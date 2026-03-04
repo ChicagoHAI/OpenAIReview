@@ -15,6 +15,9 @@ COST_PER_1M = {
     "openai/gpt-4o": {"prompt": 2.5, "completion": 10.0},
     "openai/gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
     "google/gemini-2.0-flash-001": {"prompt": 0.10, "completion": 0.40},
+    "z-ai/glm-5": {"prompt": 0.80, "completion": 2.56},
+    "moonshotai/kimi-k2.5": {"prompt": 0.45, "completion": 2.20},
+    "openai/gpt-5.2-pro": {"prompt": 21.0, "completion": 168.0},
 }
 DEFAULT_COST = {"prompt": 5.0, "completion": 25.0}
 

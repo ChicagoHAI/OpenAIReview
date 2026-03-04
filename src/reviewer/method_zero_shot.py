@@ -116,8 +116,10 @@ def review_zero_shot(
     paper_slug: str,
     document_content: str,
     model: str = "anthropic/claude-opus-4-5",
+    reasoning_effort: str | None = None,
 ) -> ReviewResult:
-    result = ReviewResult(method="zero_shot", paper_slug=paper_slug, model=model)
+    result = ReviewResult(method="zero_shot", paper_slug=paper_slug, model=model,
+                          reasoning_effort=reasoning_effort)
 
     token_count = count_tokens(document_content)
 
@@ -127,6 +129,7 @@ def review_zero_shot(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             max_tokens=8192,
+            reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
         result.total_prompt_tokens += usage["prompt_tokens"]
@@ -149,6 +152,7 @@ def review_zero_shot(
                 messages=[{"role": "user", "content": prompt}],
                 model=model,
                 max_tokens=8192,
+                reasoning_effort=reasoning_effort,
             )
             result.raw_responses.append(response)
             result.total_prompt_tokens += usage["prompt_tokens"]

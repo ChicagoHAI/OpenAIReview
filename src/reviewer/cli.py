@@ -26,6 +26,17 @@ def slugify(name: str) -> str:
     return s.strip("-")[:80]
 
 
+def _model_short_name(model: str) -> str:
+    """Extract short model name from provider/model string."""
+    # "anthropic/claude-opus-4-6" -> "claude-opus-4-6"
+    return model.split("/")[-1] if "/" in model else model
+
+
+def _method_key(method: str, model: str) -> str:
+    """Build a unique key for a method+model combination."""
+    return f"{method}__{_model_short_name(model)}"
+
+
 def cmd_review(args: argparse.Namespace) -> None:
     """Run a review on a document."""
     from .method_incremental import review_incremental
@@ -58,17 +69,22 @@ def cmd_review(args: argparse.Namespace) -> None:
     method = args.method
     print(f"Running method: {method}...")
 
+    reasoning = getattr(args, "reasoning_effort", None)
+
     if method == "zero_shot":
-        result = review_zero_shot(slug, content, model=args.model)
+        result = review_zero_shot(slug, content, model=args.model,
+                                  reasoning_effort=reasoning)
     elif method == "local":
         result = review_local(
             slug, content,
             model=args.model,
+            reasoning_effort=reasoning,
         )
     elif method in ("incremental", "incremental_full"):
         consolidated, full = review_incremental(
             slug, content,
             model=args.model,
+            reasoning_effort=reasoning,
         )
         result = full if method == "incremental_full" else consolidated
     else:
@@ -83,15 +99,16 @@ def cmd_review(args: argparse.Namespace) -> None:
     output_file = output_dir / f"{slug}.json"
 
     # Build viz-compatible data
+    key = _method_key(method, args.model)
     paper_data = _build_paper_json(
-        slug, title, content, paragraphs, method, result
+        slug, title, content, paragraphs, method, key, result
     )
 
     # Merge with existing file if present
     if output_file.exists():
         try:
             existing = json.loads(output_file.read_text())
-            existing["methods"][method] = paper_data["methods"][method]
+            existing["methods"][key] = paper_data["methods"][key]
             paper_data = existing
         except (json.JSONDecodeError, KeyError):
             pass
@@ -106,6 +123,7 @@ def _build_paper_json(
     content: str,
     paragraphs: list[str],
     method: str,
+    key: str,
     result,
 ) -> dict:
     """Build viz-compatible JSON structure for a paper."""
@@ -114,7 +132,7 @@ def _build_paper_json(
     comments = []
     for i, c in enumerate(result.comments):
         comments.append({
-            "id": f"{method}_{i}",
+            "id": f"{key}_{i}",
             "title": c.title,
             "quote": c.quote,
             "explanation": c.explanation,
@@ -122,17 +140,30 @@ def _build_paper_json(
             "paragraph_index": c.paragraph_index,
         })
 
+    model_short = _model_short_name(result.model) if result.model else ""
+    label = method.replace("_", " ").title()
+    if model_short:
+        label = f"{label} ({model_short})"
+
+    # Compute cost
+    from .evaluate import compute_cost
+    cost_usd = compute_cost(result)
+
     method_data = {
-        "label": method.replace("_", " ").title(),
+        "label": label,
+        "model": result.model,
         "overall_feedback": result.overall_feedback,
         "comments": comments,
+        "cost_usd": round(cost_usd, 4),
+        "prompt_tokens": result.total_prompt_tokens,
+        "completion_tokens": result.total_completion_tokens,
     }
 
     return {
         "slug": slug,
         "title": title,
         "paragraphs": para_list,
-        "methods": {method: method_data},
+        "methods": {key: method_data},
     }
 
 
@@ -173,6 +204,12 @@ def main() -> None:
     review_parser.add_argument(
         "--name", default=None,
         help="Paper slug name (default: derived from filename)",
+    )
+    review_parser.add_argument(
+        "--reasoning-effort",
+        choices=["none", "low", "medium", "high"],
+        default=None,
+        help="Reasoning effort level (default: adaptive/auto)",
     )
 
     # serve subcommand

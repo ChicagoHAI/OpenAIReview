@@ -31,14 +31,26 @@ def get_client() -> OpenAI:
     return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
 
 
+REASONING_EFFORT_RATIO = {
+    "none": 0,
+    "low": 0.1,
+    "medium": 0.5,
+    "high": 0.8,
+}
+
+
 def chat(
     messages: list[dict],
     model: str = "anthropic/claude-opus-4-5",
     temperature: float | None = None,
     max_tokens: int = 4096,
+    reasoning_effort: str | None = None,
     retries: int = 3,
 ) -> tuple[str, dict]:
-    """Call the OpenRouter chat API. Returns (response_text, usage_dict)."""
+    """Call the OpenRouter chat API. Returns (response_text, usage_dict).
+
+    reasoning_effort: None (adaptive default), or "none"/"low"/"medium"/"high".
+    """
     client = get_client()
     for attempt in range(retries):
         try:
@@ -49,6 +61,16 @@ def chat(
             )
             if temperature is not None:
                 kwargs["temperature"] = temperature
+            if reasoning_effort is not None:
+                if reasoning_effort == "none":
+                    # No reasoning at all
+                    pass
+                else:
+                    ratio = REASONING_EFFORT_RATIO.get(reasoning_effort, 0.5)
+                    budget = max(int(max_tokens * ratio), 1024)
+                    kwargs["extra_body"] = {
+                        "reasoning": {"max_tokens": budget}
+                    }
             resp = client.chat.completions.create(**kwargs)
             usage = {
                 "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,

@@ -223,6 +223,7 @@ def update_running_summary(
     total_passages: int,
     model: str,
     result: ReviewResult,
+    reasoning_effort: str | None = None,
     max_summary_tokens: int = 2000,
 ) -> str:
     """Call the model to update the running summary with new content."""
@@ -236,6 +237,7 @@ def update_running_summary(
         messages=[{"role": "user", "content": prompt}],
         model=model,
         max_tokens=3000,
+        reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
     result.total_completion_tokens += usage["completion_tokens"]
@@ -251,6 +253,7 @@ def is_technical_passage(
     passage_text: str,
     model: str,
     result: ReviewResult,
+    reasoning_effort: str | None = None,
 ) -> bool:
     """Use the model to decide if a passage has technical content worth checking."""
     prompt = TECHNICAL_FILTER_PROMPT.format(passage=passage_text[:2000])
@@ -258,6 +261,7 @@ def is_technical_passage(
         messages=[{"role": "user", "content": prompt}],
         model=model,
         max_tokens=8,
+        reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
     result.total_completion_tokens += usage["completion_tokens"]
@@ -268,6 +272,7 @@ def consolidate_comments(
     comments: list,
     model: str,
     result: ReviewResult,
+    reasoning_effort: str | None = None,
 ) -> list:
     """Post-hoc consolidation: deduplicate and prune low-quality issues."""
     if not comments:
@@ -285,6 +290,7 @@ def consolidate_comments(
         messages=[{"role": "user", "content": prompt}],
         model=model,
         max_tokens=8192,
+        reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
     result.total_completion_tokens += usage["completion_tokens"]
@@ -316,6 +322,7 @@ def review_incremental(
     paper_slug: str,
     document_content: str,
     model: str = "anthropic/claude-opus-4-5",
+    reasoning_effort: str | None = None,
     skip_nontechnical: bool = False,
     window_size: int = 3,
 ) -> tuple[ReviewResult, ReviewResult]:
@@ -333,6 +340,7 @@ def review_incremental(
         method="incremental",
         paper_slug=paper_slug,
         model=model,
+        reasoning_effort=reasoning_effort,
     )
 
     paragraphs = split_into_paragraphs(document_content)
@@ -348,7 +356,7 @@ def review_incremental(
 
         # Step 0: Optional pre-filter
         if skip_nontechnical:
-            if not is_technical_passage(passage_text, model, result):
+            if not is_technical_passage(passage_text, model, result, reasoning_effort):
                 skipped += 1
                 print(f"    Passage {idx+1}/{len(passages)}: SKIPPED (non-technical)")
                 # Still update summary even for skipped passages (may have definitions)
@@ -359,6 +367,7 @@ def review_incremental(
                     total_passages=len(passages),
                     model=model,
                     result=result,
+                    reasoning_effort=reasoning_effort,
                 )
                 continue
 
@@ -378,6 +387,7 @@ def review_incremental(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             max_tokens=4096,
+            reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
         result.total_prompt_tokens += usage["prompt_tokens"]
@@ -414,6 +424,7 @@ def review_incremental(
             total_passages=len(passages),
             model=model,
             result=result,
+            reasoning_effort=reasoning_effort,
         )
 
     if skip_nontechnical:
@@ -425,6 +436,7 @@ def review_incremental(
         messages=[{"role": "user", "content": OVERALL_FEEDBACK_PROMPT.format(paper_start=paper_start)}],
         model=model,
         max_tokens=512,
+        reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()
     result.total_prompt_tokens += usage["prompt_tokens"]
@@ -432,7 +444,7 @@ def review_incremental(
 
     # Step 3: Consolidation pass
     print(f"  Consolidating {len(all_comments)} comments...")
-    result.comments = consolidate_comments(all_comments, model, result)
+    result.comments = consolidate_comments(all_comments, model, result, reasoning_effort)
     print(f"  After consolidation: {len(result.comments)} comments")
 
     # Build full (pre-consolidation) result

@@ -34,6 +34,7 @@ class ReviewResult:
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
     model: str = ""
+    reasoning_effort: str | None = None
     raw_responses: list[str] = field(default_factory=list)
 
     @property

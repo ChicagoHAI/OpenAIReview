@@ -139,6 +139,7 @@ def review_local(
     paper_slug: str,
     document_content: str,
     model: str = "anthropic/claude-opus-4-5",
+    reasoning_effort: str | None = None,
     window_size: int = 3,
 ) -> ReviewResult:
     """Review a paper by deep-checking each chunk with surrounding window context."""
@@ -163,6 +164,7 @@ def review_local(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             max_tokens=4096,
+            reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
         result.total_prompt_tokens += usage["prompt_tokens"]
@@ -194,6 +196,7 @@ def review_local(
         messages=[{"role": "user", "content": OVERALL_FEEDBACK_PROMPT.format(paper_start=paper_start)}],
         model=model,
         max_tokens=512,
+        reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()
     result.total_prompt_tokens += usage["prompt_tokens"]

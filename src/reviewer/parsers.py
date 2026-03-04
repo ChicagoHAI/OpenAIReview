@@ -214,14 +214,18 @@ def parse_arxiv_html(url: str) -> tuple[str, str]:
 
     # Remove bibliography, navigation, and other non-content elements
     for sel in ["nav", ".ltx_bibliography", ".ltx_TOC", "header", "footer",
-                ".package-hierarchical-accordion", "#header", ".arxiv-watermark"]:
+                ".package-hierarchical-accordion", "#header", ".arxiv-watermark",
+                ".ltx_role_affiliationtext"]:
         for el in doc.select(sel):
             el.decompose()
 
-    # Extract structured text
+    # Extract structured text using leaf content elements only.
+    # ltx_para = paragraph text, ltx_title_* = headings, ltx_abstract = abstract,
+    # ltx_theorem/ltx_proof = theorems, ltx_caption = figure captions.
+    # We do NOT match ltx_section/ltx_subsection (containers that include all children).
     sections = []
     for element in doc.find_all(class_=re.compile(
-        r"^ltx_(title_|section|subsection|subsubsection|abstract|p$|theorem|proof|caption)"
+        r"^ltx_(para$|title_|abstract$|theorem$|proof$|caption)"
     )):
         text = element.get_text(" ", strip=True)
         if not text:
@@ -232,14 +236,30 @@ def parse_arxiv_html(url: str) -> tuple[str, str]:
         cls_str = " ".join(cls) if isinstance(cls, list) else cls
         if "ltx_title_document" in cls_str:
             sections.append(f"# {text}")
-        elif "ltx_title_section" in cls_str or "ltx_section" in cls_str:
+        elif "ltx_title_section" in cls_str:
             sections.append(f"\n## {text}")
-        elif "ltx_title_subsection" in cls_str or "ltx_subsection" in cls_str:
+        elif "ltx_title_subsection" in cls_str:
             sections.append(f"\n### {text}")
         elif "ltx_title_subsubsection" in cls_str:
             sections.append(f"\n#### {text}")
+        elif "ltx_title_appendix" in cls_str:
+            sections.append(f"\n## {text}")
+        elif "ltx_title_abstract" in cls_str:
+            # Skip — already handled by ltx_abstract match
+            continue
+        elif cls_str.startswith("ltx_title"):
+            # Other titles (theorem, proof, caption, etc.)
+            sections.append(f"\n**{text}**")
         elif "ltx_abstract" in cls_str:
-            sections.append(f"\n## Abstract\n{text}")
+            # Extract just paragraph text, skip the title child
+            abstract_paras = element.find_all(class_="ltx_p")
+            if abstract_paras:
+                abstract_text = "\n\n".join(
+                    p.get_text(" ", strip=True) for p in abstract_paras
+                )
+            else:
+                abstract_text = text
+            sections.append(f"\n## Abstract\n{abstract_text}")
         else:
             sections.append(text)
 

@@ -45,7 +45,7 @@ EMPTY_RESPONSE_TOKEN_MULTIPLIER = 2
 
 def chat(
     messages: list[dict],
-    model: str = "anthropic/claude-opus-4-5",
+    model: str = "anthropic/claude-opus-4-6",
     temperature: float | None = None,
     max_tokens: int = 16384,
     reasoning_effort: str | None = None,

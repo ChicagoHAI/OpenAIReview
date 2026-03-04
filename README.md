@@ -5,10 +5,24 @@ AI-powered academic paper reviewer that detects technical and logical errors usi
 ## Installation
 
 ```bash
-pip install .
-# or for development:
-pip install -e .
+uv pip install openaireview
 ```
+
+For development:
+```bash
+uv pip install -e .
+```
+
+### PDF math support (optional)
+
+For math-heavy PDFs, install [Marker](https://github.com/VikParuchuri/marker) separately to get accurate LaTeX extraction. Without Marker, PDFs are processed with PyMuPDF which cannot extract math symbols correctly.
+
+```bash
+# Install Marker CLI in an isolated environment (avoids dependency conflicts)
+uv tool install marker-pdf
+```
+
+Marker is used automatically when available on PATH. For papers with math, we recommend using `.tex` source or arXiv HTML URLs instead of PDF when possible — these always produce correct output.
 
 ## Quick Start
 
@@ -47,7 +61,7 @@ Review an academic paper for technical and logical issues. Accepts a local file 
 | Option | Default | Description |
 |---|---|---|
 | `--method` | `incremental` | Review method: `zero_shot`, `local`, `incremental`, `incremental_full` |
-| `--model` | `anthropic/claude-opus-4-5` | Model to use |
+| `--model` | `anthropic/claude-opus-4-6` | Model to use |
 | `--output-dir` | `./review_results` | Directory for output JSON files |
 | `--name` | (from filename) | Paper slug name |
 
@@ -62,7 +76,7 @@ Start a local visualization server to browse review results.
 
 ## Supported Input Formats
 
-- **PDF** (`.pdf`) — text extraction via PyMuPDF
+- **PDF** (`.pdf`) — uses [Marker](https://github.com/VikParuchuri/marker) for high-quality extraction with LaTeX math; falls back to PyMuPDF if Marker is not installed
 - **DOCX** (`.docx`) — via python-docx
 - **LaTeX** (`.tex`) — plain text with title extraction from `\title{}`
 - **Text/Markdown** (`.txt`, `.md`) — plain text
@@ -73,25 +87,20 @@ Start a local visualization server to browse review results.
 | Variable | Default | Description |
 |---|---|---|
 | `OPENROUTER_API_KEY` | (required) | Your OpenRouter API key |
-| `MODEL` | `anthropic/claude-opus-4-5` | Default model |
+| `MODEL` | `anthropic/claude-opus-4-6` | Default model |
 
 These can be set as environment variables or in a `.env` file. See `.env.example` for a template.
 
 ## Supported Models & Pricing
 
-All models available on [OpenRouter](https://openrouter.ai) are supported — use any model ID via `--model`. The following models have built-in pricing for accurate cost tracking in the visualization (prices fetched from OpenRouter on 2026-03-04):
+All models available on [OpenRouter](https://openrouter.ai) are supported — use any model ID via `--model`. The following models have built-in pricing for accurate cost tracking in the visualization:
 
 | Model | Input ($/1M tokens) | Output ($/1M tokens) |
 |---|---|---|
 | `anthropic/claude-opus-4-6` | $5.00 | $25.00 |
 | `anthropic/claude-opus-4-5` | $5.00 | $25.00 |
-| `anthropic/claude-haiku-4-5` | $1.00 | $5.00 |
 | `openai/gpt-5.2-pro` | $21.00 | $168.00 |
-| `openai/gpt-4o` | $2.50 | $10.00 |
-| `openai/gpt-4o-mini` | $0.15 | $0.60 |
-| `google/gemini-2.0-flash-001` | $0.10 | $0.40 |
-| `z-ai/glm-5` | $0.80 | $2.56 |
-| `moonshotai/kimi-k2.5` | $0.45 | $2.20 |
+| `google/gemini-3.1-pro-preview` | $2.00 | $12.00 |
 
 For models not listed above, a default rate of $5.00/$25.00 per 1M tokens is used.
 

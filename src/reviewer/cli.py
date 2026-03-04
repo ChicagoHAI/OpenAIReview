@@ -14,7 +14,7 @@ except ImportError:
     pass
 
 
-DEFAULT_MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4-5")
+DEFAULT_MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4-6")
 
 
 def slugify(name: str) -> str:
@@ -58,7 +58,10 @@ def cmd_review(args: argparse.Namespace) -> None:
             sys.exit(1)
         print(f"Parsing {file_path.name}...")
         title, content = parse_document(file_path)
-        default_slug = file_path.stem
+        fmt = file_path.suffix.lstrip(".").lower()
+        default_slug = f"{file_path.stem}-{fmt}" if fmt else file_path.stem
+        if fmt:
+            title = f"{title} [{fmt.upper()}]"
 
     print(f"  Title: {title}")
 
@@ -195,7 +198,7 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--model", default=DEFAULT_MODEL,
-        help="Model to use (default: anthropic/claude-opus-4-5)",
+        help="Model to use (default: anthropic/claude-opus-4-6)",
     )
     review_parser.add_argument(
         "--output-dir", default="./review_results",

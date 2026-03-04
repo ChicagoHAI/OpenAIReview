@@ -13,7 +13,7 @@ MAX_TOKENS_SINGLE = 100_000  # use single prompt if paper fits
 def review_zero_shot(
     paper_slug: str,
     document_content: str,
-    model: str = "anthropic/claude-opus-4-5",
+    model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
 ) -> ReviewResult:
     result = ReviewResult(method="zero_shot", paper_slug=paper_slug, model=model,

@@ -11,10 +11,7 @@ from .models import Comment, ReviewResult
 COST_PER_1M = {
     "anthropic/claude-opus-4-6": {"prompt": 5.0, "completion": 25.0},
     "anthropic/claude-opus-4-5": {"prompt": 5.0, "completion": 25.0},
-    "anthropic/claude-haiku-4-5": {"prompt": 1.0, "completion": 5.0},
-    "openai/gpt-4o": {"prompt": 2.5, "completion": 10.0},
-    "openai/gpt-4o-mini": {"prompt": 0.15, "completion": 0.60},
-    "google/gemini-2.0-flash-001": {"prompt": 0.10, "completion": 0.40},
+    "google/gemini-3.1-pro-preview": {"prompt": 2.0, "completion": 12.0},
     "z-ai/glm-5": {"prompt": 0.80, "completion": 2.56},
     "moonshotai/kimi-k2.5": {"prompt": 0.45, "completion": 2.20},
     "openai/gpt-5.2-pro": {"prompt": 21.0, "completion": 168.0},

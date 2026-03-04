@@ -38,7 +38,72 @@ def parse_document(file_path: str | Path) -> tuple[str, str]:
 
 
 def _parse_pdf(path: Path) -> tuple[str, str]:
-    """Extract text from PDF using pymupdf."""
+    """Extract text from PDF. Uses Marker CLI if available (better math), else pymupdf."""
+    try:
+        return _parse_pdf_marker(path)
+    except (ImportError, FileNotFoundError, RuntimeError) as e:
+        print(f"  Marker not available ({e}), using pymupdf fallback.")
+        print("  Note: pymupdf cannot extract math symbols correctly. "
+              "For math-heavy PDFs, use .tex source or arXiv HTML.")
+        return _parse_pdf_pymupdf(path)
+
+
+def _parse_pdf_marker(path: Path) -> tuple[str, str]:
+    """High-quality PDF extraction using Marker (preserves math as LaTeX).
+
+    Tries the Python API first, then falls back to the Marker CLI.
+    """
+    try:
+        from marker.converters.pdf import PdfConverter
+        from marker.models import create_model_dict
+        from marker.output import text_from_rendered
+
+        converter = PdfConverter(artifact_dict=create_model_dict())
+        rendered = converter(str(path))
+        markdown, _, _ = text_from_rendered(rendered)
+    except ImportError:
+        # Fall back to Marker CLI (avoids openai version conflict)
+        import shutil
+        import subprocess
+        import tempfile
+
+        marker_bin = shutil.which("marker_single") or shutil.which("marker")
+        if not marker_bin:
+            raise FileNotFoundError("marker CLI not found on PATH")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = subprocess.run(
+                [marker_bin, str(path), "--output_dir", tmpdir],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"marker failed: {result.stderr[:500]}")
+
+            # Marker outputs to a subdirectory named after the PDF
+            md_files = list(Path(tmpdir).rglob("*.md"))
+            if not md_files:
+                raise RuntimeError("marker produced no markdown output")
+            markdown = md_files[0].read_text()
+
+    title = _extract_title_from_markdown(markdown)
+    return title, markdown
+
+
+def _extract_title_from_markdown(markdown: str) -> str:
+    """Extract the first heading from markdown text as the title."""
+    for line in markdown.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            return stripped.lstrip("# ").strip()
+    # Fallback: first non-empty line
+    for line in markdown.split("\n"):
+        if line.strip():
+            return line.strip()[:200]
+    return ""
+
+
+def _parse_pdf_pymupdf(path: Path) -> tuple[str, str]:
+    """Fallback PDF extraction using pymupdf (no math support)."""
     import pymupdf
 
     doc = pymupdf.open(str(path))
@@ -50,7 +115,6 @@ def _parse_pdf(path: Path) -> tuple[str, str]:
         pages.append(text)
 
         if page_num == 0 and not title:
-            # Try to find title from largest font text on first page
             blocks = page.get_text("dict")["blocks"]
             best_size = 0
             for block in blocks:
@@ -58,15 +122,37 @@ def _parse_pdf(path: Path) -> tuple[str, str]:
                     continue
                 for line in block["lines"]:
                     for span in line["spans"]:
-                        if span["size"] > best_size and span["text"].strip():
+                        if span["text"].strip() and span["size"] > best_size:
                             best_size = span["size"]
-                            title = span["text"].strip()
+
+            if best_size > 0:
+                candidates = []
+                current_parts = []
+                for block in blocks:
+                    if "lines" not in block:
+                        if current_parts:
+                            candidates.append(" ".join(current_parts))
+                            current_parts = []
+                        continue
+                    for line in block["lines"]:
+                        for span in line["spans"]:
+                            span_text = span["text"].strip()
+                            if not span_text:
+                                continue
+                            if abs(span["size"] - best_size) < 0.5:
+                                current_parts.append(span_text)
+                            elif current_parts:
+                                candidates.append(" ".join(current_parts))
+                                current_parts = []
+                if current_parts:
+                    candidates.append(" ".join(current_parts))
+                if candidates:
+                    title = max(candidates, key=len)
 
     doc.close()
     full_text = "\n\n".join(pages)
 
     if not title:
-        # Fallback: first non-empty line
         for line in full_text.split("\n"):
             if line.strip():
                 title = line.strip()[:200]

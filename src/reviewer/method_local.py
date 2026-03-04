@@ -82,7 +82,7 @@ def get_chunk_window_context(
 def review_local(
     paper_slug: str,
     document_content: str,
-    model: str = "anthropic/claude-opus-4-5",
+    model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
     window_size: int = 3,
 ) -> ReviewResult:
@@ -143,7 +143,7 @@ def review_local(
     feedback_response, usage = chat(
         messages=[{"role": "user", "content": OVERALL_FEEDBACK_PROMPT.format(paper_start=paper_start)}],
         model=model,
-        max_tokens=512,
+        max_tokens=2048,
         reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()

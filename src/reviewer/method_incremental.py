@@ -206,7 +206,7 @@ def consolidate_comments(
 def review_incremental(
     paper_slug: str,
     document_content: str,
-    model: str = "anthropic/claude-opus-4-5",
+    model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
     skip_nontechnical: bool = False,
     window_size: int = 3,
@@ -324,7 +324,7 @@ def review_incremental(
     feedback_response, usage = chat(
         messages=[{"role": "user", "content": OVERALL_FEEDBACK_PROMPT.format(paper_start=paper_start)}],
         model=model,
-        max_tokens=512,
+        max_tokens=2048,
         reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()

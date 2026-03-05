@@ -63,6 +63,7 @@ def _parse_pdf_marker(path: Path) -> tuple[str, str]:
         markdown, _, _ = text_from_rendered(rendered)
     except ImportError:
         # Fall back to Marker CLI (avoids openai version conflict)
+        import os
         import shutil
         import subprocess
         import tempfile
@@ -71,19 +72,25 @@ def _parse_pdf_marker(path: Path) -> tuple[str, str]:
         if not marker_bin:
             raise FileNotFoundError("marker_single not found on PATH")
 
+        import platform
+        env = os.environ.copy()
+        if platform.system() == "Darwin":
+            env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+            env["TORCH_DEVICE"] = "cpu"
+
         with tempfile.TemporaryDirectory() as tmpdir:
             proc = subprocess.Popen(
                 [marker_bin, str(path), "--output_dir", tmpdir],
-                stderr=subprocess.PIPE, text=True,
+                env=env,
             )
             try:
-                _, stderr = proc.communicate(timeout=900)
+                proc.communicate(timeout=3600)
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.communicate()
-                raise RuntimeError("marker timed out after 900s")
+                raise RuntimeError("marker timed out after 3600s")
             if proc.returncode != 0:
-                raise RuntimeError(f"marker failed: {stderr[:500]}")
+                raise RuntimeError(f"marker failed (exit code {proc.returncode})")
 
             # Marker outputs to a subdirectory named after the PDF
             md_files = list(Path(tmpdir).rglob("*.md"))

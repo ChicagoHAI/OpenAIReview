@@ -9,14 +9,16 @@ Our goal is provide thorough and detailed reviews to help researchers conduct th
 ## Installation
 
 ```bash
-uv pip install openaireview
+uv venv && uv pip install openaireview
+# or: pip install openaireview
 ```
 
 For development:
 ```bash
 git clone https://github.com/ChicagoHAI/OpenAIReview.git
 cd OpenAIReview
-uv pip install -e .
+uv venv && uv pip install -e .
+# or: pip install -e .
 ```
 
 ### PDF math support (optional)
@@ -28,7 +30,7 @@ For math-heavy PDFs, install [Marker](https://github.com/VikParuchuri/marker) se
 uv tool install marker-pdf --with psutil
 ```
 
-Marker is used automatically when available on PATH. For papers with math, we recommend using `.tex` source or arXiv HTML URLs instead of PDF when possible — these always produce correct output.
+Marker is used automatically when available on PATH. It is most useful for math-heavy PDFs, but runs very slowly without a GPU. For papers with math, we recommend using `.tex` source, `.md`, or arXiv HTML URLs instead of PDF when possible — these always produce correct output without needing Marker.
 
 ## Quick Start
 

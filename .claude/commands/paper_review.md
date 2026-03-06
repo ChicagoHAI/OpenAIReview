@@ -12,7 +12,7 @@ Review the academic paper provided in the user's message. Follow every step belo
 
 ## Step 0 — Create a task list to track progress
 
-Use TaskCreate to create the following tasks before doing anything else:
+If a todo list or task tracking tool is available (e.g. TaskCreate, todo_write, or equivalent), create the following tasks before doing anything else:
 
 1. "Obtain paper text" — fetch and parse the paper
 2. "Pass A: Understand the paper" — build a complete mental model
@@ -21,13 +21,13 @@ Use TaskCreate to create the following tasks before doing anything else:
 5. "Present review" — output the formatted review to the user
 6. "Save viz JSON" — write results to review_results/<slug>.json
 
-Mark each task `in_progress` when you start it and `completed` when done before moving to the next step.
+Mark each task as in-progress when you start it and completed when done before moving to the next step. If no such tool is available, skip this step and proceed.
 
 ---
 
 ## Step 1 — Obtain the paper text
 
-Mark task "Obtain paper text" as `in_progress`.
+If tracking tasks, mark "Obtain paper text" as in-progress.
 
 Determine the input type from the argument and extract the text:
 
@@ -50,13 +50,13 @@ Determine the input type from the argument and extract the text:
 
 Identify the paper **title** and a **slug** (URL-friendly name derived from the filename stem or arXiv ID, lowercase, hyphens only, max 80 chars).
 
-Mark task "Obtain paper text" as `completed`.
+If tracking tasks, mark "Obtain paper text" as completed.
 
 ---
 
 ## Step 2 — Review the paper
 
-Mark task "Pass A: Understand the paper" as `in_progress`.
+If tracking tasks, mark "Pass A: Understand the paper" as in-progress.
 
 You are a thoughtful, expert reviewer. Work in two passes:
 
@@ -65,7 +65,7 @@ You are a thoughtful, expert reviewer. Work in two passes:
 - For empirical/systems papers: every stated numerical threshold or hyperparameter, every experimental design choice, every component mentioned in the system description, every aggregate statistic and what it includes/excludes, and every claim made in the abstract and introduction.
 - Build a complete picture before judging anything.
 
-Mark task "Pass A: Understand the paper" as `completed`. Mark task "Pass B: Check for issues" as `in_progress`.
+If tracking tasks, mark "Pass A: Understand the paper" as completed and "Pass B: Check for issues" as in-progress.
 
 **Pass B — Check for issues.** Work through the paper in reading order, **including appendices and tables**. For every claim, formula, definition, proof step, and stated parameter: first try to understand the authors' intent and check whether your concern is resolved by context before flagging it.
 
@@ -107,7 +107,7 @@ Acknowledge what the authors got right before noting the issue. Reference standa
 
 ## Step 3 — Consolidate your findings
 
-Mark task "Pass B: Check for issues" as `completed`. Mark task "Consolidate findings" as `in_progress`.
+If tracking tasks, mark "Pass B: Check for issues" as completed and "Consolidate findings" as in-progress.
 
 Before outputting anything, review your own issue list:
 
@@ -123,7 +123,7 @@ Only clear false positives (resolved by context, standard conventions, or the le
 
 ## Step 4 — Conversational output
 
-Mark task "Consolidate findings" as `completed`. Mark task "Present review" as `in_progress`.
+If tracking tasks, mark "Consolidate findings" as completed and "Present review" as in-progress.
 
 Present the review in the following format:
 
@@ -149,7 +149,7 @@ Explanation: Your reasoning — what concerned you, what you checked, what speci
 
 ## Step 5 — Save viz-compatible JSON
 
-Mark task "Present review" as `completed`. Mark task "Save viz JSON" as `in_progress`.
+If tracking tasks, mark "Present review" as completed and "Save viz JSON" as in-progress.
 
 After presenting the review, save results so the user can run `openaireview serve` to visualize them.
 
@@ -238,4 +238,4 @@ indexed = [{'index': i, 'text': p} for i, p in enumerate(paragraphs)]
 
 6. Tell the user: `Results saved to ./review_results/<slug>.json — run \`openaireview serve\` to visualize.`
 
-Mark task "Save viz JSON" as `completed`.
+If tracking tasks, mark "Save viz JSON" as completed.

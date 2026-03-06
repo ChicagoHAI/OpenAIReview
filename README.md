@@ -60,6 +60,27 @@ openaireview serve
 # Open http://localhost:8080
 ```
 
+## Claude Code Skill
+
+A deep-review skill is bundled with the package. It runs a multi-agent pipeline — one sub-agent per paper section plus cross-cutting agents — and produces severity-tiered findings (major / moderate / minor).
+
+Install once:
+
+```bash
+pip install openaireview
+openaireview install-skill
+```
+
+Then in any Claude Code project:
+
+```
+/openaireview paper.pdf
+/openaireview https://arxiv.org/abs/2602.18458
+```
+
+Finally, run `openaireview serve` to see results.
+
+
 ## CLI Reference
 
 ### `openaireview review <file_or_url>`

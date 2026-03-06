@@ -170,6 +170,33 @@ def _build_paper_json(
     }
 
 
+def cmd_install_skill(args: argparse.Namespace) -> None:
+    """Install the /openaireview Claude Code skill to ~/.claude/commands/."""
+    import shutil
+
+    skill_src = Path(__file__).parent / "skill"
+    dest = Path.home() / ".claude" / "commands" / "openaireview"
+
+    if dest.exists() and not args.force:
+        print(f"Skill already installed at {dest}")
+        print("Run with --force to overwrite.")
+        return
+
+    dest.mkdir(parents=True, exist_ok=True)
+    for item in skill_src.rglob("*"):
+        if item.name == "__init__.py":
+            continue
+        rel = item.relative_to(skill_src)
+        target = dest / rel
+        if item.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+    print(f"Skill installed to {dest}")
+    print("You can now use /openaireview in any Claude Code project.")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the visualization server."""
     from .serve import run_server
@@ -228,11 +255,22 @@ def main() -> None:
         help="Server port (default: 8080)",
     )
 
+    # install-skill subcommand
+    install_parser = subparsers.add_parser(
+        "install-skill", help="Install the /openaireview Claude Code skill"
+    )
+    install_parser.add_argument(
+        "--force", action="store_true",
+        help="Overwrite existing installation",
+    )
+
     args = parser.parse_args()
     if args.command == "review":
         cmd_review(args)
     elif args.command == "serve":
         cmd_serve(args)
+    elif args.command == "install-skill":
+        cmd_install_skill(args)
     else:
         parser.print_help()
         sys.exit(1)

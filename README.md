@@ -88,7 +88,7 @@ Review an academic paper for technical and logical issues. Accepts a local file 
 
 | Option | Default | Description |
 |---|---|---|
-| `--method` | `incremental` | Review method: `zero_shot`, `local`, `incremental`, `incremental_full` |
+| `--method` | `progressive` | Review method: `zero_shot`, `local`, `progressive`, `progressive_full` |
 | `--model` | `anthropic/claude-opus-4-6` | Model to use |
 | `--output-dir` | `./review_results` | Directory for output JSON files |
 | `--name` | (from filename) | Paper slug name |
@@ -136,8 +136,8 @@ For models not listed above, a default rate of $5.00/$25.00 per 1M tokens is use
 
 - **zero_shot** — single prompt asking the model to find all issues
 - **local** — deep-checks each chunk with surrounding window context (no filtering)
-- **incremental** — sequential processing with running summary, then consolidation
-- **incremental_full** — same as incremental but returns all comments before consolidation
+- **progressive** — sequential processing with running summary, then consolidation
+- **progressive_full** — same as progressive but returns all comments before consolidation
 
 ## Benchmarks
 

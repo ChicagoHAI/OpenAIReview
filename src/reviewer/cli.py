@@ -39,7 +39,7 @@ def _method_key(method: str, model: str) -> str:
 
 def cmd_review(args: argparse.Namespace) -> None:
     """Run a review on a document."""
-    from .method_incremental import review_incremental
+    from .method_progressive import review_progressive
     from .method_local import review_local
     from .method_zero_shot import review_zero_shot
     from .parsers import is_url, parse_document
@@ -83,13 +83,13 @@ def cmd_review(args: argparse.Namespace) -> None:
             model=args.model,
             reasoning_effort=reasoning,
         )
-    elif method in ("incremental", "incremental_full"):
-        consolidated, full = review_incremental(
+    elif method in ("progressive", "progressive_full"):
+        consolidated, full = review_progressive(
             slug, content,
             model=args.model,
             reasoning_effort=reasoning,
         )
-        result = full if method == "incremental_full" else consolidated
+        result = full if method == "progressive_full" else consolidated
     else:
         print(f"Error: unknown method: {method}", file=sys.stderr)
         sys.exit(1)
@@ -192,9 +192,9 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--method",
-        choices=["zero_shot", "local", "incremental", "incremental_full"],
-        default="incremental",
-        help="Review method (default: incremental)",
+        choices=["zero_shot", "local", "progressive", "progressive_full"],
+        default="progressive",
+        help="Review method (default: progressive)",
     )
     review_parser.add_argument(
         "--model", default=DEFAULT_MODEL,

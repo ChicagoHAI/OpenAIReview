@@ -24,12 +24,12 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT.parent / "src"))
 
 from reviewer.evaluate import compute_cost, evaluate, print_report
-from reviewer.method_incremental import INCREMENTAL_VARIANTS, review_incremental
+from reviewer.method_progressive import PROGRESSIVE_VARIANTS, review_progressive
 from reviewer.method_rag import RAG_VARIANTS, review_rag
 from reviewer.method_zero_shot import review_zero_shot
 from reviewer.models import ReviewResult
 
-ALL_VARIANTS = {"zero_shot": {}, **RAG_VARIANTS, **{k: {} for k in INCREMENTAL_VARIANTS}}
+ALL_VARIANTS = {"zero_shot": {}, **RAG_VARIANTS, **{k: {} for k in PROGRESSIVE_VARIANTS}}
 
 BENCHMARK_FILE = ROOT / "data" / "benchmark.jsonl"
 RESULTS_DIR = ROOT / "results"
@@ -105,8 +105,8 @@ def run_experiment(
                 model=large_model,
             )
             full_result = None
-        elif variant in INCREMENTAL_VARIANTS:
-            result, full_result = review_incremental(
+        elif variant in PROGRESSIVE_VARIANTS:
+            result, full_result = review_progressive(
                 slug, doc,
                 model=large_model,
                 small_model=small_model,
@@ -148,7 +148,7 @@ def run_experiment(
         with open(output_file, "a") as f:
             f.write(json.dumps(record) + "\n")
 
-        # Save full (pre-consolidation) result for incremental variants
+        # Save full (pre-consolidation) result for progressive variants
         if full_result:
             full_metrics = evaluate(
                 full_result, ground_truth,
@@ -310,8 +310,8 @@ def main():
         print(f"  Output: {output_file}")
         print(f"\n  Variants ({len(variants)}):")
         for v in variants:
-            if v in INCREMENTAL_VARIANTS:
-                cfg = INCREMENTAL_VARIANTS[v]
+            if v in PROGRESSIVE_VARIANTS:
+                cfg = PROGRESSIVE_VARIANTS[v]
                 print(f"    {v}: {cfg}")
             else:
                 cfg = RAG_VARIANTS[v]

@@ -18,7 +18,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from reviewer.evaluate import evaluate, load_benchmark, print_report
-from reviewer.method_incremental import review_incremental
+from reviewer.method_progressive import review_progressive
 from reviewer.method_local import review_local
 from reviewer.method_zero_shot import review_zero_shot
 
@@ -31,7 +31,7 @@ METHODS = {
     "local": lambda slug, doc, args: review_local(
         slug, doc, model=args.model,
     ),
-    "incremental": lambda slug, doc, args: review_incremental(
+    "progressive": lambda slug, doc, args: review_progressive(
         slug, doc, model=args.model
     ),
 }

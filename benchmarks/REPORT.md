@@ -45,7 +45,7 @@ Sends the entire paper in a single prompt with instructions to find technical an
 
 Splits the paper into paragraphs (~140 tokens each), uses Haiku to filter candidates (~40 of ~300), then deep-checks each with +-3 paragraph window context (asymmetric: 5 before, 2 after).
 
-### Incremental
+### Progressive
 
 Processes the paper sequentially through ~27 merged passages (~8000 chars each), maintaining a running summary of definitions, equations, theorems, and key claims. For each passage:
 1. **Deep-check** (Opus): running summary + window context + passage → find errors
@@ -55,8 +55,8 @@ Processes the paper sequentially through ~27 merged passages (~8000 chars each),
 The running summary is capped at ~2000 tokens and provides the model with notation context from the entire paper seen so far, without requiring the full text.
 
 We report two versions:
-- **Incremental**: after consolidation (fewer, higher-quality comments)
-- **Incremental (Full)**: pre-consolidation (all comments found, higher recall but lower precision)
+- **Progressive**: after consolidation (fewer, higher-quality comments)
+- **Progressive (Full)**: pre-consolidation (all comments found, higher recall but lower precision)
 
 ---
 
@@ -68,12 +68,12 @@ We report two versions:
 |---|---|---|---|---|---|---|
 | Zero-shot | 23 | 17.3% | 23.1% | 0.0% | 0.0% | $1.35 |
 | RAG Local | 211 | 48.1% | 50.0% | 15.4% | 4.5% | $3.63 |
-| **Incremental** | **68** | **53.8%** | **69.2%** | **25.0%** | **19.1%** | **$16.73** |
-| Incremental (Full) | 247 | 82.7% | 86.5% | 44.2% | 9.3% | $15.81 |
+| **Progressive** | **68** | **53.8%** | **69.2%** | **25.0%** | **19.1%** | **$16.73** |
+| Progressive (Full) | 247 | 82.7% | 86.5% | 44.2% | 9.3% | $15.81 |
 
 ### Per-paper breakdown (LLM recall)
 
-| Paper | GT | Zero-shot | RAG Local | Incremental | Incremental (Full) |
+| Paper | GT | Zero-shot | RAG Local | Progressive | Progressive (Full) |
 |---|---|---|---|---|---|
 | inference-molecular | 15 | 0% | 13% | 33% | **67%** |
 | coset-codes | 19 | 0% | 16% | 16% | 16% |
@@ -82,7 +82,7 @@ We report two versions:
 
 ### Per-paper breakdown (location recall)
 
-| Paper | GT | Zero-shot | RAG Local | Incremental | Incremental (Full) |
+| Paper | GT | Zero-shot | RAG Local | Progressive | Progressive (Full) |
 |---|---|---|---|---|---|
 | inference-molecular | 15 | 7% | 20% | 53% | **93%** |
 | coset-codes | 19 | 16% | 63% | 42% | **74%** |
@@ -93,9 +93,9 @@ We report two versions:
 
 ## Key Findings
 
-### 1. Incremental summaries dramatically improve recall
+### 1. Progressive summaries dramatically improve recall
 
-The incremental method achieves 25% LLM recall (44% pre-consolidation) compared to 15% for RAG Local and 0% for zero-shot. The running summary gives the model access to notation and definitions from the entire paper seen so far, enabling it to catch inconsistencies that span many pages.
+The progressive method achieves 25% LLM recall (44% pre-consolidation) compared to 15% for RAG Local and 0% for zero-shot. The running summary gives the model access to notation and definitions from the entire paper seen so far, enabling it to catch inconsistencies that span many pages.
 
 ### 2. Consolidation trades recall for precision
 
@@ -103,11 +103,11 @@ Post-hoc consolidation reduces comments from 247 to 68 (72% reduction) while onl
 
 ### 3. Location recall reveals the true ceiling
 
-The incremental (full) method achieves 83% location recall, meaning the model finds *something* at nearly every ground-truth error location. The gap between 83% location recall and 44% LLM recall is the deep-check quality problem: the model finds issues at the right place but not always the *same* issue as the expert reviewer.
+The progressive (full) method achieves 83% location recall, meaning the model finds *something* at nearly every ground-truth error location. The gap between 83% location recall and 44% LLM recall is the deep-check quality problem: the model finds issues at the right place but not always the *same* issue as the expert reviewer.
 
 ### 4. Zero-shot fails with the uniform prompt
 
-Zero-shot found only 23 comments with 0% LLM recall across all papers. The leniency instructions (designed for the incremental method's per-passage checking) may be too gentle for a single-pass review where the model sees the full paper and has full context.
+Zero-shot found only 23 comments with 0% LLM recall across all papers. The leniency instructions (designed for the progressive method's per-passage checking) may be too gentle for a single-pass review where the model sees the full paper and has full context.
 
 ### 5. Cost scales with depth
 
@@ -115,14 +115,14 @@ Zero-shot found only 23 comments with 0% LLM recall across all papers. The lenie
 |---|---|---|---|
 | Zero-shot | $0.34 | 6 | N/A |
 | RAG Local | $0.91 | 53 | $0.45 |
-| Incremental | $4.18 | 17 | $1.29 |
-| Incremental (Full) | $3.95 | 62 | $0.69 |
+| Progressive | $4.18 | 17 | $1.29 |
+| Progressive (Full) | $3.95 | 62 | $0.69 |
 
-The incremental method costs ~4.6x more than RAG Local per paper but finds 1.6x more ground-truth issues (consolidated) or 2.9x more (full). The bulk of the cost is the Opus deep-check calls (27 passages x ~8000 tokens each), plus 27 summary update calls.
+The progressive method costs ~4.6x more than RAG Local per paper but finds 1.6x more ground-truth issues (consolidated) or 2.9x more (full). The bulk of the cost is the Opus deep-check calls (27 passages x ~8000 tokens each), plus 27 summary update calls.
 
 ### 6. Coset-codes remains difficult
 
-All methods struggle with coset-codes (16% LLM recall even for incremental full). This paper has dense information-theoretic notation and geometric arguments that may require deeper domain expertise than the model can provide from general training.
+All methods struggle with coset-codes (16% LLM recall even for progressive full). This paper has dense information-theoretic notation and geometric arguments that may require deeper domain expertise than the model can provide from general training.
 
 ---
 
@@ -136,20 +136,20 @@ The original RAG pipeline used Haiku to pre-filter paragraphs, selecting ~17% fo
 
 Adding a definitions prefix (keywords: "definition", "denote", "let", "theorem", "assume", plus equation patterns) improved recall on notation-heavy papers. The biggest gain was on targeting-interventions (0% -> 50%) and chaotic-balanced-state (17% -> 42%).
 
-### Phase 3: Incremental approach
+### Phase 3: Progressive approach
 
-Instead of dumping raw definition paragraphs as context, the incremental method maintains a structured running summary updated after each passage. This provides:
+Instead of dumping raw definition paragraphs as context, the progressive method maintains a structured running summary updated after each passage. This provides:
 - **Structured context**: notation, equations, theorems, assumptions, and claims organized by category
 - **Sequential awareness**: the summary reflects only what has been seen so far, matching how a reader encounters the paper
 - **Bounded cost**: the summary is capped at ~2000 tokens regardless of paper length
 
-The incremental approach significantly outperforms all RAG variants on recall while producing fewer, higher-quality comments after consolidation.
+The progressive approach significantly outperforms all RAG variants on recall while producing fewer, higher-quality comments after consolidation.
 
 ---
 
 ## Recommendations
 
-1. **Use Incremental for maximum recall.** 44% LLM recall (full) or 25% (consolidated) at ~$4/paper, with 83% location coverage.
+1. **Use Progressive for maximum recall.** 44% LLM recall (full) or 25% (consolidated) at ~$4/paper, with 83% location coverage.
 
 2. **Use RAG Local for budget-constrained runs.** 15% LLM recall at $0.91/paper --- 4.6x cheaper.
 

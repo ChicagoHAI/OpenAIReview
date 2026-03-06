@@ -40,7 +40,7 @@ Do NOT flag:
 DO_NOT_FLAG_CHUNKED = DO_NOT_FLAG_BASE.rstrip() + """
 - Incomplete text at passage boundaries"""
 
-DO_NOT_FLAG_INCREMENTAL = DO_NOT_FLAG_CHUNKED.rstrip() + """
+DO_NOT_FLAG_PROGRESSIVE = DO_NOT_FLAG_CHUNKED.rstrip() + """
 - Notation not yet in the summary — it may be introduced later"""
 
 JSON_ARRAY_OUTPUT = """\
@@ -68,7 +68,7 @@ Return a JSON object with this structure:
 Return ONLY the JSON object{empty_note}. No other text."""
 
 
-# ── Deep-check prompt (used by local and incremental methods) ───────────────
+# ── Deep-check prompt (used by local and progressive methods) ───────────────
 
 DEEP_CHECK_PROMPT = f"""{REVIEWER_PREAMBLE}
 
@@ -92,7 +92,7 @@ PASSAGE TO CHECK:
 
 {JSON_ARRAY_OUTPUT}"""
 
-DEEP_CHECK_INCREMENTAL_PROMPT = f"""{REVIEWER_PREAMBLE}
+DEEP_CHECK_PROGRESSIVE_PROMPT = f"""{REVIEWER_PREAMBLE}
 
 FULL PAPER CONTEXT (relevant sections):
 {{context}}
@@ -110,7 +110,7 @@ PASSAGE TO CHECK:
 
 {LENIENCY_RULES}
 
-{DO_NOT_FLAG_INCREMENTAL}
+{DO_NOT_FLAG_PROGRESSIVE}
 
 {JSON_ARRAY_OUTPUT}"""
 
@@ -206,7 +206,7 @@ SECTION {{chunk_num}} of {{total_chunks}}:
 """
 
 
-# ── Incremental-only prompts ────────────────────────────────────────────────
+# ── Progressive-only prompts ────────────────────────────────────────────────
 
 SUMMARY_UPDATE_PROMPT = """\
 You are maintaining a concise running summary of an academic paper's key technical content. \
@@ -269,7 +269,7 @@ Return a JSON array containing the consolidated issues (same format as input). \
 Return [] if none survive filtering."""
 
 
-# ── Overall feedback (shared by local and incremental) ──────────────────────
+# ── Overall feedback (shared by local and progressive) ──────────────────────
 
 OVERALL_FEEDBACK_PROMPT = """\
 You are an expert academic reviewer. Based on the beginning of the paper below, \

@@ -16,13 +16,13 @@
 - `utils.py` — `count_tokens`, `chunk_text`, `parse_comments_from_response`, `locate_comment_in_document`, `assign_paragraph_indices`.
 - `method_zero_shot.py` — single-prompt review; chunks paper if > 100K tokens.
 - `method_local.py` — deep-checks each chunk with surrounding window context.
-- `method_incremental.py` — sequential processing with running summary + consolidation.
+- `method_progressive.py` — sequential processing with running summary + consolidation.
 - `evaluate.py` — recall/precision/F1 via fuzzy quote similarity, location-based recall, cost estimation.
 - `viz/index.html` — Visualization UI (served by `serve.py`).
 
 ### CLI Usage
 ```bash
-openaireview review paper.pdf                    # default: incremental method
+openaireview review paper.pdf                    # default: progressive method
 openaireview review paper.pdf --method zero_shot
 openaireview serve --results-dir ./review_results --port 8080
 ```

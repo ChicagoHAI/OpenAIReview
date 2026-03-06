@@ -19,10 +19,10 @@ PHASE2_RESULTS = ROOT / "results" / "experiments_phase2.jsonl"
 DEFS_RERUN_RESULTS = ROOT / "results" / "experiments_defs_rerun.jsonl"
 RERUN_INFERENCE = ROOT / "results" / "rerun_inference.jsonl"
 RERUN_INFERENCE_RAG = ROOT / "results" / "rerun_inference_rag.jsonl"
-INCREMENTAL_RESULTS = ROOT / "results" / "incremental_inference.jsonl"
-INCREMENTAL_V2_RESULTS = ROOT / "results" / "incremental_v2.jsonl"
-INCREMENTAL_V3_RESULTS = ROOT / "results" / "incremental_v3.jsonl"
-INCREMENTAL_V4_RESULTS = ROOT / "results" / "incremental_v4.jsonl"
+PROGRESSIVE_RESULTS = ROOT / "results" / "incremental_inference.jsonl"
+PROGRESSIVE_V2_RESULTS = ROOT / "results" / "incremental_v2.jsonl"
+PROGRESSIVE_V3_RESULTS = ROOT / "results" / "incremental_v3.jsonl"
+PROGRESSIVE_V4_RESULTS = ROOT / "results" / "incremental_v4.jsonl"
 BENCHMARK_JSONL = ROOT / "data" / "benchmark.jsonl"
 
 METHOD_LABELS = {
@@ -34,16 +34,16 @@ METHOD_LABELS = {
     "rag_retrieved_cot": "RAG Retrieved CoT",
     "rag_top_k_filter": "RAG Top-K Filter",
     "rag_nofilter_defs": "RAG No-Filter + Defs",
-    "incremental": "Incremental",
-    "incremental_full": "Incremental (Full)",
+    "progressive": "Progressive",
+    "progressive_full": "Progressive (Full)",
 }
 
 METHOD_ORDER = [
     "ground_truth",
     "zero_shot",
     "rag_local",
-    "incremental",
-    "incremental_full",
+    "progressive",
+    "progressive_full",
 ]
 
 
@@ -59,7 +59,7 @@ def load_phase2_results():
             key = (rec["method"], rec["paper_slug"])
             results[key] = rec
     # Override with newer results (later files take precedence)
-    for path in [DEFS_RERUN_RESULTS, RERUN_INFERENCE, RERUN_INFERENCE_RAG, INCREMENTAL_RESULTS, INCREMENTAL_V2_RESULTS, INCREMENTAL_V3_RESULTS, INCREMENTAL_V4_RESULTS]:
+    for path in [DEFS_RERUN_RESULTS, RERUN_INFERENCE, RERUN_INFERENCE_RAG, PROGRESSIVE_RESULTS, PROGRESSIVE_V2_RESULTS, PROGRESSIVE_V3_RESULTS, PROGRESSIVE_V4_RESULTS]:
         if path.exists():
             with open(path) as f:
                 for line in f:
@@ -153,7 +153,7 @@ def main():
         paras = [p["text"] for p in paper["paragraphs"]]
 
         # Add/update phase2 methods
-        for method_key in ["zero_shot", "rag_local", "incremental", "incremental_full"]:
+        for method_key in ["zero_shot", "rag_local", "progressive", "progressive_full"]:
             key = (method_key, slug)
             if key in phase2:
                 methods[method_key] = build_method_entry(method_key, phase2[key], paras)

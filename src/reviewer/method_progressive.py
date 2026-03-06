@@ -1,4 +1,4 @@
-"""Method: Incremental summary-based review.
+"""Method: Progressive summary-based review.
 
 Processes the paper sequentially, maintaining a running summary of definitions,
 equations, theorems, and key claims. For each passage:
@@ -16,7 +16,7 @@ from .client import chat
 from .models import ReviewResult
 from .prompts import (
     CONSOLIDATION_PROMPT,
-    DEEP_CHECK_INCREMENTAL_PROMPT as DEEP_CHECK_PROMPT,
+    DEEP_CHECK_PROGRESSIVE_PROMPT as DEEP_CHECK_PROMPT,
     OVERALL_FEEDBACK_PROMPT,
     SUMMARY_UPDATE_PROMPT,
     TECHNICAL_FILTER_PROMPT,
@@ -166,15 +166,12 @@ def consolidate_comments(
     issues = [c.to_dict() for c in comments]
     issues_json = json.dumps(issues, indent=2)
 
-    # If the list is very long, we may need to truncate
-    if count_tokens(issues_json) > 30000:
-        issues_json = issues_json[:120000]
-
     prompt = CONSOLIDATION_PROMPT.format(issues_json=issues_json)
+    output_cap = count_tokens(issues_json) + 1024
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
-        max_tokens=8192,
+        max_tokens=output_cap,
         reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
@@ -203,7 +200,7 @@ def consolidate_comments(
 # Main review function
 # ---------------------------------------------------------------------------
 
-def review_incremental(
+def review_progressive(
     paper_slug: str,
     document_content: str,
     model: str = "anthropic/claude-opus-4-6",
@@ -211,7 +208,7 @@ def review_incremental(
     skip_nontechnical: bool = False,
     window_size: int = 3,
 ) -> tuple[ReviewResult, ReviewResult]:
-    """Review a paper using incremental summary approach.
+    """Review a paper using progressive summary approach.
 
     Processes the paper sequentially. For each passage:
       1. (Optional) Pre-filter non-technical content
@@ -222,7 +219,7 @@ def review_incremental(
     Returns (consolidated_result, full_result).
     """
     result = ReviewResult(
-        method="incremental",
+        method="progressive",
         paper_slug=paper_slug,
         model=model,
         reasoning_effort=reasoning_effort,
@@ -230,7 +227,11 @@ def review_incremental(
 
     paragraphs = split_into_paragraphs(document_content)
     passages = merge_into_passages(paragraphs)
-    print(f"  Incremental: {len(passages)} passages (from {len(paragraphs)} paragraphs)")
+    # Scale summary budget with document length: ~10% of document tokens, floor 2000
+    doc_tokens = count_tokens(document_content)
+    max_summary_tokens = max(4000, doc_tokens // 10)
+    print(f"  Progressive: {len(passages)} passages (from {len(paragraphs)} paragraphs), "
+          f"doc length: {doc_tokens} tokens, summary budget: {max_summary_tokens} tokens")
 
     running_summary = ""
     all_comments = []
@@ -253,6 +254,7 @@ def review_incremental(
                     model=model,
                     result=result,
                     reasoning_effort=reasoning_effort,
+                    max_summary_tokens=max_summary_tokens,
                 )
                 continue
 
@@ -314,6 +316,7 @@ def review_incremental(
             model=model,
             result=result,
             reasoning_effort=reasoning_effort,
+            max_summary_tokens=max_summary_tokens,
         )
 
     if skip_nontechnical:
@@ -339,7 +342,7 @@ def review_incremental(
     # Build full (pre-consolidation) result
     import copy
     full_result = copy.deepcopy(result)
-    full_result.method = "incremental_full"
+    full_result.method = "progressive_full"
     full_result.comments = all_comments
 
     return result, full_result

@@ -166,15 +166,12 @@ def consolidate_comments(
     issues = [c.to_dict() for c in comments]
     issues_json = json.dumps(issues, indent=2)
 
-    # If the list is very long, we may need to truncate
-    if count_tokens(issues_json) > 30000:
-        issues_json = issues_json[:120000]
-
     prompt = CONSOLIDATION_PROMPT.format(issues_json=issues_json)
+    output_cap = count_tokens(issues_json) + 1024
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
-        max_tokens=8192,
+        max_tokens=output_cap,
         reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
@@ -230,7 +227,11 @@ def review_progressive(
 
     paragraphs = split_into_paragraphs(document_content)
     passages = merge_into_passages(paragraphs)
-    print(f"  Progressive: {len(passages)} passages (from {len(paragraphs)} paragraphs)")
+    # Scale summary budget with document length: ~10% of document tokens, floor 2000
+    doc_tokens = count_tokens(document_content)
+    max_summary_tokens = max(4000, doc_tokens // 10)
+    print(f"  Progressive: {len(passages)} passages (from {len(paragraphs)} paragraphs), "
+          f"doc length: {doc_tokens} tokens, summary budget: {max_summary_tokens} tokens")
 
     running_summary = ""
     all_comments = []
@@ -253,6 +254,7 @@ def review_progressive(
                     model=model,
                     result=result,
                     reasoning_effort=reasoning_effort,
+                    max_summary_tokens=max_summary_tokens,
                 )
                 continue
 
@@ -314,6 +316,7 @@ def review_progressive(
             model=model,
             result=result,
             reasoning_effort=reasoning_effort,
+            max_summary_tokens=max_summary_tokens,
         )
 
     if skip_nontechnical:

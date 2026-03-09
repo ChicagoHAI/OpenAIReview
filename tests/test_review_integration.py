@@ -7,9 +7,20 @@ import os
 
 import pytest
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+_has_api_key = any(
+    os.environ.get(k)
+    for k in ("OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY")
+)
+
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("OPENROUTER_API_KEY"),
-    reason="OPENROUTER_API_KEY not set",
+    not _has_api_key,
+    reason="No API key set (OPENROUTER/OPENAI/ANTHROPIC/GEMINI)",
 )
 
 BAD_PAPER = """\
@@ -46,7 +57,7 @@ def test_zero_shot_finds_issues():
     result = review_zero_shot(
         paper_slug="test-bad-paper",
         document_content=BAD_PAPER,
-        model="anthropic/claude-sonnet-4",
+        model="anthropic/claude-sonnet-4-6",
     )
     print(f"zero_shot found {result.num_comments} comments")
     for c in result.comments:
@@ -60,7 +71,7 @@ def test_progressive_finds_issues():
     consolidated, full = review_progressive(
         paper_slug="test-bad-paper",
         document_content=BAD_PAPER,
-        model="anthropic/claude-sonnet-4",
+        model="anthropic/claude-sonnet-4-6",
     )
     print(f"progressive found {consolidated.num_comments} comments (full: {full.num_comments})")
     for c in consolidated.comments:

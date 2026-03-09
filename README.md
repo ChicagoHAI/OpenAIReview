@@ -34,17 +34,19 @@ Marker is used automatically when available on PATH. It is most useful for math-
 
 ## Quick Start
 
-First, set your OpenRouter API key (get one at [openrouter.ai/keys](https://openrouter.ai/keys)):
+First, set an API key for any supported provider:
 
 ```bash
-export OPENROUTER_API_KEY=your_key_here
+export OPENROUTER_API_KEY=your_key_here   # OpenRouter (supports all models)
+# or
+export OPENAI_API_KEY=your_key_here       # OpenAI native
+# or
+export ANTHROPIC_API_KEY=your_key_here    # Anthropic native
+# or
+export GEMINI_API_KEY=your_key_here       # Google Gemini native
 ```
 
-Or create a `.env` file in your working directory:
-
-```
-OPENROUTER_API_KEY=your_key_here
-```
+Or create a `.env` file in your working directory (see `.env.example`).
 
 Then review a paper and visualize results:
 
@@ -94,10 +96,13 @@ Start a local visualization server to browse review results.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OPENROUTER_API_KEY` | (required) | Your OpenRouter API key |
+| `OPENROUTER_API_KEY` | | OpenRouter API key (supports all models) |
+| `OPENAI_API_KEY` | | OpenAI native API key |
+| `ANTHROPIC_API_KEY` | | Anthropic native API key |
+| `GEMINI_API_KEY` | | Google Gemini native API key |
 | `MODEL` | `anthropic/claude-opus-4-6` | Default model |
 
-These can be set as environment variables or in a `.env` file. See `.env.example` for a template.
+Set one API key. The provider is auto-detected from whichever key is set. See `.env.example` for a template.
 
 ## Supported Models & Pricing
 

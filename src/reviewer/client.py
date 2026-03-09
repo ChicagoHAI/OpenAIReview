@@ -1,4 +1,4 @@
-"""OpenRouter API client."""
+"""API client with support for OpenRouter, OpenAI, Anthropic, and Gemini."""
 
 import os
 import sys
@@ -12,23 +12,39 @@ try:
 except ImportError:
     pass
 
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Provider configs: (env_var, base_url or None for default, provider_name, model_prefix_to_strip)
+PROVIDERS = [
+    ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", "openrouter", None),
+    ("OPENAI_API_KEY", None, "openai", None),
+    ("ANTHROPIC_API_KEY", "https://api.anthropic.com/v1/", "anthropic", "anthropic/"),
+    ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai/", "gemini", "google/"),
+]
 
 
-def get_client() -> OpenAI:
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    if not api_key:
-        print(
-            "Error: OPENROUTER_API_KEY is not set.\n\n"
-            "Set it as an environment variable:\n"
-            "  export OPENROUTER_API_KEY=your_key_here\n\n"
-            "Or create a .env file in the project root:\n"
-            "  OPENROUTER_API_KEY=your_key_here\n\n"
-            "Get your API key at https://openrouter.ai/keys",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=api_key)
+def get_client() -> tuple[OpenAI, str, str | None]:
+    """Return (client, provider_name, prefix_to_strip) for the first available API key."""
+    for env_var, base_url, provider, prefix in PROVIDERS:
+        api_key = os.environ.get(env_var)
+        if api_key:
+            kwargs = {"api_key": api_key}
+            if base_url:
+                kwargs["base_url"] = base_url
+            display = env_var.replace("_API_KEY", "").replace("_", " ").title()
+            print(f"  Using {display} API")
+            return OpenAI(**kwargs), provider, prefix
+
+    print(
+        "Error: No API key found.\n\n"
+        "Set one of the following environment variables:\n"
+        "  export OPENROUTER_API_KEY=...   # OpenRouter (supports all models)\n"
+        "  export OPENAI_API_KEY=...       # OpenAI native\n"
+        "  export ANTHROPIC_API_KEY=...    # Anthropic native\n"
+        "  export GEMINI_API_KEY=...       # Google Gemini native\n\n"
+        "Or create a .env file in your working directory.\n"
+        "See .env.example for a template.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 REASONING_EFFORT_RATIO = {
@@ -43,6 +59,22 @@ EMPTY_RESPONSE_MAX_RETRIES = 3
 EMPTY_RESPONSE_TOKEN_MULTIPLIER = 2
 
 
+def _apply_reasoning(kwargs: dict, provider: str, reasoning_effort: str, max_tokens: int) -> None:
+    """Add provider-specific reasoning/thinking parameters to the API call."""
+    ratio = REASONING_EFFORT_RATIO.get(reasoning_effort, 0.5)
+    budget = max(int(max_tokens * ratio), 1024)
+
+    if provider == "openrouter":
+        kwargs["extra_body"] = {"reasoning": {"max_tokens": budget}}
+    elif provider == "anthropic":
+        kwargs["extra_body"] = {"thinking": {"type": "enabled", "budget_tokens": budget}}
+    elif provider == "openai":
+        # OpenAI uses reasoning_effort directly as a string
+        kwargs["reasoning_effort"] = reasoning_effort
+    elif provider == "gemini":
+        kwargs["extra_body"] = {"thinking": {"type": "enabled", "budget_tokens": budget}}
+
+
 def chat(
     messages: list[dict],
     model: str = "anthropic/claude-opus-4-6",
@@ -51,14 +83,22 @@ def chat(
     reasoning_effort: str | None = None,
     retries: int = 3,
 ) -> tuple[str, dict]:
-    """Call the OpenRouter chat API. Returns (response_text, usage_dict).
+    """Call a chat API. Returns (response_text, usage_dict).
+
+    Automatically selects the provider based on available API keys.
+    Model names with provider prefixes (e.g. "anthropic/claude-opus-4-6")
+    are stripped when using native APIs.
 
     reasoning_effort: None (adaptive default), or "none"/"low"/"medium"/"high".
 
     If the response is empty (e.g. reasoning consumed all tokens), retries
     with doubled max_tokens up to EMPTY_RESPONSE_MAX_RETRIES times.
     """
-    client = get_client()
+    client, provider, prefix_to_strip = get_client()
+    api_model = model
+    if prefix_to_strip and api_model.startswith(prefix_to_strip):
+        api_model = api_model[len(prefix_to_strip):]
+
     current_max_tokens = max_tokens
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "model": model}
 
@@ -66,21 +106,14 @@ def chat(
         for attempt in range(retries):
             try:
                 kwargs = dict(
-                    model=model,
+                    model=api_model,
                     messages=messages,
                     max_tokens=current_max_tokens,
                 )
                 if temperature is not None:
                     kwargs["temperature"] = temperature
-                if reasoning_effort is not None:
-                    if reasoning_effort == "none":
-                        pass
-                    else:
-                        ratio = REASONING_EFFORT_RATIO.get(reasoning_effort, 0.5)
-                        budget = max(int(current_max_tokens * ratio), 1024)
-                        kwargs["extra_body"] = {
-                            "reasoning": {"max_tokens": budget}
-                        }
+                if reasoning_effort is not None and reasoning_effort != "none":
+                    _apply_reasoning(kwargs, provider, reasoning_effort, current_max_tokens)
                 resp = client.chat.completions.create(**kwargs)
                 usage = {
                     "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,

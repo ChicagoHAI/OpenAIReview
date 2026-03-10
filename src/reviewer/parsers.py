@@ -59,8 +59,8 @@ def parse_document(
         title, text = _parse_tex(path)
         return title, text, False
     elif suffix in (".txt", ".md", ".markdown"):
-        title, text = _parse_text(path)
-        return title, text, False
+        title, text, was_ocr = _parse_text(path)
+        return title, text, was_ocr
     else:
         raise ValueError(f"Unsupported file format: {suffix}")
 
@@ -93,10 +93,11 @@ def _parse_pdf(path: Path, ocr: str | None = None) -> tuple[str, str]:
 
 
 def _parse_pdf_mistral(path: Path) -> tuple[str, str]:
-    """High-quality PDF extraction using Mistral OCR API.
+    """High-quality PDF extraction using Mistral OCR API (v3).
 
     Sends the full PDF and returns concatenated markdown from all pages.
     Preserves math (LaTeX), tables, and document structure.
+    Extracts tables in markdown format and includes headers/footers.
     Cost: ~$0.001 per page.
     """
     from mistralai.client.sdk import Mistral
@@ -112,16 +113,43 @@ def _parse_pdf_mistral(path: Path) -> tuple[str, str]:
 
     print(f"  Running Mistral OCR on {path.name}...")
     client = Mistral(api_key=api_key)
-    response = client.ocr.process(
-        model="mistral-ocr-latest",
-        document={"type": "document_url", "document_url": data_uri},
-    )
 
-    # Concatenate page markdowns
+    # Use OCR 3 features: table extraction + headers/footers
+    ocr_kwargs = {
+        "model": "mistral-ocr-latest",
+        "document": {"type": "document_url", "document_url": data_uri},
+    }
+    # Table extraction (OCR 3) — request markdown format for inline inclusion
+    try:
+        response = client.ocr.process(
+            **ocr_kwargs,
+            table_format="markdown",
+            extract_header=True,
+            extract_footer=True,
+        )
+    except TypeError:
+        # Fallback if SDK doesn't support OCR 3 params yet
+        response = client.ocr.process(**ocr_kwargs)
+
+    # Concatenate page markdowns with table content
     pages = []
     for page in response.pages:
+        page_parts = []
         if hasattr(page, "markdown") and page.markdown:
-            pages.append(page.markdown)
+            page_parts.append(page.markdown)
+
+        # Append extracted tables (OCR 3)
+        if hasattr(page, "tables") and page.tables:
+            for table in page.tables:
+                table_md = (
+                    getattr(table, "content", None)
+                    or getattr(table, "markdown", None)
+                )
+                if table_md:
+                    page_parts.append(table_md)
+
+        if page_parts:
+            pages.append("\n\n".join(page_parts))
 
     if not pages:
         raise RuntimeError("Mistral OCR returned no content")
@@ -294,23 +322,42 @@ def _parse_tex(path: Path) -> tuple[str, str]:
     return title, text
 
 
-def _parse_text(path: Path) -> tuple[str, str]:
-    """Extract text from plain text or markdown."""
-    text = path.read_text(encoding="utf-8", errors="replace")
+def _parse_text(path: Path) -> tuple[str, str, bool]:
+    """Extract text from plain text or markdown.
+
+    Detects YAML frontmatter with ocr_engine field (produced by `extract`).
+    Returns (title, text_without_frontmatter, was_ocr).
+    """
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    was_ocr = False
     title = ""
 
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        # Markdown heading
-        if stripped.startswith("#"):
-            title = stripped.lstrip("# ").strip()
-        else:
-            title = stripped[:200]
-        break
+    # Detect and parse YAML frontmatter
+    text = raw
+    if raw.startswith("---\n"):
+        end = raw.find("\n---\n", 4)
+        if end != -1:
+            frontmatter = raw[4:end]
+            text = raw[end + 5:]  # skip past closing ---\n
+            # Parse frontmatter (simple key: value, no full YAML dep needed)
+            for line in frontmatter.split("\n"):
+                if line.startswith("title:"):
+                    title = line.split(":", 1)[1].strip().strip('"')
+                if line.startswith("ocr_engine:"):
+                    was_ocr = True
 
-    return title, text
+    if not title:
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                title = stripped.lstrip("# ").strip()
+            else:
+                title = stripped[:200]
+            break
+
+    return title, text, was_ocr
 
 
 def _parse_arxiv_abs(url: str, ocr: str | None = None) -> tuple[str, str]:

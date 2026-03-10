@@ -161,6 +161,96 @@ The progressive approach significantly outperforms all RAG variants on recall wh
 
 ---
 
+## Seeded-Perturbation Benchmark
+
+The Refine benchmark above measures recall against expert-written comments, but those comments are subjective and the matching heuristic is noisy. As a complementary evaluation, we built a **seeded-perturbation benchmark** with known ground truth: take a clean paper, inject specific errors, and measure exactly what the reviewer catches.
+
+### Setup
+
+**Paper:** Nakamura & Steinsson (2018), "High-Frequency Identification of Monetary Non-Neutrality: The Information Effect," QJE. 48 pages, extracted via Mistral OCR (113K chars of clean markdown with LaTeX math).
+
+**12 injected errors** across 5 categories:
+
+| Category | Count | Examples |
+|---|---|---|
+| `sign_flip` | 3 | Flipped minus to plus in Euler equation; removed leading negative in habits equation; changed kappa\*omega to kappa/omega in Phillips curve |
+| `parameter` | 5 | beta: 0.99->0.95; sigma: 0.5->5; b: 0.9->0.09; phi_pi: 0.01->1.5; labor share: 2/3->1/3 |
+| `definition` | 2 | Output gap y_t->c_t; information fraction 1-psi->1+psi |
+| `subscript_swap` | 1 | lambda_t^n -> lambda_s^n in marginal utility gap |
+| `claim` | 1 | "large and persistent" -> "permanent" effects |
+
+Each error is a targeted text replacement with known ground truth. See `benchmarks/seed_errors.py` for the full specification and `benchmarks/results/error_manifest.json` for the manifest.
+
+### Results: Zero-Shot (Claude Opus 4.6)
+
+| Metric | Value |
+|---|---|
+| Injected errors | 12 |
+| **Detected** | **11 (92%)** |
+| Missed | 1 |
+| Total comments | 10 |
+| False positives | 5 (50%) |
+| Prompt tokens | 29,831 |
+| Completion tokens | 3,354 |
+
+**By category:**
+
+| Category | Detected / Injected | Recall |
+|---|---|---|
+| Sign flips | 3/3 | **100%** |
+| Parameter errors | 5/5 | **100%** |
+| Definition errors | 2/2 | **100%** |
+| Subscript swaps | 1/1 | **100%** |
+| Overstated claims | 0/1 | 0% |
+
+**Key observations:**
+
+1. **92% recall on injected errors.** The reviewer caught every mathematical and parameter error. It correctly identified sign flips in equations, inconsistent calibration values, and definition mismatches.
+
+2. **The explanations are substantive.** For each detected error, the reviewer didn't just flag the inconsistency but explained *why* it was wrong. For example, on `b=0.09`: "The habit parameter b=0.09 is extremely low compared to values commonly used in the New Keynesian literature. Christiano, Eichenbaum, and Evans (2005) estimate values around 0.65."
+
+3. **The only miss was the claim overstatement** ("persistent" -> "permanent"). This is the hardest category: it requires economic judgment about what constitutes an overstatement, not mathematical consistency checking.
+
+4. **False positives are not all hallucinations.** Of 5 unmatched comments, several flag real issues in the original paper (a standard error discrepancy between text and table, weak stock price evidence). The 50% false positive rate overstates the problem.
+
+5. **Zero-shot works much better here than on Refine.** The Refine benchmark showed 0% LLM recall for zero-shot. The difference: (a) seeded errors are more blatant than Refine's subtle expert comments, and (b) the Mistral OCR output preserves LaTeX math that zero-shot can actually check.
+
+### Running the Benchmark
+
+```bash
+# Dry run: inject errors and inspect the perturbed paper
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md
+
+# Full run with scoring
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md --review --method zero_shot
+
+# Progressive method
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md --review --method progressive
+```
+
+Output is saved to `benchmarks/results/`:
+- `perturbed_paper.md` -- the paper with injected errors
+- `error_manifest.json` -- ground truth
+- `review_<method>.json` -- raw reviewer output with all comments
+- `scores_<method>.json` -- detection scores with per-category breakdown
+
+### Extending to Other Papers
+
+The `ERRORS` list in `seed_errors.py` is paper-specific. To benchmark on a different paper:
+1. Extract the paper to clean markdown (e.g., `openaireview extract paper.pdf`)
+2. Define new `SeededError` entries targeting that paper's equations and calibration
+3. Run the benchmark
+
+Reusable perturbation patterns (sign flips, parameter scaling, subscript swaps) could be automated in future work.
+
+### Limitations
+
+- Single paper: results may not generalize across fields
+- Errors are hand-crafted and vary in difficulty (a subtle sign flip vs. an obviously wrong parameter)
+- The matching heuristic uses keyword overlap; manual inspection of `review_<method>.json` is recommended
+
+---
+
 ## Next Steps
 
 - Tune zero-shot prompt separately (less leniency, since full paper context is available)
@@ -168,3 +258,5 @@ The progressive approach significantly outperforms all RAG variants on recall wh
 - Investigate why coset-codes recall is low across all methods
 - Test on a larger set of papers beyond 4 benchmark examples
 - Evaluate with different large models (GPT-4o, Gemini) for cost comparison
+- Automate reusable perturbation patterns (sign flips, parameter scaling) across papers
+- Compare progressive vs. zero-shot on seeded benchmark to measure consolidation loss

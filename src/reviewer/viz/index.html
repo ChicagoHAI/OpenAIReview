@@ -461,6 +461,88 @@ body {
   border: 1px solid rgba(0,0,0,0.1);
 }
 
+/* ── Resolved comments ── */
+.comment-card.resolved {
+  opacity: 0.45;
+}
+.comment-card.resolved .card-title {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+/* Resolve button */
+.resolve-btn {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+  padding: 0;
+  vertical-align: middle;
+}
+.resolve-btn:hover {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-light);
+}
+.resolve-btn.is-resolved {
+  border-color: var(--green);
+  background: var(--green-light);
+  color: var(--green);
+}
+
+/* Comment panel filter bar */
+.comment-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border-light);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.comment-filter-bar .filter-label { margin-right: 2px; }
+.filter-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+.filter-toggle button {
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  border: none;
+  background: var(--surface);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.filter-toggle button + button { border-left: 1px solid var(--border); }
+.filter-toggle button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.filter-resolved-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* ── Scrollbar ── */
 .paper-panel::-webkit-scrollbar,
 .comment-panel::-webkit-scrollbar { width: 6px; }
@@ -499,6 +581,36 @@ const METHOD_ORDER = ['ground_truth','zero_shot','local','progressive','progress
 let activeCommentId = null;
 let renderedPaperSlug = null;
 let typesetQueue = Promise.resolve();
+let resolvedIds = new Set();
+let showOnlyOpen = false;
+
+function resolvedStorageKey(commentId) {
+  return `oar_resolved:${currentPaperSlug}:${currentMethod}:${commentId}`;
+}
+
+function loadResolvedState() {
+  resolvedIds = new Set();
+  const paper = getCurrentPaper();
+  if (!paper || !currentMethod) return;
+  const method = paper.methods[currentMethod];
+  if (!method) return;
+  method.comments.forEach(c => {
+    if (localStorage.getItem(resolvedStorageKey(c.id)) === '1') resolvedIds.add(c.id);
+  });
+}
+
+function getResolvedCount(comments) {
+  return comments.filter(c => resolvedIds.has(c.id)).length;
+}
+
+function isHiddenByFilter(c) {
+  return showOnlyOpen && resolvedIds.has(c.id);
+}
+
+function getVisibleComments(comments) {
+  if (!showOnlyOpen) return comments;
+  return comments.filter(c => !resolvedIds.has(c.id));
+}
 
 function typesetElement(el) {
   if (!window.MathJax || typeof MathJax.typesetPromise !== 'function') return;
@@ -616,14 +728,18 @@ function buildMethodTabs() {
     tab.className = 'method-tab' + (key === currentMethod ? ' active' : '');
     const comments = paper.methods[key].comments;
     const count = comments.length;
+    const resolvedCount = (key === currentMethod) ? getResolvedCount(comments) : 0;
+    const openCount = count - resolvedCount;
+    const badgeTitle = resolvedCount > 0 ? `${openCount} open, ${resolvedCount} resolved` : '';
+    const badgeText = resolvedCount > 0 ? `${openCount}/${count}` : `${count}`;
     let countLabel;
     if (hasSeverityData(comments)) {
       const mc = comments.filter(c => c.severity === 'major').length;
       const modc = comments.filter(c => c.severity === 'moderate').length;
       const mic = comments.filter(c => c.severity === 'minor').length;
-      countLabel = `<span class="tab-count" title="${mc} major, ${modc} moderate, ${mic} minor">${count}</span>`;
+      countLabel = `<span class="tab-count" title="${badgeTitle || `${mc} major, ${modc} moderate, ${mic} minor`}">${badgeText}</span>`;
     } else {
-      countLabel = `<span class="tab-count">${count}</span>`;
+      countLabel = `<span class="tab-count" title="${badgeTitle}">${badgeText}</span>`;
     }
     tab.innerHTML = `${escapeHtml(paper.methods[key].label)}${countLabel}`;
     tab.addEventListener('click', () => {
@@ -639,6 +755,7 @@ function render() {
   const paper = getCurrentPaper();
   if (!paper) return;
   const paperChanged = renderedPaperSlug !== currentPaperSlug;
+  loadResolvedState();
   buildMethodTabs();
   renderMetrics();
   renderLegend();
@@ -707,13 +824,16 @@ function renderMetrics() {
   }
 
   // Comment count — with severity breakdown if available
+  const resolvedCount = getResolvedCount(comments);
+  const openCount = comments.length - resolvedCount;
+  const openLabel = resolvedCount > 0 ? ` <span style="color:var(--text-muted);font-weight:400">(${openCount} open)</span>` : '';
   if (hasSeverityData(comments)) {
     const counts = { major: 0, moderate: 0, minor: 0 };
     comments.forEach(c => { if (counts[c.severity] !== undefined) counts[c.severity]++; });
-    parts.push(`<span class="metric"><strong>${comments.length}</strong> issues</span>`);
+    parts.push(`<span class="metric"><strong>${comments.length}</strong> issues${openLabel}</span>`);
     parts.push(`<span class="metric"><span class="badge major" style="font-size:10px">${counts.major}</span> <span class="badge moderate" style="font-size:10px">${counts.moderate}</span> <span class="badge minor" style="font-size:10px">${counts.minor}</span></span>`);
   } else {
-    parts.push(`<span class="metric"><strong>${comments.length}</strong> comments</span>`);
+    parts.push(`<span class="metric"><strong>${comments.length}</strong> comments${openLabel}</span>`);
   }
 
   if (!m) {
@@ -748,10 +868,11 @@ function renderMetrics() {
   bar.innerHTML = parts.join('');
 }
 
-function getCommentParaIndices(method) {
+function getCommentParaIndices(method, respectFilter = false) {
   const indices = new Set();
   if (!method) return indices;
   method.comments.forEach(c => {
+    if (respectFilter && isHiddenByFilter(c)) return;
     if (c.paragraph_index != null) indices.add(c.paragraph_index);
   });
   return indices;
@@ -785,6 +906,7 @@ function getSeverityForPara(method, idx) {
   const severityOrder = ['major', 'moderate', 'minor'];
   let best = null;
   method.comments.forEach(c => {
+    if (isHiddenByFilter(c)) return;
     if (c.paragraph_index === idx && c.severity) {
       if (!best || severityOrder.indexOf(c.severity) < severityOrder.indexOf(best)) {
         best = c.severity;
@@ -798,7 +920,7 @@ function updatePaperHighlights() {
   const panel = document.getElementById('paper-panel');
   const paper = getCurrentPaper();
   const method = paper.methods[currentMethod];
-  const commentIndices = getCommentParaIndices(method);
+  const commentIndices = getCommentParaIndices(method, true);
   const hasGt = hasGroundTruth(paper);
   const gtIndices = hasGt ? getGtParaIndices(paper) : new Set();
   const isGt = currentMethod === 'ground_truth';
@@ -848,22 +970,36 @@ function renderComments() {
   const method = paper.methods[currentMethod];
   if (!method) { panel.innerHTML = '<div class="empty-state">No data for this method.</div>'; return; }
 
-  let html = '';
+  const allComments = method.comments;
+  const resolvedCount = getResolvedCount(allComments);
+  const visibleComments = getVisibleComments(allComments);
+
+  // Filter bar
+  const filterBarHtml = `<div class="comment-filter-bar">
+    <span class="filter-label">Show:</span>
+    <div class="filter-toggle">
+      <button data-filter="all" class="${!showOnlyOpen ? 'active' : ''}">All</button>
+      <button data-filter="open" class="${showOnlyOpen ? 'active' : ''}">Open</button>
+    </div>
+    ${resolvedCount > 0 ? `<span class="filter-resolved-count">${resolvedCount} resolved</span>` : ''}
+  </div>`;
+
+  let html = filterBarHtml;
 
   if (method.overall_feedback) {
     html += `<div class="overall-feedback"><h3>Overall Feedback</h3>${renderMarkdownWithMath(method.overall_feedback)}</div>`;
   }
 
-  if (method.comments.length === 0) {
-    html += '<div class="empty-state">No comments from this method.</div>';
-  } else if (hasSeverityData(method.comments)) {
+  if (visibleComments.length === 0) {
+    html += `<div class="empty-state">${allComments.length === 0 ? 'No comments from this method.' : 'All issues resolved.'}</div>`;
+  } else if (hasSeverityData(allComments)) {
     // Group by severity tier
     const tiers = ['major', 'moderate', 'minor'];
     const tierLabels = { major: 'Major Issues', moderate: 'Moderate Issues', minor: 'Minor Issues' };
     const tierColors = { major: '#991b1b', moderate: '#92400e', minor: '#075985' };
 
     tiers.forEach(tier => {
-      const tierComments = method.comments.filter(c => c.severity === tier);
+      const tierComments = visibleComments.filter(c => c.severity === tier);
       if (tierComments.length > 0) {
         html += `<div class="section-label" style="color:${tierColors[tier]}">${tierLabels[tier]} (${tierComments.length})</div>`;
         tierComments.forEach(c => { html += renderCommentCard(c); });
@@ -871,15 +1007,15 @@ function renderComments() {
     });
 
     // Any comments without a recognized severity
-    const other = method.comments.filter(c => !tiers.includes(c.severity));
+    const other = visibleComments.filter(c => !tiers.includes(c.severity));
     if (other.length > 0) {
       html += `<div class="section-label">Other (${other.length})</div>`;
       other.forEach(c => { html += renderCommentCard(c); });
     }
   } else {
     // Fallback: group by located / unlocated
-    const located = method.comments.filter(c => c.paragraph_index != null);
-    const unlocated = method.comments.filter(c => c.paragraph_index == null);
+    const located = visibleComments.filter(c => c.paragraph_index != null);
+    const unlocated = visibleComments.filter(c => c.paragraph_index == null);
     located.sort((a, b) => a.paragraph_index - b.paragraph_index);
 
     if (located.length > 0) {
@@ -895,11 +1031,30 @@ function renderComments() {
   panel.innerHTML = html;
   typesetElement(panel);
 
-  panel.querySelectorAll('.comment-card').forEach(card => {
-    card.classList.toggle('active', card.dataset.id === activeCommentId);
+  panel.querySelectorAll('.filter-toggle button').forEach(btn => {
+    btn.onclick = () => {
+      showOnlyOpen = btn.dataset.filter === 'open';
+      render();
+    };
+  });
+
+  panel.querySelectorAll('.resolve-btn').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const commentId = btn.dataset.resolveId;
+      if (resolvedIds.has(commentId)) {
+        resolvedIds.delete(commentId);
+        localStorage.removeItem(resolvedStorageKey(commentId));
+      } else {
+        resolvedIds.add(commentId);
+        localStorage.setItem(resolvedStorageKey(commentId), '1');
+      }
+      render();
+    };
   });
 
   panel.querySelectorAll('.comment-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.id === activeCommentId);
     card.onclick = () => {
       const id = card.dataset.id;
       const comment = method.comments.find(c => c.id === id);
@@ -916,6 +1071,7 @@ function renderComments() {
 }
 
 function renderCommentCard(c) {
+  const isResolved = resolvedIds.has(c.id);
   const paraLink = c.paragraph_index != null
     ? `<span class="para-link">\u00b6 ${c.paragraph_index}</span>`
     : '<span class="para-link unlocated">unlocated</span>';
@@ -926,10 +1082,13 @@ function renderCommentCard(c) {
   let badges = '';
   if (c.severity) badges += `<span class="badge ${c.severity}">${c.severity}</span>`;
 
-  return `<div class="comment-card" id="card-${c.id}" data-id="${c.id}">
+  const resolveBtn = `<button class="resolve-btn${isResolved ? ' is-resolved' : ''}" data-resolve-id="${c.id}" title="${isResolved ? 'Mark as open' : 'Mark as resolved'}">✓</button>`;
+
+  return `<div class="comment-card${isResolved ? ' resolved' : ''}" id="card-${c.id}" data-id="${c.id}">
     <div class="card-header">
       <span class="card-title">${escapeHtml(c.title)}</span>
       ${badges}
+      ${resolveBtn}
     </div>
     ${quoteText ? `<div class="quote">${renderMarkdownWithMath(wrapBareLaTeX(quoteText))}</div>` : ''}
     ${explanationText ? `<div class="explanation">${renderMarkdownWithMath(explanationText)}</div>` : ''}

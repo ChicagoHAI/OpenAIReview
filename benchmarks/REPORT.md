@@ -215,6 +215,48 @@ Each error is a targeted text replacement with known ground truth. See `benchmar
 
 5. **Zero-shot works much better here than on Refine.** The Refine benchmark showed 0% LLM recall for zero-shot. The difference: (a) seeded errors are more blatant than Refine's subtle expert comments, and (b) the Mistral OCR output preserves LaTeX math that zero-shot can actually check.
 
+### Results: Progressive (Claude Opus 4.6)
+
+| Metric | Value |
+|---|---|
+| Injected errors | 12 |
+| **Detected** | **10 (83%)** |
+| Missed | 2 |
+| Total comments | 32 |
+| False positives | 24 (75%) |
+
+**By category:**
+
+| Category | Detected / Injected | Recall |
+|---|---|---|
+| Sign flips | 3/3 | **100%** |
+| Parameter errors | 3/5 | 60% |
+| Definition errors | 2/2 | **100%** |
+| Subscript swaps | 1/1 | **100%** |
+| Overstated claims | 1/1 | **100%** |
+
+**Key observations:**
+
+1. **Progressive catches the claim overstatement that zero-shot missed.** The running summary provides enough context about what was actually shown vs. stated, allowing the model to flag "permanent" as an overstatement of "large and persistent."
+
+2. **Consolidation loses real findings.** Two parameter errors (`param_sigma` and `param_labor_share`) were detected in the pre-consolidation pass but dropped during consolidation. This confirms the pattern from the Refine benchmark: consolidation operates on raw JSON without paper context and cannot distinguish true positives from noise.
+
+3. **Higher false positive rate (75% vs 50%).** The passage-by-passage approach generates 3.2x more comments than zero-shot (32 vs 10), but most additional comments are false positives. Without full paper context, each passage check raises concerns that would be resolved by reading further.
+
+4. **The precision-recall tradeoff is stark.** Zero-shot: 92% recall, 50% FP rate. Progressive: 83% recall, 75% FP rate. Zero-shot wins on both metrics for this benchmark, likely because the seeded errors are blatant enough that single-pass attention suffices.
+
+### Comparison
+
+| Metric | Zero-Shot | Progressive |
+|---|---|---|
+| Recall | **92%** (11/12) | 83% (10/12) |
+| Total comments | 10 | 32 |
+| False positives | 5 (50%) | 24 (75%) |
+| Unique catches | param_sigma, param_labor_share | claim_persistent |
+| Missed | claim_persistent | param_sigma, param_labor_share |
+
+The methods are complementary: zero-shot excels at mathematical consistency (sees all equations at once), while progressive excels at contextual reasoning (accumulates what was shown vs. claimed). An ensemble or adversarial adjudication step could combine strengths.
+
 ### Running the Benchmark
 
 ```bash
@@ -253,10 +295,9 @@ Reusable perturbation patterns (sign flips, parameter scaling, subscript swaps) 
 
 ## Next Steps
 
+- **Replace consolidation with adversarial adjudication** (see [#35](https://github.com/ChicagoHAI/OpenAIReview/issues/35), [#36](https://github.com/ChicagoHAI/OpenAIReview/issues/36)): a multi-agent debate where a Challenger contests each finding and a Reviewer defends it, with an Editor making the final verdict
 - Tune zero-shot prompt separately (less leniency, since full paper context is available)
-- Improve consolidation to preserve more true positives while still deduplicating
 - Investigate why coset-codes recall is low across all methods
 - Test on a larger set of papers beyond 4 benchmark examples
 - Evaluate with different large models (GPT-4o, Gemini) for cost comparison
 - Automate reusable perturbation patterns (sign flips, parameter scaling) across papers
-- Compare progressive vs. zero-shot on seeded benchmark to measure consolidation loss

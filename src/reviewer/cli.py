@@ -175,31 +175,57 @@ def _build_paper_json(
     }
 
 
-def cmd_install_skill(args: argparse.Namespace) -> None:
-    """Install the /openaireview Claude Code skill to ~/.claude/commands/."""
+def _install_skill_target(skill_src: Path, dest: Path, host: str) -> None:
     import shutil
 
-    skill_src = Path(__file__).parent / "skill"
-    dest = Path.home() / ".claude" / "commands" / "openaireview"
-
-    if dest.exists() and not args.force:
-        print(f"Skill already installed at {dest}")
-        print("Run with --force to overwrite.")
-        return
+    entrypoints = {
+        "claude": skill_src / "SKILL.md",
+        "codex": skill_src / "hosts" / "codex" / "SKILL.md",
+    }
+    entrypoint = entrypoints[host]
 
     dest.mkdir(parents=True, exist_ok=True)
     for item in skill_src.rglob("*"):
-        if item.name == "__init__.py":
+        if item.name == "__init__.py" or "__pycache__" in item.parts:
             continue
         rel = item.relative_to(skill_src)
+        if rel.parts[:1] == ("hosts",):
+            continue
         target = dest / rel
         if item.is_dir():
             target.mkdir(parents=True, exist_ok=True)
         else:
             shutil.copy2(item, target)
 
-    print(f"Skill installed to {dest}")
-    print("You can now use /openaireview in any Claude Code project.")
+    shutil.copy2(entrypoint, dest / "SKILL.md")
+
+
+def cmd_install_skill(args: argparse.Namespace) -> None:
+    """Install the openaireview skill for Claude Code, Codex, or both."""
+    import shutil
+
+    skill_src = Path(__file__).parent / "skill"
+    targets: list[tuple[str, Path]] = []
+    if args.target in ("claude", "both"):
+        targets.append(("claude", Path.home() / ".claude" / "commands" / "openaireview"))
+    if args.target in ("codex", "both"):
+        targets.append(("codex", Path.home() / ".codex" / "skills" / "openaireview"))
+
+    for host, dest in targets:
+        if dest.exists():
+            if not args.force:
+                print(f"Skill already installed for {host} at {dest}")
+                print("Run with --force to overwrite.")
+                continue
+            shutil.rmtree(dest)
+
+        _install_skill_target(skill_src, dest, host)
+        print(f"Installed {host} skill to {dest}")
+
+    if args.target in ("claude", "both"):
+        print("Claude Code usage: /openaireview <paper-path-or-url>")
+    if args.target in ("codex", "both"):
+        print("Codex usage: $openaireview review <paper-path-or-url>")
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
@@ -268,7 +294,13 @@ def main() -> None:
 
     # install-skill subcommand
     install_parser = subparsers.add_parser(
-        "install-skill", help="Install the /openaireview Claude Code skill"
+        "install-skill", help="Install the openaireview skill for Claude Code, Codex, or both"
+    )
+    install_parser.add_argument(
+        "--target",
+        choices=["claude", "codex", "both"],
+        default="both",
+        help="Install target (default: both)",
     )
     install_parser.add_argument(
         "--force", action="store_true",

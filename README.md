@@ -124,25 +124,49 @@ For models not listed above, a default rate of $5.00/$25.00 per 1M tokens is use
 - **progressive** — sequential processing with running summary, then consolidation
 - **progressive_full** — same as progressive but returns all comments before consolidation
 
-## Claude Code Skill
+## Skill Integration
 
-A deep-review skill is bundled with the package. It runs a multi-agent pipeline — one sub-agent per paper section plus cross-cutting agents — and produces severity-tiered findings (major / moderate / minor).
+A deep-review skill is bundled with the package. It uses the same OpenAIReview parsing, consolidation, and visualization scripts, but exposes host-specific entrypoints for Claude Code and Codex.
 
-Install once:
+Install for both hosts:
 
 ```bash
 pip install openaireview
-openaireview install-skill
+openaireview install-skill --target both
 ```
 
-Then in any Claude Code project:
+Install for a single host:
 
+```bash
+openaireview install-skill --target claude
+openaireview install-skill --target codex
 ```
+
+### Claude Code
+
+Trigger the installed command directly:
+
+```text
 /openaireview paper.pdf
 /openaireview https://arxiv.org/abs/2602.18458
 ```
 
-Finally, run `openaireview serve` to see results.
+The Claude skill uses Claude's task tracking and parallel `Agent` workflow.
+
+### Codex
+
+Install under the same skill name, `openaireview`, then invoke it by name:
+
+```text
+$openaireview review paper.pdf
+$openaireview review https://arxiv.org/abs/2602.18458
+```
+
+You can also say `Use the openaireview skill to review paper.pdf`.
+
+The Codex skill uses the bundled OpenAIReview scripts plus `update_plan` when available, and performs the section review sequentially in the main agent.
+
+For either host, run `openaireview serve` to browse results.
 
 ## Development
 

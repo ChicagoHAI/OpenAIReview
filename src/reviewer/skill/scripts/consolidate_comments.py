@@ -2,7 +2,7 @@
 """Gather all sub-agent comment JSON files from a review workspace.
 
 Usage:
-    python3 ~/.claude/commands/openaireview/scripts/consolidate_comments.py <review_dir>
+    python3 scripts/consolidate_comments.py <review_dir>
 
 Reads every .json file in <review_dir>/comments/, annotates each issue with
 its index and source file, then:

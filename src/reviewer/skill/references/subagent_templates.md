@@ -2,6 +2,31 @@
 
 Use these templates when launching sub-agents in Step 3b. Fill in all `<PLACEHOLDERS>` with actual values.
 
+## Codex exec launcher pattern
+
+For Codex-hosted runs, the parent agent should:
+
+1. Write one prompt file per sub-agent under:
+   `<REVIEW_DIR>/subagent_prompts/<NAME>.md`
+2. Launch one `codex exec` process per prompt.
+3. Run them in parallel with background jobs and `wait`.
+
+Example:
+
+```bash
+mkdir -p <REVIEW_DIR>/subagent_prompts <REVIEW_DIR>/subagent_logs
+
+codex exec \
+  -C "<WORKDIR>" \
+  --skip-git-repo-check \
+  --sandbox workspace-write \
+  --json \
+  -o "<REVIEW_DIR>/subagent_logs/<NAME>.txt" \
+  - < "<REVIEW_DIR>/subagent_prompts/<NAME>.md" &
+```
+
+The prompt must explicitly tell the sub-agent where to write its JSON output in `<REVIEW_DIR>/comments/`.
+
 ---
 
 ## Template: Section-focused sub-agent

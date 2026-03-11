@@ -2,7 +2,7 @@
 """Prepare a deep-review workspace: parse paper, split into sections, write files.
 
 Usage:
-    python3 ~/.claude/commands/openaireview/scripts/prepare_workspace.py <input> [--slug SLUG] [--criteria PATH] [--output-dir DIR]
+    python3 scripts/prepare_workspace.py <input> [--slug SLUG] [--criteria PATH] [--output-dir DIR]
 
 The script auto-detects input type (PDF, arXiv URL, .tex/.txt/.md), downloads if
 needed, parses the paper, splits into sections, and writes a structured workspace

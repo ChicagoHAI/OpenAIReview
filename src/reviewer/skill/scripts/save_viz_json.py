@@ -2,7 +2,7 @@
 """Build viz-compatible JSON from review findings and save to review_results/.
 
 Usage:
-    python3 ~/.claude/commands/openaireview/scripts/save_viz_json.py /tmp/<slug>_review [--output-dir ./review_results]
+    python3 scripts/save_viz_json.py /tmp/<slug>_review [--output-dir ./review_results]
 
 Expects these files in the review workspace:
     metadata.json          -- {"title": "...", "slug": "..."}
@@ -23,8 +23,9 @@ def main():
     parser = argparse.ArgumentParser(description="Save viz-compatible review JSON")
     parser.add_argument("review_dir", help="Path to the review workspace")
     parser.add_argument("--output-dir", default="./review_results", help="Output directory")
-    parser.add_argument("--method-key", default="openaireview__claude")
-    parser.add_argument("--method-label", default="OpenAIReview (claude)")
+    parser.add_argument("--method-key", default="openaireview__skill")
+    parser.add_argument("--method-label", default="OpenAIReview (skill)")
+    parser.add_argument("--model", default="skill")
     parser.add_argument("--slug-suffix", default="", help="Suffix appended to the slug for the output filename and JSON slug field")
     args = parser.parse_args()
 
@@ -69,7 +70,7 @@ def main():
 
     method_data = {
         "label": args.method_label,
-        "model": "claude",
+        "model": args.model,
         "overall_feedback": overall,
         "comments": comments,
         "cost_usd": 0,

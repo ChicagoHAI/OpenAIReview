@@ -95,6 +95,15 @@ def cmd_review(args: argparse.Namespace) -> None:
             reasoning_effort=reasoning,
         )
         result = full if method == "progressive_full" else consolidated
+    elif method in ("debate", "debate_full"):
+        from .method_debate import review_progressive_debate
+        debated, full = review_progressive_debate(
+            slug, content,
+            model=args.model,
+            small_model=getattr(args, "small_model", None),
+            reasoning_effort=reasoning,
+        )
+        result = full if method == "debate_full" else debated
     else:
         print(f"Error: unknown method: {method}", file=sys.stderr)
         sys.exit(1)
@@ -224,7 +233,8 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--method",
-        choices=["zero_shot", "local", "progressive", "progressive_full"],
+        choices=["zero_shot", "local", "progressive", "progressive_full",
+                 "debate", "debate_full"],
         default="progressive",
         help="Review method (default: progressive)",
     )
@@ -245,6 +255,10 @@ def main() -> None:
     review_parser.add_argument(
         "--name", default=None,
         help="Paper slug name (default: derived from filename)",
+    )
+    review_parser.add_argument(
+        "--small-model", default=None, dest="small_model",
+        help="Small model for debate challenger (default: haiku from same provider)",
     )
     review_parser.add_argument(
         "--reasoning-effort",

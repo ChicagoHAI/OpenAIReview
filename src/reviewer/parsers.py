@@ -1,5 +1,6 @@
 """Document parsers for PDF, DOCX, TEX, TXT, MD files, and arXiv HTML URLs."""
 
+import os
 import re
 from pathlib import Path
 
@@ -38,14 +39,75 @@ def parse_document(file_path: str | Path) -> tuple[str, str]:
 
 
 def _parse_pdf(path: Path) -> tuple[str, str]:
-    """Extract text from PDF. Uses Marker CLI if available (better math), else pymupdf."""
+    """Extract text from PDF using the configured backend."""
+    backend = os.environ.get("OPENAIREVIEW_PDF_BACKEND", "auto").strip().lower()
+    errors: list[str] = []
+
+    if backend not in {"auto", "marker", "lighton_onnx", "pymupdf"}:
+        raise ValueError(
+            "Unsupported OPENAIREVIEW_PDF_BACKEND. "
+            "Expected one of: auto, marker, lighton_onnx, pymupdf."
+        )
+
+    if os.environ.get("OPENAIREVIEW_PDF_PREFER_ARXIV_HTML", "1") != "0":
+        arxiv_id = _extract_arxiv_id_from_pdf(path)
+        if arxiv_id:
+            html_url = f"https://arxiv.org/html/{arxiv_id}"
+            try:
+                print(f"  Detected arXiv PDF, trying HTML parser via {html_url}...")
+                return parse_arxiv_html(html_url)
+            except Exception as e:
+                errors.append(f"arXiv HTML not available ({e})")
+
+    if backend in {"auto", "marker"}:
+        try:
+            return _parse_pdf_marker(path)
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            errors.append(f"Marker not available ({e})")
+            if backend == "marker":
+                raise RuntimeError(errors[-1]) from e
+
+    if backend in {"auto", "lighton_onnx"} and _should_try_lighton_onnx():
+        try:
+            return _parse_pdf_lighton_onnx(path)
+        except (ImportError, FileNotFoundError, RuntimeError) as e:
+            errors.append(f"LightOn ONNX backend not available ({e})")
+            if backend == "lighton_onnx":
+                raise RuntimeError(errors[-1]) from e
+    elif backend == "lighton_onnx":
+        raise RuntimeError(
+            "OPENAIREVIEW_LIGHTON_MODEL_DIR is not set. "
+            "Point it at the exported ONNX model directory."
+        )
+
+    if errors:
+        print(f"  {'; '.join(errors)}, using pymupdf fallback.")
+    print("  Note: pymupdf cannot extract math symbols correctly. "
+          "For math-heavy PDFs, use Marker, LightOn ONNX, .tex source, or arXiv HTML.")
+    return _parse_pdf_pymupdf(path)
+
+
+def _should_try_lighton_onnx() -> bool:
+    """Return whether the optional LightOn ONNX backend is configured."""
+    return bool(os.environ.get("OPENAIREVIEW_LIGHTON_MODEL_DIR"))
+
+
+def _extract_arxiv_id_from_pdf(path: Path) -> str:
+    """Best-effort arXiv ID detection from the first page of a local PDF."""
     try:
-        return _parse_pdf_marker(path)
-    except (ImportError, FileNotFoundError, RuntimeError) as e:
-        print(f"  Marker not available ({e}), using pymupdf fallback.")
-        print("  Note: pymupdf cannot extract math symbols correctly. "
-              "For math-heavy PDFs, use .tex source or arXiv HTML.")
-        return _parse_pdf_pymupdf(path)
+        import pymupdf
+    except ImportError:
+        return ""
+
+    try:
+        doc = pymupdf.open(str(path))
+        first_page = doc[0].get_text("text")
+        doc.close()
+    except Exception:
+        return ""
+
+    match = re.search(r"arXiv:(\d{4}\.\d{4,5}(?:v\d+)?)", first_page, flags=re.IGNORECASE)
+    return match.group(1) if match else ""
 
 
 def _parse_pdf_marker(path: Path) -> tuple[str, str]:
@@ -116,51 +178,15 @@ def _extract_title_from_markdown(markdown: str) -> str:
 
 
 def _parse_pdf_pymupdf(path: Path) -> tuple[str, str]:
-    """Fallback PDF extraction using pymupdf (no math support)."""
+    """Fallback PDF extraction using pymupdf with basic layout cleanup."""
     import pymupdf
 
     doc = pymupdf.open(str(path))
     pages = []
-    title = ""
+    title = _extract_title_from_pdf_page(doc[0]) if doc.page_count else ""
 
-    for page_num, page in enumerate(doc):
-        text = page.get_text()
-        pages.append(text)
-
-        if page_num == 0 and not title:
-            blocks = page.get_text("dict")["blocks"]
-            best_size = 0
-            for block in blocks:
-                if "lines" not in block:
-                    continue
-                for line in block["lines"]:
-                    for span in line["spans"]:
-                        if span["text"].strip() and span["size"] > best_size:
-                            best_size = span["size"]
-
-            if best_size > 0:
-                candidates = []
-                current_parts = []
-                for block in blocks:
-                    if "lines" not in block:
-                        if current_parts:
-                            candidates.append(" ".join(current_parts))
-                            current_parts = []
-                        continue
-                    for line in block["lines"]:
-                        for span in line["spans"]:
-                            span_text = span["text"].strip()
-                            if not span_text:
-                                continue
-                            if abs(span["size"] - best_size) < 0.5:
-                                current_parts.append(span_text)
-                            elif current_parts:
-                                candidates.append(" ".join(current_parts))
-                                current_parts = []
-                if current_parts:
-                    candidates.append(" ".join(current_parts))
-                if candidates:
-                    title = max(candidates, key=len)
+    for page in doc:
+        pages.append(_extract_page_text(page))
 
     doc.close()
     full_text = "\n\n".join(pages)
@@ -171,6 +197,169 @@ def _parse_pdf_pymupdf(path: Path) -> tuple[str, str]:
                 title = line.strip()[:200]
                 break
 
+    return title, full_text
+
+
+def _extract_page_text(page) -> str:
+    """Extract one PDF page and merge wrapped lines into cleaner paragraphs."""
+    text = page.get_text("text", sort=True)
+    return _normalize_pdf_text(text)
+
+
+def _block_to_text(block: dict) -> str:
+    """Convert a PyMuPDF text block into plain text while preserving line breaks."""
+    if "lines" not in block:
+        return ""
+
+    lines: list[str] = []
+    for line in block["lines"]:
+        parts = [span["text"] for span in line["spans"]]
+        text = re.sub(r"\s+", " ", "".join(parts)).strip()
+        if text:
+            lines.append(text)
+    return "\n".join(lines).strip()
+
+
+def _extract_title_from_pdf_page(page) -> str:
+    """Extract a plausible title from the first PDF page."""
+    blocks = page.get_text("dict", sort=True)["blocks"]
+    candidates = []
+
+    for block in blocks:
+        text = _block_to_text(block)
+        if not text:
+            continue
+        max_size = _block_max_font_size(block)
+        if max_size <= 0:
+            continue
+
+        y0 = block.get("bbox", [0, 0, 0, 0])[1]
+        if y0 > 220:
+            continue
+        if _looks_like_pdf_metadata(text):
+            continue
+        candidates.append((max_size, y0, text))
+
+    if not candidates:
+        return ""
+
+    best_size = max(size for size, _, _ in candidates)
+    top_candidates = [
+        text for size, _, text in candidates
+        if abs(size - best_size) < 0.5
+    ]
+    title = " ".join(top_candidates).strip()
+    return re.sub(r"\s+", " ", title)
+
+
+def _block_max_font_size(block: dict) -> float:
+    """Return the largest font size used in a text block."""
+    best = 0.0
+    for line in block.get("lines", []):
+        for span in line.get("spans", []):
+            text = span.get("text", "").strip()
+            if text:
+                best = max(best, float(span.get("size", 0.0)))
+    return best
+
+
+def _looks_like_pdf_metadata(text: str) -> bool:
+    """Heuristics for skipping arXiv/date/author metadata while finding a title."""
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return True
+    patterns = [
+        r"^arXiv:\d{4}\.\d{4,5}",
+        r"^\[.*\]$",
+        r"^(preprint|draft)\b",
+        r"^[A-Z][a-z]+ \d{1,2}, \d{4}\.?$",
+        r"^abstract$",
+    ]
+    return any(re.search(pattern, compact, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _normalize_pdf_text(text: str) -> str:
+    """Collapse PDF line wraps while preserving headings and paragraph breaks."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [line.strip() for line in text.split("\n")]
+    paragraphs: list[str] = []
+    current = ""
+
+    for line in lines:
+        if not line:
+            if current:
+                paragraphs.append(current)
+                current = ""
+            continue
+
+        line = re.sub(r"\s+", " ", line)
+        if not current:
+            current = line
+            continue
+
+        if current.endswith("-") and line[:1].islower():
+            current = current[:-1] + line
+            continue
+
+        if _is_heading_like(line) or _is_heading_like(current):
+            paragraphs.append(current)
+            current = line
+            continue
+
+        current += " " + line
+
+    if current:
+        paragraphs.append(current)
+
+    return "\n\n".join(paragraphs)
+
+
+def _is_heading_like(line: str) -> bool:
+    """Return whether a line looks like a standalone heading."""
+    if re.match(r"^(abstract|references|acknowledg(e)?ments?|appendix)\b", line, re.IGNORECASE):
+        return True
+    if re.match(r"^\d+(\.\d+)*\.?\s+[A-Z]", line):
+        return True
+    if len(line) <= 100 and re.match(r"^[A-Z][A-Za-z0-9 ,:;()/-]+$", line):
+        return True
+    return False
+
+
+def _parse_pdf_lighton_onnx(path: Path) -> tuple[str, str]:
+    """Optional OCR/vision extraction using a locally exported LightOn ONNX model."""
+    model_dir = os.environ.get("OPENAIREVIEW_LIGHTON_MODEL_DIR")
+    if not model_dir:
+        raise FileNotFoundError("OPENAIREVIEW_LIGHTON_MODEL_DIR is not set")
+
+    if not Path(model_dir).exists():
+        raise FileNotFoundError(f"Model directory does not exist: {model_dir}")
+
+    from .lighton import DEFAULT_LIGHTON_PROMPT, run_lighton_ocr
+
+    prompt = os.environ.get(
+        "OPENAIREVIEW_LIGHTON_PROMPT",
+        DEFAULT_LIGHTON_PROMPT,
+    )
+    provider = os.environ.get("OPENAIREVIEW_LIGHTON_PROVIDER", "auto")
+    longest_dim = int(os.environ.get("OPENAIREVIEW_LIGHTON_LONGEST_DIM", "1540"))
+    max_length = int(os.environ.get("OPENAIREVIEW_LIGHTON_MAX_LENGTH", "4096"))
+
+    run = run_lighton_ocr(
+        path,
+        model_dir=model_dir,
+        provider=provider,
+        longest_dim=longest_dim,
+        prompt=prompt,
+        max_length=max_length,
+    )
+    full_text = "\n\n".join(
+        _normalize_pdf_text(page.text) for page in run.pages if page.text.strip()
+    )
+    if not full_text:
+        raise RuntimeError("LightOn ONNX parser produced no text")
+    title = _extract_title_from_markdown(full_text)
+    if not title:
+        title = full_text.split("\n", 1)[0][:200]
     return title, full_text
 
 

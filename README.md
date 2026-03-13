@@ -21,6 +21,22 @@ uv venv && uv pip install -e .
 # or: pip install -e .
 ```
 
+For optional LightOn OCR support:
+```bash
+pip install "openaireview[lighton]"
+```
+
+For the official Python Transformers runtime:
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "openaireview[lighton-transformers]"
+```
+
+To download the public ONNX Runtime LightOn OCR checkpoint:
+```bash
+openaireview download-lighton plain --output-dir ./models/lighton-oc2-plain
+```
+
 ### PDF math support (optional)
 
 For math-heavy PDFs, install [Marker](https://github.com/VikParuchuri/marker) separately to get accurate LaTeX extraction. Without Marker, PDFs are processed with PyMuPDF which cannot extract math symbols correctly.
@@ -31,6 +47,81 @@ uv tool install marker-pdf --with psutil
 ```
 
 Marker is used automatically when available on PATH. It is most useful for math-heavy PDFs, but runs very slowly without a GPU. For papers with math, we recommend using `.tex` source, `.md`, or arXiv HTML URLs instead of PDF when possible — these always produce correct output without needing Marker.
+
+### LightOn ONNX PDF parsing (optional)
+
+You can also plug in a locally exported LightOn ONNX vision model for PDF extraction. The repo does not vendor model weights; it only provides the integration hook.
+
+```bash
+pip install "openaireview[lighton]"
+export OPENAIREVIEW_PDF_BACKEND=lighton_onnx
+export OPENAIREVIEW_LIGHTON_MODEL_DIR=/path/to/lighton-oc2-2.1b-onnx
+openaireview review examples/2602.18458v1.pdf
+```
+
+If you want LightOn to be attempted automatically after Marker and before the PyMuPDF fallback, keep `OPENAIREVIEW_PDF_BACKEND=auto` and set only `OPENAIREVIEW_LIGHTON_MODEL_DIR`.
+
+Benchmark CPU throughput:
+
+```bash
+openaireview benchmark-ocr examples/2602.18458v1.pdf \
+  --model-dir /path/to/lighton-oc2-2.1b-onnx \
+  --provider cpu \
+  --max-pages 5
+```
+
+Extract figure crops with a bbox-capable checkpoint such as `LightOnOCR-2-1B-bbox` or `LightOnOCR-2-1B-bbox-soup`:
+
+```bash
+openaireview extract-figures examples/2602.18458v1.pdf \
+  --model-dir /path/to/lighton-oc2-2.1b-bbox-soup-onnx \
+  --provider cpu \
+  --output-dir ./figure_results
+```
+
+This writes cropped figures plus a `figures_manifest.json` file containing page text, normalized boxes, and pixel coordinates for downstream pipelines.
+
+Compare plain OCR vs bbox vs bbox-soup on the same rendered pages:
+
+```bash
+openaireview benchmark-ocr-compare examples/2602.18458v1.pdf \
+  --provider cpu \
+  --model plain=/models/lighton-oc2-2.1b \
+  --model bbox=/models/lighton-oc2-2.1b-bbox \
+  --model soup=/models/lighton-oc2-2.1b-bbox-soup \
+  --reference-arxiv-html
+```
+
+The comparison benchmark renders the PDF once, runs each model on the same page images, reports per-model throughput, counts image markers, and, when reference text is available, scores OCR text with lightweight similarity metrics.
+
+Compare the existing parser against ONNX OCR using arXiv HTML as the reference:
+
+```bash
+openaireview benchmark-ocr-compare examples/2602.18458v1.pdf \
+  --provider cpu \
+  --model plain=./models/lighton-oc2-plain \
+  --reference-arxiv-html \
+  --include-pymupdf-baseline
+```
+
+Today, the public ONNX path is straightforward for the plain OCR checkpoint. Public ONNX releases for `bbox` and `bbox-soup` were not available when this was written, so those require a custom export path or a different runtime.
+
+### LightOn Transformers OCR benchmarking (recommended first step)
+
+To benchmark OCR quality against arXiv HTML using the official Python runtime:
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "openaireview[lighton-transformers]"
+
+openaireview benchmark-transformers-ocr examples/2602.18458v1.pdf \
+  --device cpu \
+  --batch-size 1 \
+  --model plain=lightonai/LightOnOCR-2-1B \
+  --reference-arxiv-html
+```
+
+This follows the official LightOn Python route and compares the OCR text against the arXiv HTML parse while also reporting the built-in `pymupdf` baseline.
 
 ## Quick Start
 
@@ -84,6 +175,26 @@ Start a local visualization server to browse review results.
 | `--results-dir` | `./review_results` | Directory containing result JSON files |
 | `--port` | `8080` | Server port |
 
+### `openaireview benchmark-ocr <pdf>`
+
+Benchmark optional LightOn OCR on a local PDF and print JSON metrics including model load time, render time, inference time, and pages/sec.
+
+### `openaireview benchmark-ocr-compare <pdf>`
+
+Benchmark multiple LightOn OCR checkpoints on the same rendered pages. This is the intended command for comparing `plain` vs `bbox` vs `bbox-soup` on CPU before deciding whether the one-pass soup model is good enough.
+
+### `openaireview benchmark-transformers-ocr <pdf>`
+
+Benchmark one or more official LightOn Transformers checkpoints on a local PDF. This is the preferred first benchmark path for quality-vs-reference experiments because it follows the runtime shown in the public LightOn demo. Use `--batch-size` to batch multiple rendered pages into one generation call when testing GPU throughput.
+
+### `openaireview download-lighton <alias_or_repo_id>`
+
+Download a LightOn ONNX model snapshot from Hugging Face. Built-in aliases currently cover the public ONNX plain OCR checkpoint.
+
+### `openaireview extract-figures <pdf>`
+
+Run a bbox-capable LightOn OCR checkpoint on a local PDF, save cropped figures, and emit a manifest JSON for downstream multimodal pipelines.
+
 ## Supported Input Formats
 
 - **PDF** (`.pdf`) — uses [Marker](https://github.com/VikParuchuri/marker) for high-quality extraction with LaTeX math; falls back to PyMuPDF if Marker is not installed
@@ -101,6 +212,13 @@ Start a local visualization server to browse review results.
 | `ANTHROPIC_API_KEY` | | Anthropic native API key |
 | `GEMINI_API_KEY` | | Google Gemini native API key |
 | `MODEL` | `anthropic/claude-opus-4-6` | Default model |
+| `OPENAIREVIEW_PDF_BACKEND` | `auto` | PDF parser backend: `auto`, `marker`, `lighton_onnx`, or `pymupdf` |
+| `OPENAIREVIEW_PDF_PREFER_ARXIV_HTML` | `1` | For local arXiv PDFs, try `arxiv.org/html/<id>` before PDF OCR/text extraction |
+| `OPENAIREVIEW_LIGHTON_MODEL_DIR` | | Path to a local LightOn ONNX model export |
+| `OPENAIREVIEW_LIGHTON_PROMPT` | built-in OCR prompt | Custom prompt used for the LightOn ONNX page extraction |
+| `OPENAIREVIEW_LIGHTON_PROVIDER` | `auto` | Provider for optional LightOn OCR inside the parser: `auto`, `cpu`, or `cuda` |
+| `OPENAIREVIEW_LIGHTON_LONGEST_DIM` | `1540` | Render size used before optional LightOn OCR |
+| `OPENAIREVIEW_LIGHTON_MAX_LENGTH` | `4096` | Maximum generated token length per page for optional LightOn OCR |
 
 Set one API key. The provider is auto-detected from whichever key is set. See `.env.example` for a template.
 

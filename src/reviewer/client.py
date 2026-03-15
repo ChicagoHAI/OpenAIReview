@@ -38,7 +38,10 @@ def _make_client(name: str) -> tuple[OpenAI, str, str | None]:
     env_var, base_url, prefix = PROVIDERS[name]
     api_key = os.environ.get(env_var)
     kwargs = {"api_key": api_key}
-    if base_url:
+    # OPENAI_BASE_URL overrides default for OpenAI (e.g. EU endpoint, Azure)
+    if name == "openai" and os.environ.get("OPENAI_BASE_URL"):
+        kwargs["base_url"] = os.environ["OPENAI_BASE_URL"]
+    elif base_url:
         kwargs["base_url"] = base_url
     return OpenAI(**kwargs), name, prefix
 
@@ -178,10 +181,19 @@ def chat(
     for empty_attempt in range(EMPTY_RESPONSE_MAX_RETRIES):
         for attempt in range(retries):
             try:
+                # OpenAI o-series and GPT-5+ models require max_completion_tokens
+                _needs_completion_tokens = (
+                    resolved_provider == "openai"
+                    and (
+                        api_model.startswith(("o1", "o3", "o4"))
+                        or api_model.startswith("gpt-5")
+                    )
+                )
+                token_key = "max_completion_tokens" if _needs_completion_tokens else "max_tokens"
                 kwargs = dict(
                     model=api_model,
                     messages=messages,
-                    max_tokens=current_max_tokens,
+                    **{token_key: current_max_tokens},
                 )
                 if temperature is not None:
                     kwargs["temperature"] = temperature

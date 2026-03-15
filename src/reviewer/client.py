@@ -12,7 +12,7 @@ try:
 except ImportError:
     pass
 
-# Provider configs: (env_var, base_url, model_prefix_to_strip)
+# Provider configs: (env_var, base_url or None for default, model_prefix_to_strip)
 PROVIDERS = {
     "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", None),
     "openai": ("OPENAI_API_KEY", None, None),

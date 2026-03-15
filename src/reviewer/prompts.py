@@ -31,6 +31,14 @@ Be lenient with:
 - Forward references — symbols or claims that may be defined or justified later in the paper
 - Informal prose that paraphrases a formal result without repeating every qualifier"""
 
+OCR_CAVEAT = """\
+NOTE: This text was extracted from a PDF via OCR. While automatic corrections \
+have been applied, some notation errors may remain. If you spot a symbol that \
+appears inconsistent with surrounding usage (e.g. a variable that appears once \
+with a different letter than everywhere else), consider whether it is an OCR \
+misread rather than an author error. Flag it only if it would be a real issue \
+even assuming the most plausible intended symbol."""
+
 DO_NOT_FLAG_BASE = """\
 Do NOT flag:
 - Formatting, typesetting, or capitalization issues

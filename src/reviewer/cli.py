@@ -51,9 +51,10 @@ def cmd_review(args: argparse.Namespace) -> None:
         os.environ["REVIEW_PROVIDER"] = provider
 
     source = args.file
+    ocr = getattr(args, "ocr", None)
     if is_url(source):
         print(f"Fetching and parsing URL...")
-        title, content = parse_document(source)
+        title, content, was_ocr = parse_document(source, ocr=ocr)
         # Derive slug from URL: use the arxiv ID or last path segment
         default_slug = source.rstrip("/").split("/")[-1]
     else:
@@ -62,7 +63,7 @@ def cmd_review(args: argparse.Namespace) -> None:
             print(f"Error: file not found: {file_path}", file=sys.stderr)
             sys.exit(1)
         print(f"Parsing {file_path.name}...")
-        title, content = parse_document(file_path)
+        title, content, was_ocr = parse_document(file_path, ocr=ocr)
         fmt = file_path.suffix.lstrip(".").lower()
         default_slug = f"{file_path.stem}-{fmt}" if fmt else file_path.stem
         if fmt:
@@ -73,6 +74,11 @@ def cmd_review(args: argparse.Namespace) -> None:
     slug = args.name or slugify(default_slug)
     paragraphs = split_into_paragraphs(content)
     print(f"  {len(paragraphs)} paragraphs")
+
+    if was_ocr:
+        from .prompts import OCR_CAVEAT
+        content = f"[{OCR_CAVEAT}]\n\n{content}"
+        print("  Source: OCR (notation auto-correction applied)")
 
     method = args.method
     print(f"Running method: {method}...")
@@ -202,6 +208,40 @@ def cmd_install_skill(args: argparse.Namespace) -> None:
     print("You can now use /openaireview in any Claude Code project.")
 
 
+def cmd_extract(args: argparse.Namespace) -> None:
+    """Run OCR extraction on a document and save as markdown with metadata."""
+    from datetime import date
+    from .parsers import parse_document
+    from .ocr_postprocess import fix_ocr_notation
+
+    source = Path(args.file)
+    if not source.exists():
+        print(f"Error: file not found: {source}", file=sys.stderr)
+        sys.exit(1)
+
+    ocr = getattr(args, "ocr", None)
+    print(f"Extracting {source.name}...")
+    title, content, was_ocr = parse_document(source, ocr=ocr)
+    print(f"  Title: {title}")
+
+    # Build YAML frontmatter
+    output_path = Path(args.output) if args.output else source.with_suffix(".md")
+    frontmatter_lines = [
+        "---",
+        f"title: \"{title}\"",
+        f"source: \"{source.name}\"",
+        f"extract_date: \"{date.today().isoformat()}\"",
+    ]
+    if was_ocr:
+        engine = ocr or "mistral"  # default when auto-detected
+        frontmatter_lines.append(f"ocr_engine: \"{engine}\"")
+    frontmatter_lines.append("---")
+
+    output_text = "\n".join(frontmatter_lines) + "\n\n" + content
+    output_path.write_text(output_text)
+    print(f"  Saved to {output_path} ({len(content)} chars)")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the visualization server."""
     from .serve import run_server
@@ -252,6 +292,30 @@ def main() -> None:
         default=None,
         help="Reasoning effort level (default: adaptive/auto)",
     )
+    review_parser.add_argument(
+        "--ocr",
+        choices=["mistral", "deepseek", "marker", "pymupdf"],
+        default=None,
+        help="PDF OCR engine (default: auto -- tries mistral, deepseek, marker, pymupdf)",
+    )
+
+    # extract subcommand
+    extract_parser = subparsers.add_parser(
+        "extract", help="Extract text from a document (OCR stage only)"
+    )
+    extract_parser.add_argument(
+        "file", help="Path to paper file (PDF, DOCX, TEX, etc.)"
+    )
+    extract_parser.add_argument(
+        "-o", "--output", default=None,
+        help="Output markdown path (default: same name with .md extension)",
+    )
+    extract_parser.add_argument(
+        "--ocr",
+        choices=["mistral", "deepseek", "marker", "pymupdf"],
+        default=None,
+        help="PDF OCR engine (default: auto)",
+    )
 
     # serve subcommand
     serve_parser = subparsers.add_parser(
@@ -278,6 +342,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "review":
         cmd_review(args)
+    elif args.command == "extract":
+        cmd_extract(args)
     elif args.command == "serve":
         cmd_serve(args)
     elif args.command == "install-skill":

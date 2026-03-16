@@ -20,12 +20,15 @@ def count_tokens(text: str, model: str = "gpt-4o") -> int:
     return len(enc.encode(text))
 
 
-def truncate_text(text: str, max_tokens: int) -> str:
+def truncate_text(text: str, max_tokens: int, model: str = "gpt-4o") -> str:
     """Truncate text to at most max_tokens tokens."""
     try:
-        enc = tiktoken.get_encoding("cl100k_base")
+        enc = tiktoken.encoding_for_model(model)
     except Exception:
-        return text[: max_tokens * 4]
+        try:
+            enc = tiktoken.get_encoding("cl100k_base")
+        except Exception:
+            return text[: max_tokens * 4]
     tokens = enc.encode(text)[:max_tokens]
     return enc.decode(tokens)
 

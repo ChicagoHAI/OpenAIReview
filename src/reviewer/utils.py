@@ -9,26 +9,26 @@ import tiktoken
 from .models import Comment
 
 
-def count_tokens(text: str, model: str = "gpt-4o") -> int:
+def _get_encoding():
+    """Get a tiktoken encoding for approximate token counting."""
     try:
-        enc = tiktoken.encoding_for_model(model)
+        return tiktoken.get_encoding("o200k_base")
     except Exception:
-        try:
-            enc = tiktoken.get_encoding("cl100k_base")
-        except Exception:
-            return len(text) // 4
+        return None
+
+
+def count_tokens(text: str) -> int:
+    enc = _get_encoding()
+    if enc is None:
+        return len(text) // 4
     return len(enc.encode(text))
 
 
-def truncate_text(text: str, max_tokens: int, model: str = "gpt-4o") -> str:
+def truncate_text(text: str, max_tokens: int) -> str:
     """Truncate text to at most max_tokens tokens."""
-    try:
-        enc = tiktoken.encoding_for_model(model)
-    except Exception:
-        try:
-            enc = tiktoken.get_encoding("cl100k_base")
-        except Exception:
-            return text[: max_tokens * 4]
+    enc = _get_encoding()
+    if enc is None:
+        return text[: max_tokens * 4]
     tokens = enc.encode(text)[:max_tokens]
     return enc.decode(tokens)
 

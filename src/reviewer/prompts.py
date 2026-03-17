@@ -80,6 +80,7 @@ Return ONLY the JSON object{empty_note}. No other text."""
 
 DEEP_CHECK_PROMPT = f"""{REVIEWER_PREAMBLE}
 
+{{ocr_caveat}}
 FULL PAPER CONTEXT (relevant sections):
 {{context}}
 
@@ -102,6 +103,7 @@ PASSAGE TO CHECK:
 
 DEEP_CHECK_PROGRESSIVE_PROMPT = f"""{REVIEWER_PREAMBLE}
 
+{{ocr_caveat}}
 FULL PAPER CONTEXT (relevant sections):
 {{context}}
 
@@ -162,6 +164,7 @@ Return a JSON object with this structure:
 
 Return ONLY the JSON object, no other text.
 
+{{ocr_caveat}}
 ---
 
 PAPER:
@@ -206,6 +209,7 @@ Return a JSON object:
 
 Return ONLY the JSON object (comments can be [] if no issues found). No other text.
 
+{{ocr_caveat}}
 ---
 
 SECTION {{chunk_num}} of {{total_chunks}}:

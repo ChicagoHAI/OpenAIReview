@@ -89,8 +89,6 @@ def cmd_review(args: argparse.Namespace) -> None:
     print(f"  {len(paragraphs)} paragraphs")
 
     if was_ocr:
-        from .prompts import OCR_CAVEAT
-        content = f"[{OCR_CAVEAT}]\n\n{content}"
         print("  Source: OCR (notation auto-correction applied)")
 
     method = args.method
@@ -100,18 +98,20 @@ def cmd_review(args: argparse.Namespace) -> None:
 
     if method == "zero_shot":
         result = review_zero_shot(slug, content, model=args.model,
-                                  reasoning_effort=reasoning)
+                                  reasoning_effort=reasoning, ocr=was_ocr)
     elif method == "local":
         result = review_local(
             slug, content,
             model=args.model,
             reasoning_effort=reasoning,
+            ocr=was_ocr,
         )
     elif method in ("progressive", "progressive_full"):
         consolidated, full = review_progressive(
             slug, content,
             model=args.model,
             reasoning_effort=reasoning,
+            ocr=was_ocr,
         )
         result = full if method == "progressive_full" else consolidated
     else:

@@ -6,7 +6,7 @@ from datetime import date
 
 from .client import chat
 from .models import ReviewResult
-from .prompts import DEEP_CHECK_PROMPT, OVERALL_FEEDBACK_PROMPT
+from .prompts import DEEP_CHECK_PROMPT, OCR_CAVEAT, OVERALL_FEEDBACK_PROMPT
 from .utils import count_tokens, locate_comment_in_document, parse_comments_from_list
 
 
@@ -85,6 +85,7 @@ def review_local(
     model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
     window_size: int = 3,
+    ocr: bool = False,
 ) -> ReviewResult:
     """Review a paper by deep-checking each chunk with surrounding window context."""
     result = ReviewResult(
@@ -103,7 +104,8 @@ def review_local(
         para_indices, chunk_text = chunks[chunk_idx]
         context = get_chunk_window_context(chunks, chunk_idx, window=window_size)
 
-        prompt = DEEP_CHECK_PROMPT.format(context=context, passage=chunk_text, current_date=date.today().isoformat())
+        ocr_caveat = OCR_CAVEAT if ocr else ""
+        prompt = DEEP_CHECK_PROMPT.format(context=context, passage=chunk_text, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
         response, usage = chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
@@ -129,7 +131,7 @@ def review_local(
                         if located is not None and located < len(para_indices):
                             c.paragraph_index = para_indices[located]
                         else:
-                            c.paragraph_index = para_indices[0]
+                            c.paragraph_index = None
                     all_comments.extend(new_comments)
                 except json.JSONDecodeError:
                     pass

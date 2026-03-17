@@ -17,6 +17,7 @@ from .models import ReviewResult
 from .prompts import (
     CONSOLIDATION_PROMPT,
     DEEP_CHECK_PROGRESSIVE_PROMPT as DEEP_CHECK_PROMPT,
+    OCR_CAVEAT,
     OVERALL_FEEDBACK_PROMPT,
     SUMMARY_UPDATE_PROMPT,
     TECHNICAL_FILTER_PROMPT,
@@ -207,6 +208,7 @@ def review_progressive(
     reasoning_effort: str | None = None,
     skip_nontechnical: bool = False,
     window_size: int = 3,
+    ocr: bool = False,
 ) -> tuple[ReviewResult, ReviewResult]:
     """Review a paper using progressive summary approach.
 
@@ -269,7 +271,8 @@ def review_progressive(
             context = window_context
 
         # Step 1: Deep-check
-        prompt = DEEP_CHECK_PROMPT.format(context=context, passage=passage_text, current_date=date.today().isoformat())
+        ocr_caveat = OCR_CAVEAT if ocr else ""
+        prompt = DEEP_CHECK_PROMPT.format(context=context, passage=passage_text, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
         response, usage = chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
@@ -298,7 +301,7 @@ def review_progressive(
                         if located is not None and located < len(para_indices):
                             c.paragraph_index = para_indices[located]
                         else:
-                            c.paragraph_index = para_indices[0]
+                            c.paragraph_index = None
                     all_comments.extend(new_comments)
                 except json.JSONDecodeError:
                     pass

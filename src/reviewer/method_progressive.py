@@ -22,7 +22,7 @@ from .prompts import (
     SUMMARY_UPDATE_PROMPT,
     TECHNICAL_FILTER_PROMPT,
 )
-from .utils import count_tokens, locate_comment_in_document, parse_comments_from_list
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def review_progressive(
     skipped = 0
 
     for idx in range(len(passages)):
-        para_indices, passage_text = passages[idx]
+        _, passage_text = passages[idx]
 
         # Step 0: Optional pre-filter
         if skip_nontechnical:
@@ -294,14 +294,9 @@ def review_progressive(
                 try:
                     items = json.loads(arr_match.group(0))
                     new_comments = parse_comments_from_list(items)
-                    # Locate each comment within the passage's paragraphs
-                    passage_paras = [paragraphs[i] for i in para_indices]
-                    for c in new_comments:
-                        located = locate_comment_in_document(c.quote, passage_paras)
-                        if located is not None and located < len(para_indices):
-                            c.paragraph_index = para_indices[located]
-                        else:
-                            c.paragraph_index = None
+                    locate_comments_in_window(
+                        new_comments, idx, passages, paragraphs, window_size,
+                    )
                     all_comments.extend(new_comments)
                 except json.JSONDecodeError:
                     pass

@@ -7,7 +7,7 @@ from datetime import date
 from .client import chat
 from .models import ReviewResult
 from .prompts import DEEP_CHECK_PROMPT, OCR_CAVEAT, OVERALL_FEEDBACK_PROMPT
-from .utils import count_tokens, locate_comment_in_document, parse_comments_from_list
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
 
 
 def split_into_paragraphs(text: str, min_chars: int = 100) -> list[str]:
@@ -125,13 +125,9 @@ def review_local(
                 try:
                     items = json.loads(arr_match.group(0))
                     new_comments = parse_comments_from_list(items)
-                    chunk_paras = [paragraphs[i] for i in para_indices]
-                    for c in new_comments:
-                        located = locate_comment_in_document(c.quote, chunk_paras)
-                        if located is not None and located < len(para_indices):
-                            c.paragraph_index = para_indices[located]
-                        else:
-                            c.paragraph_index = None
+                    locate_comments_in_window(
+                        new_comments, chunk_idx, chunks, paragraphs, window_size,
+                    )
                     all_comments.extend(new_comments)
                 except json.JSONDecodeError:
                     pass

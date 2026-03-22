@@ -29,7 +29,7 @@ uv venv && uv pip install -e .
 ## Updates
 
 - `--max-pages` and `--max-tokens` to limit input size and save OCR cost
-- Mistral OCR and DeepSeek OCR as optional PDF engines (`pip install openaireview[mistral]`)
+- Mistral OCR and DeepSeek OCR as optional PDF engines (`pip install "openaireview[mistral]"`)
 - `openaireview extract` subcommand for two-stage OCR + review workflow
 - Multi-provider routing: OpenRouter, OpenAI, Anthropic, Gemini, Mistral (`--provider`)
 - Table and figure extraction from arXiv HTML (tables as markdown)
@@ -44,8 +44,8 @@ PDF extraction quality matters — math symbols, tables, and reading order all a
 
 | Engine | Install | Best for | Notes |
 |--------|---------|----------|-------|
-| **Mistral OCR** | `pip install openaireview[mistral]` + set `MISTRAL_API_KEY` | Best overall quality, math, tables | Cloud API, ~$0.001/page |
-| **DeepSeek OCR** | `pip install openaireview[deepseek]` + local backend | Privacy-sensitive docs | Local model via Ollama/vLLM |
+| **Mistral OCR** | `pip install "openaireview[mistral]"` + set `MISTRAL_API_KEY` | Best overall quality, math, tables | Cloud API, ~$0.001/page |
+| **DeepSeek OCR** | `pip install "openaireview[deepseek]"` + local backend | Privacy-sensitive docs | Local model via Ollama/vLLM |
 | **Marker** | `uv tool install marker-pdf --with psutil` | Math-heavy PDFs (offline) | Slow without GPU |
 | **pymupdf4llm** | (included) | Fallback, always available | No math symbol support |
 

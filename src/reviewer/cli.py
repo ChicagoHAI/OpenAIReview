@@ -205,9 +205,9 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         sys.path.insert(0, str(_BENCHMARKS_DIR))
     from perturbation2 import (
         extract_candidates,
-        generate_stage1,
+        generate_perturbations,
         inject_perturbations,
-        validate_perturbations_stage1,
+        validate_perturbations,
     )
 
     source = args.file
@@ -229,7 +229,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
 
     # Stage 0: Extract candidates
     print("\nStage 0: Extracting candidate spans...")
-    candidates = extract_candidates(content)
+    candidates = extract_candidates(content, args.error_type)
     print(f"  {len(candidates)} candidates found")
 
     from collections import Counter
@@ -240,17 +240,18 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     reasoning = getattr(args, "reasoning_effort", None)
 
     # Stage 1: Generate perturbations
-    print(f"\nGenerating perturbations (method: {args.generate})...")
-    perturbations = generate_stage1(
+    print(f"\nGenerating perturbations...")
+    perturbations = generate_perturbations(
         candidates,
         model=args.model,
-        n_per_category=args.n_per_category,
+        n_per_error=args.n_per_error,
         reasoning_effort=reasoning,
+        error_type=args.error_type
     )
 
     # Validate
     print(f"\nValidating {len(perturbations)} perturbations...")
-    valid, rejected = validate_perturbations_stage1(perturbations, content)
+    valid, rejected = validate_perturbations(perturbations, content)
     print(f"  Valid: {len(valid)}, Rejected: {len(rejected)}")
     for p, reason in rejected:
         print(f"    REJECTED {p.perturbation_id}: {reason[:80]}")
@@ -276,7 +277,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
             {
                 "perturbation_id": p.perturbation_id,
                 "span_id": p.span_id,
-                "category": p.category.value,
+                "error": p.error.value,
                 "original": p.original,
                 "perturbed": p.perturbed,
                 "why_wrong": p.why_wrong,
@@ -307,7 +308,7 @@ def cmd_score(args: argparse.Namespace) -> None:
     """Score a review against injected perturbations."""
     if str(_BENCHMARKS_DIR) not in sys.path:
         sys.path.insert(0, str(_BENCHMARKS_DIR))
-    from perturbation2.models import ErrorCategory, Perturbation
+    from perturbation2.models import Error, Perturbation
     from perturbation2.score import score_review
 
     manifest_path = Path(args.manifest)
@@ -329,7 +330,7 @@ def cmd_score(args: argparse.Namespace) -> None:
         perturbations.append(Perturbation(
             perturbation_id=p["perturbation_id"],
             span_id=p["span_id"],
-            category=ErrorCategory(p["category"]),
+            error=Error(p["error"]),
             original=p["original"],
             perturbed=p["perturbed"],
             why_wrong=p["why_wrong"],
@@ -347,7 +348,7 @@ def cmd_score(args: argparse.Namespace) -> None:
 
     print(f"Scoring {len(comments)} comments against {len(perturbations)} perturbations...")
 
-    result = score_review(perturbations, comments, model=args.model)
+    result = score_review(perturbations, comments, model=args.model, method=args.method)
 
     print(f"\n{'='*50}")
     print(f"PERTURBATION BENCHMARK RESULTS")
@@ -363,7 +364,7 @@ def cmd_score(args: argparse.Namespace) -> None:
         pid_lookup = {p.perturbation_id: p for p in perturbations}
         for pid in result.missed:
             p = pid_lookup[pid]
-            print(f"  [{p.category.value}] {pid}: {p.original[:60]}... -> {p.perturbed[:60]}...")
+            print(f"  [{p.error.value}] {pid}: {p.original[:60]}... -> {p.perturbed[:60]}...")
 
     # Save results
     score_filename = manifest_path.name.replace("_perturbations.json", "_score.json")
@@ -553,7 +554,7 @@ def main() -> None:
         help="Model for perturbation generation (default: anthropic/claude-opus-4-6)",
     )
     perturb_parser.add_argument(
-        "--n-per-category", type=int, default=2,
+        "--n-per-error", type=int, default=2,
         help="Target perturbations per error category (default: 2)",
     )
     perturb_parser.add_argument(
@@ -561,15 +562,16 @@ def main() -> None:
         help="Directory for output files (default: ./perturbation_results)",
     )
     perturb_parser.add_argument(
-        "--generate", choices=["llm", "rules"], default="llm",
-        help="Perturbation generation method (default: llm)",
-    )
-    perturb_parser.add_argument(
         "--reasoning-effort",
         choices=["none", "low", "medium", "high"],
         default=None,
         help="Reasoning effort level",
     )
+    perturb_parser.add_argument(
+        "--error_type", default="all",
+        help="Error type (default: all)",
+    )
+
     # score subcommand
     score_parser = subparsers.add_parser(
         "score", help="Score a review against injected perturbations"
@@ -581,12 +583,16 @@ def main() -> None:
         "review", help="Path to review results JSON"
     )
     score_parser.add_argument(
-        "--model", default="anthropic/claude-haiku-4-5-20251001",
-        help="Model to use for explanation matching (default: claude-haiku)",
+        "--model", default=DEFAULT_MODEL,
+        help="Model for explanation matching (default: anthropic/claude-opus-4-6)",
     )
     score_parser.add_argument(
         "--output-dir", default=None,
         help="Directory to save score JSON (default: same directory as manifest)",
+    )
+    score_parser.add_argument(
+        "--method", choices=["llm", "fuzzy", "semantic"], default="llm",
+        help="Score method (default: llm)",
     )
     # install-skill subcommand
     install_parser = subparsers.add_parser(

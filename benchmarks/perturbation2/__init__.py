@@ -4,27 +4,29 @@ Pipeline: extract candidates → generate perturbations → validate → inject 
 """
 
 from .extract import extract_candidates
-from .generate import generate_stage1
+from .generate import generate_perturbations, generate_perturbations_by_type
 from .inject import inject_perturbations
 from .models import (
     CandidateSpan,
-    ErrorCategory,
+    Error,
     Perturbation,
     PerturbationResult,
     SpanType,
 )
 from .score import score_review
-from .validate import validate_perturbations_stage1
+from .validate import validate_perturbations
 
 __all__ = [
     "extract_candidates",
-    "generate_stage1",
-    "validate_perturbations_stage1",
+    "generate_perturbations",
+    "generate_perturbations_by_type",
+    "validate_perturbations",
+
     "inject_perturbations",
     "score_review",
     "CandidateSpan",
     "Perturbation",
     "PerturbationResult",
     "SpanType",
-    "ErrorCategory",
+    "Error",
 ]

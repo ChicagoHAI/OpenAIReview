@@ -10,13 +10,28 @@ class SpanType(str, Enum):
     EQUATION_INLINE = "equation_inline"     # $...$ or \(...\)
     EQUATION_NAMED = "equation_named"       # align, equation, gather, multline, cases
 
+    DEFINITION = "definition"
+    THEOREM = "theorem"
+    PROOF = "proof"
 
-class ErrorCategory(str, Enum):
+
+class Error(str, Enum):
     """Edit-centric error taxonomy (from Codex)."""
+    # surface
     NUMERIC_PARAMETER = "numeric_parameter"
     OPERATOR_OR_SIGN = "operator_or_sign"
     SYMBOL_BINDING = "symbol_binding"
     INDEX_OR_SUBSCRIPT = "index_or_subscript"
+
+    # formal
+    DEF_WRONG = "def_wrong"
+    THM_WRONG_CONDITION = "thm_wrong_condition"
+    THM_WRONG_CONCLUSION = "thm_wrong_conclusion"
+    THM_WRONG_SCOPE = "thm_wrong_scope"
+    PROOF_WRONG_DIRECTION = "proof_wrong_direction"
+    PROOF_MISSING_CASE = "proof_missing_case"
+    PROOF_WRONG_ASSUMPTION = "proof_wrong_assumption"
+    PROOF_MISMATCH = "proof_mismatch"
 
 
 @dataclass
@@ -25,10 +40,9 @@ class CandidateSpan:
     span_id: str
     span_type: SpanType
     text: str                          # exact verbatim text from the paper
-    paragraph_index: int               # which paragraph (0-based)
-    char_offset: int                   # character offset within the full document
-    context: str = ""                  # surrounding text for the LLM
-    compatible_categories: list[ErrorCategory] = field(default_factory=list)
+    context: str                       # surrounding text for the LLM
+    error_type: str
+    compatible_errors: list[Error] = field(default_factory=list)
 
 
 @dataclass
@@ -36,7 +50,7 @@ class Perturbation:
     """A single error to inject."""
     perturbation_id: str
     span_id: str                       # references a CandidateSpan
-    category: ErrorCategory
+    error: Error
     original: str                      # exact text to find (from span store)
     perturbed: str                     # replacement text
     why_wrong: str                     # explanation of why this breaks internal consistency

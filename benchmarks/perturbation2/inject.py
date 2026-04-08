@@ -6,7 +6,6 @@ from right to left (highest offset first) so earlier offsets stay valid.
 
 from .models import Perturbation
 
-
 def inject_perturbations(
     paper_text: str,
     perturbations: list[Perturbation],

@@ -211,6 +211,7 @@ def chat(
                 if reasoning_effort is not None and reasoning_effort != "none":
                     _apply_reasoning(kwargs, resolved_provider, reasoning_effort, current_max_tokens)
                 resp = client.chat.completions.create(**kwargs)
+                print(f"    [DEBUG] finish_reason={resp.choices[0].finish_reason}, completion_tokens={resp.usage.completion_tokens if resp.usage else 'N/A'}")
                 usage = {
                     "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
                     "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,

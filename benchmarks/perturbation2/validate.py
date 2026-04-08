@@ -9,7 +9,6 @@ Checks:
 
 from .models import Perturbation
 
-
 def _replacement_creates_garbage(
     paper_text: str, idx: int, original: str, perturbed: str,
 ) -> bool:
@@ -27,12 +26,7 @@ def _replacement_creates_garbage(
             return True
     return False
 
-
-# ---------------------------------------------------------------------------
-# Stage 1: 
-# ---------------------------------------------------------------------------
-
-def validate_perturbations_stage1(
+def validate_perturbations(
     perturbations: list[Perturbation],
     paper_text: str,
 ) -> tuple[list[Perturbation], list[tuple[Perturbation, str]]]:

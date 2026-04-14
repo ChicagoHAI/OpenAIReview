@@ -12,7 +12,10 @@ COST_PER_1M = {
     "anthropic/claude-opus-4-6": {"prompt": 5.0, "completion": 25.0},
     "anthropic/claude-opus-4-5": {"prompt": 5.0, "completion": 25.0},
     "google/gemini-3.1-pro-preview": {"prompt": 2.0, "completion": 12.0},
+    "google/gemini-3-flash-preview": {"prompt": 0.50, "completion": 3.00},
     "z-ai/glm-5": {"prompt": 0.80, "completion": 2.56},
+    "z-ai/glm-4.6": {"prompt": 0.39, "completion": 1.90},
+    "qwen/qwen3-235b-a22b-2507": {"prompt": 0.071, "completion": 0.10},
     "moonshotai/kimi-k2.5": {"prompt": 0.45, "completion": 2.20},
     "openai/gpt-5.2-pro": {"prompt": 21.0, "completion": 168.0},
 }

@@ -132,18 +132,37 @@ def cmd_review(args: argparse.Namespace) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     output_file = output_dir / f"{slug}.json"
 
-
-    # Build viz-compatible data
+    # Build viz-compatible data. For `progressive`, also save the
+    # pre-consolidation comments under a separate `progressive_original__*`
+    # method key so we can compare raw vs consolidated counts later.
+    method_blocks: list[tuple[str, str, object]] = []
     key = _method_key(method, args.model)
+    method_blocks.append((method, key, result))
+
+    if method == "progressive":
+        full.method = "progressive_original"
+        orig_key = _method_key("progressive_original", args.model)
+        print(f"  Pre-consolidation: {full.num_comments} comments "
+              f"(saved as {orig_key})")
+        method_blocks.append(("progressive_original", orig_key, full))
+
+    # Build first block as the base paper_data, then attach extras.
+    base_method, base_key, base_result = method_blocks[0]
     paper_data = _build_paper_json(
-        slug, title, paragraphs, method, key, result, was_ocr
+        slug, title, paragraphs, base_method, base_key, base_result, was_ocr
     )
+    for extra_method, extra_key, extra_result in method_blocks[1:]:
+        extra_data = _build_paper_json(
+            slug, title, paragraphs, extra_method, extra_key, extra_result, was_ocr
+        )
+        paper_data["methods"][extra_key] = extra_data["methods"][extra_key]
 
     # Merge with existing file if present
     if output_file.exists():
         try:
             existing = json.loads(output_file.read_text())
-            existing["methods"][key] = paper_data["methods"][key]
+            for _m, k, _r in method_blocks:
+                existing["methods"][k] = paper_data["methods"][k]
             paper_data = existing
         except (json.JSONDecodeError, KeyError):
             pass

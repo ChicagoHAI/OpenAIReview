@@ -1,8 +1,14 @@
 from .models import Perturbation, PerturbationResult
 from reviewer.client import chat
+from reviewer.utils import _normalize_for_match, _quote_coverage
 
 from rapidfuzz import fuzz
 from sentence_transformers import SentenceTransformer, util
+
+# Fraction of the (normalized) perturbed string that must be covered by the
+# (normalized) comment quote. Same coverage notion used by
+# reviewer.utils.locate_comment_in_document.
+_FUZZY_QUOTE_THRESHOLD = 0.75
 
 def score_review(perturbations: list[Perturbation], 
                  review_comments: list[dict], 
@@ -42,7 +48,23 @@ def score_review(perturbations: list[Perturbation],
 
 
 def _substring_match(quote, perturbed) -> bool:
-    return perturbed.lower() in quote.lower()
+    """Fuzzy substring match: True if `perturbed` is approximately contained
+    in `quote`. Tolerates dropped math delimiters, whitespace differences,
+    and minor formatting drift between the seeded perturbation and how a
+    reviewer ends up quoting the surrounding context.
+
+    Same normalize+coverage scheme used by
+    ``reviewer.utils.locate_comment_in_document``.
+    """
+    if not quote or not perturbed:
+        return False
+    q = _normalize_for_match(quote)
+    p = _normalize_for_match(perturbed)
+    if not p:
+        return False
+    if p in q:
+        return True
+    return _quote_coverage(p, q) >= _FUZZY_QUOTE_THRESHOLD
 
 
 PROMPT = """

@@ -36,11 +36,11 @@ Deeper structural corruptions to definitions, theorems, and proofs:
 pip install -e ".[benchmarks]"
 
 # Run the default config (2 short papers, 1 model, all methods)
-python benchmarks/perturbation2/run_pipeline.py benchmarks/perturbation2/configs/default.yaml
+python benchmarks/perturbation/run_pipeline.py benchmarks/perturbation/configs/default.yaml
 
 # Run only specific stages
-python benchmarks/perturbation2/run_pipeline.py configs/default.yaml --stages perturb,review
-python benchmarks/perturbation2/run_pipeline.py configs/default.yaml --stages score
+python benchmarks/perturbation/run_pipeline.py configs/default.yaml --stages perturb,review
+python benchmarks/perturbation/run_pipeline.py configs/default.yaml --stages score
 ```
 
 ## Configuration
@@ -64,7 +64,7 @@ review_methods:
   - zero_shot
   - progressive
 
-results_dir: benchmarks/perturbation2/results
+results_dir: benchmarks/perturbation/results
 ```
 
 Papers are streamed from the [proof-pile](https://huggingface.co/datasets/hoskinson-center/proof-pile) dataset and binned by word count.

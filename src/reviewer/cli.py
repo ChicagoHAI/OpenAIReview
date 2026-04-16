@@ -222,7 +222,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     from .parsers import is_url, parse_document
     if str(_BENCHMARKS_DIR) not in sys.path:
         sys.path.insert(0, str(_BENCHMARKS_DIR))
-    from perturbation2 import (
+    from perturbation import (
         extract_candidates,
         generate_perturbations,
         inject_perturbations,
@@ -327,8 +327,8 @@ def cmd_score(args: argparse.Namespace) -> None:
     """Score a review against injected perturbations."""
     if str(_BENCHMARKS_DIR) not in sys.path:
         sys.path.insert(0, str(_BENCHMARKS_DIR))
-    from perturbation2.models import Error, Perturbation
-    from perturbation2.score import score_review
+    from perturbation.models import Error, Perturbation
+    from perturbation.score import score_review
 
     manifest_path = Path(args.manifest)
     review_path = Path(args.review)

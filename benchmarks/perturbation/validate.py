@@ -4,30 +4,10 @@ Checks:
 1. Original text actually exists in the paper (exact match)
 2. Perturbed text differs from original
 3. No two perturbations target overlapping text spans
-4. Each perturbation's category is compatible with its span type
-5. Original text isn't truncated mid-expression (unbalanced delimiters)
-6. Replacement won't create garbled text at boundaries
+4. Replacement won't create garbled text at boundaries
 """
 
-from .models import CandidateSpan, Perturbation
-
-
-def _is_truncated(text: str) -> bool:
-    """Check if text appears to be truncated mid-expression."""
-    stripped = text.rstrip()
-    # Ends with = (mid-equation)
-    if stripped.endswith("="):
-        return True
-    # Unbalanced $ (LaTeX math)
-    if stripped.count("$") % 2 != 0:
-        return True
-    # Unbalanced LaTeX delimiters
-    if stripped.count("\\(") != stripped.count("\\)"):
-        return True
-    if stripped.count("\\[") != stripped.count("\\]"):
-        return True
-    return False
-
+from .models import Perturbation
 
 def _replacement_creates_garbage(
     paper_text: str, idx: int, original: str, perturbed: str,
@@ -46,17 +26,14 @@ def _replacement_creates_garbage(
             return True
     return False
 
-
 def validate_perturbations(
     perturbations: list[Perturbation],
     paper_text: str,
-    candidates: list[CandidateSpan] | None = None,
 ) -> tuple[list[Perturbation], list[tuple[Perturbation, str]]]:
     """Validate perturbations against the paper text.
 
     Returns (valid, rejected) where rejected is a list of (perturbation, reason).
     """
-    span_lookup = {c.span_id: c for c in candidates} if candidates else {}
     valid: list[Perturbation] = []
     rejected: list[tuple[Perturbation, str]] = []
     # Track occupied character ranges to prevent overlaps
@@ -85,22 +62,7 @@ def validate_perturbations(
             rejected.append((p, f"overlaps with an already-selected perturbation at [{idx}:{span_end}]"))
             continue
 
-        # Check 4: category compatible with span type (if we have candidate info)
-        if p.span_id in span_lookup:
-            span = span_lookup[p.span_id]
-            if p.category not in span.compatible_categories:
-                rejected.append((
-                    p,
-                    f"category {p.category.value} not compatible with span type {span.span_type.value}",
-                ))
-                continue
-
-        # Check 5: original isn't truncated mid-expression
-        if _is_truncated(p.original):
-            rejected.append((p, f"original appears truncated: ...{p.original[-40:]}"))
-            continue
-
-        # Check 6: replacement won't create garbled text
+        # Check 4: replacement won't create garbled text
         if _replacement_creates_garbage(paper_text, idx, p.original, p.perturbed):
             rejected.append((p, "replacement would create garbled text at boundaries"))
             continue

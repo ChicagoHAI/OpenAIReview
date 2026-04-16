@@ -3,13 +3,12 @@
 Pipeline: extract candidates → generate perturbations → validate → inject → score.
 """
 
-from .extract import add_line_numbers, extract_candidates
-from .generate import generate_freeform, generate_from_candidates
+from .extract import extract_candidates
+from .generate import generate_perturbations, generate_perturbations_by_type
 from .inject import inject_perturbations
 from .models import (
     CandidateSpan,
-    Difficulty,
-    ErrorCategory,
+    Error,
     Perturbation,
     PerturbationResult,
     SpanType,
@@ -19,16 +18,15 @@ from .validate import validate_perturbations
 
 __all__ = [
     "extract_candidates",
-    "add_line_numbers",
-    "generate_from_candidates",
-    "generate_freeform",
+    "generate_perturbations",
+    "generate_perturbations_by_type",
     "validate_perturbations",
+
     "inject_perturbations",
     "score_review",
     "CandidateSpan",
     "Perturbation",
     "PerturbationResult",
     "SpanType",
-    "ErrorCategory",
-    "Difficulty",
+    "Error",
 ]

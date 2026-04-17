@@ -28,22 +28,46 @@ One experiment = `configs/<name>.yaml` + `reports/<name>.md` +
 
 ## Workflow
 
-### 1. Install papers (one-time)
+### 1. Download papers (one-time)
 
 PDFs are gitignored. Download them before the first run:
+
 ```bash
-python download_papers.py            # 5 per group, ICLR 2024
-python download_papers.py -n 8       # 8 per group
+python download_papers.py
 ```
-Note: `download_papers.py` selects Oral/Spotlight by default, not Outstanding
-Paper Award winners. The current manifest was hand-curated — re-running the
-script as-is will overwrite it with a different selection.
+
+If `manifest.json` exists, the script downloads the exact papers listed
+there, skipping any already on disk. The manifest is never modified.
+
+**Adding more papers** to an existing manifest:
+
+```bash
+python download_papers.py --add -n 5                         # 5 more per group (papercopilot)
+python download_papers.py --add -n 3 --group rejected        # 3 more rejected only
+```
+
+**Bootstrapping a new study** (no manifest yet):
+
+```bash
+python download_papers.py -n 10                              # papercopilot, ICLR 2024
+python download_papers.py --source hf --venue ICLR --year 2023 -n 10   # HuggingFace
+python download_papers.py --source hf --venue NeurIPS --year 2022 -n 10
+```
+
+Two data sources via `--source`:
+
+- **papercopilot** (default): ICLR only, uses explicit accept/reject decisions.
+- **hf**: [AlgorithmicResearchGroup/openreview-papers-with-reviews](https://huggingface.co/datasets/AlgorithmicResearchGroup/openreview-papers-with-reviews)
+  on HuggingFace. Multi-venue (ICLR, NeurIPS, CoRL, UAI, MIDL), selects
+  by review score thresholds (`--accepted-threshold`, `--rejected-threshold`)
+  since the dataset has no explicit decisions.
 
 ### 2. Estimate cost before a run
 
 ```bash
 python estimate_cost.py
 ```
+
 Uses observed progressive-method token multipliers (~6× input for the chain
 of running-summary + window replay, ~0.15× output). Sanity-check before
 burning API credits.
@@ -54,16 +78,18 @@ burning API credits.
 export OPENROUTER_API_KEY=...
 python run_study.py --config configs/baseline.yaml
 ```
+
 Writes results to `results/<name>/<paper-slug>.json` and a run log to
 `results/<name>/run_log.jsonl`. Idempotent — rerunning skips paper/model
 combos already complete.
 
 **Useful flags:**
+
 - `--dry-run` — print the commands without calling the API.
 - `--paper <slug>` / `--model <name>` — restrict to one paper or model.
 - `--force` — re-run even if already complete.
 - `--max-pages` / `--max-tokens` / `--timeout-sec` / `--max-per-model` — ad-hoc
-  overrides of any YAML value.
+overrides of any YAML value.
 
 ### 4. Generate report tables
 
@@ -71,6 +97,7 @@ combos already complete.
 python generate_report.py --config configs/baseline.yaml
 python generate_report.py --config configs/baseline.yaml --papers  # include papers table (parses PDFs, slow)
 ```
+
 Prints markdown tables (overall, per-model, consolidation, cost, runtime)
 to stdout. Pipe to a file or paste into `reports/<name>.md`.
 
@@ -108,6 +135,7 @@ read-modify-write merge. Total in-flight = `max_per_model × num_models`
 ## Results format
 
 Each `results/<name>/<slug>.json` contains:
+
 - `progressive__<model_short>` — comments after the consolidation pass.
 - `progressive_original__<model_short>` — raw comments before consolidation.
 

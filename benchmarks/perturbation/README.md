@@ -88,6 +88,23 @@ Papers are streamed from the [proof-pile](https://huggingface.co/datasets/hoskin
 
 Experiment reports are in `reports/`. See `reports/surface_3models_short_medium.md` for the first benchmark run (3 cheap models, 10 papers, surface errors).
 
+### Generating report statistics
+
+After a pipeline run completes, use `generate_report.py` to aggregate results across all papers, models, and methods:
+
+```bash
+python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results_short
+```
+
+This prints markdown tables to stdout covering:
+- Configuration summary
+- Ground truth counts by length and error type
+- Recall by model × method (split by paper length and overall)
+- Recall by error type
+- Token usage and cost
+
+The output is meant to be reviewed and edited into a final report in `reports/`.
+
 ## Scoring
 
 The scorer uses a two-stage filter:

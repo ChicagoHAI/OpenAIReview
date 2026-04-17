@@ -5,8 +5,7 @@ Reads the results directory structure produced by run_pipeline.py and prints
 tables summarizing recall, error-type breakdowns, token usage, and cost.
 
 Usage:
-    python benchmarks/perturbation/generate_report.py results_short results_medium
-    python benchmarks/perturbation/generate_report.py results_short
+    python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results_short
 """
 
 import argparse
@@ -180,78 +179,40 @@ def load_results(results_dir: Path, length: str, gt: dict[str, dict[str, str]]) 
 # Report printing
 # ---------------------------------------------------------------------------
 
-def print_config(configs: list[dict]) -> None:
+def print_config(cfg: dict) -> None:
     print("## Configuration\n")
-    all_models: set[str] = set()
-    all_methods: set[str] = set()
-    lengths: list[str] = []
-    for cfg in configs:
-        all_models.update(cfg.get("review_models", []))
-        all_methods.update(cfg.get("review_methods", []))
-        lengths.append(cfg.get("length", "?"))
-
-    cfg0 = configs[0]
-    n = cfg0.get("max_papers", "?")
     print("| Setting | Value |")
     print("|---------|-------|")
-    print(f"| Papers | {n} per length bin ({', '.join(lengths)}) |")
-    print(f"| Error type | {cfg0.get('error_type', '?')} |")
-    print(f"| Perturb model | {cfg0.get('perturb_model', '?')} |")
-    print(f"| Score method | {cfg0.get('score_method', '?')} |")
-    print(f"| Score model | {cfg0.get('score_model', '?')} |")
-    print(f"| Review models | {', '.join(sorted(all_models))} |")
-    print(f"| Review methods | {', '.join(sorted(all_methods))} |")
+    print(f"| Papers | {cfg.get('max_papers', '?')} |")
+    print(f"| Length | {cfg.get('length', '?')} |")
+    print(f"| Error type | {cfg.get('error_type', '?')} |")
+    print(f"| Perturb model | {cfg.get('perturb_model', '?')} |")
+    print(f"| Score method | {cfg.get('score_method', '?')} |")
+    print(f"| Score model | {cfg.get('score_model', '?')} |")
+    print(f"| Review models | {', '.join(cfg.get('review_models', []))} |")
+    print(f"| Review methods | {', '.join(cfg.get('review_methods', []))} |")
     print()
 
 
-def print_ground_truth(all_gt: dict[str, dict[str, str]], cells: list[CellResult]) -> None:
+def print_ground_truth(gt: dict[str, dict[str, str]]) -> None:
     print("## Ground Truth Summary\n")
 
-    # Map paper_label -> length via cells
-    paper_length: dict[str, str] = {}
-    for c in cells:
-        paper_length[c.paper_label] = c.length
+    error_counts: dict[str, int] = defaultdict(int)
+    total = 0
 
-    by_length: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    totals_by_length: dict[str, int] = defaultdict(int)
-
-    for paper_label, perts in sorted(all_gt.items()):
-        length = paper_length.get(paper_label, "unknown")
+    for paper_label, perts in sorted(gt.items()):
         for etype in perts.values():
-            by_length[length][etype] += 1
-            totals_by_length[length] += 1
+            error_counts[etype] += 1
+            total += 1
 
-    for length in sorted(by_length):
-        n_papers = sum(1 for p, l in paper_length.items() if l == length and p in all_gt)
-        total = totals_by_length[length]
-        print(f"**{length}** ({n_papers} papers): {total} perturbations")
-        for etype in sorted(by_length[length]):
-            print(f"  - {etype}: {by_length[length][etype]}")
-        print()
-
-    grand_total = sum(totals_by_length.values())
-    print(f"**Total**: {grand_total} perturbations\n")
+    print(f"**{len(gt)} papers**, {total} perturbations total:")
+    for etype in sorted(error_counts):
+        print(f"  - {etype}: {error_counts[etype]}")
+    print()
 
 
 def print_recall_by_model_method(cells: list[CellResult]) -> None:
     print("## Recall by Model x Method\n")
-    print("| model | method | length | gt | detected | recall |")
-    print("|-------|--------|--------|----|----------|--------|")
-
-    groups: dict[tuple, dict] = defaultdict(lambda: {"gt": 0, "det": 0})
-    for c in cells:
-        groups[(c.model_slug, c.method, c.length)]["gt"] += c.n_injected
-        groups[(c.model_slug, c.method, c.length)]["det"] += c.n_detected
-
-    for (model, method, length) in sorted(groups):
-        g = groups[(model, method, length)]
-        recall = g["det"] / g["gt"] * 100 if g["gt"] else 0
-        print(f"| {model} | {method} | {length} | {g['gt']} | {g['det']} | {recall:.1f}% |")
-    print()
-
-
-def print_overall_recall(cells: list[CellResult]) -> None:
-    print("### Overall Recall (all lengths combined)\n")
     print("| model | method | gt | detected | recall |")
     print("|-------|--------|----|----------|--------|")
 
@@ -268,7 +229,7 @@ def print_overall_recall(cells: list[CellResult]) -> None:
 
 
 def print_recall_by_error_type(cells: list[CellResult]) -> None:
-    print("## Recall by Error Type (all papers combined)\n")
+    print("## Recall by Error Type\n")
 
     all_etypes: set[str] = set()
     for c in cells:
@@ -306,20 +267,18 @@ def print_recall_by_error_type(cells: list[CellResult]) -> None:
 
 def print_token_usage(cells: list[CellResult]) -> None:
     print("## Token Usage and Cost\n")
-    print("| length | model | cells | prompt tokens | completion tokens | cost (USD) |")
-    print("|--------|-------|-------|---------------|-------------------|------------|")
+    print("| model | cells | prompt tokens | completion tokens | cost (USD) |")
+    print("|-------|-------|---------------|-------------------|------------|")
 
-    groups: dict[tuple, dict] = defaultdict(lambda: {"cells": 0, "prompt": 0, "comp": 0, "cost": 0.0})
+    groups: dict[str, dict] = defaultdict(lambda: {"cells": 0, "prompt": 0, "comp": 0, "cost": 0.0})
     for c in cells:
-        key = (c.length, c.model_slug)
-        groups[key]["cells"] += 1
-        groups[key]["prompt"] += c.prompt_tokens
-        groups[key]["comp"] += c.completion_tokens
-        # Prefer the stored cost_usd; fall back to computing from tokens
+        groups[c.model_slug]["cells"] += 1
+        groups[c.model_slug]["prompt"] += c.prompt_tokens
+        groups[c.model_slug]["comp"] += c.completion_tokens
         if c.cost_usd > 0:
-            groups[key]["cost"] += c.cost_usd
+            groups[c.model_slug]["cost"] += c.cost_usd
         else:
-            groups[key]["cost"] += compute_cost(
+            groups[c.model_slug]["cost"] += compute_cost(
                 slug_to_full_model(c.model_slug), c.prompt_tokens, c.completion_tokens
             )
 
@@ -328,15 +287,15 @@ def print_token_usage(cells: list[CellResult]) -> None:
     total_comp = 0
     total_cost = 0.0
 
-    for (length, model) in sorted(groups):
-        g = groups[(length, model)]
+    for model in sorted(groups):
+        g = groups[model]
         total_cells += g["cells"]
         total_prompt += g["prompt"]
         total_comp += g["comp"]
         total_cost += g["cost"]
-        print(f"| {length} | {model} | {g['cells']} | {g['prompt']:,} | {g['comp']:,} | ${g['cost']:.4f} |")
+        print(f"| {model} | {g['cells']} | {g['prompt']:,} | {g['comp']:,} | ${g['cost']:.4f} |")
 
-    print(f"| **total** | | **{total_cells}** | **{total_prompt:,}** | **{total_comp:,}** | **${total_cost:.4f}** |")
+    print(f"| **total** | **{total_cells}** | **{total_prompt:,}** | **{total_comp:,}** | **${total_cost:.4f}** |")
     print()
 
 
@@ -349,54 +308,43 @@ def main() -> None:
         description="Aggregate perturbation benchmark results and print a report to stdout.",
     )
     parser.add_argument(
-        "results_dirs",
-        nargs="+",
+        "results_dir",
         type=Path,
-        help="One or more results directories (e.g. results_short results_medium)",
+        help="Results directory produced by run_pipeline.py",
     )
     args = parser.parse_args()
 
-    all_cells: list[CellResult] = []
-    all_gt: dict[str, dict[str, str]] = {}
-    configs: list[dict] = []
+    results_dir = args.results_dir
+    if not results_dir.is_dir():
+        print(f"Error: {results_dir} is not a directory", file=sys.stderr)
+        sys.exit(1)
 
-    for results_dir in args.results_dirs:
-        if not results_dir.is_dir():
-            print(f"Warning: {results_dir} is not a directory, skipping", file=sys.stderr)
-            continue
+    # Load config
+    cfg: dict = {}
+    config_path = results_dir / "config.yaml"
+    if yaml and config_path.exists():
+        with config_path.open() as f:
+            cfg = yaml.safe_load(f) or {}
+    length = cfg.get("length", results_dir.name)
 
-        # Load config
-        config_path = results_dir / "config.yaml"
-        if yaml and config_path.exists():
-            with config_path.open() as f:
-                cfg = yaml.safe_load(f) or {}
-            configs.append(cfg)
-            length = cfg.get("length", results_dir.name)
-        else:
-            length = results_dir.name
-            configs.append({"length": length})
+    # Load ground truth
+    gt = load_ground_truth(results_dir)
 
-        # Load ground truth
-        gt = load_ground_truth(results_dir)
-        all_gt.update(gt)
+    # Load score + review data
+    cells = load_results(results_dir, length, gt)
 
-        # Load score + review data
-        cells = load_results(results_dir, length, gt)
-        all_cells.extend(cells)
-
-    if not all_cells:
-        print("No results found in the given directories.", file=sys.stderr)
+    if not cells:
+        print("No results found.", file=sys.stderr)
         sys.exit(1)
 
     # Print report
     print("# Perturbation Benchmark Report\n")
-    if configs:
-        print_config(configs)
-    print_ground_truth(all_gt, all_cells)
-    print_recall_by_model_method(all_cells)
-    print_overall_recall(all_cells)
-    print_recall_by_error_type(all_cells)
-    print_token_usage(all_cells)
+    if cfg:
+        print_config(cfg)
+    print_ground_truth(gt)
+    print_recall_by_model_method(cells)
+    print_recall_by_error_type(cells)
+    print_token_usage(cells)
 
 
 if __name__ == "__main__":

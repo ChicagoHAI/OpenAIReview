@@ -23,8 +23,48 @@ import yaml
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 
-# Models in display order (short name -> full name mapping built at runtime).
+# Models in display order for the baseline three. Any model not in this list
+# still appears (sorted alphabetically after these).
 MODEL_ORDER = ["gemini-3-flash-preview", "glm-4.6", "qwen3-235b-a22b-2507"]
+
+
+def ordered_models(models: set[str]) -> list[str]:
+    """MODEL_ORDER first, then any others sorted."""
+    head = [m for m in MODEL_ORDER if m in models]
+    tail = sorted(m for m in models if m not in MODEL_ORDER)
+    return head + tail
+
+
+# ---------------------------------------------------------------------------
+# System detection
+# ---------------------------------------------------------------------------
+#
+# A "system" is a review producer (e.g. `progressive`, `coarse`). Each system
+# writes methods of the form `<system>__<model>` into result JSONs. Some
+# systems (openaireview progressive) also emit a raw-vs-consolidated pair
+# (`progressive_original__<model>` alongside `progressive__<model>`); others
+# (competitors) emit only a single prefix. Detection: scan the actual method
+# keys and pair up any `*_original` with its base.
+
+def detect_systems(results: dict[str, dict]) -> list[dict]:
+    """Return [{name, cons_prefix, raw_prefix | None}, ...] detected from JSONs."""
+    prefixes: set[str] = set()
+    for res in results.values():
+        for key in res.get("methods", {}):
+            if "__" in key:
+                prefixes.add(key.split("__", 1)[0])
+
+    systems = []
+    for p in sorted(prefixes):
+        if p.endswith("_original"):
+            continue  # shown via its consolidated partner's shrink column
+        raw = f"{p}_original"
+        systems.append({
+            "name": p,
+            "cons_prefix": p,
+            "raw_prefix": raw if raw in prefixes else None,
+        })
+    return systems
 
 
 # ---------------------------------------------------------------------------
@@ -139,15 +179,15 @@ def count_comments(result: dict, method_prefix: str) -> dict[str, int]:
     return counts
 
 
-def get_cost(result: dict) -> dict[str, float]:
-    """Return {model_short: cost_usd} for consolidated methods."""
+def get_cost(result: dict, method_prefix: str) -> dict[str, float]:
+    """Return {model_short: cost_usd} for the given prefix."""
     costs: dict[str, float] = {}
     methods = result.get("methods", {})
     for key, data in methods.items():
-        if not key.startswith("progressive__"):
+        if not key.startswith(method_prefix + "__"):
             continue
-        model = key[len("progressive__"):]
-        costs[model] = data.get("cost_usd", 0.0)
+        model = key[len(method_prefix) + 2:]
+        costs[model] = data.get("cost_usd") or 0.0
     return costs
 
 
@@ -155,20 +195,24 @@ def get_cost(result: dict) -> dict[str, float]:
 # Table builders
 # ---------------------------------------------------------------------------
 
-def build_overall_table(manifest: dict, results: dict[str, dict]) -> list[dict]:
-    """Overall: accepted vs rejected."""
+def build_overall_table(
+    manifest: dict, results: dict[str, dict], system: dict
+) -> list[dict]:
+    """Overall: accepted vs rejected, for one system."""
+    cons_pref = system["cons_prefix"]
+    raw_pref = system["raw_prefix"]
     groups: dict[str, dict] = {
         "accepted": {"n": 0, "raw": 0, "consolidated": 0},
         "rejected": {"n": 0, "raw": 0, "consolidated": 0},
     }
     for slug, res in results.items():
         group = paper_group(slug, manifest)
-        raw_counts = count_comments(res, "progressive_original")
-        cons_counts = count_comments(res, "progressive")
-        for model in raw_counts:
+        cons_counts = count_comments(res, cons_pref)
+        raw_counts = count_comments(res, raw_pref) if raw_pref else cons_counts
+        for model, cons in cons_counts.items():
             groups[group]["n"] += 1
-            groups[group]["raw"] += raw_counts[model]
-            groups[group]["consolidated"] += cons_counts.get(model, 0)
+            groups[group]["consolidated"] += cons
+            groups[group]["raw"] += raw_counts.get(model, cons)
 
     rows = []
     for g in ["accepted", "rejected"]:
@@ -186,24 +230,29 @@ def build_overall_table(manifest: dict, results: dict[str, dict]) -> list[dict]:
     return rows
 
 
-def build_per_model_table(manifest: dict, results: dict[str, dict]) -> list[dict]:
-    """Per-model breakdown."""
-    # {(group, model): {n, raw, consolidated}}
+def build_per_model_table(
+    manifest: dict, results: dict[str, dict], system: dict
+) -> list[dict]:
+    """Per-model breakdown for one system."""
+    cons_pref = system["cons_prefix"]
+    raw_pref = system["raw_prefix"]
     cells: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"n": 0, "raw": 0, "consolidated": 0}
     )
+    seen_models: set[str] = set()
     for slug, res in results.items():
         group = paper_group(slug, manifest)
-        raw_counts = count_comments(res, "progressive_original")
-        cons_counts = count_comments(res, "progressive")
-        for model in raw_counts:
+        cons_counts = count_comments(res, cons_pref)
+        raw_counts = count_comments(res, raw_pref) if raw_pref else cons_counts
+        for model, cons in cons_counts.items():
+            seen_models.add(model)
             cells[(group, model)]["n"] += 1
-            cells[(group, model)]["raw"] += raw_counts[model]
-            cells[(group, model)]["consolidated"] += cons_counts.get(model, 0)
+            cells[(group, model)]["consolidated"] += cons
+            cells[(group, model)]["raw"] += raw_counts.get(model, cons)
 
     rows = []
     for group in ["accepted", "rejected"]:
-        for model in MODEL_ORDER:
+        for model in ordered_models(seen_models):
             d = cells.get((group, model))
             if not d or d["n"] == 0:
                 continue
@@ -217,23 +266,30 @@ def build_per_model_table(manifest: dict, results: dict[str, dict]) -> list[dict
     return rows
 
 
-
-def build_consolidation_table(manifest: dict, results: dict[str, dict]) -> list[dict]:
-    """Consolidation shrink per model, split by group."""
-    # {(group, model): {raw, consolidated}}
+def build_consolidation_table(
+    manifest: dict, results: dict[str, dict], system: dict
+) -> list[dict]:
+    """Consolidation shrink per model, split by group. Only meaningful when
+    the system exposes a raw_prefix."""
+    cons_pref = system["cons_prefix"]
+    raw_pref = system["raw_prefix"]
+    if not raw_pref:
+        return []
     cells: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"raw": 0, "consolidated": 0}
     )
+    seen_models: set[str] = set()
     for slug, res in results.items():
         group = paper_group(slug, manifest)
-        raw_counts = count_comments(res, "progressive_original")
-        cons_counts = count_comments(res, "progressive")
+        cons_counts = count_comments(res, cons_pref)
+        raw_counts = count_comments(res, raw_pref)
         for model in raw_counts:
+            seen_models.add(model)
             cells[(group, model)]["raw"] += raw_counts[model]
             cells[(group, model)]["consolidated"] += cons_counts.get(model, 0)
 
     rows = []
-    for model in MODEL_ORDER:
+    for model in ordered_models(seen_models):
         acc = cells.get(("accepted", model), {"raw": 0, "consolidated": 0})
         rej = cells.get(("rejected", model), {"raw": 0, "consolidated": 0})
         acc_shrink = 1 - acc["consolidated"] / acc["raw"] if acc["raw"] > 0 else 0
@@ -242,18 +298,21 @@ def build_consolidation_table(manifest: dict, results: dict[str, dict]) -> list[
     return rows
 
 
-def build_cost_table(manifest: dict, results: dict[str, dict]) -> list[dict]:
-    """Cost per model, split by group."""
-    # {(group, model): cost}
+def build_cost_table(
+    manifest: dict, results: dict[str, dict], system: dict
+) -> list[dict]:
+    """Cost per model, split by group, for one system."""
     cells: dict[tuple[str, str], float] = defaultdict(float)
+    seen_models: set[str] = set()
     for slug, res in results.items():
         group = paper_group(slug, manifest)
-        costs = get_cost(res)
+        costs = get_cost(res, system["cons_prefix"])
         for model, cost in costs.items():
+            seen_models.add(model)
             cells[(group, model)] += cost
 
     rows = []
-    for model in MODEL_ORDER:
+    for model in ordered_models(seen_models):
         acc = cells.get(("accepted", model), 0.0)
         rej = cells.get(("rejected", model), 0.0)
         rows.append({"model": model, "accepted": acc, "rejected": rej,
@@ -273,7 +332,7 @@ def build_runtime_table(run_log: list[dict], manifest: dict) -> list[dict]:
         durations[model].append(entry["duration_sec"])
 
     rows = []
-    for model in MODEL_ORDER:
+    for model in ordered_models(set(durations)):
         durs = durations.get(model, [])
         if not durs:
             continue
@@ -300,23 +359,37 @@ def fmt_papers(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def fmt_overall(rows: list[dict]) -> str:
+def fmt_overall(rows: list[dict], has_raw: bool) -> str:
     lines = []
-    lines.append("| Group | N runs | Raw (total) | Raw (avg) | Consolidated (total) | Consolidated (avg) | Shrink |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- |")
-    for r in rows:
-        lines.append(f"| **{r['group'].title()}** | {r['n']} | {r['raw_total']} | {r['raw_avg']:.1f} "
-                     f"| {r['cons_total']} | {r['cons_avg']:.1f} | {r['shrink']:.0%} |")
+    if has_raw:
+        lines.append("| Group | N runs | Raw (total) | Raw (avg) | Consolidated (total) | Consolidated (avg) | Shrink |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- |")
+        for r in rows:
+            lines.append(f"| **{r['group'].title()}** | {r['n']} | {r['raw_total']} | {r['raw_avg']:.1f} "
+                         f"| {r['cons_total']} | {r['cons_avg']:.1f} | {r['shrink']:.0%} |")
+    else:
+        lines.append("| Group | N runs | Comments (total) | Comments (avg) |")
+        lines.append("| --- | --- | --- | --- |")
+        for r in rows:
+            lines.append(f"| **{r['group'].title()}** | {r['n']} | "
+                         f"{r['cons_total']} | {r['cons_avg']:.1f} |")
     return "\n".join(lines)
 
 
-def fmt_per_model(rows: list[dict]) -> str:
+def fmt_per_model(rows: list[dict], has_raw: bool) -> str:
     lines = []
-    lines.append("| Group | Model | N | Raw (total) | Raw (avg) | Cons. (total) | Cons. (avg) | Shrink |")
-    lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
-    for r in rows:
-        lines.append(f"| {r['group']} | {r['model']} | {r['n']} | {r['raw_total']} | {r['raw_avg']:.1f} "
-                     f"| {r['cons_total']} | {r['cons_avg']:.1f} | {r['shrink']:.0%} |")
+    if has_raw:
+        lines.append("| Group | Model | N | Raw (total) | Raw (avg) | Cons. (total) | Cons. (avg) | Shrink |")
+        lines.append("| --- | --- | --- | --- | --- | --- | --- | --- |")
+        for r in rows:
+            lines.append(f"| {r['group']} | {r['model']} | {r['n']} | {r['raw_total']} | {r['raw_avg']:.1f} "
+                         f"| {r['cons_total']} | {r['cons_avg']:.1f} | {r['shrink']:.0%} |")
+    else:
+        lines.append("| Group | Model | N | Comments (total) | Comments (avg) |")
+        lines.append("| --- | --- | --- | --- | --- |")
+        for r in rows:
+            lines.append(f"| {r['group']} | {r['model']} | {r['n']} | "
+                         f"{r['cons_total']} | {r['cons_avg']:.1f} |")
     return "\n".join(lines)
 
 
@@ -420,29 +493,40 @@ def main() -> None:
     elif args.papers:
         print("(Papers table skipped — PDFs not on disk. Run download_papers.py first.)\n")
 
-    # --- Overall ---
-    print("\n### Overall: accepted vs rejected\n")
-    overall = build_overall_table(manifest, results)
-    print(fmt_overall(overall))
+    # --- Per-system tables ---
+    systems = detect_systems(results)
+    if not systems:
+        print("\n(No methods found in result JSONs.)")
+    for system in systems:
+        name = system["name"]
+        has_raw = system["raw_prefix"] is not None
+        banner = f"System: {name}"
+        print(f"\n\n## {banner}\n")
 
-    # --- Per-model ---
-    print("\n### Per-model breakdown\n")
-    per_model = build_per_model_table(manifest, results)
-    print(fmt_per_model(per_model))
+        overall = build_overall_table(manifest, results, system)
+        if overall:
+            print(f"\n### Overall: accepted vs rejected ({name})\n")
+            print(fmt_overall(overall, has_raw))
 
-    # --- Consolidation effect ---
-    print("\n### Consolidation effect\n")
-    consolidation = build_consolidation_table(manifest, results)
-    print(fmt_consolidation(consolidation))
+        per_model = build_per_model_table(manifest, results, system)
+        if per_model:
+            print(f"\n### Per-model breakdown ({name})\n")
+            print(fmt_per_model(per_model, has_raw))
 
-    # --- Cost ---
-    print("\n### Cost\n")
-    cost = build_cost_table(manifest, results)
-    print(fmt_cost(cost))
+        if has_raw:
+            consolidation = build_consolidation_table(manifest, results, system)
+            if consolidation:
+                print(f"\n### Consolidation effect ({name})\n")
+                print(fmt_consolidation(consolidation))
 
-    # --- Runtime ---
+        cost = build_cost_table(manifest, results, system)
+        if cost and any(r["total"] for r in cost):
+            print(f"\n### Cost ({name})\n")
+            print(fmt_cost(cost))
+
+    # --- Runtime (single table spanning all systems; derived from log) ---
     if run_log:
-        print("\n### Runtime\n")
+        print("\n\n## Runtime (all systems)\n")
         runtime = build_runtime_table(run_log, manifest)
         print(fmt_runtime(runtime))
     else:

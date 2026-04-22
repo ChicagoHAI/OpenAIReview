@@ -228,6 +228,7 @@ def _parse_response(response: str,
             span_id=span_id,
             error=error,
             original=span.text,  # from OUR store, not the model's
+            offset=span.offset,  # from OUR store, not the model's
             perturbed=perturbed,
             why_wrong=item.get("why_wrong", ""),
         ))

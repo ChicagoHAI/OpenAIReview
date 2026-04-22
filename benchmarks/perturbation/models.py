@@ -40,6 +40,7 @@ class CandidateSpan:
     span_id: str
     span_type: SpanType
     text: str                          # exact verbatim text from the paper
+    offset: int                        # character offset into the paper text
     context: str                       # surrounding text for the LLM
     error_type: str
     compatible_errors: list[Error] = field(default_factory=list)
@@ -52,6 +53,7 @@ class Perturbation:
     span_id: str                       # references a CandidateSpan
     error: Error
     original: str                      # exact text to find (from span store)
+    offset: int                        # character offset into the original paper text
     perturbed: str                     # replacement text
     why_wrong: str                     # explanation of why this breaks internal consistency
 

@@ -625,6 +625,49 @@ def _self_critique(state: PersonaState) -> dict:
 
 
 def build_persona_subgraph():
+    # ───────────────────────────────────────────────────────────────────
+    # NOTE — the section loop is INTENTIONALLY sequential per persona.
+    #
+    # Each persona reviews its assigned sections one at a time, driven by
+    # `section_cursor` + a conditional back-edge to `review_section`. The
+    # "obvious" faster version is to fan out one Send per section inside
+    # the subgraph so all assigned sections are reviewed in parallel.
+    # DON'T switch without understanding what the loop buys:
+    #
+    # 1. Cursor-driven back-edge is a LangGraph primitive this kata is
+    #    specifically designed to exercise. Fan-out everywhere is the
+    #    easy pattern; stateful iteration inside a subgraph is the one
+    #    people don't reach for. Lose this, lose a primitive proof.
+    #
+    # 2. Linear checkpoint history → clean fork-at-step semantics.
+    #    `get_state_history` on a persona's namespace shows a readable
+    #    progression (cursor 0, 1, 2, …, self_critique). You can fork
+    #    at any cursor value and replay from there. With parallel Sends
+    #    inside, the subgraph's checkpoint tree has concurrent pending
+    #    tasks, and "rewind to just before section 5" stops being a
+    #    well-defined checkpoint.
+    #
+    # 3. Hang blast radius is bounded. OpenRouter occasionally hangs a
+    #    single request. With sequential-per-persona, max concurrent
+    #    requests = 3 (one per persona); with parallel-inside, it's
+    #    sum(assignments) which is 15–25 on real papers. Self_critique
+    #    still has to wait for ALL sibling section reviews either way,
+    #    so parallel doesn't rescue you from a hung call — it just
+    #    multiplies the surface area where a hang can originate.
+    #
+    # 4. Accumulating state inside the subgraph is the demo. `section_
+    #    comments: Annotated[list, add]` fans IN across loop iterations
+    #    inside a single subgraph run. Moving parallelism to the parent
+    #    (flat (persona, section) Sends) loses that nested-reducer
+    #    exercise entirely.
+    #
+    # The trade-off is wall-clock: on a ~22-section paper, sequential
+    # loop runs ~5 min per persona (bottlenecked by the longest
+    # assignment); parallel Sends would run ~30 s/persona. For a kata
+    # that prioritizes primitive coverage over throughput, the 5 min is
+    # the cost of the feature. If you ever need throughput, copy this
+    # file, flatten the fan-out, and keep both versions in-repo.
+    # ───────────────────────────────────────────────────────────────────
     sg = StateGraph(PersonaState, output_schema=PersonaOutput)
     sg.add_node("review_section", _review_section)
     sg.add_node("self_critique", _self_critique)

@@ -63,6 +63,53 @@ have substrate for. See NOTES.md for the write-up of what surprised me.
          └──── "redo:N"    ──▶  review_as_persona  (Send, specific persona)
 ```
 
+### Why the section loop is sequential per persona (not parallel)
+
+This is the single most common "why didn't you do it faster" question
+about the kata, so spelling it out here. Across personas is parallel
+(3 Sends from `plan_assignments`). **Within a persona, sections are
+reviewed one at a time**, driven by `section_cursor` and a conditional
+back-edge. Kept sequential on purpose:
+
+1. **Cursor-driven back-edge is the primitive.** Fan-out-everywhere is
+   the easy LangGraph pattern. Stateful iteration inside a subgraph —
+   a counter, an accumulating reducer, a conditional edge that routes
+   either back to itself or forward — is the primitive people don't
+   reach for. If this collapses into another Send fan-out, the kata
+   loses one of its five primitive proofs.
+
+2. **Linear checkpoint history = clean fork-at-step semantics.**
+   `get_state_history` on a persona's namespace shows `cursor 0 → 1 →
+   2 → … → self_critique`. You can fork at any cursor value, rewrite
+   the state, and replay from there. With parallel Sends inside the
+   subgraph, the checkpoint tree carries concurrent pending tasks and
+   "rewind to just before section 5" stops being a well-defined
+   checkpoint. Time-travel gets fuzzier.
+
+3. **Hang blast radius is bounded.** OpenRouter occasionally stalls a
+   single request indefinitely (seen multiple times during this
+   build). Sequential-per-persona means max concurrent requests = 3.
+   Parallel-inside means sum(assignments), which is 15–25 on real
+   papers. Self_critique still has to join all sibling section
+   reviews either way, so parallel doesn't rescue you from a hung
+   call — it widens the surface area for hangs to originate.
+
+4. **`section_comments: Annotated[list[Comment], add]` is a
+   nested-reducer demo.** The reducer fans IN across loop iterations
+   inside a single subgraph run — not across concurrent subgraph
+   instances. Moving parallelism up to the parent (flat (persona,
+   section) Sends to a leaf subgraph) loses that nested exercise.
+
+**The cost is wall-clock.** On a 22-section paper, sequential loop is
+~5 min per persona (bottlenecked by the longest assignment);
+parallel-inside would be ~30 s/persona. For a kata prioritizing
+primitive coverage over throughput, 5 min is the feature's price tag.
+
+The same note lives in `review_rounds.py:build_persona_subgraph` so
+it's visible at the edit site.
+
+---
+
 ### Persona subgraph (nested internal section loop)
 
 ```

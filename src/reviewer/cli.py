@@ -17,6 +17,15 @@ except ImportError:
 DEFAULT_MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4-6")
 OCR_DISCLAIMER = "This document was extracted by OCR engine and could contain mistakes."
 
+def _enable_live_logs() -> None:
+    """Flush log lines immediately in non-interactive runs."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        stream.reconfigure(line_buffering=True)
+
+
 def slugify(name: str) -> str:
     """Convert a name to a URL-friendly slug."""
     s = name.lower().strip()
@@ -50,12 +59,31 @@ def cmd_review(args: argparse.Namespace) -> None:
     if provider:
         os.environ["REVIEW_PROVIDER"] = provider
 
+    # review_rounds delegates to the sibling kata package — it does its own
+    # parsing, graph-building, and viz-JSON writing. Guarded import so a
+    # minimal install without langgraph still serves other methods.
+    if args.method == "review_rounds":
+        try:
+            from review_rounds.review_rounds import run_oneshot
+        except ImportError as e:
+            print(
+                "--method review_rounds requires the kata extra. Install with:\n"
+                "  pip install -e '.[kata]'\n"
+                f"  (original import error: {e})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        run_oneshot(paper_path=args.file, output_dir=Path(args.output_dir))
+        return
+
     source = args.file
     ocr = getattr(args, "ocr", None)
     max_pages = getattr(args, "max_pages", None)
     if max_pages and not (not is_url(source) and Path(source).suffix.lower() == ".pdf"):
         print("  Warning: --max-pages only applies to local PDF files, ignoring")
         max_pages = None
+    provider_label = provider or os.environ.get("REVIEW_PROVIDER") or "auto"
+    print(f"Review config: method={args.method}, model={args.model}, provider={provider_label}, ocr={ocr or 'auto'}")
     if is_url(source):
         print(f"Fetching and parsing URL...")
         title, content, was_ocr = parse_document(source, ocr=ocr, max_pages=max_pages)
@@ -265,6 +293,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    _enable_live_logs()
     parser = argparse.ArgumentParser(
         prog="openaireview",
         description="AI-powered academic paper reviewer",
@@ -280,7 +309,7 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--method",
-        choices=["zero_shot", "local", "progressive", "progressive_full"],
+        choices=["zero_shot", "local", "progressive", "progressive_full", "review_rounds"],
         default="progressive",
         help="Review method (default: progressive)",
     )

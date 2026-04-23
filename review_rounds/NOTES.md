@@ -1,9 +1,100 @@
 # review-rounds — post-mortem
 
-Interview fuel, not OSS docs. Surprises from the actual build on
-`examples/2602.18458v1.pdf` against `minimax/minimax-m2.7` via OpenRouter.
+Interview fuel, not OSS docs. Two builds on `examples/2602.18458v1.pdf`:
+first against `minimax/minimax-m2.7` (prose-aggregate shape), then a
+reshape to mirror the OpenAIReview Claude Code skill's section-level
+pipeline against `moonshotai/kimi-k2.6` with LangChain structured output.
 
 ---
+
+## Surprises from the section-aware reshape
+
+**R1. LengthFinishReasonError is the reasoning-model tax.** kimi-k2.6
+spends ~3000 reasoning tokens per structured-output call, invisibly,
+before emitting any visible content. First run: `max_tokens=1024` → all
+burned on reasoning, zero output, `LengthFinishReasonError`. Second
+run: `max_tokens=4096` → reasoning capped at 1024 via
+`extra_body.reasoning.max_tokens`, visible-output finally finishes.
+Third run: `max_tokens=16384, reasoning_max=4096` for headroom. Lesson:
+with reasoning models, `max_tokens` must budget for *both* thinking and
+the schema. Also — `model_kwargs={"extra_body": {...}}` in ChatOpenAI
+emits a deprecation warning in langchain-openai 1.x; pass `extra_body`
+as a top-level kwarg.
+
+**R2. JSON schema doesn't have integer dict keys.** First shape of
+`PlanOutput` had `assignments: dict[int, list[int]]`. Structured output
+round-trips through JSON schema under the hood — integer keys become
+strings, and on top of that kimi chose `"persona_1"`, `"persona_2"`,
+`"persona_3"` over `"0"`/`"1"`/`"2"`. Two mistakes in one field. Fix:
+`list[list[int]]` — outer index is the persona index, no dict keys at
+all. Removing the ambiguity is cheaper than parsing around it.
+
+**R3. Subgraph output_schema is still the gatekeeper.** The section-loop
+variant of `PersonaState` carries `persona`, `persona_idx`, `summary`,
+`sections`, `section_cursor`, `section_comments` — none of which should
+reach the parent. Without `output_schema=PersonaOutput` (only
+`comments`), three concurrent subgraphs would collide on every single
+non-reducer field at fan-in. This is the same trap from the first
+build, just with a wider shape.
+
+**R4. Structured output eliminates `_parse_json_*` helpers.** The
+original prose-aggregate kata had 30 LoC of JSON extraction + fallback
+defaults (`_parse_json_list`, `_parse_json_object`). Swapping to
+`ChatOpenAI.with_structured_output(PydanticModel)` deleted all of them
+— validation failures trigger LangChain's auto-retry, malformed output
+is impossible at the schema level. Trade-off: one more dependency
+(`langchain-openai`) and a reasoning-model tax (R1).
+
+**R5. The orchestrator-assigns-sections node is the interesting new
+demo.** `plan_assignments` takes a PaperOutput (personas + assignments)
+and the fan-out conditional edge consumes `assignments` to Send each
+persona only its assigned sections. That is LLM output directly shaping
+the graph's control flow — far more interesting than the prose-aggregate
+fan-out which was just "send everyone to everyone." It's also the
+natural fork demo: `update_state` on the `assignments` field at the
+post-plan checkpoint reissues the whole fan-out with a new partition.
+
+**R6. Skill-script reuse via tmpdir.** `prepare_workspace.split_sections`
+writes files as a side effect. For the kata's in-memory flow I wrapped
+it with a `tempfile.TemporaryDirectory` and read each file back into a
+Pydantic `Section`. ~5 lines. Cheaper than reimplementing the regex +
+8K-char chunk fallback, and if the skill's heuristic changes, the kata
+follows for free.
+
+**R7. Viz JSON compatibility is almost-free when you reuse the right
+helpers.** The main `openaireview serve` UI expects
+`{paragraphs, methods: {<key>: {comments: [{quote, paragraph_index, ...}]}}}`.
+Reusing `reviewer.utils.split_into_paragraphs` +
+`locate_comment_in_document` makes my kata output byte-compatible with
+other methods' output under a `review_rounds__<model>` method key.
+
+**R8. OpenRouter hangs without max_retries.** One persona subgraph got
+stuck at cursor=0/7 for 15 minutes on a single kimi-k2.6 request that
+never returned — timeout=180 alone didn't save us; LangChain needed
+`max_retries=3` too. The other two parallel subgraphs kept going, but
+the hung one blocked the join at `consolidate`. Set `timeout=90,
+max_retries=3` on ChatOpenAI; expect tail-latency pain on reasoning
+models via OpenRouter.
+
+**R9. Cost tracking belongs in a callback, not the node body.**
+LangChain's `BaseCallbackHandler.on_llm_end` receives the LLMResult
+with `llm_output['token_usage']`, which on OpenRouter includes `cost`
+(upstream dollar cost). One module-level collector, attached via
+`ChatOpenAI(callbacks=[USAGE])`, accumulates across every node — 1-2
+graph calls or 80, same API. Running the totals through the graph
+state instead would cost a reducer + constant thread-safety worry.
+
+**R10. Output file collisions are the UI's boundary.** Main
+`openaireview` CLI writes `review_results/<slug>.json` and merges new
+methods into the existing `methods` dict. I nearly wrote a separate
+`<slug>_review_rounds.json` file, which `openaireview serve` would
+index as a separate paper instead of another method on the same paper.
+Matching the main CLI's merge convention was one extra `if
+path.exists(): doc.setdefault("methods", {})[method_key] = block`.
+
+---
+
+## Surprises from the first build (prose-aggregate, minimax)
 
 1. **Biggest surprise — subgraph outputs flood the parent state.** When 3
    persona subgraphs finalize concurrently, *every* field of their

@@ -32,7 +32,6 @@ import json
 import sqlite3
 import sys
 import uuid
-from dataclasses import dataclass
 from operator import add
 from pathlib import Path
 from typing import Annotated, TypedDict
@@ -44,6 +43,8 @@ from langgraph.types import Command, Send, interrupt
 from reviewer.client import chat
 from reviewer.parsers import parse_document
 from reviewer.utils import count_tokens
+
+from review_rounds.models import Draft
 
 
 CHECKPOINT_DB = Path(__file__).parent / ".checkpoints.db"
@@ -60,21 +61,6 @@ VERDICT_MAX_TOKENS = 512         # JSON-only; no need to burn tokens.
 # ---------------------------------------------------------------------------
 # State shapes
 # ---------------------------------------------------------------------------
-
-
-@dataclass
-class Draft:
-    """One persona's finished draft. Carries enough state that the time-travel
-    demo (update_state on a completed run) can rewrite a single entry without
-    re-running the other personas' subgraphs."""
-
-    persona: str
-    persona_idx: int
-    initial: str
-    challenge: str
-    verdict: str  # "keep" | "revise"
-    verdict_reason: str
-    final: str
 
 
 def _merge_edits(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
@@ -99,8 +85,10 @@ class ReviewState(TypedDict, total=False):
 
 
 class PersonaState(TypedDict, total=False):
-    """Subgraph-local state. `drafts` is the single channel that crosses the
-    subgraph/parent boundary — it shares a name and reducer with the parent."""
+    """Subgraph-local state. Carries everything the per-persona pipeline
+    needs internally. Only fields declared on PersonaOutput cross back to
+    the parent — otherwise `paper_text`, `persona`, etc. would fan-in with
+    three concurrent writes against a non-reducer channel."""
 
     persona: str
     persona_idx: int
@@ -110,6 +98,14 @@ class PersonaState(TypedDict, total=False):
     verdict: str
     verdict_reason: str
     final: str
+    drafts: Annotated[list[Draft], add]
+
+
+class PersonaOutput(TypedDict, total=False):
+    """Subgraph → parent boundary. Only `drafts` leaks out; everything else
+    stays private to the persona pipeline. Matches the parent's reducer on
+    `drafts` so the three subgraph results fan in cleanly."""
+
     drafts: Annotated[list[Draft], add]
 
 
@@ -280,7 +276,15 @@ def fan_out_personas(state: ReviewState) -> list[Send]:
 
 
 def critic_aggregate(state: ReviewState) -> dict:
-    drafts = sorted(state["drafts"], key=lambda d: d.persona_idx)
+    # The `drafts` channel uses an `add` reducer, so update_state and redo:N
+    # both APPEND rather than replace. Dedupe here by taking the latest entry
+    # per persona_idx — that gives "most recent wins" semantics, which is
+    # what fork-and-replay and redo:N both conceptually want. See NOTES.md
+    # for the trap this unearths.
+    latest: dict[int, Draft] = {}
+    for d in state["drafts"]:
+        latest[d.persona_idx] = d
+    drafts = [latest[i] for i in sorted(latest)]
 
     # edits (if any) from a prior human gate override a persona's final text.
     edits = state.get("edits", {}) or {}
@@ -440,7 +444,7 @@ def _finalize(state: PersonaState) -> dict:
 
 
 def build_persona_subgraph():
-    sg = StateGraph(PersonaState)
+    sg = StateGraph(PersonaState, output_schema=PersonaOutput)
     sg.add_node("draft", _draft)
     sg.add_node("challenge", _challenge)
     sg.add_node("verdict", _verdict)
@@ -555,10 +559,14 @@ def _cmd_fork(args) -> int:
     """Time-travel demo: rewrite one persona's draft at a past checkpoint,
     then re-run from there. critic_aggregate re-runs with the edited draft;
     the other two drafts are untouched."""
+    # checkpoint_ns="" pins the fork to the parent graph's namespace
+    # (subgraph checkpoints live in their own ns). Without it, SqliteSaver's
+    # put_writes fails with KeyError at config["configurable"]["checkpoint_ns"].
     config = {
         "configurable": {
             "thread_id": args.thread_id,
             "checkpoint_id": args.checkpoint_id,
+            "checkpoint_ns": "",
         }
     }
     graph = build_graph(_open_checkpointer())

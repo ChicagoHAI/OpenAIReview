@@ -92,6 +92,46 @@ index as a separate paper instead of another method on the same paper.
 Matching the main CLI's merge convention was one extra `if
 path.exists(): doc.setdefault("methods", {})[method_key] = block`.
 
+**R11. Reasoning models + big structured-output schemas = systematic
+failure.** Ran the same pipeline against `anthropic/claude-haiku-4-5`
+and `moonshotai/kimi-k2.6` on the 25-page paper. Haiku cleared all
+four structured-output nodes in one go (56 issues, 12 major / 30
+moderate / 14 minor, $0.41). Kimi hit four different failures on the
+same run: `plan_assignments` → `LengthFinishReasonError`,
+`review_section` → `ValidationError` (missing `title` field),
+`self_critique` × 2 → empty `parsed`, `consolidate` → truncated JSON.
+Every single one was a case where kimi's reasoning step consumed
+most of the 16384-token budget before visible output got emitted, so
+the schema either didn't complete or never started. Graceful
+fallbacks produced 60 "moderate" issues ($0.47) — functionally
+usable but severity-untiered, because consolidate was the last
+fallback-triggering call.
+
+**The lesson isn't "kimi is bad"** — it's that reasoning models spend
+tokens on a budget that's invisible to `max_tokens`, and big nested
+Pydantic schemas (`ConsolidationOutput` with `list[ConsolidatedIssue]`)
+are token-hungry on the output side. The two combine badly. For this
+pipeline shape, a non-reasoning model is structurally a better fit.
+If you need a reasoning model, either shrink the schema (emit
+comments incrementally, not as a big list), drop `method="json_schema"`
+back to `function_calling` (more forgiving parse path), or bump
+`max_tokens` far past what looks reasonable.
+
+**R12. Defensive fallbacks are a kata-appropriate pattern.** The
+cleanest way to diagnose what kimi was doing wrong was to see *which
+node* failed and *what* it returned. Five lines of `try: structured.
+invoke(...) except: log + emit fallback` per node gave me four
+separate `[warn]` lines in one run, each identifying the failing node
+and truncated error. Without it, the first crash would have ended the
+run at minute 3 and I'd have re-run to diagnose. With it, I got a
+full graph execution with warnings surfaced in-line.
+
+**Trade-off**: the graph now always completes, but silently produces
+lower-quality output when a node fails. For a kata — valuable;
+failures become visible artifacts. For production — dangerous;
+you'd want an explicit "partial result" flag on state and a
+downstream check that fails loudly before writing viz JSON.
+
 ---
 
 ## Surprises from the first build (prose-aggregate, minimax)

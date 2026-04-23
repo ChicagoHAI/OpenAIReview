@@ -132,6 +132,40 @@ failures become visible artifacts. For production — dangerous;
 you'd want an explicit "partial result" flag on state and a
 downstream check that fails loudly before writing viz JSON.
 
+**R13. Rewind-from-checkpoint is the kata's best demo.** After kimi's
+consolidate failed with a truncated-JSON error, I didn't rerun the
+whole pipeline (25 min of persona reviews already completed and
+checkpointed). Instead: bumped `consolidate`'s `max_tokens` from 16k
+→ 64k in code, found the pre-consolidate checkpoint via
+`get_state_history`, and invoked with `config={thread_id, checkpoint_id}`
+and `None` as input. LangGraph loaded the 60-comment state from the
+checkpoint, re-ran consolidate with the new code, paused at
+human_gate. Resume → publish → fresh viz JSON. Cost of the rewind:
+one `consolidate` call (~1 min), no persona reviews re-executed.
+
+The haiku pipeline finished in 25 minutes. The kimi pipeline plus the
+rewind-after-fix added about 4 minutes on top of that. Without
+checkpointer, fixing the 16k → 64k issue would have meant a full
+rerun — 25+ minutes and $0.40 re-spent on work that was already done.
+
+**This is the feature LangGraph genuinely wins on over Strands.**
+Time-travel + reducer-aware state replay means "change one LLM call's
+parameters and re-execute just that step" is a one-liner. Every fix
+during development benefits — not just dramatic time-travel demos.
+Durable checkpointing makes iterating on the pipeline cheap.
+
+**R14. Kimi consolidates more aggressively than haiku.** Same paper,
+same raw input to consolidate, different models:
+- haiku: 56 raw comments → 56 final issues (minimal dedup, 12/30/14)
+- kimi: 60 raw comments → 34 final issues (43% dedup, 6/18/10)
+
+Probably a temperament thing: kimi's reasoning step actively hunts for
+same-root-cause comments to merge; haiku takes more instructions
+literally. Whichever is "correct" depends on the paper — a 25-page
+PDF likely benefits from kimi's dedup; a short focused paper might
+prefer haiku's verbosity. Worth remembering when picking models for
+review-style consolidation tasks.
+
 ---
 
 ## Surprises from the first build (prose-aggregate, minimax)

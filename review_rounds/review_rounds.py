@@ -496,7 +496,11 @@ def consolidate(state: ReviewState) -> dict:
         summary=state["summary"],
         comments_json=_json.dumps(indexed, indent=2),
     )
-    structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
+    # 64k visible output budget — reasoning models chew through a big chunk of
+    # max_tokens invisibly, and ConsolidationOutput with 50+ nested issues
+    # easily needs 15k+ tokens of visible JSON. 16k was getting truncated
+    # mid-object on kimi-k2.6; 64k gives generous headroom. See NOTES R11.
+    structured = _make_llm(max_tokens=65536, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
     try:
         out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
     except (ValidationError, Exception) as e:

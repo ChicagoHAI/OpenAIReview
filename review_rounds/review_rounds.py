@@ -62,6 +62,7 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
+from pydantic import ValidationError
 
 from reviewer.parsers import parse_document
 from reviewer.skill.scripts.prepare_workspace import split_sections as _skill_split_sections
@@ -475,7 +476,26 @@ def consolidate(state: ReviewState) -> dict:
         comments_json=_json.dumps(indexed, indent=2),
     )
     structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
-    out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
+    try:
+        out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
+    except (ValidationError, Exception) as e:
+        # Consolidate is the last LLM call — if it fails, synthesize a
+        # minimal fallback from raw comments so publish still produces a
+        # viz JSON (lower quality but non-empty).
+        print(f"  [warn] consolidate failed: {type(e).__name__}: {str(e)[:200]}; using raw comments as issues")
+        fallback = [
+            ConsolidatedIssue(
+                title=c.title, quote=c.quote, explanation=c.explanation,
+                comment_type=c.comment_type, severity="moderate",
+                source_section_idx=c.source_section_idx, merged_from=[i],
+            )
+            for i, c in enumerate(comments)
+        ]
+        return {
+            "final_issues": fallback,
+            "overall_feedback": "Consolidation step failed; raw per-persona comments listed without dedup or severity tiering.",
+            "usage": USAGE.snapshot(),
+        }
     return {
         "final_issues": list(out.issues),
         "overall_feedback": out.overall_feedback,
@@ -571,7 +591,14 @@ def route_from_gate(state: ReviewState):
 
 
 def _review_section(state: PersonaState) -> dict:
-    """Review the current cursor's section; append comments to section_comments."""
+    """Review the current cursor's section; append comments to section_comments.
+
+    Defensive: catches ValidationError / API errors from the structured-
+    output call. OpenRouter + some models don't strictly enforce JSON
+    schema — we've seen kimi return comments missing required fields
+    (e.g. `title` absent). Rather than crash the whole run on one bad
+    section, log and emit an empty list for that section so the loop
+    keeps advancing and sibling personas stay unaffected."""
     cursor = state["section_cursor"]
     section = state["sections"][cursor]
     prompt = REVIEW_SECTION_PROMPT.format(
@@ -582,7 +609,14 @@ def _review_section(state: PersonaState) -> dict:
         section_text=section.text,
     )
     structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=CommentList)
-    out: CommentList = structured.invoke(prompt)  # type: ignore[assignment]
+    try:
+        out: CommentList = structured.invoke(prompt)  # type: ignore[assignment]
+    except (ValidationError, Exception) as e:
+        print(
+            f"  [warn] review_section failed for persona {state['persona_idx']} "
+            f"section {section.idx}: {type(e).__name__}: {str(e)[:200]}"
+        )
+        return {"section_comments": [], "section_cursor": cursor + 1, "usage": USAGE.snapshot()}
 
     # Stamp provenance on every comment (LLM doesn't fill these).
     stamped: list[Comment] = []
@@ -594,6 +628,7 @@ def _review_section(state: PersonaState) -> dict:
     return {
         "section_comments": stamped,    # reducer appends
         "section_cursor": cursor + 1,    # plain write; single sequential edge
+        "usage": USAGE.snapshot(),
     }
 
 
@@ -614,7 +649,17 @@ def _self_critique(state: PersonaState) -> dict:
         comments_json=_json.dumps(indexed, indent=2),
     )
     structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=CriticVerdict)
-    verdict: CriticVerdict = structured.invoke(prompt)  # type: ignore[assignment]
+    try:
+        verdict: CriticVerdict = structured.invoke(prompt)  # type: ignore[assignment]
+    except (ValidationError, Exception) as e:
+        # Fall back to keep-everything if the critic fails — better to over-
+        # emit than to drop all of this persona's work. Consolidation will
+        # still dedupe/prune downstream.
+        print(
+            f"  [warn] self_critique failed for persona {state['persona_idx']}: "
+            f"{type(e).__name__}: {str(e)[:200]}; keeping all comments"
+        )
+        return {"comments": all_comments, "usage": USAGE.snapshot()}
 
     kept = [all_comments[i] for i in verdict.kept_indices if 0 <= i < len(all_comments)]
     # Emit to the boundary `comments` channel (shared reducer with parent).

@@ -166,6 +166,58 @@ PDF likely benefits from kimi's dedup; a short focused paper might
 prefer haiku's verbosity. Worth remembering when picking models for
 review-style consolidation tasks.
 
+**R15. Review quality deep-dive: kimi wins on substance, haiku on
+recall.** Spawned an opus-4.7 subagent to spot-check both methods'
+output against the actual paper text. Findings:
+
+- **Haiku fabricated a major issue** (#10 "Critical framework sections
+  entirely empty"). The claimed "empty sections" are actually defined
+  in paragraphs 70, 72, 294, 296. The `quote` field fabricated
+  markdown headers that don't appear in the paper. This is the most
+  dangerous class of LLM-review failure — the kind that makes human
+  reviewers stop trusting the whole output.
+
+- **Haiku contradicted itself** on major #4 (demanded a "separate
+  verification component" that the paper literally describes at line
+  80: *"A separate replicator evaluator then verifies…"*). The
+  reviewer persona didn't cross-read Method + Appendix A before
+  complaining.
+
+- **Kimi's 6/6 majors all passed spot-check** against the paper. All
+  quotes verbatim. Includes one genuinely strong finding haiku
+  missed entirely: **authors-as-sole-annotators conflict of interest**
+  (line 92: "three human authors as annotators"). That's probably the
+  single strongest methodological critique available for this paper.
+
+- **Kimi's dedup is legitimate.** Every checked `merged_from` group
+  collapses comments targeting the same root cause. Haiku's
+  non-dedup produced 6 separate comments on paragraph 90 that are
+  all the same structural flaw — noise, not useful granularity.
+
+- **Kimi's regression**: all 34 consolidated issues have
+  `source_section_idx=-1`. The structured output fills in section
+  provenance during persona review but kimi doesn't preserve it
+  through consolidation. Haiku does. Future fix: prompt kimi
+  explicitly to carry section indices through, or post-hoc
+  reconstruct via quote-matching.
+
+- **Severity calibration**: haiku inflates ("major" tagged on
+  acknowledgements-section nitpicks). Kimi's 6 majors all threaten
+  paper-level conclusions.
+
+**For stock use, kimi is the better reviewer on long papers.** One
+fabricated major from haiku costs more reviewer credibility than
+haiku's extra recall buys back. Haiku is useful when you want maximum
+recall and will hand-filter — expect ~15-25% of its output to be
+duplicates, nitpicks, or (in the worst case) invented structural
+claims.
+
+Full subagent report with paper-grounded citations available on
+request — worth referencing when explaining to interviewers *which*
+specific primitives paid off. The cross-model comparison itself was
+only possible because the kata emits byte-compatible viz JSON for
+both models merged into one file.
+
 ---
 
 ## Surprises from the first build (prose-aggregate, minimax)

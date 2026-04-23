@@ -36,6 +36,7 @@ from operator import add
 from pathlib import Path
 from typing import Annotated, TypedDict
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
@@ -48,6 +49,7 @@ from review_rounds.models import Draft
 
 
 CHECKPOINT_DB = Path(__file__).parent / ".checkpoints.db"
+OUTPUTS_DIR = Path(__file__).parent / "outputs"
 
 MODEL = "minimax/minimax-m2.7"
 PROVIDER = "openrouter"
@@ -324,8 +326,69 @@ def human_gate(state: ReviewState) -> dict:
     return {"decision": decision if isinstance(decision, str) else "approve"}
 
 
-def publish(state: ReviewState) -> dict:
+def publish(state: ReviewState, config: RunnableConfig) -> dict:
+    """Terminal node. Writes the final review to outputs/<thread_id>.md.
+
+    The second arg makes LangGraph pass RunnableConfig so we can pull the
+    thread_id. Saving here (rather than in _cmd_run) means the file is
+    produced regardless of which process invokes approve — run, resume,
+    or a fork that got approved."""
+    thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+    path = _write_output(thread_id, state)
+    print(f"[saved] {path}")
     return {}
+
+
+def _write_output(thread_id: str, state: ReviewState) -> Path:
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = OUTPUTS_DIR / f"{thread_id}.md"
+
+    # Dedupe drafts by persona_idx the same way critic_aggregate does — the
+    # append-only `add` reducer means the raw list may contain stale entries
+    # from redo:N or fork-override cycles.
+    latest: dict[int, Draft] = {}
+    for d in state.get("drafts", []) or []:
+        latest[d.persona_idx] = d
+    drafts = [latest[i] for i in sorted(latest)]
+    edits = state.get("edits") or {}
+
+    lines = [
+        f"# Review — {state.get('paper_title', '')}",
+        "",
+        f"- **Thread:** `{thread_id}`",
+        f"- **Paper:** `{state.get('paper_path', '')}`",
+        f"- **Decision:** `{state.get('decision') or 'n/a'}`",
+        "",
+        "## Aggregate",
+        "",
+        state.get("aggregate", "_no aggregate produced_"),
+        "",
+        "## Individual drafts",
+        "",
+    ]
+    for d in drafts:
+        final_text = edits.get(str(d.persona_idx), d.final)
+        lines.extend([
+            f"### Reviewer {d.persona_idx + 1}: {d.persona}",
+            f"*verdict: {d.verdict} — {d.verdict_reason}*",
+            "",
+            "**Initial draft**",
+            "",
+            d.initial,
+            "",
+            "**Challenge**",
+            "",
+            d.challenge,
+            "",
+            "**Final**",
+            "",
+            final_text,
+            "",
+            "---",
+            "",
+        ])
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def route_from_gate(state: ReviewState):
@@ -610,6 +673,20 @@ def _cmd_fork(args) -> int:
     return 0
 
 
+def _cmd_dump(args) -> int:
+    """Save the current state of a thread to outputs/<thread_id>.md without
+    advancing the graph. Useful when paused at human_gate."""
+    config = {"configurable": {"thread_id": args.thread_id}}
+    graph = build_graph(_open_checkpointer())
+    snap = graph.get_state(config)
+    if not snap.values:
+        print(f"No state found for thread {args.thread_id}")
+        return 1
+    path = _write_output(args.thread_id, snap.values)
+    print(f"[saved] {path}")
+    return 0
+
+
 def _cmd_topology(_args) -> int:
     graph = build_graph()
     try:
@@ -689,6 +766,10 @@ def main(argv: list[str] | None = None) -> int:
     p_fork.add_argument("--persona", type=int, required=True)
     p_fork.add_argument("--draft", required=True)
     p_fork.set_defaults(func=_cmd_fork)
+
+    p_dump = sub.add_parser("dump", help="save current thread state to outputs/<thread_id>.md")
+    p_dump.add_argument("thread_id")
+    p_dump.set_defaults(func=_cmd_dump)
 
     p_top = sub.add_parser("topology", help="print the graph topology")
     p_top.set_defaults(func=_cmd_topology)

@@ -166,9 +166,13 @@ def _make_llm(max_tokens: int = PER_CALL_MAX_TOKENS, reasoning_max: int = 1024) 
         api_key=os.environ["OPENROUTER_API_KEY"],
         max_tokens=max_tokens,
         # timeout covers each attempt; max_retries bounds total time per node.
-        # OpenRouter can hang individual requests — seen during kata runs.
-        timeout=90,
-        max_retries=3,
+        # Reasoning models on OpenRouter can legitimately take 2-3 min on
+        # complex structured-output calls (kimi-k2.6 spending 4k reasoning
+        # tokens + 16k visible). A 90s cutoff would abort real calls
+        # mid-flight and waste retries. 300s + 2 retries bounds total to
+        # ~15 min/node and avoids killing legit slow generations.
+        timeout=300,
+        max_retries=2,
         extra_body={"reasoning": {"max_tokens": reasoning_max}},
         callbacks=[USAGE],
     )

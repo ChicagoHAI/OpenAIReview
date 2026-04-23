@@ -85,7 +85,7 @@ CHECKPOINT_DB = Path(__file__).parent / ".checkpoints.db"
 OUTPUTS_DIR = Path(__file__).parent / "outputs"
 DEFAULT_VIZ_DIR = Path("review_results")
 
-MODEL = "moonshotai/kimi-k2.6"
+MODEL = os.environ.get("REVIEW_ROUNDS_MODEL", "moonshotai/kimi-k2.6")
 OCR_ENGINE = "mistral"
 PAPER_MAX_TOKENS = 20_000
 PER_CALL_MAX_TOKENS = 8_096
@@ -184,6 +184,24 @@ def _merge_edits(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     return {**left, **right}
 
 
+def _merge_usage(left: dict | None, right: dict | None) -> dict:
+    """Reducer for the usage channel: element-wise max.
+
+    USAGE is module-level and monotonically increasing within a process, so
+    every write is a cumulative snapshot. Max across concurrent writes
+    (three parallel persona subgraphs) keeps the largest/latest total
+    without double-counting."""
+    left = left or {}
+    right = right or {}
+    out = dict(left)
+    for k, v in right.items():
+        if isinstance(v, (int, float)) and isinstance(out.get(k), (int, float)):
+            out[k] = max(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 class ReviewState(TypedDict, total=False):
     paper_path: str
     paper_title: str
@@ -197,6 +215,11 @@ class ReviewState(TypedDict, total=False):
     overall_feedback: str
     decision: str                                   # "approve" | "redo:<idx>" | "edit"
     edits: Annotated[dict[str, str], _merge_edits]
+    # Usage/cost tracking. Persisted in state so it survives across process
+    # boundaries (run process pauses at human_gate; resume process runs
+    # publish with a fresh USAGE module-level collector, so we read from
+    # here instead).
+    usage: Annotated[dict, _merge_usage]
 
 
 class PersonaState(TypedDict, total=False):
@@ -219,6 +242,7 @@ class PersonaOutput(TypedDict, total=False):
     concurrent subgraphs would fight over non-reducer fields at fan-in."""
 
     comments: Annotated[list[Comment], add]
+    usage: Annotated[dict, _merge_usage]
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +393,7 @@ def summarize_paper(state: ReviewState) -> dict:
     llm = _make_llm(max_tokens=4096)
     # Free-form summary, no Pydantic schema — not every node needs structured output.
     msg = llm.invoke(prompt)
-    return {"summary": msg.content}
+    return {"summary": msg.content, "usage": USAGE.snapshot()}
 
 
 def plan_assignments(state: ReviewState) -> dict:
@@ -401,7 +425,7 @@ def plan_assignments(state: ReviewState) -> dict:
     for i, idx in enumerate(leftovers):
         assignments[i % max(len(personas), 1)].append(idx)
 
-    return {"personas": personas, "assignments": assignments}
+    return {"personas": personas, "assignments": assignments, "usage": USAGE.snapshot()}
 
 
 def fan_out_personas(state: ReviewState) -> list[Send]:
@@ -448,7 +472,11 @@ def consolidate(state: ReviewState) -> dict:
     )
     structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
     out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
-    return {"final_issues": list(out.issues), "overall_feedback": out.overall_feedback}
+    return {
+        "final_issues": list(out.issues),
+        "overall_feedback": out.overall_feedback,
+        "usage": USAGE.snapshot(),
+    }
 
 
 def human_gate(state: ReviewState) -> dict:
@@ -479,9 +507,14 @@ def human_gate(state: ReviewState) -> dict:
 
 
 def publish(state: ReviewState, config: RunnableConfig) -> dict:
-    """Terminal node. Writes markdown dump + viz JSON."""
+    """Terminal node. Writes markdown dump + viz JSON.
+
+    Usage is sourced from state["usage"] because publish often runs in a
+    different Python process than the LLM-calling nodes (after a human_gate
+    interrupt + resume), where the module-level USAGE collector is fresh."""
     thread_id = config.get("configurable", {}).get("thread_id", "unknown")
-    md_path = _write_markdown(thread_id, state)
+    usage = _merge_usage(state.get("usage") or {}, USAGE.snapshot())
+    md_path = _write_markdown(thread_id, state, usage=usage)
     viz_path = write_viz_json(
         paper_path=state.get("paper_path", ""),
         paper_title=state.get("paper_title", ""),
@@ -490,17 +523,16 @@ def publish(state: ReviewState, config: RunnableConfig) -> dict:
         overall_feedback=state.get("overall_feedback", ""),
         model=MODEL,
         output_dir=DEFAULT_VIZ_DIR,
-        usage=USAGE.snapshot(),
+        usage=usage,
     )
-    usage = USAGE.snapshot()
     print(f"[saved] {md_path}")
     print(f"[saved] {viz_path}")
     print(
-        f"[usage] calls={usage['calls']} "
-        f"prompt={usage['prompt_tokens']} "
-        f"completion={usage['completion_tokens']} "
-        f"reasoning={usage['reasoning_tokens']} "
-        f"cost=${usage['cost_usd']:.4f}"
+        f"[usage] calls={usage.get('calls', 0)} "
+        f"prompt={usage.get('prompt_tokens', 0)} "
+        f"completion={usage.get('completion_tokens', 0)} "
+        f"reasoning={usage.get('reasoning_tokens', 0)} "
+        f"cost=${usage.get('cost_usd', 0):.4f}"
     )
     return {}
 
@@ -582,7 +614,10 @@ def _self_critique(state: PersonaState) -> dict:
 
     kept = [all_comments[i] for i in verdict.kept_indices if 0 <= i < len(all_comments)]
     # Emit to the boundary `comments` channel (shared reducer with parent).
-    return {"comments": kept}
+    # Also emit cumulative usage snapshot — fan-in max-reducer keeps the
+    # largest across the three parallel personas (all seeing the same
+    # module-level USAGE counter).
+    return {"comments": kept, "usage": USAGE.snapshot()}
 
 
 def build_persona_subgraph():
@@ -657,9 +692,11 @@ def _collect_interrupts(result) -> list:
     return []
 
 
-def _write_markdown(thread_id: str, state: ReviewState) -> Path:
+def _write_markdown(thread_id: str, state: ReviewState, usage: dict | None = None) -> Path:
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
     path = OUTPUTS_DIR / f"{thread_id}.md"
+    if usage is None:
+        usage = _merge_usage(state.get("usage") or {}, USAGE.snapshot())
 
     issues = state.get("final_issues", []) or []
     sections = state.get("sections", []) or []
@@ -677,7 +714,7 @@ def _write_markdown(thread_id: str, state: ReviewState) -> Path:
         f"- **Personas:** {len(personas)}",
         f"- **Raw comments:** {len(raw_comments)}",
         f"- **Final issues:** {len(issues)}",
-        f"- **Usage:** {USAGE.snapshot()}",
+        f"- **Usage:** {usage}",
         "",
         "## Overall feedback",
         "",

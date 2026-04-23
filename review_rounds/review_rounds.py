@@ -413,7 +413,28 @@ def plan_assignments(state: ReviewState) -> dict:
         section_list=section_list,
     )
     structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=PlanOutput)
-    plan: PlanOutput = structured.invoke(prompt)  # type: ignore[assignment]
+    try:
+        plan: PlanOutput = structured.invoke(prompt)  # type: ignore[assignment]
+    except (ValidationError, Exception) as e:
+        # Kimi-k2.6 occasionally returns empty content after burning its
+        # reasoning budget — LangChain then raises ValueError. Fall back to
+        # generic personas + round-robin section assignment so the graph
+        # can still proceed.
+        print(f"  [warn] plan_assignments failed: {type(e).__name__}: {str(e)[:200]}; using fallback personas")
+        fallback_personas = [
+            "A methodology-focused reviewer who focuses on experimental rigor and reproducibility",
+            "A clarity-focused reviewer who focuses on exposition and logical flow",
+            "A prior-art reviewer who focuses on novelty and literature positioning",
+        ]
+        n_sections = len(state["sections"])
+        fallback_assignments = {i: [] for i in range(3)}
+        for idx in range(n_sections):
+            fallback_assignments[idx % 3].append(idx)
+        return {
+            "personas": fallback_personas,
+            "assignments": fallback_assignments,
+            "usage": USAGE.snapshot(),
+        }
 
     # list[list[int]] on the wire → dict[int, list[int]] in state. Normalize
     # to exactly 3 personas + 3 assignments, padding with empty lists if the

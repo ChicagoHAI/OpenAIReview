@@ -9,7 +9,6 @@ equations, theorems, and key claims. For each passage:
 """
 
 import json
-import re
 from datetime import date
 
 from .client import chat
@@ -22,7 +21,7 @@ from .prompts import (
     SUMMARY_UPDATE_PROMPT,
     TECHNICAL_FILTER_PROMPT,
 )
-from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_response
 
 
 # ---------------------------------------------------------------------------
@@ -178,21 +177,16 @@ def consolidate_comments(
     result.total_prompt_tokens += usage["prompt_tokens"]
     result.total_completion_tokens += usage["completion_tokens"]
 
-    arr_match = re.search(r"\[.*\]", response, re.DOTALL)
-    if arr_match:
-        try:
-            items = json.loads(arr_match.group(0))
-            consolidated = parse_comments_from_list(items)
-            # Preserve paragraph_index from original comments by matching quotes
-            orig_by_quote = {}
-            for c in comments:
-                orig_by_quote[c.quote[:200]] = c.paragraph_index
-            for c in consolidated:
-                if c.paragraph_index is None:
-                    c.paragraph_index = orig_by_quote.get(c.quote[:200])
-            return consolidated
-        except json.JSONDecodeError:
-            pass
+    consolidated = parse_comments_from_response(response)
+    if consolidated:
+        # Preserve paragraph_index from original comments by matching quotes
+        orig_by_quote = {}
+        for c in comments:
+            orig_by_quote[c.quote[:200]] = c.paragraph_index
+        for c in consolidated:
+            if c.paragraph_index is None:
+                c.paragraph_index = orig_by_quote.get(c.quote[:200])
+        return consolidated
 
     return comments  # fallback: return originals if parsing fails
 
@@ -289,17 +283,12 @@ def review_progressive(
             print(f"    WARNING: Empty response for passage {idx+1}/{len(passages)} "
                   f"(model={model}). No comments extracted from this passage.")
         else:
-            arr_match = re.search(r"\[.*\]", response, re.DOTALL)
-            if arr_match:
-                try:
-                    items = json.loads(arr_match.group(0))
-                    new_comments = parse_comments_from_list(items)
-                    locate_comments_in_window(
-                        new_comments, idx, passages, paragraphs, window_size,
-                    )
-                    all_comments.extend(new_comments)
-                except json.JSONDecodeError:
-                    pass
+            new_comments = parse_comments_from_response(response)
+            if new_comments:
+                locate_comments_in_window(
+                    new_comments, idx, passages, paragraphs, window_size,
+                )
+                all_comments.extend(new_comments)
 
         print(f"    Passage {idx+1}/{len(passages)}: "
               f"{len(new_comments)} comments, "

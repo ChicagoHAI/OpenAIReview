@@ -27,7 +27,7 @@ Exercises the LangGraph primitives:
   - get_state_history() + update_state() for time-travel.
   - Conditional edges (declarative routing, not LLM-chosen).
 
-LLM calls use `langchain_openai.ChatOpenAI.with_structured_output(PydanticModel)`
+LLM calls use `langchain_openai.ChatOpenAI.with_structured_output(method="json_schema", schema=PydanticModel)`
 so every node gets a validated Pydantic instance instead of raw JSON strings.
 
 CLI (stateful kata):
@@ -383,7 +383,7 @@ def plan_assignments(state: ReviewState) -> dict:
         summary=state["summary"],
         section_list=section_list,
     )
-    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(PlanOutput)
+    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=PlanOutput)
     plan: PlanOutput = structured.invoke(prompt)  # type: ignore[assignment]
 
     # list[list[int]] on the wire → dict[int, list[int]] in state. Normalize
@@ -446,7 +446,7 @@ def consolidate(state: ReviewState) -> dict:
         summary=state["summary"],
         comments_json=_json.dumps(indexed, indent=2),
     )
-    structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(ConsolidationOutput)
+    structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
     out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
     return {"final_issues": list(out.issues), "overall_feedback": out.overall_feedback}
 
@@ -545,7 +545,7 @@ def _review_section(state: PersonaState) -> dict:
         section_heading=section.heading,
         section_text=section.text,
     )
-    structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(CommentList)
+    structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=CommentList)
     out: CommentList = structured.invoke(prompt)  # type: ignore[assignment]
 
     # Stamp provenance on every comment (LLM doesn't fill these).
@@ -577,7 +577,7 @@ def _self_critique(state: PersonaState) -> dict:
         persona=state["persona"],
         comments_json=_json.dumps(indexed, indent=2),
     )
-    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(CriticVerdict)
+    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=CriticVerdict)
     verdict: CriticVerdict = structured.invoke(prompt)  # type: ignore[assignment]
 
     kept = [all_comments[i] for i in verdict.kept_indices if 0 <= i < len(all_comments)]

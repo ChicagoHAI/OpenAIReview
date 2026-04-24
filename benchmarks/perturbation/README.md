@@ -5,15 +5,16 @@ Benchmark for evaluating how well LLM reviewers detect **seeded errors** in math
 ## Pipeline
 
 ```
-extract → generate → validate → inject → review → score
+extract → generate → validate → verify → inject → review → score
 ```
 
-1. **Extract** (`extract.py`): Identify candidate math spans (equations, symbols) in the paper.
-2. **Generate** (`generate.py`): Use an LLM to create perturbations for each candidate span.
-3. **Validate** (`validate.py`): Check that perturbations are valid (original exists, no overlaps, no garbled text).
-4. **Inject** (`inject.py`): Apply valid perturbations to produce a corrupted paper.
-5. **Review**: Run `openaireview review` on the corrupted paper with each (model, method) combination.
-6. **Score** (`score.py`): Compare review comments against the perturbation manifest using fuzzy substring matching + LLM-as-judge.
+1. **Extract** (`extract.py`): Identify candidate math spans (equations, symbols). Each span carries `verifier_related_passages` — passages elsewhere in the paper referencing the same symbols (used downstream by the verifier). Optionally also `related_passages` shown to the generator (`context_mode=related`).
+2. **Generate** (`generate.py`): An LLM produces perturbations + a verbatim `contradicts_quote` from the paper that the perturbation contradicts. The prompt teaches the typo-shaped vs substantive-error distinction (`substantive_guidance=on`).
+3. **Validate** (`validate.py`): Structural tests 1–4 — original exists, perturbed differs, no span overlap, no garbled output.
+4. **Verify** (`verify.py`): Test #5 — a strong-model judge drops `typo-shaped` and `not-an-error` perturbations, keeping only `substantive` ones. See [Verifier](#verifier).
+5. **Inject** (`inject.py`): Apply surviving perturbations to produce a corrupted paper.
+6. **Review**: Run `openaireview review` on the corrupted paper with each (model, method) combination.
+7. **Score** (`score.py`): Compare review comments against the perturbation manifest using fuzzy substring matching + LLM-as-judge.
 
 ## Error Types
 
@@ -59,6 +60,17 @@ score_method: llm           # llm | fuzzy | semantic
 perturb_model: google/gemini-3-flash-preview
 score_model:   google/gemini-3-flash-preview
 
+# Generator context-provision strategy:
+context_mode: window        # none | window | related
+context_window: 200
+related_passages_max: 5
+
+# Substantive-error verifier (test #5):
+verifier_model: anthropic/claude-sonnet-4-6
+verifier_reasoning: none    # none | low | medium | high
+verifier_max_workers: 8
+skip_verifier: false
+
 review_models:
   - google/gemini-3-flash-preview
   - z-ai/glm-4.6
@@ -67,10 +79,55 @@ review_methods:
   - zero_shot
   - progressive
 
-results_dir: benchmarks/perturbation/results
+results_dir: benchmarks/perturbation/results/short
 ```
 
 Papers are streamed from the [proof-pile](https://huggingface.co/datasets/hoskinson-center/proof-pile) dataset and binned by word count.
+
+## Verifier
+
+The verifier (`verify.py`, test #5) judges each surviving perturbation as `substantive` / `typo-shaped` / `not-an-error` and drops everything that isn't substantive. Two layers:
+
+1. **Structural pre-check** (deterministic, no LLM): rejects mixed-direction inequality chains, operator salad, runaway spans, literal `\n`/`\t` escape artifacts.
+2. **LLM judge**: 3-step prompt (self-coherence / quote specificity / downstream dependence) with explicit tie-breaking rules.
+
+Production setup is `anthropic/claude-sonnet-4-6 @ reasoning=none` — selected after gold-set eval showed `medium` reasoning over-thinks the "almost-always-typo-shaped" rules and underperforms `none` (~3-4 pts on training, ~3.7 pts on held-out). Override per-run via `verifier_model` / `verifier_reasoning` in the config, or with `--skip-verifier` to run only the structural tests 1–4.
+
+### Validating the verifier itself
+
+A hand-labeled gold set (89 training + 83 held-out perturbations) lives at `analyses/verifier_eval/`. Each example carries a verdict (`substantive` / `typo-shaped` / `not-an-error`) and a rationale. Re-run the eval with:
+
+```bash
+# Training set (production prompt + structural pre-check)
+python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant after
+
+# Held-out set
+python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant after \
+    --gold benchmarks/perturbation/analyses/verifier_eval/gold_set_heldout.json \
+    --tag heldout
+
+# Compare to legacy prompt (no pre-check, why_wrong included)
+python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant before
+```
+
+Each run writes `analyses/verifier_eval/results/{split}_{variant}.json` with per-example predictions, accuracy, per-class F1, and per-error-type accuracy. Canonical accuracy tables across model/reasoning combinations live in `analyses/verifier_eval/README.md`.
+
+## Analyses
+
+`analyses/` holds A/B comparison scripts that exercise the perturb pipeline under different settings on the same paper set. Each emits raw JSON next to the run artifacts under `<results_dir>/` and a rendered markdown report under `reports/`.
+
+- `compare_context_modes.py` — sweep `none` / `window` / `related` generator context modes. `--modes` flag for subset runs.
+- `compare_substantive_guidance.py` — A/B between `substantive_guidance=on` vs `off` in the generator prompt.
+
+```bash
+python benchmarks/perturbation/analyses/compare_substantive_guidance.py \
+    benchmarks/perturbation/configs/compare_substantive_guidance_10papers.yaml
+
+python benchmarks/perturbation/analyses/compare_context_modes.py \
+    benchmarks/perturbation/configs/compare_10papers.yaml --modes window,related
+```
+
+`reports/README.md` indexes completed analyses with their key findings.
 
 ## Results Layout
 
@@ -118,7 +175,7 @@ The scorer uses a two-stage filter:
 
 ## Known Limitations
 
-- The perturb stage targets `n_per_error=2` perturbations per error type (8 total per paper), but the LLM often reuses the same candidate span for both, causing the validator to reject the duplicate. Typical yield is ~4-5 per paper.
+- Surface generation now targets 3 error types × 2 per type = 6 perturbations per paper (down from 8 — `symbol_binding` was dropped because bare symbol swaps are structurally typo-shaped). After verifier filtering, typical yield is ~4 substantive perturbations per short paper.
 - Fuzzy substring matching can miss catches where the reviewer heavily paraphrases the quoted text.
 - `cost_usd` from OpenRouter metadata is unreliable for some models (notably qwen).
 

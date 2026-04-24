@@ -18,8 +18,29 @@ python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant afte
     --gold benchmarks/perturbation/analyses/verifier_eval/gold_set_heldout.json --tag heldout
 ```
 
-- `before`: legacy prompt (includes `why_wrong`), no structural precheck.
-- `after`: new 3-step prompt (no `why_wrong`), structural precheck enabled.
+### Variants
+
+**`before` — legacy prompt, no structural precheck.** The starting baseline; everything goes to the LLM.
+
+- Prompt includes the generator's `why_wrong` rationale alongside the (original, perturbed, quote) triple. The model can lean on the generator's stated reason for the contradiction.
+- No-quote short-circuit: if the perturbation has no `contradicts_quote`, the verifier returns `not-an-error` without an LLM call.
+- No structural precheck: every perturbation goes to the LLM regardless of how malformed it looks.
+
+**`after` — tuned prompt, structural precheck enabled.** The production setup.
+
+- `why_wrong` removed from the prompt — generators were too easily fabricating plausible-sounding rationales that bluffed past the verifier (notably, this drove `symbol_binding` from 24% → 100% accuracy on training).
+- 3-step judgment procedure with explicit tie-breaking:
+  1. **Self-coherence** on the perturbed span alone — flag malformations like mixed-direction inequality chains, type/unit mismatches, operator salad, or symbols replaced with letters never bound in the quote/original.
+  2. **Quote specificity** — the cited quote must literally state the original value/symbol/operator (or an obvious equivalent). A quote that only mentions the same variable or topic is not enough.
+  3. **Downstream dependence** — does the perturbation actually break a statement the paper relies on elsewhere? If the value/symbol is stated once and never reused → typo-shaped.
+- Tie-breakers: when ambiguous between substantive and typo-shaped, choose typo-shaped. When no quote available and the perturbed span is a bare symbol swap or local index shift, also typo-shaped.
+- No-quote short-circuit removed: even without a quote, the LLM judges the perturbed span on its own merits (catches bare-symbol-swap typos that the legacy short-circuit miscategorized as not-an-error).
+- Structural precheck before the LLM call: deterministic regex rules reject obvious malformations without spending a token. Rules:
+  - Runaway perturbed span (>2× original length + 50 chars) — probably a span-extraction bug.
+  - Literal escape artifacts (`\n` / `\t` / `\r` not followed by a letter, when not in original) — pipeline bug, not a real perturbation.
+  - Mixed-direction inequality chain inside math content (`<` and `>` both present in a single math blob) — malformed by construction.
+  - Operator salad (two consecutive binary inequality operators).
+- JSON salvage: when the LLM output is truncated mid-JSON (reasoning ate the budget), regex-recovers the verdict token from the partial response so a single bad call doesn't drop a perturbation.
 
 Each run writes to a canonical path under `results/` (rerun overwrites in place):
 

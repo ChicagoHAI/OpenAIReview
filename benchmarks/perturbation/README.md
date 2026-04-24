@@ -18,14 +18,17 @@ extract → generate → validate → inject → review → score
 ## Error Types
 
 ### Surface errors
+
 Minimal single-token edits to math expressions:
+
 - `operator_or_sign` — flip `+`/`-`, `≤`/`≥`, `∪`/`∩`
-- `symbol_binding` — swap a symbol (`α`→`β`)
 - `index_or_subscript` — change sub/superscript (`x_i`→`x_{i+1}`)
 - `numeric_parameter` — change a number (`0.5`→`0.25`)
 
 ### Formal errors
+
 Deeper structural corruptions to definitions, theorems, and proofs:
+
 - `def_wrong`, `thm_wrong_condition`, `thm_wrong_conclusion`, `thm_wrong_scope`
 - `proof_wrong_direction`, `proof_missing_case`, `proof_wrong_assumption`, `proof_mismatch`
 
@@ -93,10 +96,11 @@ Experiment reports are in `reports/`. See `reports/surface_3models_short_medium.
 After a pipeline run completes, use `generate_report.py` to aggregate results across all papers, models, and methods:
 
 ```bash
-python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results_short
+python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results/short
 ```
 
 This prints markdown tables to stdout covering:
+
 - Configuration summary
 - Ground truth counts by length and error type
 - Recall by model × method (split by paper length and overall)
@@ -108,6 +112,7 @@ The output is meant to be reviewed and edited into a final report in `reports/`.
 ## Scoring
 
 The scorer uses a two-stage filter:
+
 1. **Fuzzy substring match** — checks if the perturbed text appears (approximately) in the review comment's quote, using normalized text coverage with a 0.75 threshold.
 2. **LLM-as-judge** — asks a model to rate whether the reviewer's explanation identifies the same error described in the perturbation's `why_wrong` field (score >= 3/5 = match).
 
@@ -116,3 +121,4 @@ The scorer uses a two-stage filter:
 - The perturb stage targets `n_per_error=2` perturbations per error type (8 total per paper), but the LLM often reuses the same candidate span for both, causing the validator to reject the duplicate. Typical yield is ~4-5 per paper.
 - Fuzzy substring matching can miss catches where the reviewer heavily paraphrases the quoted text.
 - `cost_usd` from OpenRouter metadata is unreliable for some models (notably qwen).
+

@@ -20,7 +20,7 @@ class Error(str, Enum):
     # surface
     NUMERIC_PARAMETER = "numeric_parameter"
     OPERATOR_OR_SIGN = "operator_or_sign"
-    SYMBOL_BINDING = "symbol_binding"
+    SYMBOL_BINDING = "symbol_binding"  # Deprecated for generation — bare symbol swaps are typo-shaped. Kept for back-compat with old manifests.
     INDEX_OR_SUBSCRIPT = "index_or_subscript"
 
     # formal
@@ -43,6 +43,16 @@ class CandidateSpan:
     context: str                       # surrounding text for the LLM
     error_type: str
     compatible_errors: list[Error] = field(default_factory=list)
+    # Passages elsewhere in the paper that reference the same symbols/names as
+    # this span, SHOWN TO THE GENERATOR. Populated only when context_mode ==
+    # "related". Each entry is {"offset": int, "snippet": str, "matched_tokens": list[str]}.
+    related_passages: list[dict] = field(default_factory=list)
+    # Verifier-facing related passages: ALWAYS populated regardless of
+    # context_mode. The verifier uses these to fairly judge perturbations
+    # generated in "none" mode (where contradicts_quote is absent) by sampling
+    # one as the contradicts_quote — putting all three modes on equal footing
+    # at verification time.
+    verifier_related_passages: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +64,9 @@ class Perturbation:
     original: str                      # exact text to find (from span store)
     perturbed: str                     # replacement text
     why_wrong: str                     # explanation of why this breaks internal consistency
+    # Exact verbatim quote from elsewhere in the paper that the perturbation
+    # contradicts. Empty string if the generator didn't produce one (legacy).
+    contradicts_quote: str = ""
 
 
 @dataclass

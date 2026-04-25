@@ -94,13 +94,16 @@
 
 The progressive method produces comments in multiple passes, then consolidates (deduplicates/merges) them. The tables above report **pooled** recall (consolidated + pre-consolidation comments fed together to the scorer). Below is the breakdown showing whether consolidation helps or hurts:
 
-| model | consolidated | pre-consolidation | pooled | comments (consol / pre-consol) |
-|---|---:|---:|---:|---|
-| gemini-3-flash-preview | 14/47 (30%) | 15/47 (32%) | 15/47 (32%) | 78 / 103 |
-| glm-4.6 | 22/47 (47%) | 21/47 (45%) | 22/47 (47%) | 141 / 151 |
-| qwen3-235b-a22b-2507 | 18/47 (38%) | 20/47 (43%) | 22/47 (47%) | 112 / 263 |
+
+| model                  | consolidated | pre-consolidation | pooled      | comments (consol / pre-consol) |
+| ---------------------- | ------------ | ----------------- | ----------- | ------------------------------ |
+| gemini-3-flash-preview | 14/47 (30%)  | 15/47 (32%)       | 15/47 (32%) | 78 / 103                       |
+| glm-4.6                | 22/47 (47%)  | 21/47 (45%)       | 22/47 (47%) | 141 / 151                      |
+| qwen3-235b-a22b-2507   | 18/47 (38%)  | 20/47 (43%)       | 22/47 (47%) | 112 / 263                      |
+
 
 **Findings:**
+
 - **gemini**: consolidation drops 1 detection (30% vs 32% pre-consol). Minimal impact — comment counts are similar (78 vs 103).
 - **glm-4.6**: consolidation is neutral or slightly helpful (+1 detection vs pre-consol alone). The consolidation step may produce more focused explanations that score better with the LLM judge.
 - **qwen**: consolidation hurts the most — drops from 20 to 18 detections. qwen generates far more raw comments (263 pre-consolidation vs 112 after), so consolidation aggressively prunes. Pooling recovers the lost detections and adds 2 more.

@@ -4,7 +4,7 @@ from datetime import date
 
 from .client import chat
 from .models import ReviewResult
-from .prompts import LARGE_PAPER_CHUNK_PROMPT, OCR_CAVEAT, ZERO_SHOT_PROMPT
+from .prompts import ZERO_SHOT_CHUNK_PROMPT, OCR_CAVEAT, ZERO_SHOT_PROMPT
 from .utils import assign_paragraph_indices, chunk_text, count_tokens, parse_review_response
 
 MAX_TOKENS_SINGLE = 100_000  # use single prompt if paper fits
@@ -44,7 +44,7 @@ def review_zero_shot(
         overall_parts = []
         for i, chunk in enumerate(chunks):
             ocr_caveat = OCR_CAVEAT if ocr else ""
-            prompt = LARGE_PAPER_CHUNK_PROMPT.format(
+            prompt = ZERO_SHOT_CHUNK_PROMPT.format(
                 chunk_num=i + 1,
                 total_chunks=len(chunks),
                 chunk_text=chunk,

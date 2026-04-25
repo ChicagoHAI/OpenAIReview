@@ -7,28 +7,7 @@ from datetime import date
 from .client import chat
 from .models import ReviewResult
 from .prompts import DEEP_CHECK_PROMPT, OCR_CAVEAT, OVERALL_FEEDBACK_PROMPT
-from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
-
-
-def split_into_paragraphs(text: str, min_chars: int = 100) -> list[str]:
-    """Split document into paragraphs, merging short ones with the next."""
-    raw = [p.strip() for p in text.split("\n\n") if p.strip()]
-    paragraphs: list[str] = []
-    carry = ""
-    for p in raw:
-        if carry:
-            p = carry + "\n\n" + p
-            carry = ""
-        if len(p) < min_chars:
-            carry = p
-        else:
-            paragraphs.append(p)
-    if carry:
-        if paragraphs:
-            paragraphs[-1] = paragraphs[-1] + "\n\n" + carry
-        else:
-            paragraphs.append(carry)
-    return paragraphs
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list, split_into_paragraphs
 
 
 def merge_into_chunks(
@@ -66,8 +45,10 @@ def get_chunk_window_context(
     """Get surrounding passages as context (asymmetric: more before, less after)."""
     before = window + 2
     after = max(1, window - 1)
+
     start = max(0, chunk_idx - before)
     end = min(len(chunks), chunk_idx + after + 1)
+    
     context_parts = []
     for i in range(start, end):
         _, text = chunks[i]

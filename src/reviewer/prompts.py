@@ -5,51 +5,41 @@
 REVIEWER_PREAMBLE = """\
 You are a thoughtful reviewer checking a passage from an academic paper. \
 Today's date is {current_date}. \
-Engage deeply with the material. For each potential issue, first try to understand the authors' \
+Engage with the material in DETAIL. For each potential issue, first try to understand the authors' \
 intent and check whether your concern is resolved by context before flagging it."""
 
 CHECK_CRITERIA = """\
 Check for:
-1. Mathematical / formula errors: wrong formulas, sign errors, missing factors, incorrect derivations, subscript or index errors
-2. Notation inconsistencies: symbols used in a way that contradicts their earlier definition
-3. Inconsistency between text and formal definitions: prose says one thing but the equation says another
-4. Parameter / numerical inconsistencies: stated values contradict what can be derived from definitions or tables elsewhere
-5. Insufficient justification: a key derivation step is skipped where the result is non-trivial
-6. Questionable claims: statements that overstate what has actually been shown
-7. Ambiguity that could mislead: flag only if a careful reader could reasonably reach an incorrect conclusion
-8. Underspecified methods: an algorithm, procedure, or modification is described too vaguely for a reader to reproduce — key choices, boundary conditions, or parameter settings are left implicit"""
+1. Mathematical correctness (e.g. wrong formulas, sign errors, missing factors, incorrect derivations, subscript or index errors)
+2. Notation inconsistencies (e.g. symbols used differently than defined, undefined notation)
+3. Definition/Theorem inconsistencies (e.g. statements that contradict formal definitions/theorems)
+4. Numerical inconsistencies (e.g. stated values contradict what can be derived from definitions, tables, or other sections)
+5. Insufficient justification (e.g. skipped non-trivial step in derivation)
+6. Overclaiming (e.g. statements that claim more than the evidence supports)
+7. Ambiguity (e.g. lack of detail/specification that could lead reader to incorrect conclusions)"""
 
 EXPLANATION_STYLE = """\
-For each issue, write like a careful reader thinking aloud. Describe what initially confused or \
-concerned you, what you checked to resolve it, and what specifically remains problematic. \
-Acknowledge what the authors got right before noting the issue. Reference standard results \
-or conventions in the field when relevant."""
+For each issue, state precisely what is correct, as well as what is wrong and why. Quote the exact text, explain the specific error, and if relevant, show what the correct version should be. Do not flag issues that can be resolved from context. Reference standard results or conventions in the field when relevant."""
 
 LENIENCY_RULES = """\
 Be lenient with:
-- Introductory and overview sections, which intentionally simplify or gloss over details
-- Forward references — symbols or claims that may be defined or justified later in the paper
-- Informal prose that paraphrases a formal result without repeating every qualifier"""
+- Introductory and overview sections
+- Forward references (e.g. notation/claims that may be defined/justified later in the paper)
+- Informal prose (e.g. conceptual descriptions for the purpose of intuition)"""
 
 OCR_CAVEAT = """\
-NOTE: This text was extracted from a PDF via OCR. While automatic corrections \
-have been applied, some notation errors may remain. If you spot a symbol that \
-appears inconsistent with surrounding usage (e.g. a variable that appears once \
-with a different letter than everywhere else), consider whether it is an OCR \
-misread rather than an author error. Flag it only if it would be a real issue \
-even assuming the most plausible intended symbol."""
+NOTE: This text was extracted via OCR and may contain notation errors. If a symbol appears inconsistent with surrounding usage, consider whether it is an OCR misread before flagging it."""
 
 DO_NOT_FLAG_BASE = """\
 Do NOT flag:
-- Formatting, typesetting, or capitalization issues
-- References to equations or sections not shown in the context (they exist elsewhere)
-- Trivial observations that any reader in the field would immediately resolve"""
+- Standard field conventions and notational shorthands (e.g. dropping summation bounds, overloading common symbols)
+- Formatting, typesetting, capitalization
+- References to content that exists elsewhere in the paper but isn't shown in the current context
+- Issues resolvable by a competent reader through basic inference
+- Stylistic or presentation preferences that don't affect correctness"""
 
 DO_NOT_FLAG_CHUNKED = DO_NOT_FLAG_BASE.rstrip() + """
 - Incomplete text at passage boundaries"""
-
-DO_NOT_FLAG_PROGRESSIVE = DO_NOT_FLAG_CHUNKED.rstrip() + """
-- Notation not yet in the summary — it may be introduced later"""
 
 JSON_ARRAY_OUTPUT = """\
 Return ONLY a JSON array (can be []). Each item:
@@ -59,29 +49,13 @@ Return ONLY a JSON array (can be []). Each item:
 - "type": "technical" or "logical"
 """
 
-JSON_OBJECT_OUTPUT = """\
-Return a JSON object with this structure:
-{{{{
-  "overall_feedback": "{feedback_desc}",
-  "comments": [
-    {{{{
-      "title": "short descriptive title of the issue",
-      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
-      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
-      "type": "technical" or "logical"
-    }}}}
-  ]
-}}}}
-
-Return ONLY the JSON object{empty_note}. No other text."""
-
-
 # ── Deep-check prompt (used by local and progressive methods) ───────────────
 
 DEEP_CHECK_PROMPT = f"""{REVIEWER_PREAMBLE}
 
 {{ocr_caveat}}
-FULL PAPER CONTEXT (relevant sections):
+
+CONTEXT:
 {{context}}
 
 ---
@@ -101,47 +75,22 @@ PASSAGE TO CHECK:
 
 {JSON_ARRAY_OUTPUT}"""
 
-DEEP_CHECK_PROGRESSIVE_PROMPT = f"""{REVIEWER_PREAMBLE}
+
+# ── Zero-shot prompts ───────────────────────────────────────────────────────
+
+ZERO_SHOT_PROMPT = f"""{REVIEWER_PREAMBLE}
 
 {{ocr_caveat}}
-FULL PAPER CONTEXT (relevant sections):
-{{context}}
 
 ---
 
-PASSAGE TO CHECK:
-{{passage}}
+PAPER:
+
+{{paper_text}}
 
 ---
 
 {CHECK_CRITERIA}
-
-{EXPLANATION_STYLE}
-
-{LENIENCY_RULES}
-
-{DO_NOT_FLAG_PROGRESSIVE}
-
-{JSON_ARRAY_OUTPUT}"""
-
-
-# ── Zero-shot prompts ───────────────────────────────────────────────────────
-
-ZERO_SHOT_PROMPT = f"""\
-You are a thoughtful reviewer reading the following academic paper. \
-Today's date is {{current_date}}. \
-Engage deeply with the material. For each potential issue, first try to understand the authors' \
-intent and check whether your concern is resolved by context before flagging it.
-
-Carefully check for:
-1. Mathematical / formula errors: wrong formulas, sign errors, missing factors, incorrect derivations, subscript or index errors
-2. Notation inconsistencies: symbols used in a way that contradicts their earlier definition
-3. Inconsistency between text and formal definitions: prose says one thing but the equation says another
-4. Parameter / numerical inconsistencies: stated values contradict what can be derived from definitions or tables elsewhere
-5. Insufficient justification: a key derivation step is skipped where the result is non-trivial
-6. Questionable claims: statements that overstate what has actually been shown
-7. Ambiguity that could mislead: flag only if a careful reader could reasonably reach an incorrect conclusion
-8. Underspecified methods: an algorithm, procedure, or modification is described too vaguely for a reader to reproduce — key choices, boundary conditions, or parameter settings are left implicit
 
 {EXPLANATION_STYLE}
 
@@ -151,42 +100,32 @@ Carefully check for:
 
 Return a JSON object with this structure:
 {{{{
-  "overall_feedback": "One paragraph high-level assessment of the paper's quality and main issues",
+  "overall_feedback": "one paragraph high-level assessment of the paper's quality and main issues",
   "comments": [
     {{{{
-      "title": "short descriptive title of the issue",
-      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
-      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
       "type": "technical" or "logical"
     }}}}
   ]
 }}}}
 
-Return ONLY the JSON object, no other text.
+Return ONLY the JSON object. No other text."""
+
+ZERO_SHOT_CHUNK_PROMPT = f"""{REVIEWER_PREAMBLE}
 
 {{ocr_caveat}}
+
 ---
 
-PAPER:
+PASSAGE TO CHECK:
 
-{{paper_text}}
-"""
+{{chunk_text}}
 
-LARGE_PAPER_CHUNK_PROMPT = f"""\
-You are a thoughtful reviewer checking a section of an academic paper. \
-Today's date is {{current_date}}. \
-Engage deeply with the material. For each potential issue, first try to understand the authors' \
-intent and check whether your concern is resolved by context before flagging it.
+---
 
-Carefully check for:
-1. Mathematical / formula errors: wrong formulas, sign errors, missing factors, incorrect derivations, subscript or index errors
-2. Notation inconsistencies: symbols used in a way that contradicts their earlier definition
-3. Inconsistency between text and formal definitions: prose says one thing but the equation says another
-4. Parameter / numerical inconsistencies: stated values contradict what can be derived from definitions or tables elsewhere
-5. Insufficient justification: a key derivation step is skipped where the result is non-trivial
-6. Questionable claims: statements that overstate what has actually been shown
-7. Ambiguity that could mislead: flag only if a careful reader could reasonably reach an incorrect conclusion
-8. Underspecified methods: an algorithm, procedure, or modification is described too vaguely for a reader to reproduce — key choices, boundary conditions, or parameter settings are left implicit
+{CHECK_CRITERIA}
 
 {EXPLANATION_STYLE}
 
@@ -194,34 +133,26 @@ Carefully check for:
 
 {DO_NOT_FLAG_CHUNKED}
 
-Return a JSON object:
+Return a JSON object with this structure:
 {{{{
   "overall_feedback": "brief assessment of this section",
   "comments": [
     {{{{
-      "title": "short descriptive title of the issue",
-      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
-      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
       "type": "technical" or "logical"
     }}}}
   ]
 }}}}
 
-Return ONLY the JSON object (comments can be [] if no issues found). No other text.
-
-{{ocr_caveat}}
----
-
-SECTION {{chunk_num}} of {{total_chunks}}:
-
-{{chunk_text}}
-"""
+Return ONLY the JSON object. No other text."""
 
 
 # ── Progressive-only prompts ────────────────────────────────────────────────
 
 SUMMARY_UPDATE_PROMPT = """\
-You are maintaining a concise running summary of an academic paper's key technical content. \
+You are maintaining a concise running summary of an academic paper. \
 This summary will be used as context when reviewing later sections of the paper.
 
 CURRENT SUMMARY:
@@ -229,7 +160,7 @@ CURRENT SUMMARY:
 
 ---
 
-NEW PASSAGE (section {passage_idx} of {total_passages}):
+NEW PASSAGE:
 {passage_text}
 
 ---
@@ -237,42 +168,36 @@ NEW PASSAGE (section {passage_idx} of {total_passages}):
 Update the summary to incorporate any NEW information from this passage. \
 Keep the summary structured and concise. Include:
 
-1. **Notation & Definitions**: Any new symbols, variables, or terms defined
+1. **Notation and Definitions**: Any new symbols, variables, or terms defined
 2. **Key Equations**: Important equations or formulas introduced (write them out, preserving LaTeX)
-3. **Theorems & Propositions**: Statements of theorems, lemmas, corollaries (brief statement, not proof)
+3. **Theorems and Propositions**: Statements of theorems, lemmas, corollaries (brief statement, not proof)
 4. **Assumptions**: Any stated assumptions or conditions
 5. **Key Claims**: Important results or conclusions established
 
 Rules:
-- PRESERVE all existing summary content unless it is superseded by new information
-- ADD new items from the passage
+- PRESERVE ALL existing summary content unless it is superseded by new information
 - Do NOT include commentary, proof details, or experimental results
 - Do NOT include information not in the passage or existing summary
-- Keep entries brief — one line per item where possible
+- Keep entries brief (one line per item where possible)
 - If the passage contains no new definitions, equations, or key claims, return the summary unchanged
 
-Return the updated summary directly (no JSON, no code fences)."""
+Return the updated summary directly."""
 
-TECHNICAL_FILTER_PROMPT = """\
-Does this passage from an academic paper contain technical content worth checking for errors? \
-Technical content includes: equations, proofs, derivations, theorems, algorithms, \
-specific quantitative claims, or formal definitions.
+SUBSTANTIAL_FILTER_PROMPT = """\
+Does this passage from an academic paper contain substantial content worth checking for errors? \
+Substantial content includes: equations, derivations, definitions, theorems, proofs, algorithms, \
+logical reasoning/claims.
 
-Non-technical content includes: introductions, related work surveys, acknowledgments, \
-reference lists, author bios, general motivation, or high-level overviews without formal claims.
+Non-substantial content includes: introductions, citations, acknowledgments, author bios.
 
-PASSAGE:
+PASSAGE TO CHECK:
 {passage}
 
 Answer with ONLY "yes" or "no"."""
 
 CONSOLIDATION_PROMPT = """\
 You are reviewing the complete list of issues found in an academic paper. \
-Your job is to consolidate this list: remove duplicates and merge closely related issues.
-
-Remove issues that:
-- Flag the same underlying problem as another issue (keep the better-explained one)
-- Flag standard conventions, notational shorthands, or well-known results
+Your job is to consolidate this list by removing duplicates. If multiple issues flag the SAME underlying problem, keep the most detailed and well-explained one and remove the others. 
 
 ISSUES FOUND:
 {issues_json}
@@ -284,9 +209,20 @@ Return [] if none survive filtering."""
 # ── Overall feedback (shared by local and progressive) ──────────────────────
 
 OVERALL_FEEDBACK_PROMPT = """\
-You are an expert academic reviewer. Based on the beginning of the paper below, \
-write one paragraph of high-level feedback on the paper's quality, clarity, \
-and most significant issues.
+You are an expert academic reviewer. Based on the beginning of the paper below, write one paragraph of high-level feedback that:
+- Identifies the paper's strongest contributions
+- Raises 3-5 major thematic critiques (reference specific passages)
+- Identifies conceptual tensions or unresolved contradictions in the paper's core argument
+- If empirical, evaluates whether the experimental design, baselines, and metrics are appropriate and whether the results actually support the conclusions
+
+Be direct and specific. Read like a domain expert, not a general-purpose critic. Do NOT summarize the paper. Do NOT list individual errors. 
+
+Things to consider:
+- Scope of claims: are the results narrow but presented as broadly applicable?
+- Mising baselines or comparisons: what obvious alternative approaches are not discussed?
+- Assumptions: are the key assumptions stated clearly, and are the realistic?           
+- Internal consistency: do the different parts of the paper (theory, experiments, conclusions) tell a coherent story?
+- Unresolved ideas: what are the most important questions the paper doesn't address?           
 
 PAPER (first 8000 characters):
 {paper_start}

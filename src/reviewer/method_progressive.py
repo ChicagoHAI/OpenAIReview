@@ -2,7 +2,7 @@
 
 Processes the paper sequentially, maintaining a running summary of definitions,
 equations, theorems, and key claims. For each passage:
-  1. (Optional) Pre-filter to skip non-technical content
+  1. (Optional) Pre-filter to skip non-substantial content
   2. Deep-check: running summary + window context + passage → find errors
   3. Summary update: current summary + passage → updated summary
   4. Post-hoc consolidation: one final call to deduplicate and prune low-confidence issues
@@ -16,39 +16,18 @@ from .client import chat
 from .models import ReviewResult
 from .prompts import (
     CONSOLIDATION_PROMPT,
-    DEEP_CHECK_PROGRESSIVE_PROMPT as DEEP_CHECK_PROMPT,
+    DEEP_CHECK_PROMPT,
     OCR_CAVEAT,
     OVERALL_FEEDBACK_PROMPT,
     SUMMARY_UPDATE_PROMPT,
-    TECHNICAL_FILTER_PROMPT,
+    SUBSTANTIAL_FILTER_PROMPT,
 )
-from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list, split_into_paragraphs
 
 
 # ---------------------------------------------------------------------------
 # Paragraph / passage helpers
 # ---------------------------------------------------------------------------
-
-def split_into_paragraphs(text: str, min_chars: int = 100) -> list[str]:
-    """Split document into paragraphs, merging short ones with the next."""
-    raw = [p.strip() for p in text.split("\n\n") if p.strip()]
-    paragraphs: list[str] = []
-    carry = ""
-    for p in raw:
-        if carry:
-            p = carry + "\n\n" + p
-            carry = ""
-        if len(p) < min_chars:
-            carry = p
-        else:
-            paragraphs.append(p)
-    if carry:
-        if paragraphs:
-            paragraphs[-1] = paragraphs[-1] + "\n\n" + carry
-        else:
-            paragraphs.append(carry)
-    return paragraphs
-
 
 def merge_into_passages(
     paragraphs: list[str],
@@ -135,14 +114,14 @@ def update_running_summary(
     return updated
 
 
-def is_technical_passage(
+def is_substantial_passage(
     passage_text: str,
     model: str,
     result: ReviewResult,
     reasoning_effort: str | None = None,
 ) -> bool:
-    """Use the model to decide if a passage has technical content worth checking."""
-    prompt = TECHNICAL_FILTER_PROMPT.format(passage=passage_text[:2000])
+    """Use the model to decide if a passage has substantial content worth checking."""
+    prompt = SUBSTANTIAL_FILTER_PROMPT.format(passage=passage_text[:2000])
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
@@ -206,14 +185,14 @@ def review_progressive(
     document_content: str,
     model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
-    skip_nontechnical: bool = False,
+    skip_nonsubstantial: bool = False,
     window_size: int = 3,
     ocr: bool = False,
 ) -> tuple[ReviewResult, ReviewResult]:
     """Review a paper using progressive summary approach.
 
     Processes the paper sequentially. For each passage:
-      1. (Optional) Pre-filter non-technical content
+      1. (Optional) Pre-filter non-substantial content
       2. Deep-check with running summary + window context
       3. Update the running summary
     Then consolidate all comments in a final pass.
@@ -243,10 +222,10 @@ def review_progressive(
         _, passage_text = passages[idx]
 
         # Step 0: Optional pre-filter
-        if skip_nontechnical:
-            if not is_technical_passage(passage_text, model, result, reasoning_effort):
+        if skip_nonsubstantial:
+            if not is_substantial_passage(passage_text, model, result, reasoning_effort):
                 skipped += 1
-                print(f"    Passage {idx+1}/{len(passages)}: SKIPPED (non-technical)")
+                print(f"    Passage {idx+1}/{len(passages)}: SKIPPED (non-substantial)")
                 # Still update summary even for skipped passages (may have definitions)
                 running_summary = update_running_summary(
                     current_summary=running_summary,
@@ -317,8 +296,8 @@ def review_progressive(
             max_summary_tokens=max_summary_tokens,
         )
 
-    if skip_nontechnical:
-        print(f"  Skipped {skipped}/{len(passages)} non-technical passages")
+    if skip_nonsubstantial:
+        print(f"  Skipped {skipped}/{len(passages)} non-substantial passages")
 
     # Generate overall feedback
     paper_start = document_content[:8000]

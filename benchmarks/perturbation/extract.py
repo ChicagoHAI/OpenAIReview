@@ -37,6 +37,7 @@ def extract_candidates(text: str, error_type: str) -> list[CandidateSpan]:
                 span_id=f"S{span_counter:04d}",
                 span_type=span_type,
                 text=match_text,
+                offset=match_offset,
                 context=context,
                 error_type=error_type,
                 compatible_errors=errors,

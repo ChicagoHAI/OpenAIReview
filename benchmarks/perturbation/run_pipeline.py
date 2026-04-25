@@ -54,6 +54,18 @@ class Config:
     review_methods: list[str] = field(default_factory=lambda: ["zero_shot", "local", "progressive"])
     results_dir: str = "results"
 
+    # Context-provision strategy for the generator.
+    context_mode: str = field(default="window", metadata={"choices": ["none", "window", "related"]})
+    substantive_guidance: bool = True
+    context_window: int = 200
+    related_passages_max: int = 5
+
+    # Substantive-error verifier (validation test #5).
+    verifier_model: str = "anthropic/claude-sonnet-4-6"
+    verifier_reasoning: str = field(default="none", metadata={"choices": ["none", "low", "medium", "high"]})
+    verifier_max_workers: int = 8
+    skip_verifier: bool = False
+
 
 def load_config(path: Path) -> Config:
     with path.open() as f:
@@ -158,11 +170,25 @@ def perturb(papers: list[dict], cfg: Config) -> None:
         tmp_path = perturb_dir / f"paper_{i:03d}.md"
         tmp_path.write_text(paper["text"])
 
-        print(f"\n  [1] Perturb  (model: {model_slug(cfg.perturb_model)})")
-        rc = run(["openaireview", "perturb", str(tmp_path),
-                  "--error_type", cfg.error_type,
-                  "--output-dir", str(perturb_dir),
-                  "--model", cfg.perturb_model])
+        print(f"\n  [1] Perturb  (model: {model_slug(cfg.perturb_model)}, "
+              f"context_mode: {cfg.context_mode})")
+        perturb_cmd = [
+            "openaireview", "perturb", str(tmp_path),
+            "--error_type", cfg.error_type,
+            "--output-dir", str(perturb_dir),
+            "--model", cfg.perturb_model,
+            "--context-mode", cfg.context_mode,
+            "--context-window", str(cfg.context_window),
+            "--related-passages-max", str(cfg.related_passages_max),
+            "--verifier-model", cfg.verifier_model,
+            "--verifier-reasoning", cfg.verifier_reasoning,
+            "--verifier-max-workers", str(cfg.verifier_max_workers),
+        ]
+        if not cfg.substantive_guidance:
+            perturb_cmd.append("--no-substantive-guidance")
+        if cfg.skip_verifier:
+            perturb_cmd.append("--skip-verifier")
+        rc = run(perturb_cmd)
         if rc != 0:
             print(f"  perturb failed (exit {rc}), skipping paper")
 

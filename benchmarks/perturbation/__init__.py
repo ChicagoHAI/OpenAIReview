@@ -15,12 +15,15 @@ from .models import (
 )
 from .score import score_review
 from .validate import validate_perturbations
+from .verify import verify_perturbations, VerifierVerdict
 
 __all__ = [
     "extract_candidates",
     "generate_perturbations",
     "generate_perturbations_by_type",
     "validate_perturbations",
+    "verify_perturbations",
+    "VerifierVerdict",
 
     "inject_perturbations",
     "score_review",

@@ -85,9 +85,23 @@ def _normalize_for_match(text: str) -> str:
     text = text.replace("|", " ")
     text = text.replace("*", "")
     text = text.replace("_", "")
-    text = text.replace("’", "'")
+    text = text.replace("\u2019", "'")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def _quote_coverage(quote: str, window: str) -> float:
+    """Fraction of the quote covered by matching blocks in the window.
+
+    Unlike ``SequenceMatcher.ratio()`` which divides by the combined length
+    of both strings, this divides only by the quote length so that extra
+    content in the window does not penalise the score.
+    """
+    if not quote:
+        return 0.0
+    sm = SequenceMatcher(None, quote, window, autojunk=False)
+    matched = sum(block.size for block in sm.get_matching_blocks())
+    return matched / len(quote)
 
 
 def locate_comment_in_document(
@@ -126,12 +140,37 @@ def locate_comment_in_document(
             if (len(para_norm) - window_size) % step:
                 windows.append(para_norm[-window_size:])
 
-        score = max(SequenceMatcher(None, quote_norm, window).ratio() for window in windows)
+        score = max(_quote_coverage(quote_norm, window) for window in windows)
         if score > best_score:
             best_score = score
             best_idx = i
 
     return best_idx if best_score >= threshold else None
+
+
+def locate_comments_in_window(
+    comments: list[Comment],
+    chunk_idx: int,
+    chunks: list[tuple[list[int], str]],
+    paragraphs: list[str],
+    window_size: int = 3,
+) -> None:
+    """Set paragraph_index on each comment by matching within the context window.
+    """
+    before = window_size + 2
+    after = max(1, window_size - 1)
+    win_start = max(0, chunk_idx - before)
+    win_end = min(len(chunks), chunk_idx + after + 1)
+    window_para_indices: list[int] = []
+    for wi in range(win_start, win_end):
+        window_para_indices.extend(chunks[wi][0])
+    window_paras = [paragraphs[i] for i in window_para_indices]
+    for c in comments:
+        located = locate_comment_in_document(c.quote, window_paras)
+        if located is not None and located < len(window_para_indices):
+            c.paragraph_index = window_para_indices[located]
+        else:
+            c.paragraph_index = None
 
 
 def assign_paragraph_indices(

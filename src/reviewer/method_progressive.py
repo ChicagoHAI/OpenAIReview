@@ -119,10 +119,14 @@ def update_running_summary(
         passage_idx=passage_idx,
         total_passages=total_passages,
     )
+    # Bumped from 3000 to 16384. Reasoning models (kimi-k2.6) can spend
+    # 2000+ tokens on reasoning before emitting any visible summary, and the
+    # 3000 cap left no headroom — first call returns empty, retry with 6000
+    # often also empty.
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
-        max_tokens=3000,
+        max_tokens=16384,
         reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
@@ -143,10 +147,15 @@ def is_technical_passage(
 ) -> bool:
     """Use the model to decide if a passage has technical content worth checking."""
     prompt = TECHNICAL_FILTER_PROMPT.format(passage=passage_text[:2000])
+    # max_tokens bumped from 8 to 2048. Reasoning models (kimi-k2.6) spend
+    # 600-1500 reasoning tokens before emitting even a one-word reply — an
+    # 8-token cap guarantees an empty response and the filter fails closed
+    # (technical passages skipped). 2048 is generous enough to accommodate
+    # kimi's reasoning budget while still being cheap per call.
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
-        max_tokens=8,
+        max_tokens=2048,
         reasoning_effort=reasoning_effort,
     )
     result.total_prompt_tokens += usage["prompt_tokens"]
@@ -273,10 +282,13 @@ def review_progressive(
         # Step 1: Deep-check
         ocr_caveat = OCR_CAVEAT if ocr else ""
         prompt = DEEP_CHECK_PROMPT.format(context=context, passage=passage_text, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
+        # Bumped from 16384 to 32768. With reasoning models, prompt (5-10k)
+        # + reasoning (3-5k) + visible JSON comment list (can easily be 5-10k
+        # for a complex passage) exceeds 16k budget. 32k provides headroom.
         response, usage = chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
-            max_tokens=16384,
+            max_tokens=32768,
             reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)

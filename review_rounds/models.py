@@ -41,10 +41,10 @@ class PlanOutput(BaseModel):
     should get roughly equal load."""
 
     personas: list[str] = Field(description="One-sentence reviewer personas")
-    # List-of-lists instead of dict: outer index = persona index, inner list =
-    # section indices for that persona. Avoids the JSON-schema "no int dict
-    # keys" issue and the "persona_1 vs 0 vs 1" naming ambiguity that cost
-    # an afternoon — see NOTES.md.
+    # List-of-lists rather than dict: JSON schema doesn't have integer dict
+    # keys, and models frequently name the entries ("persona_1", "persona_2"
+    # …) instead of "0"/"1". Outer index = persona index removes both
+    # failure modes.
     assignments: list[list[int]] = Field(
         description="assignments[i] = section indices assigned to personas[i]"
     )

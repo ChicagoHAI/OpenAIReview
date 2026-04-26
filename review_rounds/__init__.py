@@ -1,6 +1,6 @@
-"""review-rounds: a stateful LangGraph kata over OpenAIReview's PDF extractor.
+"""review_rounds: section-level LangGraph review pipeline over OpenAIReview's PDF extractor.
 
-Not part of the openaireview package. Side-project artifact for exercising
-LangGraph primitives (StateGraph + reducers, SqliteSaver checkpoint, interrupt
-/ Command, get_state_history / update_state, subgraph composition).
+Enabled via `openaireview review <paper> --method review_rounds` (requires the
+`[review_rounds]` optional dependency) or the stateful CLI at
+`python -m review_rounds.review_rounds`.
 """

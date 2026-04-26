@@ -59,16 +59,16 @@ def cmd_review(args: argparse.Namespace) -> None:
     if provider:
         os.environ["REVIEW_PROVIDER"] = provider
 
-    # review_rounds delegates to the sibling kata package — it does its own
-    # parsing, graph-building, and viz-JSON writing. Guarded import so a
-    # minimal install without langgraph still serves other methods.
+    # review_rounds delegates to the sibling review_rounds package — it does
+    # its own parsing, graph-building, and viz-JSON writing. Guarded import so
+    # a minimal install without langgraph still serves other methods.
     if args.method == "review_rounds":
         try:
             from review_rounds.review_rounds import run_oneshot
         except ImportError as e:
             print(
-                "--method review_rounds requires the kata extra. Install with:\n"
-                "  pip install -e '.[kata]'\n"
+                "--method review_rounds requires the review_rounds extra. Install with:\n"
+                "  pip install -e '.[review_rounds]'\n"
                 f"  (original import error: {e})",
                 file=sys.stderr,
             )

@@ -1,7 +1,7 @@
-"""Section-aware stateful review-round graph over OpenAIReview outputs.
+"""Section-level stateful review pipeline over OpenAIReview outputs.
 
-This kata simulates the OpenAIReview Claude Code skill's section-level pipeline
-inside a LangGraph StateGraph. Flow:
+A LangGraph StateGraph that mirrors the OpenAIReview Claude Code skill's
+section-level review flow:
 
     extract_pdf → split_sections → summarize_paper → plan_assignments
                                                           │
@@ -17,20 +17,10 @@ inside a LangGraph StateGraph. Flow:
                                                           ├─→ consolidate  (edit path)
                                                           └─→ review_as_persona  (redo)
 
-Exercises the LangGraph primitives:
-  - StateGraph with Pydantic-typed state carrying Sections and Comments.
-  - Annotated[list, add] reducers for subgraph fan-in + internal section loop.
-  - Parallel fan-out via Send, with orchestrator-assigned section subsets.
-  - Subgraph composition with output_schema (only `comments` crosses the boundary).
-  - SqliteSaver checkpointer for durability across process restarts.
-  - interrupt() + Command(resume=...) for human-in-the-loop.
-  - get_state_history() + update_state() for time-travel.
-  - Conditional edges (declarative routing, not LLM-chosen).
-
 LLM calls use `langchain_openai.ChatOpenAI.with_structured_output(method="json_schema", schema=PydanticModel)`
 so every node gets a validated Pydantic instance instead of raw JSON strings.
 
-CLI (stateful kata):
+Stateful CLI:
     python -m review_rounds.review_rounds run <paper> [--thread-id ID]
     python -m review_rounds.review_rounds resume <thread-id> <decision>
     python -m review_rounds.review_rounds history <thread-id>
@@ -62,11 +52,10 @@ from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, Send, interrupt
-from pydantic import ValidationError
 
 from reviewer.parsers import parse_document
 from reviewer.skill.scripts.prepare_workspace import split_sections as _skill_split_sections
-from reviewer.utils import count_tokens
+from reviewer.utils import count_tokens, truncate_text
 
 from review_rounds.models import (
     Comment,
@@ -99,14 +88,16 @@ PER_CALL_MAX_TOKENS = 8_096
 
 class _UsageCollector(BaseCallbackHandler):
     """LangChain callback that accumulates token + cost usage across every
-    LLM call in the graph. Module-level state is pragmatic for a kata —
-    a production system would thread this through the graph state with a
-    reducer or use LangSmith.
+    LLM call in the graph.
 
     OpenRouter returns the upstream dollar cost in
     `completion.usage.cost`; LangChain exposes it via
     response.llm_output['token_usage']['cost']. Reasoning tokens land in
-    `completion_tokens_details.reasoning_tokens`."""
+    `completion_tokens_details.reasoning_tokens`.
+
+    Uses a module-level singleton; each LLM-calling node emits
+    `USAGE.snapshot()` into the `usage` state channel (element-wise-max
+    reducer) so totals survive process restarts at the human_gate interrupt."""
 
     def __init__(self) -> None:
         self.prompt_tokens = 0
@@ -189,6 +180,17 @@ def _merge_edits(left: dict[str, str], right: dict[str, str]) -> dict[str, str]:
     return {**left, **right}
 
 
+def _merge_dropped(left: list[int] | None, right: list[int] | None) -> list[int]:
+    """Set-union reducer for dropped_personas.
+
+    `comments` uses `operator.add` (append), so you can't "undrop" via
+    replacement. The fork command instead writes persona indices here;
+    `consolidate` filters `comments` by this set before running. Stored
+    as a list (not set) because the sqlite checkpointer msgpack encoder
+    doesn't round-trip sets."""
+    return sorted(set(left or []) | set(right or []))
+
+
 def _merge_usage(left: dict | None, right: dict | None) -> dict:
     """Reducer for the usage channel: element-wise max.
 
@@ -220,6 +222,11 @@ class ReviewState(TypedDict, total=False):
     overall_feedback: str
     decision: str                                   # "approve" | "redo:<idx>" | "edit"
     edits: Annotated[dict[str, str], _merge_edits]
+    # Fork channel: persona indices whose comments `consolidate` should
+    # ignore. Union-reducer so concurrent writes survive; `_cmd_fork`
+    # writes here instead of trying to replace the add-reducer comments
+    # channel (which would just append).
+    dropped_personas: Annotated[list[int], _merge_dropped]
     # Usage/cost tracking. Persisted in state so it survives across process
     # boundaries (run process pauses at human_gate; resume process runs
     # publish with a fresh USAGE module-level collector, so we read from
@@ -366,7 +373,8 @@ Raw comments (JSON, indexed):
 def extract_pdf(state: ReviewState) -> dict:
     """Parse the paper with OpenAIReview's extractor; truncate to PAPER_MAX_TOKENS."""
     title, text, _ = parse_document(state["paper_path"], ocr=OCR_ENGINE)
-    text = _truncate_to_tokens(text, PAPER_MAX_TOKENS)
+    if count_tokens(text) > PAPER_MAX_TOKENS:
+        text = truncate_text(text, PAPER_MAX_TOKENS)
     return {"paper_title": title, "paper_text": text}
 
 
@@ -412,15 +420,8 @@ def plan_assignments(state: ReviewState) -> dict:
         summary=state["summary"],
         section_list=section_list,
     )
-    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=PlanOutput)
-    try:
-        plan: PlanOutput = structured.invoke(prompt)  # type: ignore[assignment]
-    except (ValidationError, Exception) as e:
-        # Kimi-k2.6 occasionally returns empty content after burning its
-        # reasoning budget — LangChain then raises ValueError. Fall back to
-        # generic personas + round-robin section assignment so the graph
-        # can still proceed.
-        print(f"  [warn] plan_assignments failed: {type(e).__name__}: {str(e)[:200]}; using fallback personas")
+    def _fallback(reason: str) -> dict:
+        print(f"  [warn] plan_assignments {reason}; using fallback personas")
         fallback_personas = [
             "A methodology-focused reviewer who focuses on experimental rigor and reproducibility",
             "A clarity-focused reviewer who focuses on exposition and logical flow",
@@ -436,6 +437,21 @@ def plan_assignments(state: ReviewState) -> dict:
             "usage": USAGE.snapshot(),
         }
 
+    structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=PlanOutput)
+    try:
+        plan: PlanOutput = structured.invoke(prompt)  # type: ignore[assignment]
+    except Exception as e:
+        # Kimi-k2.6 occasionally returns empty content after burning its
+        # reasoning budget — LangChain then raises ValueError. Fall back to
+        # generic personas + round-robin section assignment so the graph
+        # can still proceed.
+        return _fallback(f"failed: {type(e).__name__}: {str(e)[:200]}")
+
+    # An empty `personas` list would silently ship a no-reviewer review; treat
+    # it the same as a raise. Keeps the graph's downstream fan-out sane.
+    if not plan.personas:
+        return _fallback("returned empty personas list")
+
     # list[list[int]] on the wire → dict[int, list[int]] in state. Normalize
     # to exactly 3 personas + 3 assignments, padding with empty lists if the
     # LLM returned fewer.
@@ -449,7 +465,7 @@ def plan_assignments(state: ReviewState) -> dict:
     covered = {idx for idxs in assignments.values() for idx in idxs}
     leftovers = [s.idx for s in state["sections"] if s.idx not in covered]
     for i, idx in enumerate(leftovers):
-        assignments[i % max(len(personas), 1)].append(idx)
+        assignments[i % len(personas)].append(idx)
 
     return {"personas": personas, "assignments": assignments, "usage": USAGE.snapshot()}
 
@@ -481,8 +497,16 @@ def fan_out_personas(state: ReviewState) -> list[Send]:
 
 
 def consolidate(state: ReviewState) -> dict:
-    """Dedup + severity tier all personas' comments into final_issues."""
+    """Dedup + severity tier all personas' comments into final_issues.
+
+    Respects `dropped_personas` — fork writes there to exclude a persona's
+    comments without mutating the add-reducer `comments` channel."""
     comments = state.get("comments", []) or []
+    dropped = set(state.get("dropped_personas") or [])
+    if dropped:
+        before = len(comments)
+        comments = [c for c in comments if c.persona_idx not in dropped]
+        print(f"  [fork] consolidate: dropped {before - len(comments)} comments from personas {sorted(dropped)}")
     if not comments:
         return {"final_issues": [], "overall_feedback": "No issues flagged."}
 
@@ -503,7 +527,7 @@ def consolidate(state: ReviewState) -> dict:
     structured = _make_llm(max_tokens=65536, reasoning_max=4096).with_structured_output(method="json_schema", schema=ConsolidationOutput)
     try:
         out: ConsolidationOutput = structured.invoke(prompt)  # type: ignore[assignment]
-    except (ValidationError, Exception) as e:
+    except Exception as e:
         # Consolidate is the last LLM call — if it fails, synthesize a
         # minimal fallback from raw comments so publish still produces a
         # viz JSON (lower quality but non-empty).
@@ -560,10 +584,20 @@ def publish(state: ReviewState, config: RunnableConfig) -> dict:
 
     Usage is sourced from state["usage"] because publish often runs in a
     different Python process than the LLM-calling nodes (after a human_gate
-    interrupt + resume), where the module-level USAGE collector is fresh."""
-    thread_id = config.get("configurable", {}).get("thread_id", "unknown")
+    interrupt + resume), where the module-level USAGE collector is fresh.
+
+    Output-dir routing:
+      - viz JSON: `config.configurable.output_dir` if set, else
+        module-level DEFAULT_VIZ_DIR (the `python -m` stateful CLI).
+      - markdown: same override → alongside the viz JSON when invoked via
+        the main CLI shim; OUTPUTS_DIR otherwise."""
+    configurable = config.get("configurable", {}) or {}
+    thread_id = configurable.get("thread_id", "unknown")
+    override = configurable.get("output_dir")
+    viz_dir = Path(override) if override else DEFAULT_VIZ_DIR
+    md_dir = Path(override) if override else OUTPUTS_DIR
     usage = _merge_usage(state.get("usage") or {}, USAGE.snapshot())
-    md_path = _write_markdown(thread_id, state, usage=usage)
+    md_path = _write_markdown(thread_id, state, usage=usage, outputs_dir=md_dir)
     viz_path = write_viz_json(
         paper_path=state.get("paper_path", ""),
         paper_title=state.get("paper_title", ""),
@@ -571,7 +605,7 @@ def publish(state: ReviewState, config: RunnableConfig) -> dict:
         issues=state.get("final_issues", []) or [],
         overall_feedback=state.get("overall_feedback", ""),
         model=MODEL,
-        output_dir=DEFAULT_VIZ_DIR,
+        output_dir=viz_dir,
         usage=usage,
     )
     print(f"[saved] {md_path}")
@@ -593,14 +627,22 @@ def route_from_gate(state: ReviewState):
     if decision == "edit":
         return "consolidate"
     if decision.startswith("redo:"):
-        idx = int(decision.split(":", 1)[1])
+        personas = state.get("personas") or []
+        try:
+            idx = int(decision.split(":", 1)[1])
+        except ValueError:
+            print(f"  [warn] redo: non-integer persona index in decision {decision!r}; publishing")
+            return "publish"
+        if not (0 <= idx < len(personas)):
+            print(f"  [warn] redo:{idx} out of range (0..{len(personas)-1}); publishing")
+            return "publish"
         all_sections = {s.idx: s for s in state["sections"]}
         assigned_idxs = state["assignments"].get(idx, [])
         assigned = [all_sections[i] for i in assigned_idxs if i in all_sections]
         return Send(
             "review_as_persona",
             {
-                "persona": state["personas"][idx],
+                "persona": personas[idx],
                 "persona_idx": idx,
                 "summary": state["summary"],
                 "sections": assigned,
@@ -636,7 +678,7 @@ def _review_section(state: PersonaState) -> dict:
     structured = _make_llm(max_tokens=16384, reasoning_max=4096).with_structured_output(method="json_schema", schema=CommentList)
     try:
         out: CommentList = structured.invoke(prompt)  # type: ignore[assignment]
-    except (ValidationError, Exception) as e:
+    except Exception as e:
         print(
             f"  [warn] review_section failed for persona {state['persona_idx']} "
             f"section {section.idx}: {type(e).__name__}: {str(e)[:200]}"
@@ -676,7 +718,7 @@ def _self_critique(state: PersonaState) -> dict:
     structured = _make_llm(max_tokens=8192, reasoning_max=2048).with_structured_output(method="json_schema", schema=CriticVerdict)
     try:
         verdict: CriticVerdict = structured.invoke(prompt)  # type: ignore[assignment]
-    except (ValidationError, Exception) as e:
+    except Exception as e:
         # Fall back to keep-everything if the critic fails — better to over-
         # emit than to drop all of this persona's work. Consolidation will
         # still dedupe/prune downstream.
@@ -702,41 +744,27 @@ def build_persona_subgraph():
     # `section_cursor` + a conditional back-edge to `review_section`. The
     # "obvious" faster version is to fan out one Send per section inside
     # the subgraph so all assigned sections are reviewed in parallel.
-    # DON'T switch without understanding what the loop buys:
+    # Reasons to keep it sequential:
     #
-    # 1. Cursor-driven back-edge is a LangGraph primitive this kata is
-    #    specifically designed to exercise. Fan-out everywhere is the
-    #    easy pattern; stateful iteration inside a subgraph is the one
-    #    people don't reach for. Lose this, lose a primitive proof.
-    #
-    # 2. Linear checkpoint history → clean fork-at-step semantics.
+    # 1. Linear checkpoint history → clean fork-at-step semantics.
     #    `get_state_history` on a persona's namespace shows a readable
-    #    progression (cursor 0, 1, 2, …, self_critique). You can fork
-    #    at any cursor value and replay from there. With parallel Sends
-    #    inside, the subgraph's checkpoint tree has concurrent pending
+    #    progression (cursor 0, 1, 2, …, self_critique). You can fork at
+    #    any cursor value and replay from there. Parallel Sends inside the
+    #    subgraph would produce a checkpoint tree with concurrent pending
     #    tasks, and "rewind to just before section 5" stops being a
     #    well-defined checkpoint.
     #
-    # 3. Hang blast radius is bounded. OpenRouter occasionally hangs a
-    #    single request. With sequential-per-persona, max concurrent
-    #    requests = 3 (one per persona); with parallel-inside, it's
-    #    sum(assignments) which is 15–25 on real papers. Self_critique
-    #    still has to wait for ALL sibling section reviews either way,
-    #    so parallel doesn't rescue you from a hung call — it just
-    #    multiplies the surface area where a hang can originate.
+    # 2. Hang blast radius is bounded. OpenRouter occasionally hangs a
+    #    single request. Sequential-per-persona means max concurrent
+    #    requests = 3 (one per persona); parallel-inside is sum(
+    #    assignments), 15–25 on real papers. Self_critique still has to
+    #    wait for ALL sibling section reviews either way — parallelizing
+    #    doesn't rescue a hung call, it only multiplies the surface area.
     #
-    # 4. Accumulating state inside the subgraph is the demo. `section_
-    #    comments: Annotated[list, add]` fans IN across loop iterations
-    #    inside a single subgraph run. Moving parallelism to the parent
-    #    (flat (persona, section) Sends) loses that nested-reducer
-    #    exercise entirely.
-    #
-    # The trade-off is wall-clock: on a ~22-section paper, sequential
-    # loop runs ~5 min per persona (bottlenecked by the longest
-    # assignment); parallel Sends would run ~30 s/persona. For a kata
-    # that prioritizes primitive coverage over throughput, the 5 min is
-    # the cost of the feature. If you ever need throughput, copy this
-    # file, flatten the fan-out, and keep both versions in-repo.
+    # Wall-clock trade-off: on a ~22-section paper, sequential runs ~5 min
+    # per persona (bottlenecked by the longest assignment); parallel
+    # Sends would run ~30 s/persona. If you need throughput, copy this
+    # file and flatten the fan-out.
     # ───────────────────────────────────────────────────────────────────
     sg = StateGraph(PersonaState, output_schema=PersonaOutput)
     sg.add_node("review_section", _review_section)
@@ -789,19 +817,6 @@ def build_graph(checkpointer=None):
 # ---------------------------------------------------------------------------
 
 
-def _truncate_to_tokens(text: str, max_tokens: int) -> str:
-    if count_tokens(text) <= max_tokens:
-        return text
-    lo, hi = 0, len(text)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if count_tokens(text[:mid]) <= max_tokens:
-            lo = mid
-        else:
-            hi = mid - 1
-    return text[:lo]
-
-
 def _collect_interrupts(result) -> list:
     if isinstance(result, dict):
         raw = result.get("__interrupt__") or []
@@ -809,9 +824,15 @@ def _collect_interrupts(result) -> list:
     return []
 
 
-def _write_markdown(thread_id: str, state: ReviewState, usage: dict | None = None) -> Path:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    path = OUTPUTS_DIR / f"{thread_id}.md"
+def _write_markdown(
+    thread_id: str,
+    state: ReviewState,
+    usage: dict | None = None,
+    outputs_dir: Path | None = None,
+) -> Path:
+    target = Path(outputs_dir) if outputs_dir is not None else OUTPUTS_DIR
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"{thread_id}.md"
     if usage is None:
         usage = _merge_usage(state.get("usage") or {}, USAGE.snapshot())
 
@@ -886,21 +907,15 @@ def run_oneshot(
 
     The main CLI should import this; the stateful commands (run/resume/fork)
     remain on the python -m review_rounds.review_rounds entry."""
-    global DEFAULT_VIZ_DIR
-    previous = DEFAULT_VIZ_DIR
-    DEFAULT_VIZ_DIR = Path(output_dir)
-    try:
-        graph = build_graph()  # no checkpointer
-        tid = thread_id or uuid.uuid4().hex[:8]
-        config = {"configurable": {"thread_id": tid}}
-        result = graph.invoke({"paper_path": paper_path}, config=config)
+    graph = build_graph()  # no checkpointer
+    tid = thread_id or uuid.uuid4().hex[:8]
+    config = {"configurable": {"thread_id": tid, "output_dir": str(output_dir)}}
+    result = graph.invoke({"paper_path": paper_path}, config=config)
 
-        # If the graph paused at human_gate, auto-approve and continue.
-        if _collect_interrupts(result):
-            result = graph.invoke(Command(resume="approve"), config=config)
-        return result
-    finally:
-        DEFAULT_VIZ_DIR = previous
+    # If the graph paused at human_gate, auto-approve and continue.
+    if _collect_interrupts(result):
+        result = graph.invoke(Command(resume="approve"), config=config)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -963,9 +978,11 @@ def _cmd_history(args) -> int:
 
 
 def _cmd_fork(args) -> int:
-    """Time-travel: clear one persona's comments at a past checkpoint,
-    optionally re-run the graph from there. Consolidate re-runs with the
-    remaining personas' comments only."""
+    """Time-travel: drop one persona's comments from consolidation at a past
+    checkpoint, then continue. Writes to the `dropped_personas` channel
+    instead of rewriting `comments` — the latter's `add` reducer would
+    append the replacement list to the existing one, leaving the target
+    persona's comments in state and duplicating the survivors."""
     config = {
         "configurable": {
             "thread_id": args.thread_id,
@@ -977,14 +994,15 @@ def _cmd_fork(args) -> int:
     snap = graph.get_state(config)
 
     raw = list(snap.values.get("comments", []) or [])
-    # Checkpointer may hand back plain dicts; normalize to Comment.
     comments = [Comment(**c) if isinstance(c, dict) else c for c in raw]
-    kept = [c for c in comments if c.persona_idx != args.persona]
-    dropped = len(comments) - len(kept)
-    print(f"[fork] dropping {dropped} comments from persona {args.persona}; "
-          f"keeping {len(kept)}.")
+    n_target = sum(1 for c in comments if c.persona_idx == args.persona)
+    print(f"[fork] persona {args.persona}: {n_target} comments will be excluded from consolidation")
 
-    new_config = graph.update_state(config, {"comments": kept}, as_node="review_as_persona")
+    new_config = graph.update_state(
+        config,
+        {"dropped_personas": [args.persona]},
+        as_node="review_as_persona",
+    )
     print(f"[forked] new checkpoint: {new_config['configurable']['checkpoint_id']}")
 
     result = graph.invoke(None, config=new_config)

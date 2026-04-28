@@ -8,7 +8,12 @@ import re
 from .models import CandidateSpan, Error, SpanType
 
 def extract_abstract(text: str):
-    pass 
+    """Extract abstract text from LaTeX."""                                                                           
+    m = re.search(r'\\begin\{abstract\}(.+?)\\end\{abstract\}', text, re.DOTALL)                                      
+    if m:
+        return m.group(1).strip()        
+                                                                                 
+    return None 
 
 def extract_candidates(text: str) -> list[CandidateSpan]:
     """Extract all perturbation candidates from a paper's text.

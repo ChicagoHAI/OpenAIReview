@@ -10,118 +10,125 @@ from .models import (
     Perturbation,
 )
 
-surface_errors = [
-    Error.OPERATOR_OR_SIGN,
-    Error.SYMBOL_BINDING,
-    Error.INDEX_OR_SUBSCRIPT,
+errors = [
     Error.NUMERIC_PARAMETER,
+    Error.OPERATOR_OR_SIGN,
+    Error.INDEX_OR_SUBSCRIPT,
+    Error.COMPUTATION,
+
+    Error.INCORRECT_CLAIM,
+
+    Error.MISSING_CASE,
+    Error.INDUCTION,
+    Error.CIRCULAR_REASONING,
+    Error.INVALID_IMPLICATION,
+
+    Error.MISINTERP,
+    Error.CAUSAL_REVERSED,
+    Error.P_HACKING
 ]
 
-formal_errors = [
-    Error.DEF_WRONG,
-    Error.THM_WRONG_CONDITION,
-    Error.THM_WRONG_CONCLUSION,
-    Error.THM_WRONG_SCOPE,
-    Error.PROOF_WRONG_DIRECTION,
-    Error.PROOF_MISSING_CASE,
-    Error.PROOF_WRONG_ASSUMPTION,
-    Error.PROOF_MISMATCH
+surface_errors = [
+    Error.NUMERIC_PARAMETER,
+    Error.OPERATOR_OR_SIGN,
+    Error.INDEX_OR_SUBSCRIPT,
+    Error.COMPUTATION
 ]
 
-"""Given candidate spans from a paper, select spans and introduce a single minimal error
-per span. Errors should be subtle enough that a careful reviewer could catch them,
-but not so obvious they are immediately apparent."""
+claim_errors = [
+    Error.INCORRECT_CLAIM
+]
+
+logic_errors = [
+    Error.MISSING_CASE,
+    Error.INDUCTION,
+    Error.CIRCULAR_REASONING,
+    Error.INVALID_IMPLICATION
+]
+
+experimental_errors = [
+    Error.MISINTERP,
+    Error.CAUSAL_REVERSED,
+    Error.P_HACKING
+]
 
 # ---------------------------------------------------------------------------
 # Prompts
 # ---------------------------------------------------------------------------
 
-SURFACE_PROMPT = r"""
-You are creating seeded errors in academic math papers to benchmark LLM reviewers.
+FIELD_PROMPT = r"""
+This is the abstract of an academic paper: 
+{abstract}
 
-Your task:
-Select a subset of candidates and generate EXACTLY {n_per_error} perturbations for EACH of the following errors:
-- operator_or_sign: flip an operator or sign (e.g. + becomes -, \leq becomes \geq, \cup becomes \cap)
-- symbol_binding: replace a symbol with a similar but wrong one (e.g. \alpha becomes \beta, \mu becomes \sigma)
-- index_or_subscript: change a subscript or superscript (e.g. x_i becomes x_{{i+1}}, A^n becomes A^{{n-1}})
-- numeric_parameter: change a numeric value (e.g. 0.5 becomes 0.25, n=100 becomes n=200)
+Identify its main field of study and return ONLY 1-5 words. 
+"""
 
-You should end up with exactly {n_total} perturbations total.
+PROMPT = r"""
+You are creating seeded errors for an academic paper in the field of {field} to benchmark LLM reviewers.
 
-Do NOT generate more than ONE perturbation for each candidate. 
+Choose from the following perturbation CANDIDATES:
+{candidates_json}
+
+If "error_type" is "surface", generate ONE compatible perturbation:
+- numeric_parameter: change a numeric constant (e.g. 0.5 → 0.25, n=10 → n=100)
+- operator_or_sign: flip an operator or sign (e.g. + → -, ≤ → ≥, ∪ → ∩)                                               
+- index_or_subscript: change a subscript/superscript (e.g. x_i → x_{{i+1}})                                           
+- computation: introduce an arithmetic error in a derivation step
+
+If "error_type" is "claim", generate ONE compatible perturbation:
+- incorrect_claim: corrupt the statement subtly (wrong condition, wrong quantifier, wrong bound
+
+If "error_type" is "logic", generate ONE compatible perturbation:
+- missing_case: remove one case from case analysis, or corrupt the base case in an induction
+- induction: make the inductive step invalid                                                                          
+- circular_reasoning: use the theorem being proved as a step in its own proof
+- invalid_implication: reverse or invalidate a key logical implication
+
+If "error_type" is "experimental", you may generate MULTIPLE perturbations as long as they are DISJOINT:
+- misinterp: misinterpret a p-value or confidence interval
+- causal_reversed: flip a causal claim (X causes Y → Y causes X)                                                      
+- p_hacking: remove or negate a multiple testing correction (Bonferroni, FDR, etc.) 
 
 OUTPUT FORMAT:
 For each perturbation, return:
 - span_id: the candidate's span_id (copy exactly)
-- error: one of {errors}
+- error: the corresponding error from {errors}
 - perturbed: modified LaTeX text (must differ from original)
 - why_wrong: a short explanation of how the error can be detected using ONLY the paper
 
 Return ONLY a JSON array of perturbation objects. No commentary.
 
 STRICT REQUIREMENTS:
-- Do NOT generate more than ONE perturbation for each candidate
 - The perturbed text must be valid LaTeX
 - The error must be verifiable from the paper text alone (no external knowledge)
-
-CANDIDATES:
-{candidates_json}
-"""
-
-FORMAL_PROMPT = r"""
-You are creating seeded errors in academic math papers to benchmark LLM reviewers.
-
-Generate {n_per_error} perturbations for each of the following (if possible):
-- def_wrong: corrupt a definition so it no longer captures the intended object (e.g. wrong condition, wrong formula, wrong bound)
-- thm_wrong_condition: weaken, strengthen, or change a condition so the theorem no longer holds as stated
-- thm_wrong_conclusion: alter the conclusion so it is stronger than what the proof supports
-- thm_wrong_scope: change a quantifier or domain so the theorem applies in the wrong scope (e.g. "for all" becomes "there exists", or the domain changes)
-- proof_wrong_direction: reverse an implication in a key step (e.g. prove A becomes B instead B becomes A as needed)
-- proof_missing_case: drop one case from a case analysis or induction step, making the proof incomplete
-- proof_wrong_assumption: introduce or substitute a wrong assumption in the proof (e.g. use a stronger property than what was proven)
-- proof_mismatch: make a step prove a statement that is subtly different from the theorem being claimed
-
-RULES:
-- Make exactly one change per perturbation (minimal edit)
-- The perturbed text must be valid LaTeX
-- The error must be detectable from the paper text alone — cite the specific line or equation in why_wrong
-
-CANDIDATES:
-{candidates_json}
-
-For each perturbation, return:
-- span_id: which candidate to perturb
-- error: one of {errors}
-- perturbed: the replacement text (must differ from original, valid LaTeX)
-- why_wrong: how a reader can verify this is wrong using only the paper (reference the specific inconsistency)
-
-Return ONLY a JSON array of perturbation objects. No commentary.
 """
 
 # ---------------------------------------------------------------------------
-# Generate perturbations by error type:
+# Generate perturbations:
 # ---------------------------------------------------------------------------
 
-def generate_perturbations_by_type(error_type: str, 
-                                   candidates: list[CandidateSpan],
-                                   model: str = "anthropic/claude-opus-4-6",
-                                   n_per_error: int = 2,
-                                   reasoning_effort: str | None = None) -> list[Perturbation]:
-    # get prompt
-    if error_type == "surface":
-        errors = surface_errors
-        prompt = SURFACE_PROMPT
-    elif error_type == "formal":
-        errors = formal_errors
-        prompt = FORMAL_PROMPT
-    else:
-        pass 
+def identify_field(abstract, model: str = "anthropic/claude-opus-4-6", reasoning_effort: str | None = None):
+    formatted_prompt = FIELD_PROMPT.format(
+        abstract=abstract,
+    )
 
+    response, usage = chat(
+        messages=[{"role": "user", "content": FIELD_PROMPT}],
+        model=model,
+        max_tokens=8192,
+        reasoning_effort=reasoning_effort,
+    )
+    
+    return response.strip().lower()
+
+def generate_perturbations(abstract,
+                           candidates: list[CandidateSpan],
+                           model: str = "anthropic/claude-opus-4-6",
+                           reasoning_effort: str | None = None) -> list[Perturbation]:
     # Build candidate JSON for the prompt
     candidates_json = json.dumps([
         {
             "span_id": c.span_id,
-            "type": c.span_type.value,
             "text": c.text,
             "context": c.context,
             "error_type": c.error_type,
@@ -130,14 +137,13 @@ def generate_perturbations_by_type(error_type: str,
         for c in candidates
     ], indent=2)
 
-    formatted_prompt = prompt.format(
-        n_per_error=n_per_error,
-        n_total=n_per_error * len(errors),
+    formatted_prompt = PROMPT.format(
+        field=identify_field(abstract),
         candidates_json=candidates_json,
         errors=", ".join(c.value for c in errors),
     )
 
-    print(f"  {error_type}: {len(candidates)} candidates...")
+    print(f"  {len(candidates)} candidates...")
 
     response, usage = chat(
         messages=[{"role": "user", "content": formatted_prompt}],
@@ -148,28 +154,6 @@ def generate_perturbations_by_type(error_type: str,
 
     perturbations = _parse_response(response, candidates)
     print(f"    -> {len(perturbations)} perturbations")
-
-    return perturbations
-
-# ---------------------------------------------------------------------------
-# Generate all perturbations:
-# ---------------------------------------------------------------------------
-
-def generate_perturbations(candidates: list[CandidateSpan],
-                                model: str = "anthropic/claude-opus-4-6",
-                                n_per_error: int = 2,
-                                reasoning_effort: str | None = None,
-                                error_type: str = "surface"):
-    candidates_surface = [candidate for candidate in candidates if candidate.error_type == "surface"]
-    candidates_formal = [candidate for candidate in candidates if candidate.error_type == "formal"]
-
-    perturbations = []
-    if error_type == "surface" or error_type == "all":
-        surface = generate_perturbations_by_type("surface", candidates_surface, model, n_per_error, reasoning_effort)
-        perturbations.extend(surface)
-    if error_type == "formal" or error_type == "all":
-        formal = generate_perturbations_by_type("formal", candidates_formal, model, n_per_error, reasoning_effort)
-        perturbations.extend(formal)
 
     return perturbations
 

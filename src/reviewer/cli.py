@@ -230,8 +230,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         sys.path.insert(0, str(_BENCHMARKS_DIR))
     from perturbation import (
         extract_abstract,
-        extract_candidates_theoretical,
-        extract_candidates_experimental,
+        extract_candidates,
         generate_perturbations,
         inject_perturbations,
         validate_perturbations,
@@ -256,10 +255,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
 
     # Stage 0: Extract candidates
     print("\nStage 0: Extracting candidate spans...")
-    if args.category == "theoretical":
-        candidates = extract_candidates_theoretical(content)
-    elif args.category == "experimental": 
-        candidates = extract_candidates_experimental(content)
+    candidates = extract_candidates(args.category, args.error_type, content)
     print(f"  {len(candidates)} candidates found")
 
     from collections import Counter
@@ -274,6 +270,8 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     abstract = extract_abstract(content) or content[:2000]
     perturbations = generate_perturbations(
         args.category,
+        args.error_type,
+        args.n_total,
         abstract,
         candidates,
         model=args.model,
@@ -601,8 +599,22 @@ def main() -> None:
         help="Reasoning effort level",
     )
     perturb_parser.add_argument(
-        "--category", default="theoretical",
+        "--category",
+        choices=["theoretical", "experimental"],
+        default="theoretical",
         help="Paper category (default: theoretical)",
+    )
+    perturb_parser.add_argument(
+        "--error-type",
+        choices=["all", "surface", "claim_theoretical", "logic", "statement_empirical", "experimental"],
+        default="all",
+        help="Error type to extract (default: all)",
+    )
+    perturb_parser.add_argument(
+        "--n-total",
+        type=int,
+        default=20,
+        help="Target number of perturbations per paper (default: 20)",
     )
 
     # score subcommand

@@ -30,26 +30,45 @@ def extract_abstract(text: str) -> str | None:
 
     return None
 
-def extract_candidates_theoretical(text: str) -> list[CandidateSpan]:
+_MAX_PER_SPAN_TYPE = 20
+
+def extract_candidates(category, error_type, text: str) -> list[CandidateSpan]:
     """Extract all perturbation candidates from a paper's text.
 
     Returns spans sorted by position in the document.
     """
     candidates: list[CandidateSpan] = []
     span_counter = 0
+    type_counts: dict[SpanType, int] = {}
 
-    # Extract spans of each type
-    for extractor in _EXTRACTORS_THEORETICAL: # CAN return overlapping spans (diff categories)
+    if category == "theoretical":
+        if error_type == "all":
+            extractors = _EXTRACTORS_THEORETICAL
+        elif error_type == "surface":
+            extractors = _EXTRACTORS_SURFACE
+        elif error_type == "claim_theoretical":
+            extractors = _EXTRACTORS_CLAIM_THEORETICAL
+        elif error_type == "logic":
+            extractors = _EXTRACTORS_LOGIC
+    elif category == "experimental":
+        if error_type == "all":
+            extractors = _EXTRACTORS_EMPIRICAL
+        elif error_type == "surface":
+            extractors = _EXTRACTORS_SURFACE
+        elif error_type == "statement_empirical":
+            extractors = _EXTRACTORS_STATEMENT_EMPIRICAL
+        elif error_type == "experimental":
+            extractors = _EXTRACTORS_EXPERIMENTAL
+
+    for extractor in extractors:
         for span_type, match_text, match_offset in extractor(text):
+            if type_counts.get(span_type, 0) >= _MAX_PER_SPAN_TYPE:
+                continue
+
             context = _get_context(text, match_offset, match_len=len(match_text), window=200)
             errors = _compatible_errors(span_type)
 
-            if extractor in _EXTRACTORS_SURFACE:
-                error_type = "surface"
-            elif extractor in _EXTRACTORS_CLAIM:
-                error_type = "claim"
-            elif extractor in _EXTRACTORS_LOGIC:
-                error_type = "logic"
+            error = extractor_dict[extractor]
 
             candidates.append(CandidateSpan(
                 span_id=f"S{span_counter:04d}",
@@ -57,44 +76,11 @@ def extract_candidates_theoretical(text: str) -> list[CandidateSpan]:
                 text=match_text,
                 offset=match_offset,
                 context=context,
-                error_type=error_type,
+                error_type=error,
                 compatible_errors=errors,
             ))
             span_counter += 1
-
-    return candidates
-
-def extract_candidates_experimental(text: str) -> list[CandidateSpan]:
-    """Extract all perturbation candidates from a paper's text.
-
-    Returns spans sorted by position in the document.
-    """
-    candidates: list[CandidateSpan] = []
-    span_counter = 0
-
-    # Extract spans of each type
-    for extractor in _EXTRACTORS_EXPERIMENTAL: # CAN return overlapping spans (diff categories)
-        for span_type, match_text, match_offset in extractor(text):
-            context = _get_context(text, match_offset, match_len=len(match_text), window=200)
-            errors = _compatible_errors(span_type)
-
-            if extractor in _EXTRACTORS_SURFACE:
-                error_type = "surface"
-            elif extractor == _extract_paragraphs:
-                error_type = "claim"
-            elif extractor == _extract_experimental:
-                error_type = "experimental"
-
-            candidates.append(CandidateSpan(
-                span_id=f"S{span_counter:04d}",
-                span_type=span_type,
-                text=match_text,
-                offset=match_offset,
-                context=context,
-                error_type=error_type,
-                compatible_errors=errors,
-            ))
-            span_counter += 1
+            type_counts[span_type] = type_counts.get(span_type, 0) + 1
 
     return candidates
 
@@ -177,7 +163,7 @@ def _extract_theorems(text: str):
             yield SpanType.THEOREM, m.group(0), m.start()
 
 
-_EXTRACTORS_CLAIM = [
+_EXTRACTORS_CLAIM_THEORETICAL = [
     _extract_definitions,
     _extract_theorems,
 ]
@@ -199,7 +185,7 @@ _EXTRACTORS_LOGIC = [
 ]
 
 # ---------------------------------------------------------------------------
-# Error Type 4: Experimental 
+# Error Type 4: Empirical 
 # ---------------------------------------------------------------------------
 _SKIP_SECTIONS = re.compile(
     r'bibliograph|reference|appendix|acknowledge|acknowledgement',
@@ -230,7 +216,9 @@ def _extract_paragraphs(text: str):
             para_offset = text.find(para, start)                                                                      
             if para_offset == -1:
                 continue                                                                                              
-            yield SpanType.EXPERIMENTAL, para, para_offset
+            yield SpanType.PARAGRAPH, para, para_offset
+
+_EXTRACTORS_STATEMENT_EMPIRICAL = [_extract_paragraphs]
 
 def _extract_experimental(text: str):                                                                                 
     """Find experimental/results/methods sections, yielding individual paragraphs."""
@@ -258,12 +246,28 @@ def _extract_experimental(text: str):
                 continue
             yield SpanType.EXPERIMENTAL, para, para_offset
 
+_EXTRACTORS_EXPERIMENTAL = [_extract_experimental]
+
 # ---------------------------------------------------------------------------
 # All Errors
 # ---------------------------------------------------------------------------
 
-_EXTRACTORS_THEORETICAL = _EXTRACTORS_SURFACE + _EXTRACTORS_CLAIM + _EXTRACTORS_LOGIC 
-_EXTRACTORS_EXPERIMENTAL = _EXTRACTORS_SURFACE + [_extract_paragraphs, _extract_experimental]
+_EXTRACTORS_THEORETICAL = _EXTRACTORS_SURFACE + _EXTRACTORS_CLAIM_THEORETICAL + _EXTRACTORS_LOGIC
+_EXTRACTORS_EMPIRICAL = _EXTRACTORS_SURFACE + _EXTRACTORS_STATEMENT_EMPIRICAL + _EXTRACTORS_EXPERIMENTAL
+
+extractor_dict = {
+    _extract_display_equations: "surface",
+    _extract_inline_equations: "surface",
+    _extract_named_equations: "surface",
+
+    _extract_definitions: "claim_theoretical",
+    _extract_theorems: "claim_theoretical",
+
+    _extract_proofs: "logic",
+
+    _extract_paragraphs: "statement_empirical",
+    _extract_experimental: "experimental"
+}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -299,10 +303,10 @@ def _compatible_errors(span_type: SpanType) -> list[Error]:
         ], 
 
         SpanType.DEFINITION: [
-            Error.INCORRECT_CLAIM,
+            Error.INCORRECT_CLAIM_THEORETICAL,
         ],
         SpanType.THEOREM: [
-            Error.INCORRECT_CLAIM,
+            Error.INCORRECT_CLAIM_THEORETICAL,
         ],
 
         SpanType.PROOF: [
@@ -310,21 +314,15 @@ def _compatible_errors(span_type: SpanType) -> list[Error]:
             Error.INDUCTION,
             Error.CIRCULAR_REASONING,
             Error.INVALID_IMPLICATION,
-            Error.OPERATOR_OR_SIGN,
-            Error.INDEX_OR_SUBSCRIPT,
-            Error.NUMERIC_PARAMETER,
-            Error.COMPUTATION
         ],
 
+        SpanType.PARAGRAPH: [
+            Error.INCORRECT_STATEMENT_EMPIRICAL
+        ],
         SpanType.EXPERIMENTAL: [
             Error.MISINTERP,
             Error.CAUSAL_REVERSED,
             Error.P_HACKING,
-            Error.INCORRECT_CLAIM,
-            Error.OPERATOR_OR_SIGN,
-            Error.INDEX_OR_SUBSCRIPT,
-            Error.NUMERIC_PARAMETER,
-            Error.COMPUTATION
         ]
     }
     return mapping.get(span_type, [])

@@ -3,7 +3,7 @@
 Pipeline: extract candidates → generate perturbations → validate → inject → score.
 """
 
-from .extract import extract_abstract, extract_candidates_theoretical, extract_candidates_experimental
+from .extract import extract_abstract, extract_candidates
 from .generate import generate_perturbations
 from .inject import inject_perturbations
 from .models import (
@@ -18,8 +18,7 @@ from .validate import validate_perturbations
 
 __all__ = [
     "extract_abstract",
-    "extract_candidates_theoretical",
-    "extract_candidates_experimental",
+    "extract_candidates",
     "generate_perturbations",
     "validate_perturbations",
 

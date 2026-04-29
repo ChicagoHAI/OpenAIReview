@@ -21,8 +21,9 @@ class SpanType(str, Enum):
     # logic errors
     PROOF = "proof"
 
-    # experimental errors
+    # empirical errors
     EXPERIMENTAL = "experimental"
+    PARAGRAPH = "paragraph"
 
 
 
@@ -34,14 +35,19 @@ class Error(str, Enum):
     INDEX_OR_SUBSCRIPT = "index_or_subscript"
     COMPUTATION = "computation"
 
-    # claim 
-    INCORRECT_CLAIM = "incorrect_claim"
+
+    # claim theoretical
+    INCORRECT_CLAIM_THEORETICAL = "incorrect_claim_theoretical"
 
     # logic
     MISSING_CASE = "missing_case"
     INDUCTION = "induction"
     CIRCULAR_REASONING = "circular_reasoning"
     INVALID_IMPLICATION = "invalid_implication"
+
+
+    # statement empirical 
+    INCORRECT_STATEMENT_EMPIRICAL = "incorrect_statement_empirical"
 
     # experimental 
     MISINTERP = "misinterp"

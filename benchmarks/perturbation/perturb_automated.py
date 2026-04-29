@@ -237,7 +237,7 @@ def main() -> None:
     output_root = (
         Path(args.output_dir)
         if args.output_dir
-        else RESULTS_DIR / args.domain.replace(" ", "_")
+        else RESULTS_DIR / args.domain.replace(" ", "_") / args.error_type
     )
     output_root.mkdir(parents=True, exist_ok=True)
 

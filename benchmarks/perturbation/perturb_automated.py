@@ -6,7 +6,7 @@ and runs the perturbation pipeline until a target number of papers have been
 successfully perturbed (i.e. n_injected >= n_total).
 
 Usage:
-    python perturb_automated.py --domain "mathematics" --arxiv-category "math.*" --category theoretical --error-type logic --target 10 --n-total 10
+    python perturb_automated.py --domain "mathematics" --arxiv-category "math.*" --category theoretical --error-type logic --target 10 --n-total 10 --min-year 2010
 """
 
 import argparse
@@ -31,11 +31,13 @@ RESULTS_DIR = Path(__file__).parent / "results" / "perturbations"
 # arXiv helpers
 # ---------------------------------------------------------------------------
 
-def search_arxiv(domain: str, arxiv_category: str | None, start: int, batch_size: int) -> list[dict]:
+def search_arxiv(domain: str, arxiv_category: str | None, start: int, batch_size: int, min_year: int | None = None) -> list[dict]:
     """Return a list of {arxiv_id, title} dicts from the arXiv API."""
     query_parts = [f"all:{urllib.parse.quote(domain)}"]
     if arxiv_category:
         query_parts.append(f"cat:{arxiv_category}")
+    if min_year:
+        query_parts.append(f"submittedDate:[{min_year}0101+TO+*]")
     query = "+AND+".join(query_parts)
 
     url = (
@@ -226,6 +228,10 @@ def main() -> None:
         "--delay", type=float, default=3.0,
         help="Seconds to wait between papers (default: 3.0)",
     )
+    parser.add_argument(
+        "--min-year", type=int, default=None,
+        help="Only include papers submitted on or after this year (e.g. 2010)",
+    )
     args = parser.parse_args()
 
     output_root = (
@@ -242,6 +248,7 @@ def main() -> None:
     print(f"Target:         {args.target} papers")
     print(f"n_total:        {args.n_total} perturbations/paper")
     print(f"Model:          {args.model}")
+    print(f"Min year:       {args.min_year or 'any'}")
     print(f"Output:         {output_root}")
 
     successful = 0
@@ -257,6 +264,7 @@ def main() -> None:
                 papers = search_arxiv(
                     args.domain, args.arxiv_category,
                     arxiv_start, args.batch_size,
+                    min_year=args.min_year,
                 )
             except Exception as e:
                 print(f"arXiv API error: {e}")

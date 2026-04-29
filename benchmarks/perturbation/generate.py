@@ -106,6 +106,8 @@ Choose from the following perturbation CANDIDATES:
 
 {valid_errors}
 
+Before finalizing each perturbation, verify that the introduced error is meaningful. 
+
 OUTPUT FORMAT:
 For each perturbation, return:
 - span_id: the candidate's span_id (copy exactly)

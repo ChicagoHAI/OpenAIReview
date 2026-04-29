@@ -36,8 +36,6 @@ def search_arxiv(domain: str, arxiv_category: str | None, start: int, batch_size
     query_parts = [f"all:{urllib.parse.quote(domain)}"]
     if arxiv_category:
         query_parts.append(f"cat:{arxiv_category}")
-    if min_year:
-        query_parts.append(f"submittedDate:[{min_year}0101+TO+*]")
     query = "+AND+".join(query_parts)
 
     url = (
@@ -59,6 +57,13 @@ def search_arxiv(domain: str, arxiv_category: str | None, start: int, batch_size
         arxiv_id = id_text.split("/abs/")[-1].strip()
         title_el = entry.find("atom:title", ns)
         title = (title_el.text or "").strip().replace("\n", " ")
+
+        if min_year:
+            published_el = entry.find("atom:published", ns)
+            published = (published_el.text or "") if published_el is not None else ""
+            if not published or int(published[:4]) < min_year:
+                continue
+
         if arxiv_id:
             papers.append({"arxiv_id": arxiv_id, "title": title})
 
@@ -134,35 +139,47 @@ def run_perturb(
     model: str,
     output_dir: Path,
 ) -> int:
-    """Run `openaireview perturb` and return n_injected (0 on any failure)."""
-    cmd = [
-        "openaireview", "perturb", str(tex_path),
-        "--category", category,
-        "--error-type", error_type,
-        "--n-total", str(n_total),
-        "--model", model,
-        "--output-dir", str(output_dir),
-    ]
+    """Run `openaireview perturb` and return total n_injected across all error types."""
+    if error_type == "all":
+        if category == "theoretical":
+            error_types = ["surface", "claim_theoretical", "logic"]
+        elif category == "empirical":
+            error_types = ["surface", "statement_empirical", "experimental"]
+    else:
+        error_types = [error_type]
 
-    print(f"    $ {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    per_run = max(1, n_total // len(error_types))
+    total_injected = 0
 
-    manifests = list(output_dir.glob("*_perturbations.json"))
-    if not manifests:
-        if result.returncode != 0:
-            print(result.stdout + result.stderr)
-        return 0
+    for et in error_types:
+        cmd = [
+            "openaireview", "perturb", str(tex_path),
+            "--category", category,
+            "--error-type", et,
+            "--n-total", str(per_run),
+            "--model", model,
+            "--output-dir", str(output_dir),
+        ]
 
-    manifest_path = max(manifests, key=lambda p: p.stat().st_mtime)
-    try:
-        manifest = json.loads(manifest_path.read_text())
-        n_injected = manifest.get("n_injected", 0)
-    except Exception:
-        n_injected = 0
+        print(f"    $ {' '.join(cmd)}")
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
-    if n_injected >= 0:  # always stash output for caller to decide
-        result._n_injected = n_injected
-    return n_injected
+        manifests = list(output_dir.glob(f"*_{et}_perturbations.json"))
+        if not manifests:
+            manifests = list(output_dir.glob("*_perturbations.json"))
+        if not manifests:
+            if result.returncode != 0:
+                print(result.stdout + result.stderr)
+            continue
+
+        manifest_path = max(manifests, key=lambda p: p.stat().st_mtime)
+        try:
+            manifest = json.loads(manifest_path.read_text())
+            total_injected += manifest.get("n_injected", 0)
+        except Exception:
+            pass
+
+    return total_injected
 
 
 def _already_done(paper_output_dir: Path, n_total: int) -> bool:
@@ -213,8 +230,8 @@ def main() -> None:
         help="Minimum perturbations required for a paper to count (default: 20)",
     )
     parser.add_argument(
-        "--model", default="anthropic/claude-opus-4-6",
-        help="Model for perturbation generation (default: anthropic/claude-opus-4-6)",
+        "--model", default="google/gemini-3-flash-preview",
+        help="Model for perturbation generation (default: google/gemini-3-flash-preview)",
     )
     parser.add_argument(
         "--output-dir", default=None,

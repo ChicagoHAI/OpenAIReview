@@ -224,7 +224,11 @@ def domain_specific_errors(field, abstract, model: str = "anthropic/claude-opus-
     )
 
     cleaned = re.sub(r"^```[a-z]*\n?|\n?```$", "", response.strip(), flags=re.MULTILINE)
-    items = json.loads(cleaned)
+    try:
+        items = json.loads(cleaned)
+    except json.JSONDecodeError:
+        cleaned = re.sub(r'\\(?!["\\/bfnrtu])', '', cleaned)
+        items = json.loads(cleaned)
     return ", ".join(str(x) for x in items)
 
 def generate_perturbations(category,

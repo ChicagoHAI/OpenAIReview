@@ -233,6 +233,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         generate_perturbations,
         inject_perturbations,
         validate_perturbations,
+        verify_perturbations,
     )
 
     source = args.file
@@ -251,10 +252,19 @@ def cmd_perturb(args: argparse.Namespace) -> None:
 
     print(f"  Title: {title}")
     print(f"  Length: {len(content):,} chars")
+    print(f"  Context mode: {args.context_mode} (window={args.context_window}, "
+          f"related_passages_max={args.related_passages_max})")
+    print(f"  Substantive guidance: {'on' if args.substantive_guidance else 'off'}")
 
     # Stage 0: Extract candidates
     print("\nStage 0: Extracting candidate spans...")
-    candidates = extract_candidates(content, args.error_type)
+    candidates = extract_candidates(
+        content,
+        args.error_type,
+        context_mode=args.context_mode,
+        context_window=args.context_window,
+        related_passages_max=args.related_passages_max,
+    )
     print(f"  {len(candidates)} candidates found")
 
     from collections import Counter
@@ -262,42 +272,117 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     for t, n in type_counts.most_common():
         print(f"    {t}: {n}")
 
+    if args.context_mode == "related":
+        n_with_related = sum(1 for c in candidates if c.related_passages)
+        print(f"  Candidates with related_passages: {n_with_related}/{len(candidates)}")
+
     reasoning = getattr(args, "reasoning_effort", None)
 
     # Stage 1: Generate perturbations
     print(f"\nGenerating perturbations...")
-    perturbations = generate_perturbations(
+    perturbations, gen_stats = generate_perturbations(
         candidates,
         model=args.model,
         n_per_error=args.n_per_error,
         reasoning_effort=reasoning,
-        error_type=args.error_type
+        error_type=args.error_type,
+        return_stats=True,
+        context_mode=args.context_mode,
+        substantive_guidance=args.substantive_guidance,
     )
 
-    # Validate
-    print(f"\nValidating {len(perturbations)} perturbations...")
+    # Stage 2: Structural validation (tests 1–4)
+    print(f"\nValidating {len(perturbations)} perturbations (tests 1–4)...")
     valid, rejected = validate_perturbations(perturbations, content)
     print(f"  Valid: {len(valid)}, Rejected: {len(rejected)}")
+
+    # Tally per-test rejection reasons (best-effort, via substring match).
+    rejected_by_test = {
+        "test1_original_not_found": 0,
+        "test2_unchanged": 0,
+        "test3_overlap": 0,
+        "test4_garbled": 0,
+    }
     for p, reason in rejected:
+        if "original text not found" in reason:
+            rejected_by_test["test1_original_not_found"] += 1
+        elif "identical to original" in reason:
+            rejected_by_test["test2_unchanged"] += 1
+        elif "overlaps" in reason:
+            rejected_by_test["test3_overlap"] += 1
+        elif "garbled" in reason:
+            rejected_by_test["test4_garbled"] += 1
         print(f"    REJECTED {p.perturbation_id}: {reason[:80]}")
 
+    # Stage 3: Verifier validation (test 5) — only if enabled
+    verifier_stats = {
+        "n_input": 0, "substantive": 0, "typo-shaped": 0,
+        "not-an-error": 0, "parse-error": 0,
+    }
+    verifier_rejected: list[tuple] = []
+    if args.skip_verifier:
+        print(f"\nVerifier: SKIPPED (--skip-verifier)")
+        accepted = valid
+    else:
+        accepted, verifier_rejected, verifier_stats = verify_perturbations(
+            valid,
+            candidates,
+            model=args.verifier_model,
+            reasoning_effort=args.verifier_reasoning,
+            max_workers=args.verifier_max_workers,
+        )
+        for p, v in verifier_rejected:
+            print(f"    VERIFIER REJECTED {p.perturbation_id} [{v.verdict}]: {v.reason[:100]}")
+
     # Inject
-    corrupted, applied = inject_perturbations(content, valid)
+    corrupted, applied = inject_perturbations(content, accepted)
     print(f"\nInjected {len(applied)} perturbations")
 
     # Save outputs
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    n_generated = len(perturbations)
+    n_candidates = len(candidates)
+    generation_yield = (n_generated / n_candidates) if n_candidates else 0.0
+    if not valid:
+        verifier_acceptance_rate = 0.0
+    elif args.skip_verifier:
+        verifier_acceptance_rate = 1.0
+    else:
+        verifier_acceptance_rate = len(applied) / len(valid)
+    acceptance_rate = (len(applied) / n_generated) if n_generated else 0.0
+
     # Save perturbation manifest
     manifest = {
         "paper_title": title,
         "paper_slug": slug,
-        "n_candidates": len(candidates),
-        "n_generated": len(perturbations),
-        "n_valid": len(valid),
+        "n_candidates": n_candidates,
+        "n_generated": n_generated,
+        "n_valid_structural": len(valid),
+        "n_accepted_by_verifier": len(applied) if not args.skip_verifier else None,
         "n_injected": len(applied),
+        "generation_yield": generation_yield,
+        "verifier_acceptance_rate": verifier_acceptance_rate,
+        "acceptance_rate": acceptance_rate,  # n_injected / n_generated (end-to-end)
         "model": args.model,
+        "context_mode": args.context_mode,
+        "substantive_guidance": args.substantive_guidance,
+        "context_window": args.context_window,
+        "related_passages_max": args.related_passages_max,
+        "generator_stats": gen_stats,
+        "rejection_counts": {
+            **rejected_by_test,
+            "test5_verifier_typo_shaped": verifier_stats.get("typo-shaped", 0),
+            "test5_verifier_not_an_error": verifier_stats.get("not-an-error", 0),
+            "test5_verifier_parse_error": verifier_stats.get("parse-error", 0),
+        },
+        "verifier": {
+            "enabled": not args.skip_verifier,
+            "model": args.verifier_model,
+            "reasoning_effort": args.verifier_reasoning,
+            **verifier_stats,
+        },
         "perturbations": [
             {
                 "perturbation_id": p.perturbation_id,
@@ -306,6 +391,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
                 "original": p.original,
                 "perturbed": p.perturbed,
                 "why_wrong": p.why_wrong,
+                "contradicts_quote": p.contradicts_quote,
             }
             for p in applied
         ],
@@ -315,10 +401,33 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2))
     print(f"\nManifest saved to: {manifest_path}")
 
+    # Summary table
+    print("\n" + "=" * 60)
+    print(f"ACCEPTANCE SUMMARY ({args.context_mode} mode)")
+    print("=" * 60)
+    print(f"  Candidates:                        {n_candidates}")
+    print(f"  Generated:                         {n_generated}  "
+          f"(generation yield: {generation_yield:.1%} of candidates)")
+    print(f"  Rejected (test 1 not-found):       {rejected_by_test['test1_original_not_found']}")
+    print(f"  Rejected (test 2 unchanged):       {rejected_by_test['test2_unchanged']}")
+    print(f"  Rejected (test 3 overlap):         {rejected_by_test['test3_overlap']}")
+    print(f"  Rejected (test 4 garbled):         {rejected_by_test['test4_garbled']}")
+    if not args.skip_verifier:
+        print(f"  Rejected (test 5 typo-shaped):     {verifier_stats['typo-shaped']}")
+        print(f"  Rejected (test 5 not-an-error):    {verifier_stats['not-an-error']}")
+        print(f"  Rejected (test 5 parse-error):     {verifier_stats['parse-error']}")
+        qs = verifier_stats.get('quote_source', {}) or {}
+        print(f"  Quote source: generator={qs.get('generator', 0)}  "
+              f"random-sampled={qs.get('random-sampled', 0)}  "
+              f"none-available={qs.get('none-available', 0)}")
+    print(f"  Accepted (injected):               {len(applied)}")
+    print(f"  End-to-end acceptance rate:        {acceptance_rate:.1%}  "
+          f"(verifier acceptance: {verifier_acceptance_rate:.1%})")
+
     # Save corrupted paper
     corrupted_path = output_dir / f"{slug}_corrupted.md"
     corrupted_path.write_text(corrupted)
-    print(f"Corrupted paper saved to: {corrupted_path}")
+    print(f"\nCorrupted paper saved to: {corrupted_path}")
 
     # Save clean paper for reference
     clean_path = output_dir / f"{slug}_clean.md"
@@ -349,7 +458,8 @@ def cmd_score(args: argparse.Namespace) -> None:
     manifest = json.loads(manifest_path.read_text())
     review_data = json.loads(review_path.read_text())
 
-    # Reconstruct Perturbation objects
+    # Reconstruct Perturbation objects (contradicts_quote is optional for
+    # backwards compatibility with pre-verifier manifests).
     perturbations = []
     for p in manifest["perturbations"]:
         perturbations.append(Perturbation(
@@ -359,6 +469,7 @@ def cmd_score(args: argparse.Namespace) -> None:
             original=p["original"],
             perturbed=p["perturbed"],
             why_wrong=p["why_wrong"],
+            contradicts_quote=p.get("contradicts_quote", ""),
         ))
 
     # Extract comments from review JSON (handles viz format)
@@ -601,6 +712,59 @@ def main() -> None:
     perturb_parser.add_argument(
         "--error_type", default="all",
         help="Error type (default: all)",
+    )
+    perturb_parser.add_argument(
+        "--context-mode",
+        choices=["none", "window", "related"],
+        default="window",
+        help="How to supply context to the generator: 'none' (no context), "
+             "'window' (current ±200-char behavior), 'related' (window + "
+             "whole-paper related passages). Default: window.",
+    )
+    perturb_parser.add_argument(
+        "--context-window", type=int, default=200,
+        help="Width of the ±context window in characters (default: 200). "
+             "Used when --context-mode is 'window' or 'related'.",
+    )
+    substantive_guidance_group = perturb_parser.add_mutually_exclusive_group()
+    substantive_guidance_group.add_argument(
+        "--substantive-guidance",
+        dest="substantive_guidance",
+        action="store_true",
+        help="Explicitly teach the generator the typo-shaped vs substantive-error distinction "
+             "(default: enabled).",
+    )
+    substantive_guidance_group.add_argument(
+        "--no-substantive-guidance",
+        dest="substantive_guidance",
+        action="store_false",
+        help="Disable the explicit typo-shaped vs substantive-error guidance and use a neutral prompt.",
+    )
+    perturb_parser.set_defaults(substantive_guidance=True)
+    perturb_parser.add_argument(
+        "--related-passages-max", type=int, default=5,
+        help="Maximum number of related passages attached per candidate when "
+            "--context-mode is 'related' (default: 5).",
+    )
+    perturb_parser.add_argument(
+        "--verifier-model", default="anthropic/claude-sonnet-4-6",
+        help="Model used by the substantive-error verifier (test #5). "
+             "Default: anthropic/claude-sonnet-4-6.",
+    )
+    perturb_parser.add_argument(
+        "--verifier-reasoning",
+        choices=["none", "low", "medium", "high"],
+        default="none",
+        help="Reasoning effort for the verifier (default: none).",
+    )
+    perturb_parser.add_argument(
+        "--verifier-max-workers", type=int, default=8,
+        help="Parallel worker count for verifier fan-out (default: 8).",
+    )
+    perturb_parser.add_argument(
+        "--skip-verifier", action="store_true",
+        help="Skip the substantive-error verifier (test #5). Structural tests "
+             "1–4 still run.",
     )
 
     # score subcommand

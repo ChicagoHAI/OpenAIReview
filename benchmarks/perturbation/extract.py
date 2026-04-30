@@ -6,12 +6,55 @@ Each span is tagged with its type and compatible error categories.
 
 import re
 from .models import CandidateSpan, Error, SpanType
+from .related_passages import find_related_passages
 
-def extract_candidates(text: str, error_type: str) -> list[CandidateSpan]:
+# Valid context modes for extract_candidates.
+CONTEXT_MODES = ("none", "window", "related")
+
+
+def extract_candidates(
+    text: str,
+    error_type: str,
+    context_mode: str = "window",
+    context_window: int = 200,
+    related_passages_max: int = 5,
+) -> list[CandidateSpan]:
     """Extract all perturbation candidates from a paper's text.
 
     Returns spans sorted by position in the document.
+
+    Parameters
+    ----------
+    text : str
+        The paper text.
+    error_type : str
+        "surface", "formal", or "all".
+    context_mode : str
+        Controls what the GENERATOR sees. The verifier always has access to the
+        full related_passages list (see below).
+
+        "none"    — span.context is empty; span.related_passages is empty (so
+                    the generator sees no context at all).
+        "window"  — span.context is a ±context_window-char slice; related
+                    passages not shown to the generator.
+        "related" — span.context is the ±context_window slice AND span.related_passages
+                    is populated from whole-paper search (shown to the generator).
+
+    Regardless of context_mode, span.verifier_related_passages is ALWAYS populated
+    from the whole-paper lexical search. The verifier uses this to evaluate
+    perturbations on equal footing across modes: when the generator didn't provide
+    a contradicts_quote (none mode), the verifier can sample one from here.
+
+    context_window : int
+        Width of the local context window (±this many chars). Used when
+        context_mode in {"window", "related"}.
+    related_passages_max : int
+        Maximum number of merged snippets per span. Caps both related_passages
+        (generator-visible, related mode only) and verifier_related_passages.
     """
+    if context_mode not in CONTEXT_MODES:
+        raise ValueError(f"context_mode must be one of {CONTEXT_MODES}, got {context_mode!r}")
+
     if error_type == "surface":
         _EXTRACTORS = _EXTRACTORS_SURFACE
     elif error_type == "formal":
@@ -20,12 +63,16 @@ def extract_candidates(text: str, error_type: str) -> list[CandidateSpan]:
         _EXTRACTORS = _EXTRACTORS_ALL
 
     candidates: list[CandidateSpan] = []
+    span_offsets: list[int] = []  # parallel to `candidates`
     span_counter = 0
 
     # Extract spans of each type
     for extractor in _EXTRACTORS: # CAN return overlapping spans (diff categories)
         for span_type, match_text, match_offset in extractor(text):
-            context = _get_context(text, match_offset, match_len=len(match_text), window=200)
+            if context_mode == "none":
+                context = ""
+            else:
+                context = _get_context(text, match_offset, match_len=len(match_text), window=context_window)
             errors = _compatible_errors(span_type)
 
             if extractor in _EXTRACTORS_SURFACE:
@@ -42,7 +89,20 @@ def extract_candidates(text: str, error_type: str) -> list[CandidateSpan]:
                 error_type=error_type,
                 compatible_errors=errors,
             ))
+            span_offsets.append(match_offset)
             span_counter += 1
+
+    # Always compute verifier_related_passages (independent of context_mode).
+    # The verifier uses these when the generator didn't provide a contradicts_quote.
+    for span, off in zip(candidates, span_offsets):
+        passages = find_related_passages(
+            span, text, off,
+            max_passages=related_passages_max,
+        )
+        span.verifier_related_passages = passages
+        if context_mode == "related":
+            # In related mode, the generator also sees them.
+            span.related_passages = passages
 
     return candidates
 

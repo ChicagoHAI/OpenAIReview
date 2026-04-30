@@ -30,7 +30,7 @@ from dataclasses import dataclass
 
 from reviewer.client import chat
 
-from .models import CandidateSpan, Perturbation
+from .models import CandidateSpan, Error, Perturbation
 
 
 DEFAULT_VERIFIER_MODEL = "anthropic/claude-sonnet-4-6"
@@ -178,6 +178,311 @@ POSITIVE EXAMPLE (should be classified substantive):
 Return ONLY a single JSON object (no commentary):
 {{"verdict": "substantive" | "typo-shaped" | "not-an-error", "reason": "<one sentence citing which step failed or passed>"}}
 """
+
+
+# Checklist variants: replace the prose 3-step procedure with 4 yes/no items
+# whose answer pattern deterministically maps to a verdict. Aim is to reduce
+# circular vibe-matching against gold labels (which were produced by a previous
+# Claude session against the prose prompt) by forcing decomposed, mechanical
+# judgments. One checklist per error-type family. Same INPUT placeholders as
+# VERIFIER_PROMPT.
+VERIFIER_PROMPT_CHECKLIST_SURFACE = r"""
+You are checking a seeded error in an academic math paper against a checklist.
+
+INPUTS:
+
+Error type: {error_type}
+
+Original span:
+<<<
+{original}
+>>>
+
+Perturbed span:
+<<<
+{perturbed}
+>>>
+
+Quote from elsewhere in the paper ({quote_source}):
+<<<
+{quote}
+>>>
+
+Answer each item with Y or N. Be literal — do not infer beyond what is shown.
+
+C1. Is the perturbed span well-formed when read in isolation?
+    Answer N if it has any of: mixed-direction inequality chain (e.g.
+    "0 < w > L/2"), broken sandwich (e.g. "a >= b <= c"), operator salad
+    (two binary operators with no operand), obvious type/unit mismatch,
+    or contains a symbol/letter not bound anywhere in the original or quote.
+    Otherwise Y.
+
+C2. Does the quote literally state the ORIGINAL value/symbol/operator
+    (or an obviously equivalent form)?
+    Mentioning the same variable name or topic abstractly does NOT count.
+    The quote must concretely state the original. Otherwise N.
+
+C3. Does the perturbation alter something the quote (or its directly
+    implied downstream math) relies on?
+    Answer N for: a numeric value the quote shows is stated only once and
+    never reused; a re-indexing of a sum/interval whose value is unchanged
+    by the shift; a sign/operator flip in a standalone equation never
+    referenced by the quote.
+    Otherwise Y.
+
+C4. Is the perturbation a bare symbol swap (one identifier replaced with
+    another that is not independently defined in the paper) or a purely-
+    local index shift with no downstream reference?
+    Y if yes; N otherwise.
+
+VERDICT (apply this rule deterministically to your answers):
+  if C1 == N or C4 == Y          → "typo-shaped"
+  elif C2 == N                   → "not-an-error"
+  elif C3 == N                   → "not-an-error"
+  else                           → "substantive"
+
+Return ONLY a single JSON object (no commentary):
+{{"c1": "Y" | "N",
+  "c2": "Y" | "N",
+  "c3": "Y" | "N",
+  "c4": "Y" | "N",
+  "verdict": "substantive" | "typo-shaped" | "not-an-error",
+  "reason": "<one sentence citing which item drove the verdict>"}}
+"""
+
+
+VERIFIER_PROMPT_CHECKLIST_LOGIC = r"""
+You are checking a seeded error in the PROOF of an academic math paper against
+a checklist.
+
+INPUTS:
+
+Error type: {error_type}    (one of: missing_case, induction, circular_reasoning, invalid_implication)
+
+Original step / proof excerpt:
+<<<
+{original}
+>>>
+
+Perturbed version:
+<<<
+{perturbed}
+>>>
+
+Quote from elsewhere in the paper ({quote_source}):
+<<<
+{quote}
+>>>
+
+Answer each item with Y or N. Be literal — judge from inputs only.
+
+L1. Is the perturbed step coherent as a logical argument when read in
+    isolation? Y if it parses as a step / case / inductive argument.
+    N for nonsense like "by induction on the empty set", a step that names
+    variables not bound anywhere, or a syntactically broken inference.
+
+L2. Does the quote establish what the proof is meant to conclude — the
+    theorem statement, lemma being applied, or inductive hypothesis?
+    Mentioning the topic in the abstract is NOT enough; the quote must
+    pin down the claim the perturbed step bears on. Otherwise N.
+
+L3. Does the perturbation break the chain of inference?
+    - missing_case: the deleted case is non-trivial (its conclusion is not
+      forced by the remaining cases).
+    - induction: the base case is now wrong, or the inductive step no
+      longer reduces n+1 to n.
+    - circular_reasoning: a step now invokes the very claim being proved.
+    - invalid_implication: a reversed/dropped arrow now allows conclusions
+      the quote rules out (or blocks ones it requires).
+    Y if a careful reader could point at the broken link given the quote;
+    N if the modification leaves the proof still valid (or its breakage
+    is invisible from the inputs).
+
+L4. Is the change cosmetic? Y for: rewording, swapping an equivalent
+    step, permuting a case ordering, dropping a manifestly redundant case.
+
+VERDICT (apply this rule deterministically to your answers):
+  if L1 == N or L4 == Y          → "typo-shaped"
+  elif L2 == N                   → "not-an-error"
+  elif L3 == N                   → "not-an-error"
+  else                           → "substantive"
+
+Return ONLY a single JSON object (no commentary):
+{{"l1": "Y" | "N",
+  "l2": "Y" | "N",
+  "l3": "Y" | "N",
+  "l4": "Y" | "N",
+  "verdict": "substantive" | "typo-shaped" | "not-an-error",
+  "reason": "<one sentence citing which item drove the verdict>"}}
+"""
+
+
+VERIFIER_PROMPT_CHECKLIST_CLAIM = r"""
+You are checking a seeded error in a DEFINITION or THEOREM statement of an
+academic math paper against a checklist.
+
+INPUTS:
+
+Error type: {error_type}    (incorrect_claim_theoretical)
+
+Original statement:
+<<<
+{original}
+>>>
+
+Perturbed statement:
+<<<
+{perturbed}
+>>>
+
+Quote from elsewhere in the paper ({quote_source}):
+<<<
+{quote}
+>>>
+
+Answer each item with Y or N. Be literal.
+
+D1. Is the perturbed statement well-formed as a definition/theorem when
+    read in isolation? N for: undefined symbols, missing quantifiers that
+    the syntax requires, mismatched arity, or any malformation that
+    wouldn't compile in the paper.
+
+D2. Does the quote actually invoke, apply, or reference the original
+    definition/theorem in a way that depends on its specific wording?
+    Just naming "Theorem 2.1" or using a related concept does NOT count.
+    The quote must use a hypothesis or conclusion that the perturbation
+    touches. Otherwise N.
+
+D3. Does the perturbation change the meaning so that the quoted
+    application is no longer valid? Look for: weakened/strengthened
+    quantifiers (∀ ↔ ∃) the application relies on, a hypothesis the
+    application uses now dropped/reversed, a conclusion the application
+    cites now strengthened beyond what the proof supports.
+    Y if the application stops going through; N if it still holds with
+    the perturbed wording.
+
+D4. Is the change a cosmetic reformulation? Y for: renaming bound
+    variables, reordering equivalent clauses, restating with a synonym.
+
+VERDICT (apply this rule deterministically to your answers):
+  if D1 == N or D4 == Y          → "typo-shaped"
+  elif D2 == N                   → "not-an-error"
+  elif D3 == N                   → "not-an-error"
+  else                           → "substantive"
+
+Return ONLY a single JSON object (no commentary):
+{{"d1": "Y" | "N",
+  "d2": "Y" | "N",
+  "d3": "Y" | "N",
+  "d4": "Y" | "N",
+  "verdict": "substantive" | "typo-shaped" | "not-an-error",
+  "reason": "<one sentence citing which item drove the verdict>"}}
+"""
+
+
+VERIFIER_PROMPT_CHECKLIST_EMPIRICAL = r"""
+You are checking a seeded error in EMPIRICAL prose of an academic paper
+against a checklist.
+
+INPUTS:
+
+Error type: {error_type}    (incorrect_statement_empirical, misinterp, causal_reversed, p_hacking)
+
+Original passage:
+<<<
+{original}
+>>>
+
+Perturbed passage:
+<<<
+{perturbed}
+>>>
+
+Quote from elsewhere in the paper ({quote_source}):
+<<<
+{quote}
+>>>
+
+Answer each item with Y or N. Be literal.
+
+E1. Is the perturbed passage coherent prose? N for: garbled grammar
+    introduced by the perturbation, undefined terms, or sentences that
+    parse but become meaningless.
+
+E2. Does the quote pin down the specific empirical content the passage
+    is about — a named result, dataset, comparison, p-value, effect
+    direction, method choice? Mentioning the same topic abstractly is
+    NOT enough. Otherwise N.
+
+E3. Does the perturbation produce a claim that disagrees with the
+    quoted content?
+    - incorrect_statement_empirical: the claim now contradicts a number,
+      dataset, or methodological detail the quote states.
+    - misinterp: the claim now misreads what the quoted result means
+      (e.g. p-value treated as Pr[null|data], correlation read as
+      causation where the paper explicitly disclaims it).
+    - causal_reversed: the claim's causal direction now opposes what the
+      quote establishes.
+    - p_hacking: the claim now adds a methodological flaw absent from
+      the quote, or removes a correction the quote describes.
+    Y if a careful reader comparing prose to quote sees the
+    disagreement; N otherwise.
+
+E4. Is the change a stylistic rephrasing that preserves the empirical
+    claim? Y for: synonym swaps, hedging tweaks like "few" ↔ "some" that
+    don't flip the conclusion, reordering the claim's clauses.
+
+VERDICT (apply this rule deterministically to your answers):
+  if E1 == N or E4 == Y          → "typo-shaped"
+  elif E2 == N                   → "not-an-error"
+  elif E3 == N                   → "not-an-error"
+  else                           → "substantive"
+
+Return ONLY a single JSON object (no commentary):
+{{"e1": "Y" | "N",
+  "e2": "Y" | "N",
+  "e3": "Y" | "N",
+  "e4": "Y" | "N",
+  "verdict": "substantive" | "typo-shaped" | "not-an-error",
+  "reason": "<one sentence citing which item drove the verdict>"}}
+"""
+
+
+# Dispatcher: maps Error.value → checklist template. Used when prompt_template
+# is the special sentinel "checklist" — _verify_one resolves the right template
+# per perturbation.
+CHECKLIST_BY_ERROR: dict[str, str] = {
+    # surface
+    "numeric_parameter":              VERIFIER_PROMPT_CHECKLIST_SURFACE,
+    "operator_or_sign":               VERIFIER_PROMPT_CHECKLIST_SURFACE,
+    "index_or_subscript":             VERIFIER_PROMPT_CHECKLIST_SURFACE,
+    "computation":                    VERIFIER_PROMPT_CHECKLIST_SURFACE,
+    "symbol_binding":                 VERIFIER_PROMPT_CHECKLIST_SURFACE,
+    # claim theoretical
+    "incorrect_claim_theoretical":    VERIFIER_PROMPT_CHECKLIST_CLAIM,
+    # logic
+    "missing_case":                   VERIFIER_PROMPT_CHECKLIST_LOGIC,
+    "induction":                      VERIFIER_PROMPT_CHECKLIST_LOGIC,
+    "circular_reasoning":             VERIFIER_PROMPT_CHECKLIST_LOGIC,
+    "invalid_implication":            VERIFIER_PROMPT_CHECKLIST_LOGIC,
+    # statement empirical
+    "incorrect_statement_empirical":  VERIFIER_PROMPT_CHECKLIST_EMPIRICAL,
+    # experimental
+    "misinterp":                      VERIFIER_PROMPT_CHECKLIST_EMPIRICAL,
+    "causal_reversed":                VERIFIER_PROMPT_CHECKLIST_EMPIRICAL,
+    "p_hacking":                      VERIFIER_PROMPT_CHECKLIST_EMPIRICAL,
+}
+
+
+def _resolve_prompt_template(prompt_template, error: Error) -> str:
+    """Allow prompt_template to be either a string template or a dict
+    keyed by Error.value. The sentinel string "checklist" routes through
+    CHECKLIST_BY_ERROR (the per-error checklist family)."""
+    if prompt_template == "checklist":
+        return CHECKLIST_BY_ERROR[error.value]
+    if isinstance(prompt_template, dict):
+        return prompt_template[error.value]
+    return prompt_template
 
 
 _MIXED_INEQ_RE = re.compile(r"(<|\\le(?:q)?\b|\\leq\b).*?(>|\\ge(?:q)?\b|\\geq\b)", re.DOTALL)
@@ -383,7 +688,7 @@ def _verify_one(
     span: CandidateSpan | None,
     model: str,
     reasoning_effort: str | None,
-    prompt_template: str = VERIFIER_PROMPT,
+    prompt_template=VERIFIER_PROMPT,
     use_structural_precheck: bool = True,
 ) -> VerifierVerdict:
     quote, quote_source = _pick_quote(p, span)
@@ -397,6 +702,8 @@ def _verify_one(
                 quote_source=quote_source,
             )
 
+    resolved_template = _resolve_prompt_template(prompt_template, p.error)
+
     format_kwargs = dict(
         error_type=p.error.value,
         original=p.original,
@@ -409,9 +716,9 @@ def _verify_one(
         ),
     )
     # Legacy prompt expects why_wrong; new prompt does not. Supply both so either works.
-    if "{why_wrong}" in prompt_template:
+    if "{why_wrong}" in resolved_template:
         format_kwargs["why_wrong"] = p.why_wrong or "(generator did not provide one)"
-    prompt = prompt_template.format(**format_kwargs)
+    prompt = resolved_template.format(**format_kwargs)
 
     # Note: we used to short-circuit "none-available" to not-an-error here without calling
     # the LLM. That missed bare-symbol-swap / local-index-shift typos where the perturbed

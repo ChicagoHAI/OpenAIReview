@@ -3,10 +3,13 @@
 Usage:
     python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant before
     python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant after
+    python -m benchmarks.perturbation.analyses.verifier_eval.run_eval --variant checklist
 
 Variants:
-    before — legacy prompt (with why_wrong), no structural precheck. Baseline.
-    after  — new prompt (no why_wrong), structural precheck enabled.
+    before    — legacy prompt (with why_wrong), no structural precheck. Baseline.
+    after     — production prose prompt (no why_wrong), structural precheck enabled.
+    checklist — 4-item Y/N checklist with deterministic verdict rule, structural precheck enabled.
+                Designed to reduce circular vibe-matching against gold labels.
 
 Writes results/{split}_{variant}.json.
 
@@ -51,6 +54,7 @@ def _make_perturbation(ex: dict) -> Perturbation:
         span_id=ex["span_id"],
         error=Error(ex["error"]),
         original=ex["original"],
+        offset=ex.get("offset", 0),
         perturbed=ex["perturbed"],
         why_wrong=ex.get("why_wrong", ""),
         contradicts_quote=ex.get("contradicts_quote", ""),
@@ -75,6 +79,10 @@ def _run(
         use_structural = False
     elif variant == "after":
         prompt_template = VERIFIER_PROMPT
+        use_structural = True
+    elif variant == "checklist":
+        # Sentinel: _verify_one routes to the per-error checklist via CHECKLIST_BY_ERROR.
+        prompt_template = "checklist"
         use_structural = True
     else:
         raise ValueError(f"unknown variant: {variant}")
@@ -192,7 +200,7 @@ def _run(
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--variant", choices=("before", "after"), required=True)
+    ap.add_argument("--variant", choices=("before", "after", "checklist"), required=True)
     ap.add_argument("--model", default=DEFAULT_VERIFIER_MODEL)
     ap.add_argument("--reasoning", default=DEFAULT_VERIFIER_REASONING)
     ap.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS)

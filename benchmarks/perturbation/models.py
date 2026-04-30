@@ -34,6 +34,7 @@ class Error(str, Enum):
     OPERATOR_OR_SIGN = "operator_or_sign"
     INDEX_OR_SUBSCRIPT = "index_or_subscript"
     COMPUTATION = "computation"
+    SYMBOL_BINDING = "symbol_binding"  # deprecated for generation; kept for back-compat with old gold-set manifests
 
 
     # claim theoretical

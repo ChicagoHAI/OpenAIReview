@@ -160,7 +160,7 @@ def _apply_reasoning(kwargs: dict, provider: str, reasoning_effort: str, max_tok
 def chat(
     messages: list[dict],
     model: str = "anthropic/claude-opus-4-6",
-    temperature: float | None = None,
+    temperature: float | None = 0.0,
     max_tokens: int = 16384,
     reasoning_effort: str | None = None,
     retries: int = 3,

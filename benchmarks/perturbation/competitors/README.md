@@ -47,18 +47,18 @@ python benchmarks/perturbation/run_competitor_benchmark.py \
 
 # 3. Regenerate the report standalone (single or combined)
 python benchmarks/perturbation/generate_report.py \
-    benchmarks/perturbation/results/short
+    benchmarks/perturbation/results_short
 
 python benchmarks/perturbation/generate_report.py \
-    benchmarks/perturbation/results/short \
-    benchmarks/perturbation/results/medium \
+    benchmarks/perturbation/results_short \
+    benchmarks/perturbation/results_medium \
     --out benchmarks/perturbation/reports/combined.md
 
 # Optional: split progressive into consolidated vs pre-consolidation columns
 #   (rescores each review JSON twice — costs a handful of LLM-judge calls).
 python benchmarks/perturbation/competitors/split_rescore_progressive.py \
-    --results-dir benchmarks/perturbation/results/short \
-    --results-dir benchmarks/perturbation/results/medium
+    --results-dir benchmarks/perturbation/results_short \
+    --results-dir benchmarks/perturbation/results_medium
 ```
 
 ### Stages

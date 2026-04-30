@@ -236,7 +236,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         validate_perturbations,
     )
     from perturbation.extract import attach_verifier_related_passages
-    from perturbation.verify import verify_perturbations
+    from perturbation.verify import verify_perturbations_batched
 
     source = args.file
     if is_url(source):
@@ -292,12 +292,12 @@ def cmd_perturb(args: argparse.Namespace) -> None:
     verifier_stats = None
     if not args.skip_verifier:
         print(f"\nVerifying {len(valid)} perturbations (substantive-error oracle)...")
-        accepted, rejected_v, verifier_stats = verify_perturbations(
+        accepted, rejected_v, verifier_stats = verify_perturbations_batched(
             valid,
             candidates,
+            paper_title=title,
             model=args.verifier_model,
             reasoning_effort=args.verifier_reasoning,
-            max_workers=args.verifier_max_workers,
         )
         print(f"  Accepted: {len(accepted)}, Dropped: {len(rejected_v)}")
         for p, v in rejected_v:

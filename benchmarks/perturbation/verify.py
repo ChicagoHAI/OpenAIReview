@@ -181,11 +181,14 @@ Return ONLY a single JSON object (no commentary):
 
 
 # Checklist variants: replace the prose 3-step procedure with 4 yes/no items
-# whose answer pattern deterministically maps to a verdict. Aim is to reduce
-# circular vibe-matching against gold labels (which were produced by a previous
-# Claude session against the prose prompt) by forcing decomposed, mechanical
-# judgments. One checklist per error-type family. Same INPUT placeholders as
-# VERIFIER_PROMPT.
+# whose answer pattern deterministically maps to a verdict. One checklist per
+# error-type family. Same INPUT placeholders as VERIFIER_PROMPT.
+
+# VERDICT (applied in code from the answers):
+#   if C1 == N or C4 == Y          → "typo-shaped"
+#   elif C2 == N                   → "not-an-error"
+#   elif C3 == N                   → "not-an-error"
+#   else                           → "substantive"
 VERIFIER_PROMPT_CHECKLIST_SURFACE = r"""
 You are checking a seeded error in an academic math paper against a checklist.
 
@@ -211,7 +214,7 @@ Quote from elsewhere in the paper ({quote_source}):
 Answer each item with Y or N. Be literal — do not infer beyond what is shown.
 
 C1. Is the perturbed span well-formed when read in isolation?
-    Answer N if it has any of: mixed-direction inequality chain (e.g.
+    Answer N if it has any of but not limited to: mixed-direction inequality chain (e.g.
     "0 < w > L/2"), broken sandwich (e.g. "a >= b <= c"), operator salad
     (two binary operators with no operand), obvious type/unit mismatch,
     or contains a symbol/letter not bound anywhere in the original or quote.
@@ -225,32 +228,35 @@ C2. Does the quote literally state the ORIGINAL value/symbol/operator
 C3. Does the perturbation alter something the quote (or its directly
     implied downstream math) relies on?
     Answer N for: a numeric value the quote shows is stated only once and
-    never reused; a re-indexing of a sum/interval whose value is unchanged
-    by the shift; a sign/operator flip in a standalone equation never
+    never reused; a sign/operator flip in a standalone equation never
     referenced by the quote.
     Otherwise Y.
 
-C4. Is the perturbation a bare symbol swap (one identifier replaced with
-    another that is not independently defined in the paper) or a purely-
-    local index shift with no downstream reference?
+C4. (structural) Is the perturbed form structurally typo-shaped
+    regardless of evidence — one of:
+    (a) a bare symbol swap whose replacement letter is not bound
+        anywhere in the paper; or
+    (b) a re-indexing that leaves the expression algebraically
+        unchanged (dummy-variable rename like \sum_i \to \sum_j, or
+        simultaneous bound + index shift like \sum_{{i=0}}^n a_i \to
+        \sum_{{i=1}}^{{n+1}} a_{{i-1}})?
     Y if yes; N otherwise.
 
-VERDICT (apply this rule deterministically to your answers):
-  if C1 == N or C4 == Y          → "typo-shaped"
-  elif C2 == N                   → "not-an-error"
-  elif C3 == N                   → "not-an-error"
-  else                           → "substantive"
-
-Return ONLY a single JSON object (no commentary):
+Return ONLY a single JSON object (no commentary). The verdict will be
+computed downstream from your answers — do not output a verdict yourself.
 {{"c1": "Y" | "N",
   "c2": "Y" | "N",
   "c3": "Y" | "N",
   "c4": "Y" | "N",
-  "verdict": "substantive" | "typo-shaped" | "not-an-error",
-  "reason": "<one sentence citing which item drove the verdict>"}}
+  "reason": "<one sentence justifying the most decisive item>"}}
 """
 
 
+# VERDICT (applied in code from the answers):
+#   if L1 == N or L4 == Y          → "typo-shaped"
+#   elif L2 == N                   → "not-an-error"
+#   elif L3 == N                   → "not-an-error"
+#   else                           → "substantive"
 VERIFIER_PROMPT_CHECKLIST_LOGIC = r"""
 You are checking a seeded error in the PROOF of an academic math paper against
 a checklist.
@@ -301,22 +307,21 @@ L3. Does the perturbation break the chain of inference?
 L4. Is the change cosmetic? Y for: rewording, swapping an equivalent
     step, permuting a case ordering, dropping a manifestly redundant case.
 
-VERDICT (apply this rule deterministically to your answers):
-  if L1 == N or L4 == Y          → "typo-shaped"
-  elif L2 == N                   → "not-an-error"
-  elif L3 == N                   → "not-an-error"
-  else                           → "substantive"
-
-Return ONLY a single JSON object (no commentary):
+Return ONLY a single JSON object (no commentary). The verdict will be
+computed downstream from your answers — do not output a verdict yourself.
 {{"l1": "Y" | "N",
   "l2": "Y" | "N",
   "l3": "Y" | "N",
   "l4": "Y" | "N",
-  "verdict": "substantive" | "typo-shaped" | "not-an-error",
-  "reason": "<one sentence citing which item drove the verdict>"}}
+  "reason": "<one sentence justifying the most decisive item>"}}
 """
 
 
+# VERDICT (applied in code from the answers):
+#   if D1 == N or D4 == Y          → "typo-shaped"
+#   elif D2 == N                   → "not-an-error"
+#   elif D3 == N                   → "not-an-error"
+#   else                           → "substantive"
 VERIFIER_PROMPT_CHECKLIST_CLAIM = r"""
 You are checking a seeded error in a DEFINITION or THEOREM statement of an
 academic math paper against a checklist.
@@ -364,22 +369,21 @@ D3. Does the perturbation change the meaning so that the quoted
 D4. Is the change a cosmetic reformulation? Y for: renaming bound
     variables, reordering equivalent clauses, restating with a synonym.
 
-VERDICT (apply this rule deterministically to your answers):
-  if D1 == N or D4 == Y          → "typo-shaped"
-  elif D2 == N                   → "not-an-error"
-  elif D3 == N                   → "not-an-error"
-  else                           → "substantive"
-
-Return ONLY a single JSON object (no commentary):
+Return ONLY a single JSON object (no commentary). The verdict will be
+computed downstream from your answers — do not output a verdict yourself.
 {{"d1": "Y" | "N",
   "d2": "Y" | "N",
   "d3": "Y" | "N",
   "d4": "Y" | "N",
-  "verdict": "substantive" | "typo-shaped" | "not-an-error",
-  "reason": "<one sentence citing which item drove the verdict>"}}
+  "reason": "<one sentence justifying the most decisive item>"}}
 """
 
 
+# VERDICT (applied in code from the answers):
+#   if E1 == N or E4 == Y          → "typo-shaped"
+#   elif E2 == N                   → "not-an-error"
+#   elif E3 == N                   → "not-an-error"
+#   else                           → "substantive"
 VERIFIER_PROMPT_CHECKLIST_EMPIRICAL = r"""
 You are checking a seeded error in EMPIRICAL prose of an academic paper
 against a checklist.
@@ -432,19 +436,111 @@ E4. Is the change a stylistic rephrasing that preserves the empirical
     claim? Y for: synonym swaps, hedging tweaks like "few" ↔ "some" that
     don't flip the conclusion, reordering the claim's clauses.
 
-VERDICT (apply this rule deterministically to your answers):
-  if E1 == N or E4 == Y          → "typo-shaped"
-  elif E2 == N                   → "not-an-error"
-  elif E3 == N                   → "not-an-error"
-  else                           → "substantive"
-
-Return ONLY a single JSON object (no commentary):
+Return ONLY a single JSON object (no commentary). The verdict will be
+computed downstream from your answers — do not output a verdict yourself.
 {{"e1": "Y" | "N",
   "e2": "Y" | "N",
   "e3": "Y" | "N",
   "e4": "Y" | "N",
-  "verdict": "substantive" | "typo-shaped" | "not-an-error",
-  "reason": "<one sentence citing which item drove the verdict>"}}
+  "reason": "<one sentence justifying the most decisive item>"}}
+"""
+
+
+# Batched, unified-prompt variant. One call evaluates ALL perturbations from a
+# single (paper, error_type) run. Each perturbation carries its own evidence
+# (surrounding_context + related_passages), so the prompt is independent of any
+# single sampled quote. The model dispatches I3 on each perturbation's
+# error_type field.
+#
+# VERDICT (applied in code from the answers, per perturbation):
+#   if I1 == N or I4 == Y          → "typo-shaped"
+#   elif I2 == N                   → "not-an-error"
+#   elif I3 == N                   → "not-an-error"
+#   else                           → "substantive"
+VERIFIER_PROMPT_BATCHED = r"""
+You are checking a batch of seeded errors in an academic paper against a checklist.
+
+Paper: {paper_title}
+
+You will receive a JSON array of perturbations. Each perturbation has:
+- perturbation_id: unique key — use this verbatim in your output
+- error_type: one of the seeded error categories
+- original: the original text span from the paper
+- perturbed: the modified version with the seeded error
+- surrounding_context: ~200 characters of paper text around the span (verbatim, NOT perturbed)
+- related_passages: list of snippets from elsewhere in the paper that mention the same symbols/named refs (verbatim, NOT perturbed)
+
+Judge each perturbation INDEPENDENTLY. Do not let the assessment of one perturbation influence another. Treat surrounding_context and related_passages as ground truth from the original paper, even if they overlap with the location of another perturbation in the batch.
+
+PERTURBATIONS:
+{perturbations_json}
+
+For EACH perturbation, answer four items with Y or N. Be literal — judge from the inputs above only.
+
+I1. (well-formed) Is the perturbed span well-formed when read in isolation?
+    Answer N for any of: a mixed-direction inequality chain (e.g. "0 < w > L/2"),
+    a broken sandwich (e.g. "a >= b <= c"), operator salad (two binary operators
+    with no operand), obvious type/unit mismatch, garbled grammar, a sentence
+    that parses but is meaningless, "by induction on the empty set"-style
+    nonsense, a step that names variables not bound anywhere, a definition with
+    undefined symbols / mismatched arity / missing required quantifiers, or a
+    symbol/letter not bound in the original, surrounding_context, or
+    related_passages. Otherwise Y.
+
+I2. (evidence available) Do the surrounding_context or related_passages contain
+    something CONCRETE that the original span establishes or relates to —
+    a stated value, a definition, an applied theorem, a methodological detail,
+    a named result, a stated fact, or a downstream use of the same
+    symbol/quantity/concept? Mentioning the topic abstractly does NOT count;
+    the evidence must be a concrete claim about the same object the original
+    span is about. Otherwise N.
+
+I3. (contradiction confirmed) Does the perturbation contradict that evidence,
+    given the perturbation's error_type?
+    - Surface (numeric_parameter, operator_or_sign, index_or_subscript,
+      computation, symbol_binding): does the perturbed value/symbol/operator
+      now disagree with how the same quantity appears in surrounding_context
+      or related_passages?
+    - incorrect_claim_theoretical: does the perturbation alter the statement
+      so that an application of it visible in surrounding_context or
+      related_passages no longer goes through?
+    - Logic (missing_case, induction, circular_reasoning, invalid_implication):
+      does the perturbed step now break the chain of inference toward what
+      the proof is trying to establish? (missing_case: the deleted case is
+      non-trivial; induction: base case wrong, or step no longer reduces n+1
+      to n; circular_reasoning: a step now invokes the very claim being
+      proved; invalid_implication: a reversed/dropped arrow now allows
+      conclusions ruled out by context.)
+    - Empirical (incorrect_statement_empirical, misinterp, causal_reversed,
+      p_hacking): does the perturbed claim now disagree with a fact
+      established in surrounding_context or related_passages, OR introduce a
+      methodological flaw the original explicitly avoided (post-hoc
+      selection, removed correction, reversed causal direction)?
+    Y if a careful reader could point at the contradiction; N if the
+    modification leaves the perturbation unrefuted by the available evidence.
+
+I4. (typo-shaped / cosmetic) Is the perturbed form structurally typo-shaped or
+    cosmetically equivalent regardless of evidence — one of: a bare symbol
+    swap whose replacement letter is not bound anywhere; a re-indexing that
+    leaves the expression algebraically unchanged (dummy-variable rename like
+    \sum_i \to \sum_j; simultaneous bound + index shift); a synonym swap; a
+    reordering of equivalent clauses; renaming bound variables; permuting a
+    case ordering; dropping a manifestly redundant case; a hedging tweak
+    ("few" ↔ "some") that does not flip the conclusion?
+    Y if yes; N otherwise.
+
+Return ONLY a single JSON array (no commentary). One object per input
+perturbation, keyed by perturbation_id (NOT by list order — the consumer binds
+on perturbation_id). Include every perturbation_id from the input. The verdict
+will be computed downstream from your answers — do not output a verdict yourself.
+
+[{{"perturbation_id": "<id>",
+   "i1": "Y" | "N",
+   "i2": "Y" | "N",
+   "i3": "Y" | "N",
+   "i4": "Y" | "N",
+   "reason": "<one sentence justifying the most decisive item>"}},
+  ...]
 """
 
 
@@ -623,15 +719,62 @@ def _strip_code_fences(s: str) -> str:
     return s
 
 
+_CHECKLIST_PREFIXES = ("c", "l", "d", "e", "i")
+
+
+def _compute_verdict_from_checklist(obj: dict) -> tuple[str, str] | None:
+    """If obj is a checklist response (keys <p>1..<p>4 with Y/N values for some
+    prefix in {c,l,d,e}), apply the deterministic rule and return (verdict, items_repr).
+    Returns None if obj is not a checklist response. Returns ("parse-error", reason)
+    if items are present but malformed.
+
+    Rule (identical across all four families):
+      if i1 == N or i4 == Y          → "typo-shaped"
+      elif i2 == N or i3 == N        → "not-an-error"
+      else                           → "substantive"
+    """
+    for prefix in _CHECKLIST_PREFIXES:
+        keys = tuple(f"{prefix}{i}" for i in (1, 2, 3, 4))
+        if not all(k in obj for k in keys):
+            continue
+        vals = [str(obj[k]).strip().upper() for k in keys]
+        if any(v not in ("Y", "N") for v in vals):
+            return ("parse-error", f"checklist items must be Y/N, got {dict(zip(keys, vals))}")
+        i1, i2, i3, i4 = vals
+        if i1 == "N" or i4 == "Y":
+            return ("typo-shaped", f"{keys[0]}={i1} {keys[3]}={i4}")
+        if i2 == "N" or i3 == "N":
+            return ("not-an-error", f"{keys[1]}={i2} {keys[2]}={i3}")
+        return ("substantive", f"{keys[0]}=Y {keys[1]}=Y {keys[2]}=Y {keys[3]}=N")
+    return None
+
+
 def _try_verdict_dict(obj) -> tuple[str, str] | None:
-    """Return (verdict, reason) if obj is a valid verdict dict, else None."""
-    if not isinstance(obj, dict) or "verdict" not in obj:
+    """Return (verdict, reason) if obj is a valid verdict dict, else None.
+
+    Two response shapes are accepted:
+      1. Checklist: keys c1..c4 / l1..l4 / d1..d4 / e1..e4 with Y/N values.
+         Verdict is computed deterministically in code.
+      2. Legacy: a "verdict" key with one of _VALID_VERDICTS.
+    """
+    if not isinstance(obj, dict):
+        return None
+    model_reason = str(obj.get("reason", "")).strip()
+
+    checklist = _compute_verdict_from_checklist(obj)
+    if checklist is not None:
+        verdict, items_repr = checklist
+        if verdict == "parse-error":
+            return checklist
+        reason = f"[{items_repr}] {model_reason}".strip() if model_reason else f"[{items_repr}]"
+        return (verdict, reason)
+
+    if "verdict" not in obj:
         return None
     verdict = str(obj.get("verdict", "")).strip().lower()
-    reason = str(obj.get("reason", "")).strip()
     if verdict not in _VALID_VERDICTS:
         return ("parse-error", f"unknown verdict {verdict!r}")
-    return (verdict, reason)
+    return (verdict, model_reason)
 
 
 def _parse_verdict(response: str) -> tuple[str, str]:
@@ -814,6 +957,224 @@ def verify_perturbations(
             "random-sampled": sum(1 for v in verdicts.values() if v.quote_source == "random-sampled"),
             "none-available": sum(1 for v in verdicts.values() if v.quote_source == "none-available"),
         },
+    }
+    print(f"  Verifier verdicts: {stats}")
+    return accepted, rejected, stats
+
+
+# ---------------------------------------------------------------------------
+# Batched verifier (one LLM call per (paper, error_type) run)
+# ---------------------------------------------------------------------------
+
+
+def _parse_batched_response(
+    response: str,
+    expected_ids: set[str],
+) -> dict[str, tuple[str, str]]:
+    """Pull a JSON array of per-perturbation answers out of the response.
+
+    Returns dict keyed by perturbation_id → (verdict, reason). Missing IDs
+    from `expected_ids` are NOT inserted here — the caller decides how to
+    handle them (typically: assign 'parse-error').
+
+    Strategies, in order:
+      1. Strip code fences, parse the whole response as a JSON list.
+      2. Walk for the first embedded `[...]` that decodes into a list.
+      3. Walk for individual `{...}` objects carrying `perturbation_id`
+         (handles a model that returned concatenated objects without array
+         wrapping).
+    """
+    out: dict[str, tuple[str, str]] = {}
+
+    def _ingest(arr: list) -> None:
+        for obj in arr:
+            if not isinstance(obj, dict):
+                continue
+            pid = str(obj.get("perturbation_id", "")).strip()
+            if not pid or pid not in expected_ids:
+                continue
+            result = _compute_verdict_from_checklist(obj)
+            if result is None:
+                out[pid] = ("parse-error", "no checklist items in response object")
+                continue
+            verdict, items_repr = result
+            if verdict == "parse-error":
+                out[pid] = result
+                continue
+            model_reason = str(obj.get("reason", "")).strip()
+            reason = f"[{items_repr}] {model_reason}".strip() if model_reason else f"[{items_repr}]"
+            out[pid] = (verdict, reason)
+
+    stripped = _strip_code_fences(response)
+
+    # Strategy 1: whole-response JSON array.
+    try:
+        obj = json.loads(stripped)
+        if isinstance(obj, list):
+            _ingest(obj)
+            if out:
+                return out
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Strategy 2: walk for an embedded `[...]` that decodes to a list.
+    decoder = json.JSONDecoder()
+    for source in (stripped, response):
+        i = 0
+        while i < len(source):
+            if source[i] == "[":
+                try:
+                    obj, end = decoder.raw_decode(source, i)
+                    if isinstance(obj, list):
+                        _ingest(obj)
+                        if out:
+                            return out
+                    i = end
+                except json.JSONDecodeError:
+                    i += 1
+            else:
+                i += 1
+
+    # Strategy 3: walk for individual objects carrying `perturbation_id`.
+    for source in (stripped, response):
+        i = 0
+        while i < len(source):
+            if source[i] == "{":
+                try:
+                    obj, end = decoder.raw_decode(source, i)
+                    if isinstance(obj, dict):
+                        _ingest([obj])
+                    i = end
+                except json.JSONDecodeError:
+                    i += 1
+            else:
+                i += 1
+
+    return out
+
+
+def verify_perturbations_batched(
+    perturbations: list[Perturbation],
+    candidates: list[CandidateSpan],
+    paper_title: str = "",
+    model: str = DEFAULT_VERIFIER_MODEL,
+    reasoning_effort: str | None = DEFAULT_VERIFIER_REASONING,
+    use_structural_precheck: bool = True,
+) -> tuple[list[Perturbation], list[tuple[Perturbation, VerifierVerdict]], dict]:
+    """Verify all perturbations in a single batched LLM call.
+
+    One call evaluates the whole list. Each perturbation carries its own
+    surrounding_context (±200 chars from `CandidateSpan.context`) and the
+    full `verifier_related_passages` list — no single-quote dependency.
+
+    The structural precheck still runs upfront and short-circuits caught
+    perturbations to "typo-shaped" without an LLM call.
+
+    Returns (accepted, rejected, stats) — same shape as
+    `verify_perturbations` so callers can swap the function name.
+    """
+    span_lookup = {c.span_id: c for c in candidates}
+
+    if not perturbations:
+        return [], [], {
+            "n_input": 0,
+            "substantive": 0,
+            "typo-shaped": 0,
+            "not-an-error": 0,
+            "parse-error": 0,
+        }
+
+    verdicts: dict[str, VerifierVerdict] = {}
+    survivors: list[Perturbation] = []
+
+    # Stage 1: structural precheck (deterministic, no LLM).
+    if use_structural_precheck:
+        for p in perturbations:
+            status, reason = structural_precheck(p)
+            if status == "reject-typo":
+                verdicts[p.perturbation_id] = VerifierVerdict(
+                    p.perturbation_id, "typo-shaped",
+                    f"structural precheck: {reason}",
+                )
+            else:
+                survivors.append(p)
+    else:
+        survivors = list(perturbations)
+
+    # Stage 2: batched LLM call for the survivors.
+    print(f"\nVerifier (batched): {len(survivors)} perturbations "
+          f"({len(perturbations) - len(survivors)} caught by structural precheck) "
+          f"in 1 call (model={model}, reasoning={reasoning_effort})...")
+
+    if survivors:
+        payload = []
+        for p in survivors:
+            span = span_lookup.get(p.span_id)
+            payload.append({
+                "perturbation_id": p.perturbation_id,
+                "error_type": p.error.value,
+                "original": p.original,
+                "perturbed": p.perturbed,
+                "surrounding_context": span.context if span else "",
+                "related_passages": [
+                    rp.get("snippet", "")
+                    for rp in (span.verifier_related_passages if span else [])
+                ],
+            })
+
+        prompt = VERIFIER_PROMPT_BATCHED.format(
+            paper_title=paper_title or "(untitled)",
+            perturbations_json=json.dumps(payload, indent=2),
+        )
+
+        try:
+            response, _usage = chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=model,
+                max_tokens=16384,
+                reasoning_effort=reasoning_effort,
+            )
+        except Exception as e:
+            err = f"batched chat failed: {e}"
+            for p in survivors:
+                verdicts[p.perturbation_id] = VerifierVerdict(
+                    p.perturbation_id, "parse-error", err,
+                )
+        else:
+            expected_ids = {p.perturbation_id for p in survivors}
+            parsed = _parse_batched_response(response, expected_ids)
+            for p in survivors:
+                if p.perturbation_id in parsed:
+                    verdict, reason = parsed[p.perturbation_id]
+                    verdicts[p.perturbation_id] = VerifierVerdict(
+                        p.perturbation_id, verdict, reason,
+                    )
+                else:
+                    verdicts[p.perturbation_id] = VerifierVerdict(
+                        p.perturbation_id, "parse-error",
+                        f"missing from batched response; raw_head={response[:200]!r}",
+                    )
+
+    # Bucket into accepted / rejected.
+    accepted: list[Perturbation] = []
+    rejected: list[tuple[Perturbation, VerifierVerdict]] = []
+    for p in perturbations:
+        v = verdicts[p.perturbation_id]
+        if v.verdict == "substantive":
+            accepted.append(p)
+        else:
+            rejected.append((p, v))
+
+    stats = {
+        "n_input": len(perturbations),
+        "substantive": sum(1 for v in verdicts.values() if v.verdict == "substantive"),
+        "typo-shaped": sum(1 for v in verdicts.values() if v.verdict == "typo-shaped"),
+        "not-an-error": sum(1 for v in verdicts.values() if v.verdict == "not-an-error"),
+        "parse-error": sum(1 for v in verdicts.values() if v.verdict == "parse-error"),
+        "structural-typo": sum(
+            1 for v in verdicts.values()
+            if v.verdict == "typo-shaped" and v.reason.startswith("structural precheck:")
+        ),
     }
     print(f"  Verifier verdicts: {stats}")
     return accepted, rejected, stats

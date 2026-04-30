@@ -134,7 +134,9 @@ For each candidate, generate ONE compatible perturbation:
 
 CLAIM_THEORETICAL_ERRORS = r"""
 For each candidate, generate ONE compatible perturbation:
-- incorrect_claim: corrupt the statement subtly (e.g. wrong condition, wrong quantifier, wrong bound, wrong constant, wrong sign, wrong index/subscript)
+- incorrect_claim_theoretical: introduce a SUBSTANTIAL error that corrupts the validity of the claim
+
+AVOID surface-level errors.
 """
 
 LOGIC_ERRORS = r"""
@@ -147,7 +149,9 @@ For each candidate, generate ONE compatible perturbation:
 
 STATEMENT_EMPIRICAL_ERRORS = r"""
 For each candidate, generate ONE compatible perturbation:
-- incorrect_claim: corrupt the statement so it is factually incorrect
+- incorrect_statement_empirical: introduce a SUBSTANTIAL error that corrupts the validity of the statement
+
+AVOID surface-level errors.
 """
 
 EXPERIMENTAL_ERRORS = r"""

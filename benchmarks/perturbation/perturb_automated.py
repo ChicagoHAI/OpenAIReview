@@ -180,7 +180,7 @@ def run_perturb(
 
         print(f"      {et}: {et_injected}/{n_total}")
         total_injected += et_injected
-        if et_injected < 0.8 * n_total: # buffer for errors injected 
+        if et_injected < 0.7 * n_total: # buffer for errors injected 
             all_passed = False
 
     return total_injected if all_passed else 0

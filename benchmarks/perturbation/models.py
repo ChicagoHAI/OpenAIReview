@@ -6,32 +6,54 @@ from enum import Enum
 
 class SpanType(str, Enum):
     """What kind of content a span contains."""
+    # abstract 
+    ABSTRACT = "abstract"
+
+    # surface errors
     EQUATION_DISPLAY = "equation_display"   # $$...$$ or \[...\]
     EQUATION_INLINE = "equation_inline"     # $...$ or \(...\)
     EQUATION_NAMED = "equation_named"       # align, equation, gather, multline, cases
 
+    # false claims
     DEFINITION = "definition"
     THEOREM = "theorem"
+
+    # logic errors
     PROOF = "proof"
+
+    # empirical errors
+    EXPERIMENTAL = "experimental"
+    PARAGRAPH = "paragraph"
+
 
 
 class Error(str, Enum):
-    """Edit-centric error taxonomy (from Codex)."""
+    """Edit-centric error taxonomy."""
     # surface
     NUMERIC_PARAMETER = "numeric_parameter"
     OPERATOR_OR_SIGN = "operator_or_sign"
-    SYMBOL_BINDING = "symbol_binding"  # Deprecated for generation — bare symbol swaps are typo-shaped. Kept for back-compat with old manifests.
     INDEX_OR_SUBSCRIPT = "index_or_subscript"
+    COMPUTATION = "computation"
+    SYMBOL_BINDING = "symbol_binding"  # deprecated for generation; kept for back-compat with old gold-set manifests
 
-    # formal
-    DEF_WRONG = "def_wrong"
-    THM_WRONG_CONDITION = "thm_wrong_condition"
-    THM_WRONG_CONCLUSION = "thm_wrong_conclusion"
-    THM_WRONG_SCOPE = "thm_wrong_scope"
-    PROOF_WRONG_DIRECTION = "proof_wrong_direction"
-    PROOF_MISSING_CASE = "proof_missing_case"
-    PROOF_WRONG_ASSUMPTION = "proof_wrong_assumption"
-    PROOF_MISMATCH = "proof_mismatch"
+
+    # claim theoretical
+    INCORRECT_CLAIM_THEORETICAL = "incorrect_claim_theoretical"
+
+    # logic
+    MISSING_CASE = "missing_case"
+    INDUCTION = "induction"
+    CIRCULAR_REASONING = "circular_reasoning"
+    INVALID_IMPLICATION = "invalid_implication"
+
+
+    # statement empirical 
+    INCORRECT_STATEMENT_EMPIRICAL = "incorrect_statement_empirical"
+
+    # experimental 
+    MISINTERP = "misinterp"
+    CAUSAL_REVERSED = "causal_reversed"
+    P_HACKING = "p_hacking"
 
 
 @dataclass
@@ -44,15 +66,7 @@ class CandidateSpan:
     context: str                       # surrounding text for the LLM
     error_type: str
     compatible_errors: list[Error] = field(default_factory=list)
-    # Passages elsewhere in the paper that reference the same symbols/names as
-    # this span, SHOWN TO THE GENERATOR. Populated only when context_mode ==
-    # "related". Each entry is {"offset": int, "snippet": str, "matched_tokens": list[str]}.
     related_passages: list[dict] = field(default_factory=list)
-    # Verifier-facing related passages: ALWAYS populated regardless of
-    # context_mode. The verifier uses these to fairly judge perturbations
-    # generated in "none" mode (where contradicts_quote is absent) by sampling
-    # one as the contradicts_quote — putting all three modes on equal footing
-    # at verification time.
     verifier_related_passages: list[dict] = field(default_factory=list)
 
 
@@ -66,9 +80,7 @@ class Perturbation:
     offset: int                        # character offset into the original paper text
     perturbed: str                     # replacement text
     why_wrong: str                     # explanation of why this breaks internal consistency
-    # Exact verbatim quote from elsewhere in the paper that the perturbation
-    # contradicts. Empty string if the generator didn't produce one (legacy).
-    contradicts_quote: str = ""
+    contradicts_quote: str = ""        # verbatim quote the perturbation contradicts; verifier samples one if empty
 
 
 @dataclass

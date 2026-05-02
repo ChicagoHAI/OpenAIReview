@@ -8,12 +8,12 @@ default, or to `--out FILE`.
 
 Usage:
     # Single results dir (prints to stdout)
-    python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results/short
+    python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results_short
 
     # Combined short + medium, written to a file
     python benchmarks/perturbation/generate_report.py \\
-        benchmarks/perturbation/results/short \\
-        benchmarks/perturbation/results/medium \\
+        benchmarks/perturbation/results_short \\
+        benchmarks/perturbation/results_medium \\
         --out benchmarks/perturbation/reports/combined.md
 """
 

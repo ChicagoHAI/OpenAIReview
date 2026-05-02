@@ -46,21 +46,13 @@ from datasets import load_dataset
 class Config:
     max_papers: int = 2
     length: str = field(default="short", metadata={"choices": ["short", "medium", "long"]})
-    error_type: str = field(default="all", metadata={"choices": ["surface", "formal", "all"]})
     score_method: str = field(default="llm", metadata={"choices": ["llm", "fuzzy", "semantic"]})
     perturb_model: str = "google/gemini-3-flash-preview"
     score_model: str = "google/gemini-3-flash-preview"
     review_models: list[str] = field(default_factory=lambda: ["google/gemini-3-flash-preview"])
     review_methods: list[str] = field(default_factory=lambda: ["zero_shot", "local", "progressive"])
     results_dir: str = "results"
-
-    # Context-provision strategy for the generator.
-    context_mode: str = field(default="window", metadata={"choices": ["none", "window", "related"]})
-    substantive_guidance: bool = True
-    context_window: int = 200
-    related_passages_max: int = 5
-
-    # Substantive-error verifier (validation test #5).
+    # Verifier (test #5) — runs after the 4 structural validation tests.
     verifier_model: str = "anthropic/claude-sonnet-4-6"
     verifier_reasoning: str = field(default="none", metadata={"choices": ["none", "low", "medium", "high"]})
     verifier_max_workers: int = 8
@@ -160,7 +152,7 @@ def perturb(papers: list[dict], cfg: Config) -> None:
 
     for i, paper in enumerate(papers, start=1):
         paper_label = f"paper_{i:03d}"
-        perturb_dir = results_dir / "perturb" / cfg.error_type / paper_label
+        perturb_dir = results_dir / "perturb" / paper_label
         perturb_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"{'='*60}")
@@ -171,21 +163,15 @@ def perturb(papers: list[dict], cfg: Config) -> None:
         tmp_path.write_text(paper["text"])
 
         print(f"\n  [1] Perturb  (model: {model_slug(cfg.perturb_model)}, "
-              f"context_mode: {cfg.context_mode})")
+              f"verifier: {'off' if cfg.skip_verifier else model_slug(cfg.verifier_model)})")
         perturb_cmd = [
             "openaireview", "perturb", str(tmp_path),
-            "--error_type", cfg.error_type,
             "--output-dir", str(perturb_dir),
             "--model", cfg.perturb_model,
-            "--context-mode", cfg.context_mode,
-            "--context-window", str(cfg.context_window),
-            "--related-passages-max", str(cfg.related_passages_max),
             "--verifier-model", cfg.verifier_model,
             "--verifier-reasoning", cfg.verifier_reasoning,
             "--verifier-max-workers", str(cfg.verifier_max_workers),
         ]
-        if not cfg.substantive_guidance:
-            perturb_cmd.append("--no-substantive-guidance")
         if cfg.skip_verifier:
             perturb_cmd.append("--skip-verifier")
         rc = run(perturb_cmd)
@@ -199,12 +185,12 @@ def review(papers: list[dict], cfg: Config) -> None:
 
     for i, paper in enumerate(papers, start=1):
         paper_label = f"paper_{i:03d}"
-        perturb_dir = results_dir / "perturb" / cfg.error_type / paper_label
+        perturb_dir = results_dir / "perturb" / paper_label
 
         corrupted = max(perturb_dir.glob("*_corrupted.md"),
                         key=lambda p: p.stat().st_mtime, default=None)
         if not corrupted:
-            print(f"  No corrupted paper found for {cfg.error_type}/{paper_label}, skipping")
+            print(f"  No corrupted paper found for {paper_label}, skipping")
             continue
 
         print(f"{'='*60}")
@@ -213,10 +199,10 @@ def review(papers: list[dict], cfg: Config) -> None:
 
         for model in cfg.review_models:
             for method in cfg.review_methods:
-                review_dir = results_dir / model_slug(model) / cfg.error_type / method / paper_label / "review"
+                review_dir = results_dir / model_slug(model) / method / paper_label / "review"
                 review_dir.mkdir(parents=True, exist_ok=True)
 
-                print(f"\n  [2] Review  ({model_slug(model)} / {cfg.error_type} / {method})")
+                print(f"\n  [2] Review  ({model_slug(model)} / {method})")
                 rc = run(["openaireview", "review", str(corrupted),
                           "--method", method,
                           "--output-dir", str(review_dir),
@@ -231,12 +217,12 @@ def score(papers: list[dict], cfg: Config) -> None:
 
     for i, paper in enumerate(papers, start=1):
         paper_label = f"paper_{i:03d}"
-        perturb_dir = results_dir / "perturb" / cfg.error_type / paper_label
+        perturb_dir = results_dir / "perturb" / paper_label
 
         manifest = max(perturb_dir.glob("*_perturbations.json"),
                        key=lambda p: p.stat().st_mtime, default=None)
         if not manifest:
-            print(f"  No manifest found for {cfg.error_type}/{paper_label}, skipping")
+            print(f"  No manifest found for {paper_label}, skipping")
             continue
 
         print(f"{'='*60}")
@@ -245,17 +231,17 @@ def score(papers: list[dict], cfg: Config) -> None:
 
         for model in cfg.review_models:
             for review_method in cfg.review_methods:
-                review_dir = results_dir / model_slug(model) / cfg.error_type / review_method / paper_label / "review"
-                score_dir = results_dir / model_slug(model) / cfg.error_type / review_method / paper_label / "score" / cfg.score_method
+                review_dir = results_dir / model_slug(model) / review_method / paper_label / "review"
+                score_dir = results_dir / model_slug(model) / review_method / paper_label / "score" / cfg.score_method
                 score_dir.mkdir(parents=True, exist_ok=True)
 
                 review_json = max(review_dir.glob("*.json"),
                                   key=lambda p: p.stat().st_mtime, default=None)
                 if not review_json:
-                    print(f"  No review found for {model_slug(model)}/{cfg.error_type}/{review_method}/{paper_label}, skipping")
+                    print(f"  No review found for {model_slug(model)}/{review_method}/{paper_label}, skipping")
                     continue
 
-                print(f"\n  [3] Score   ({model_slug(model)} / {cfg.error_type} / {review_method} / {cfg.score_method})")
+                print(f"\n  [3] Score   ({model_slug(model)} / {review_method} / {cfg.score_method})")
                 rc = run(["openaireview", "score", str(manifest), str(review_json),
                           "--model", cfg.score_model,
                           "--method", cfg.score_method,

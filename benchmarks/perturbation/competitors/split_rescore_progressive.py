@@ -8,8 +8,8 @@ instead of the pooled progressive recall.
 
 Usage:
   python benchmarks/perturbation/competitors/split_rescore_progressive.py \\
-      --results-dir benchmarks/perturbation/results/short \\
-      --results-dir benchmarks/perturbation/results/medium \\
+      --results-dir benchmarks/perturbation/results_short \\
+      --results-dir benchmarks/perturbation/results_medium \\
       --parallel 6
 """
 

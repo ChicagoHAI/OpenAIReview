@@ -26,7 +26,7 @@ import json
 import random
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from reviewer.client import chat
 
@@ -487,13 +487,21 @@ I1. (well-formed) Is the perturbed span well-formed when read in isolation?
     symbol/letter not bound in the original, surrounding_context, or
     related_passages. Otherwise Y.
 
-I2. (evidence available) Do the surrounding_context or related_passages contain
-    something CONCRETE that the original span establishes or relates to —
-    a stated value, a definition, an applied theorem, a methodological detail,
-    a named result, a stated fact, or a downstream use of the same
-    symbol/quantity/concept? Mentioning the topic abstractly does NOT count;
-    the evidence must be a concrete claim about the same object the original
-    span is about. Otherwise N.
+I2. (evidence available) Is there a basis to judge the perturbation against?
+    Y if EITHER:
+      (a) surrounding_context or related_passages contain something CONCRETE
+          that the original span establishes or relates to — a stated value,
+          definition, applied theorem, methodological detail, named result,
+          stated fact, or downstream use of the same symbol/quantity/concept;
+      OR
+      (b) the perturbed text alone introduces a self-evidencing methodological
+          or interpretive flaw that a careful reader would catch on domain
+          norms — e.g. post-hoc selection ("we tested several definitions and
+          kept the one that gave the best result"), removed multiple-testing
+          correction, treating a p-value as P(null|data), claiming probability 1
+          for a probabilistic result, or other textbook violations.
+    Mentioning the topic abstractly does NOT count for (a); the evidence must
+    be a concrete claim about the same object. Otherwise N.
 
 I3. (contradiction confirmed) Does the perturbation contradict that evidence,
     given the perturbation's error_type?
@@ -534,11 +542,19 @@ perturbation, keyed by perturbation_id (NOT by list order — the consumer binds
 on perturbation_id). Include every perturbation_id from the input. The verdict
 will be computed downstream from your answers — do not output a verdict yourself.
 
+For "quote": copy a SHORT verbatim substring (≤80 chars) from the perturbed
+text that pinpoints the issue you cited (the malformed token, the contradicted
+claim, the broken inference step, the cosmetic edit). If the issue is the
+ABSENCE of something, copy the substring of the perturbed text closest to
+where it should have appeared. Use "" only when the perturbation is genuinely
+about an absence with no nearby anchor.
+
 [{{"perturbation_id": "<id>",
    "i1": "Y" | "N",
    "i2": "Y" | "N",
    "i3": "Y" | "N",
    "i4": "Y" | "N",
+   "quote": "<≤80-char verbatim substring of perturbed pinpointing the issue>",
    "reason": "<one sentence justifying the most decisive item>"}},
   ...]
 """
@@ -586,15 +602,39 @@ _MIXED_INEQ_RE_REV = re.compile(r"(>|\\ge(?:q)?\b|\\geq\b).*?(<|\\le(?:q)?\b|\\l
 _OPERATOR_SALAD_RE = re.compile(r"(?:<\s*>|>\s*<|\\le\s*\\ge|\\ge\s*\\le|\\leq\s*\\geq|\\geq\s*\\leq)")
 
 
-def structural_precheck(p: Perturbation) -> tuple[str, str]:
-    """Fast, deterministic pre-check. Returns (status, reason).
+def _trim_around(text: str, start: int, end: int, window: int = 30) -> str:
+    """Return a single-line, ≤(2*window+span) char snippet around [start,end)."""
+    a = max(0, start - window)
+    b = min(len(text), end + window)
+    snippet = text[a:b].replace("\n", " ").strip()
+    if a > 0:
+        snippet = "…" + snippet
+    if b < len(text):
+        snippet = snippet + "…"
+    return snippet[:120]
+
+
+def _trim_blob(blob: str, max_len: int = 100) -> str:
+    """Compact a math blob to a single-line snippet of at most max_len chars."""
+    s = " ".join(blob.split())
+    return s[:max_len] + ("…" if len(s) > max_len else "")
+
+
+def structural_precheck(p: Perturbation) -> tuple[str, str, str]:
+    """Fast, deterministic pre-check. Returns (status, reason, quote).
 
     status is one of:
       - "keep"         → pass to LLM verifier
       - "reject-typo"  → surface-typo caught by a structural rule; skip LLM call
 
+    `reason` is a short rule label; `quote` is a short snippet from the
+    perturbed text that pinpoints the rule firing (empty when the diagnostic
+    is purely numeric, e.g. runaway span).
+
     Rules (any match → reject-typo):
-      1. Runaway perturbed span (likely span-extraction bug).
+      1. Runaway perturbed span (likely span-extraction bug). Skipped for prose
+         error types where the generator legitimately appends a sentence to a
+         short heading.
       2. Literal escape artifacts in perturbed that aren't in original.
       3. Mixed-direction inequality chain in perturbed (e.g. "0 < w > L/2").
       4. Operator salad (two consecutive binary inequality operators with no operand).
@@ -605,9 +645,16 @@ def structural_precheck(p: Perturbation) -> tuple[str, str]:
     orig, pert = p.original or "", p.perturbed or ""
 
     # Rule 1: runaway span.
-    if len(pert) > 2 * len(orig) + 50:
+    # Prose error types intentionally append sentences (e.g. injecting a misinterp
+    # claim after a \subsubsection heading), so a large perturbed/original ratio is
+    # legitimate — only flag for math-shaped error families.
+    PROSE_ERROR_TYPES = {
+        "incorrect_statement_empirical", "misinterp", "causal_reversed", "p_hacking",
+    }
+    if p.error.value not in PROSE_ERROR_TYPES and len(pert) > 2 * len(orig) + 50:
         return ("reject-typo",
-                f"perturbed is {len(pert)} chars vs {len(orig)} original — runaway span (structural bug)")
+                f"runaway perturbed span ({len(pert)} chars vs {len(orig)} original)",
+                "")
 
     # Rule 2: literal escape artifacts introduced by the perturbation.
     # e.g. paper_005 had "$$\n   ...\n  $$" where \n appears as literal backslash-n
@@ -617,9 +664,11 @@ def structural_precheck(p: Perturbation) -> tuple[str, str]:
     # macros and should NOT be flagged. Only flag the escape char followed by a
     # non-letter (whitespace, punctuation, end of string).
     escape_re = re.compile(r"\\[ntr](?![a-zA-Z])")
-    if escape_re.search(pert) and not escape_re.search(orig):
+    m = escape_re.search(pert)
+    if m and not escape_re.search(orig):
         return ("reject-typo",
-                "perturbed contains a literal escape artifact (\\n / \\t / \\r not followed by a letter) absent from original")
+                "literal escape artifact in perturbed (\\n / \\t / \\r not followed by a letter)",
+                _trim_around(pert, m.start(), m.end()))
 
     # Rule 3: mixed-direction inequality chain inside the perturbed span.
     # Only consider math content (between $ delimiters or \begin{align}/\end{align} blocks).
@@ -629,19 +678,27 @@ def structural_precheck(p: Perturbation) -> tuple[str, str]:
         _MIXED_INEQ_RE.search(b) and _MIXED_INEQ_RE_REV.search(b) for b in orig_blobs
     )
     if not orig_mixed:
+        lt_re = re.compile(r"<|\\le(?:q)?\b|\\leq\b")
+        gt_re = re.compile(r">|\\ge(?:q)?\b|\\geq\b")
         for blob in _extract_math_blobs(pert):
-            lt_count = len(re.findall(r"<|\\le(?:q)?\b|\\leq\b", blob))
-            gt_count = len(re.findall(r">|\\ge(?:q)?\b|\\geq\b", blob))
-            if lt_count > 0 and gt_count > 0:
+            lt_hits = [m.start() for m in lt_re.finditer(blob)]
+            gt_hits = [m.start() for m in gt_re.finditer(blob)]
+            if lt_hits and gt_hits:
+                # Window around the closest <…> pair so the snippet shows the actual mismatch.
+                lo = min(min(lt_hits), min(gt_hits))
+                hi = max(max(lt_hits), max(gt_hits)) + 4
                 return ("reject-typo",
-                        "perturbed math contains a mixed-direction inequality chain (Step 1 malformation)")
+                        "mixed-direction inequality chain in perturbed math",
+                        _trim_blob(blob[max(0, lo - 10):min(len(blob), hi + 10)]))
 
     # Rule 4: operator salad.
-    if _OPERATOR_SALAD_RE.search(pert) and not _OPERATOR_SALAD_RE.search(orig):
+    m = _OPERATOR_SALAD_RE.search(pert)
+    if m and not _OPERATOR_SALAD_RE.search(orig):
         return ("reject-typo",
-                "perturbed contains two consecutive inequality operators (operator salad)")
+                "two consecutive inequality operators in perturbed (operator salad)",
+                _trim_around(pert, m.start(), m.end()))
 
-    return ("keep", "")
+    return ("keep", "", "")
 
 
 def _extract_math_blobs(text: str) -> list[str]:
@@ -672,6 +729,8 @@ class VerifierVerdict:
     verdict: str            # one of _VALID_VERDICTS, or "parse-error"
     reason: str
     quote_source: str = ""  # "generator" | "random-sampled" | "none-available"
+    items: dict = field(default_factory=dict)  # {"i1":"Y", "i2":"Y", ...} when checklist parse succeeded
+    quote: str = ""         # short verbatim snippet pinpointing the issue (LLM quote or structural-snippet)
 
 
 def _deterministic_rng(key: str) -> random.Random:
@@ -837,12 +896,13 @@ def _verify_one(
     quote, quote_source = _pick_quote(p, span)
 
     if use_structural_precheck:
-        status, reason = structural_precheck(p)
+        status, reason, sp_quote = structural_precheck(p)
         if status == "reject-typo":
             return VerifierVerdict(
                 p.perturbation_id, "typo-shaped",
                 f"structural precheck: {reason}",
                 quote_source=quote_source,
+                quote=sp_quote,
             )
 
     resolved_template = _resolve_prompt_template(prompt_template, p.error)
@@ -970,12 +1030,15 @@ def verify_perturbations(
 def _parse_batched_response(
     response: str,
     expected_ids: set[str],
-) -> dict[str, tuple[str, str]]:
+) -> dict[str, tuple[str, str, dict, str]]:
     """Pull a JSON array of per-perturbation answers out of the response.
 
-    Returns dict keyed by perturbation_id → (verdict, reason). Missing IDs
-    from `expected_ids` are NOT inserted here — the caller decides how to
-    handle them (typically: assign 'parse-error').
+    Returns dict keyed by perturbation_id → (verdict, reason, items, quote)
+    where items is a dict like {"i1": "Y", "i2": "Y", "i3": "Y", "i4": "N"}
+    (empty on parse-error) and quote is the short verbatim snippet from the
+    perturbed text (empty if the model didn't supply one). Missing IDs from
+    `expected_ids` are NOT inserted here — the caller decides how to handle
+    them (typically: assign 'parse-error').
 
     Strategies, in order:
       1. Strip code fences, parse the whole response as a JSON list.
@@ -984,7 +1047,15 @@ def _parse_batched_response(
          (handles a model that returned concatenated objects without array
          wrapping).
     """
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, tuple[str, str, dict, str]] = {}
+
+    def _items_for(obj: dict) -> dict[str, str]:
+        """Extract i1..i4 (or c/l/d/e prefix) Y/N items from obj. Empty if absent."""
+        for prefix in _CHECKLIST_PREFIXES:
+            keys = tuple(f"{prefix}{i}" for i in (1, 2, 3, 4))
+            if all(k in obj for k in keys):
+                return {k: str(obj[k]).strip().upper() for k in keys}
+        return {}
 
     def _ingest(arr: list) -> None:
         for obj in arr:
@@ -993,17 +1064,18 @@ def _parse_batched_response(
             pid = str(obj.get("perturbation_id", "")).strip()
             if not pid or pid not in expected_ids:
                 continue
+            items = _items_for(obj)
+            quote = str(obj.get("quote", "")).strip()
             result = _compute_verdict_from_checklist(obj)
             if result is None:
-                out[pid] = ("parse-error", "no checklist items in response object")
+                out[pid] = ("parse-error", "no checklist items in response object", items, quote)
                 continue
             verdict, items_repr = result
             if verdict == "parse-error":
-                out[pid] = result
+                out[pid] = (verdict, items_repr, items, quote)
                 continue
-            model_reason = str(obj.get("reason", "")).strip()
-            reason = f"[{items_repr}] {model_reason}".strip() if model_reason else f"[{items_repr}]"
-            out[pid] = (verdict, reason)
+            reason = str(obj.get("reason", "")).strip()
+            out[pid] = (verdict, reason, items, quote)
 
     stripped = _strip_code_fences(response)
 
@@ -1060,18 +1132,17 @@ def verify_perturbations_batched(
     model: str = DEFAULT_VERIFIER_MODEL,
     reasoning_effort: str | None = DEFAULT_VERIFIER_REASONING,
     use_structural_precheck: bool = True,
-) -> tuple[list[Perturbation], list[tuple[Perturbation, VerifierVerdict]], dict]:
+) -> tuple[list[Perturbation], list[tuple[Perturbation, VerifierVerdict]], dict, dict[str, VerifierVerdict]]:
     """Verify all perturbations in a single batched LLM call.
 
     One call evaluates the whole list. Each perturbation carries its own
     surrounding_context (±200 chars from `CandidateSpan.context`) and the
     full `verifier_related_passages` list — no single-quote dependency.
 
-    The structural precheck still runs upfront and short-circuits caught
-    perturbations to "typo-shaped" without an LLM call.
-
-    Returns (accepted, rejected, stats) — same shape as
-    `verify_perturbations` so callers can swap the function name.
+    Returns (accepted, rejected, stats, verdicts) where verdicts is the full
+    per-pid VerifierVerdict map (covering BOTH accepted and rejected); each
+    VerifierVerdict carries `items` (i1..i4 Y/N) when the model produced a
+    parseable checklist.
     """
     span_lookup = {c.span_id: c for c in candidates}
 
@@ -1082,7 +1153,7 @@ def verify_perturbations_batched(
             "typo-shaped": 0,
             "not-an-error": 0,
             "parse-error": 0,
-        }
+        }, {}
 
     verdicts: dict[str, VerifierVerdict] = {}
     survivors: list[Perturbation] = []
@@ -1090,11 +1161,12 @@ def verify_perturbations_batched(
     # Stage 1: structural precheck (deterministic, no LLM).
     if use_structural_precheck:
         for p in perturbations:
-            status, reason = structural_precheck(p)
+            status, reason, sp_quote = structural_precheck(p)
             if status == "reject-typo":
                 verdicts[p.perturbation_id] = VerifierVerdict(
                     p.perturbation_id, "typo-shaped",
                     f"structural precheck: {reason}",
+                    quote=sp_quote,
                 )
             else:
                 survivors.append(p)
@@ -1145,9 +1217,9 @@ def verify_perturbations_batched(
             parsed = _parse_batched_response(response, expected_ids)
             for p in survivors:
                 if p.perturbation_id in parsed:
-                    verdict, reason = parsed[p.perturbation_id]
+                    verdict, reason, items, q = parsed[p.perturbation_id]
                     verdicts[p.perturbation_id] = VerifierVerdict(
-                        p.perturbation_id, verdict, reason,
+                        p.perturbation_id, verdict, reason, items=items, quote=q,
                     )
                 else:
                     verdicts[p.perturbation_id] = VerifierVerdict(
@@ -1165,9 +1237,11 @@ def verify_perturbations_batched(
         else:
             rejected.append((p, v))
 
+    n_sub = sum(1 for v in verdicts.values() if v.verdict == "substantive")
     stats = {
         "n_input": len(perturbations),
-        "substantive": sum(1 for v in verdicts.values() if v.verdict == "substantive"),
+        "substantive": n_sub,
+        "substantive_rate": n_sub / len(perturbations) if perturbations else 0.0,
         "typo-shaped": sum(1 for v in verdicts.values() if v.verdict == "typo-shaped"),
         "not-an-error": sum(1 for v in verdicts.values() if v.verdict == "not-an-error"),
         "parse-error": sum(1 for v in verdicts.values() if v.verdict == "parse-error"),
@@ -1177,4 +1251,4 @@ def verify_perturbations_batched(
         ),
     }
     print(f"  Verifier verdicts: {stats}")
-    return accepted, rejected, stats
+    return accepted, rejected, stats, verdicts

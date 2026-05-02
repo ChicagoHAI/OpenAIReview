@@ -290,9 +290,10 @@ def cmd_perturb(args: argparse.Namespace) -> None:
 
     # Verify (substantive-error oracle, test #5)
     verifier_stats = None
+    verifier_verdicts: dict = {}
     if not args.skip_verifier:
         print(f"\nVerifying {len(valid)} perturbations (substantive-error oracle)...")
-        accepted, rejected_v, verifier_stats = verify_perturbations_batched(
+        accepted, rejected_v, verifier_stats, verdict_map = verify_perturbations_batched(
             valid,
             candidates,
             paper_title=title,
@@ -302,6 +303,15 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         print(f"  Accepted: {len(accepted)}, Dropped: {len(rejected_v)}")
         for p, v in rejected_v:
             print(f"    DROPPED {p.perturbation_id} ({v.verdict}): {v.reason[:80]}")
+        verifier_verdicts = {
+            pid: {
+                "verdict": v.verdict,
+                "quote": v.quote,
+                "reason": v.reason,
+                **v.items,  # i1..i4 when available
+            }
+            for pid, v in verdict_map.items()
+        }
         valid = accepted
 
     # Inject
@@ -323,6 +333,7 @@ def cmd_perturb(args: argparse.Namespace) -> None:
         "model": args.model,
         "verifier_model": args.verifier_model if not args.skip_verifier else None,
         "verifier_stats": verifier_stats,
+        "verifier_verdicts": verifier_verdicts,
         "perturbations": [
             {
                 "perturbation_id": p.perturbation_id,
@@ -383,6 +394,7 @@ def cmd_score(args: argparse.Namespace) -> None:
             span_id=p["span_id"],
             error=Error(p["error"]),
             original=p["original"],
+            offset=p.get("offset", 0),
             perturbed=p["perturbed"],
             why_wrong=p["why_wrong"],
         ))

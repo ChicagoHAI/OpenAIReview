@@ -35,13 +35,21 @@ Deeper structural corruptions to definitions, theorems, and proofs:
 # Install benchmark dependencies
 pip install -e ".[benchmarks]"
 
-# Run the default config (2 short papers, 1 model, all methods)
-python benchmarks/perturbation/run_pipeline.py benchmarks/perturbation/configs/default.yaml
+# Run a single config (prepare → review → score → report)
+python benchmarks/perturbation/run_benchmark.py benchmarks/perturbation/configs/default.yaml
 
 # Run only specific stages
-python benchmarks/perturbation/run_pipeline.py configs/default.yaml --stages perturb,review
-python benchmarks/perturbation/run_pipeline.py configs/default.yaml --stages score
+python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages prepare,review
+python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages score
+
+# Run many domains in one process (workers stay busy across config boundaries)
+python benchmarks/perturbation/run_benchmark.py --configs configs/full_*.yaml \
+    --parallel-openaireview 2 --parallel-coarse 8
 ```
+
+`run_benchmark.py` selects a review system per config via the `system:` field
+(`openaireview` | `coarse` | `reviewer3`); see `systems/README.md` for setup
+of the third-party systems.
 
 ## Configuration
 

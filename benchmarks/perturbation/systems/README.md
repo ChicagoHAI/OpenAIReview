@@ -1,12 +1,19 @@
-# Competitor reviewers on the perturbation benchmark
+# System reviewers on the perturbation benchmark
 
 Runs third-party review systems through the same `perturb → review → score`
 pipeline as the native `openaireview` benchmark, so results are directly
 comparable on identical perturbed corpora.
 
+Each system implements the `System` protocol (`_base.py`); the runner buckets
+review jobs by `(model, method)` cell and dispatches via the configured system.
+
 Currently supports:
 
-- **coarse** — adapter at `coarse_adapter.py`, driver at `coarse_driver.py`.
+- **openaireview** (`openaireview.py`) — the native runner; subprocess `openaireview review`.
+- **coarse** (`coarse.py`, wraps `coarse_adapter.py` + `coarse_driver.py`) — third-party.
+- **reviewer3** (`reviewer3.py`, wraps `reviewer3_adapter.py`) — third-party HTTP API.
+
+Select the system per config via the YAML field `system: openaireview | coarse | reviewer3`.
 
 ## Setup (one-time)
 
@@ -32,18 +39,14 @@ into the openaireview env is required.
 ## Running
 
 ```bash
-# 1. Estimate cost before launching (no LLM calls made)
-python benchmarks/perturbation/run_competitor_benchmark.py \
+# 1. Estimate cost before launching (no LLM calls; coarse only today)
+python benchmarks/perturbation/run_benchmark.py \
     benchmarks/perturbation/configs/coarse_short.yaml --estimate-cost
-python benchmarks/perturbation/run_competitor_benchmark.py \
-    benchmarks/perturbation/configs/coarse_medium.yaml --estimate-cost
 
-# 2. Run the full pipeline (perturb → review → score → report)
-#    --parallel N runs N (paper, model) pairs concurrently
-python benchmarks/perturbation/run_competitor_benchmark.py \
-    benchmarks/perturbation/configs/coarse_short.yaml --parallel 3
-python benchmarks/perturbation/run_competitor_benchmark.py \
-    benchmarks/perturbation/configs/coarse_medium.yaml --parallel 3
+# 2. Run the full pipeline (prepare → review → score → report)
+#    --parallel-coarse N runs N (paper, model) pairs concurrently
+python benchmarks/perturbation/run_benchmark.py \
+    benchmarks/perturbation/configs/coarse_short.yaml --parallel-coarse 3
 
 # 3. Regenerate the report standalone (single or combined)
 python benchmarks/perturbation/generate_report.py \
@@ -56,32 +59,33 @@ python benchmarks/perturbation/generate_report.py \
 
 # Optional: split progressive into consolidated vs pre-consolidation columns
 #   (rescores each review JSON twice — costs a handful of LLM-judge calls).
-python benchmarks/perturbation/competitors/split_rescore_progressive.py \
+python benchmarks/perturbation/systems/split_rescore_progressive.py \
     --results-dir benchmarks/perturbation/results_short \
     --results-dir benchmarks/perturbation/results_medium
 ```
 
 ### Stages
 
-`--stages` takes any comma-separated subset of `perturb,review,score,report`.
+`--stages` takes any comma-separated subset of `prepare,review,score,report`.
 Common patterns:
 
-- `--stages review,score,report` — skip perturb when artifacts already exist.
-- `--stages perturb` — just materialize the corrupted papers (fast, cheap).
+- `--stages review,score,report` — skip prepare when staging is already done.
+- `--stages prepare` — just stage the corrupted papers (fast, no LLM).
 
 ### Parallelism
 
-`--parallel N` flattens all (paper × model) pairs and dispatches up to N
-concurrently. Each coarse process already parallelizes across paper sections
-internally, so the outer pool multiplies throughput against OpenRouter.
-Guidance:
+`--parallel-coarse N` runs N (paper, model) pairs concurrently for coarse;
+analogous flags exist for the other systems (`--parallel-openaireview`,
+`--parallel-reviewer3`). Each coarse process already parallelizes across
+paper sections internally, so the outer pool multiplies throughput against
+OpenRouter. Guidance:
 
 - N=1 — serial; easy to read logs; slowest.
 - N=3 — 3× speedup, reasonable load on OpenRouter.
 - N=6+ — may trip rate limits depending on your OpenRouter plan.
 
-Log lines are prefixed with `[coarse/<model_slug>/paper_NNN]` so interleaved
-output stays greppable. A heartbeat prints every 30 s per job.
+Log lines are prefixed with `[<domain>/<paper>/<error>/<model>]` so interleaved
+output stays greppable.
 
 ## Output layout
 

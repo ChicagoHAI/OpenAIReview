@@ -134,7 +134,7 @@ For each candidate, generate ONE compatible perturbation:
 
 CLAIM_THEORETICAL_ERRORS = r"""
 For each candidate, generate ONE compatible perturbation:
-- incorrect_claim_theoretical: introduce a SUBSTANTIAL error that corrupts the validity of the claim
+- incorrect_claim_theoretical: introduce a SUBSTANTIAL error that corrupts the validity of the claim (e.g. false information, missing assumptions, overly strong conclusion, unjustified generalizations)
 
 AVOID surface-level errors.
 """
@@ -149,7 +149,7 @@ For each candidate, generate ONE compatible perturbation:
 
 STATEMENT_EMPIRICAL_ERRORS = r"""
 For each candidate, generate ONE compatible perturbation:
-- incorrect_statement_empirical: introduce a SUBSTANTIAL error that corrupts the validity of the statement
+- incorrect_statement_empirical: introduce a SUBSTANTIAL error that corrupts the validity of the statement (e.g. false information, missing assumptions, overly strong conclusion, unjustified generalizations)
 
 AVOID surface-level errors.
 """

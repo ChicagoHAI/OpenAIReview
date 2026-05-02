@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Aggregate perturbation benchmark results into a markdown report.
 
-Reads the results directory structure produced by `run_pipeline.py` and
-`run_competitor_benchmark.py`. Accepts one or more `--results-dir` to
-produce a single combined report across lengths. Output goes to stdout by
-default, or to `--out FILE`.
+Reads the results directory structure produced by `run_benchmark.py` and
+accepts one or more results directories to combine into a single report.
+Importable as `generate_report(results_dirs) -> str`; also runnable as a
+CLI (output to stdout, or to `--out FILE`).
 
 Usage:
     # Single results dir (prints to stdout)
@@ -431,88 +431,81 @@ def _infer_length(results_dir: Path, cfg: dict) -> str:
     return name
 
 
+def _render_report(results_dirs: list[Path]) -> None:
+    """Print the report to stdout. Helpers all use `print()`, so callers can
+    capture this with `contextlib.redirect_stdout`."""
+    all_cells: list[CellResult] = []
+    all_gt: dict[str, dict[str, str]] = {}
+    configs: list[tuple[Path, dict]] = []
+
+    for rd in results_dirs:
+        if not rd.is_dir():
+            print(f"Error: {rd} is not a directory", file=sys.stderr)
+            sys.exit(1)
+        cfg: dict = {}
+        config_path = rd / "config.yaml"
+        if yaml and config_path.exists():
+            with config_path.open() as f:
+                cfg = yaml.safe_load(f) or {}
+        length = _infer_length(rd, cfg)
+        gt = load_ground_truth(rd)
+        cells = load_results(rd, length, gt)
+        all_cells.extend(cells)
+        for paper_label, perts in gt.items():
+            all_gt[f"{length}:{paper_label}"] = perts
+        configs.append((rd, cfg))
+
+    if not all_cells:
+        print("No results found.", file=sys.stderr)
+        sys.exit(1)
+
+    print("# Perturbation Benchmark Report\n")
+    if len(configs) == 1:
+        print_config(configs[0][1])
+    else:
+        print("## Sources\n")
+        for rd, cfg in configs:
+            length = _infer_length(rd, cfg)
+            print(f"- `{rd}` (length={length}, "
+                  f"models={cfg.get('models') or cfg.get('review_models') or cfg.get('coarse_models', '?')})")
+        print()
+
+    print_ground_truth(all_gt)
+    print_overall_by_method(all_cells)
+    print_recall_by_length_method(all_cells)
+    print_recall_by_model_method(all_cells)
+    print_recall_by_length_model_method(all_cells)
+    print_recall_by_error_type_x_method(all_cells)
+    print_recall_by_error_type(all_cells)
+    print_token_usage(all_cells)
+
+
+def generate_report(results_dirs: list[Path]) -> str:
+    """Return the markdown report as a string. Importable from `run_benchmark.py`."""
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        _render_report(results_dirs)
+    return buf.getvalue()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Aggregate perturbation benchmark results into a markdown report.",
     )
-    parser.add_argument(
-        "results_dirs",
-        nargs="+",
-        type=Path,
-        help="One or more results directories. When multiple are given, "
-             "cells from each are concatenated so the report spans both.",
-    )
-    parser.add_argument(
-        "--out", type=Path, default=None,
-        help="Write the report to this path (default: stdout).",
-    )
+    parser.add_argument("results_dirs", nargs="+", type=Path,
+                        help="One or more results directories.")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="Write to this path (default: stdout).")
     args = parser.parse_args()
-
-    # Redirect stdout to file if requested
-    out_fp = None
-    if args.out is not None:
+    md = generate_report(args.results_dirs)
+    if args.out is None:
+        sys.stdout.write(md)
+    else:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        out_fp = args.out.open("w")
-        sys.stdout = out_fp
-
-    try:
-        all_cells: list[CellResult] = []
-        all_gt: dict[str, dict[str, str]] = {}
-        configs: list[tuple[Path, dict]] = []
-
-        for rd in args.results_dirs:
-            if not rd.is_dir():
-                print(f"Error: {rd} is not a directory", file=sys.stderr)
-                sys.exit(1)
-            cfg: dict = {}
-            config_path = rd / "config.yaml"
-            if yaml and config_path.exists():
-                with config_path.open() as f:
-                    cfg = yaml.safe_load(f) or {}
-            length = _infer_length(rd, cfg)
-            gt = load_ground_truth(rd)
-            cells = load_results(rd, length, gt)
-            all_cells.extend(cells)
-            # Namespace gt by results_dir to avoid paper_label collisions across lengths
-            for paper_label, perts in gt.items():
-                all_gt[f"{length}:{paper_label}"] = perts
-            configs.append((rd, cfg))
-
-        if not all_cells:
-            print("No results found.", file=sys.stderr)
-            sys.exit(1)
-
-        # Header
-        print("# Perturbation Benchmark Report\n")
-        if len(configs) == 1:
-            print_config(configs[0][1])
-        else:
-            print("## Sources\n")
-            for rd, cfg in configs:
-                length = _infer_length(rd, cfg)
-                print(f"- `{rd}` (length={length}, "
-                      f"models={cfg.get('review_models') or cfg.get('coarse_models', '?')})")
-            print()
-
-        print_ground_truth(all_gt)
-
-        # Summary tables
-        print_overall_by_method(all_cells)
-        print_recall_by_length_method(all_cells)
-        print_recall_by_model_method(all_cells)
-        print_recall_by_length_model_method(all_cells)
-
-        # Error-type breakdowns
-        print_recall_by_error_type_x_method(all_cells)
-        print_recall_by_error_type(all_cells)
-
-        # Cost
-        print_token_usage(all_cells)
-    finally:
-        if out_fp is not None:
-            sys.stdout = sys.__stdout__
-            out_fp.close()
-            print(f"Report: {args.out}", file=sys.stderr)
+        args.out.write_text(md)
+        print(f"Report: {args.out}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,940 @@
+{
+  "slug": "iclr2022-6hTObFz_-do-androids-dream-of-electric-fences-safety-aware-reinforcem",
+  "title": "DO ANDROIDS DREAM OF ELECTRIC FENCES? SAFETY-AWARE REINFORCEMENT LEARNING WITH LATENT SHIELDING [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## DO ANDROIDS DREAM OF ELECTRIC FENCES? SAFETY-AWARE REINFORCEMENT LEARNING WITH LATENT SHIELDING"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nThe growing trend of fledgling reinforcement learning systems making their way into real-world applications has been accompanied by growing concerns for their safety and robustness. In recent years, a variety of approaches have been put forward to address the challenges of safety-aware reinforcement learning; however, these methods often either require a handcrafted model of the environment to be provided beforehand, or that the environment is relatively simple and lowdimensional. We present a novel approach to safety-aware deep reinforcement learning in high-dimensional environments called _latent shielding_ . Latent shielding leverages internal representations of the environment learnt by model-based agents to \u201cimagine\u201d future trajectories and avoid those deemed unsafe. We experimentally demonstrate that this approach leads to improved adherence to formallydefined safety specifications."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nThe steady trickle of reinforcement learning (RL) systems making their way out of the lab and into the real world has cast a spotlight on the safety and robustness of RL agents. The motivation behind this should be relatively easy to grasp: when training an agent in real-world settings, it is desirable that some states are never reached as they could, for instance, cause permanent damage to the hardware the agent is controlling. We can thus informally define the notion of _safety-aware RL_ in terms of the classical RL setup with the added requirement that the number of _unsafe_ states visited be minimised. Under this definition, however, it has been found that many state-of-the-art RL algorithms unnecessarily enter unsafe states despite safe alternatives being available and there being a positive correlation between avoiding such states and reward (Giacobbe et al., 2021)."
+    },
+    {
+      "index": 3,
+      "text": "The field of safety-aware RL encompasses a multitude of approaches ranging from constrained policy optimisation (Chow et al., 2017; Achiam et al., 2017; Yang et al., 2020) to safety critics (Srinivasan et al., 2020; Bharadhwaj et al., 2021; Thananjeyan et al., 2021) to meta-learning (Turchetta et al., 2020). In this work, we focus on a particular family of approaches known as _shielding_ (Alshiekh et al., 2018; Anderson et al., 2020; Giacobbe et al., 2021; ElSayed-Aly et al., 2021; Pranger et al., 2021). Central to shielding is the notion of a _shield_ , a filter that checks actions proposed by the agent\u2019s existing policy with reference to a model of the environment\u2019s dynamics and some formal safety specification. The shield overrides actions that may lead to an unsafe state using some other safe (but by no means optimal) policy. A key advantage of many shielding approaches is that the resulting _shielded_ policies are formally verifiable; however, a shortcoming is that they require a model of environmental dynamics - typically handcrafted - to be provided in advance. Providing such a model may prove difficult for complex real-world environments, with inaccuracies and human biases creeping into handcrafted models."
+    },
+    {
+      "index": 4,
+      "text": "In this work, we propose a safe RL agent that makes uses of _latent shielding_ , an approach to shielding in environments where a formally-specified dynamics model is not available in advance. At an intuitive level, the agent uses a data-driven approach to learn its own latent world model (a component of which is a dynamics model) which is then leveraged by a shield. The shield then uses the agent\u2019s model to \u201cimagine\u201d trajectories arising from different actions, forcing the agent to avoid"
+    },
+    {
+      "index": 5,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2021\n\nthose it foresees leading to unsafe states. In addition, the agent can be trained within its own latent world model thus reducing the number of safety violations seen during training."
+    },
+    {
+      "index": 6,
+      "text": "**Contributions** The main contribution of this work is a framework for shielding agents in complex, stochastic and high-dimensional environments without knowledge of environmental dynamics _a priori_ . We further introduce a new method to aid exploration when training shielded agents. Though our framework loses the formal safety guarantees associated with traditional symbolic shielding approaches, our experiments illustrate that latent shielding reduces unsafe behaviour during training and achieves testing performance comparable to previous symbolic approaches."
+    },
+    {
+      "index": 7,
+      "text": "## 2 PRELIMINARIES\n\nIn this section, we cover some relevant background topics. We begin by introducing our problem setup for safety-aware RL and give an overview of the specification language used in this work. This is followed by an outline of the latent world model we make use of in this work as well as a discussion on shielding."
+    },
+    {
+      "index": 8,
+      "text": "## 2.1 PROBLEM SETUP\n\nWe consider an agent interacting with an environment _E_ modelled as a _partially observable Markov decision process (POMDP)_ with states _s \u2208SE_ , observations _ot \u2208OE_ , agent-generated actions _at \u2208AE_ and scalar rewards _rt \u2208_ R over discrete time steps _t \u2208_ [0 _,_ 1 _, ..., T \u2212_ 1]. We assume the environment has been augmented with a labelling function _L[\u03c6] E_[:] _[S][E][\u2192{][safe, unsafe][}]_[that,] at each time step, informs us whether a _violation_ has occurred with respect to some formal safety specification _\u03c6_ . For the avoidance of doubt, we define a violation to have occurred whenever _\u03c6_ does not hold. This is a weaker assumption than previous works in shielding (which assume access to an abstraction of the environment) and can be thought as a secondary safety-focused reward function with a binary output. Intuitively, the goal of the agent is to learn a policy _\u03c0_ that maximises its expected cumulative reward while minimising the number of violations of _\u03c6_ ."
+    },
+    {
+      "index": 9,
+      "text": "## 2.2 SYNTACTICALLY CO-SAFE LINEAR TEMPORAL LOGIC\n\nIn this work, we use _syntactically co-safe Linear Temporal Logic (scLTL)_ (Kupferman & Vardi, 2001) as our specification language. Valid scLTL formulae over some set of atomic propositions _AP_ can be constructed according to the following grammar:"
+    },
+    {
+      "index": 10,
+      "text": "_\u03c6_ ::= _true | d | \u00acd | \u03c6 \u2228 \u03c6 | \u03c6 \u2227 \u03c6 | \u20dd\u03c6 | \u03c6 \u222a \u03c6 | \u22c4\u03c6_ (1)\n\nwhere _d \u2208 AP_ , _\u00ac (negation)_ , _\u2228 (disjunction)_ , _\u2227 (conjunction)_ are the familiar operators from propositional logic, and _\u20dd (next)_ , _\u222a (until)_ and _\u22c4 (eventually)_ are temporal operators. We can monitor a co-safe LTL specification using a technique known as _progression_ (Bacchus & Kabanza, 2000)."
+    },
+    {
+      "index": 11,
+      "text": "## 2.3 RECURRENT STATE-SPACE MODELS\n\nWe refer to the predictive model of an environment maintained by a model-based agent as its _world model_ . World models can be learnt from experience and be used both as a substitute for the environment during training (Ha & Schmidhuber, 2018; Hafner et al., 2021) and for planning at run-time (Hafner et al., 2019b). Though many realisations of the notion of a world model exist, the world model used in this work is based on the _recurrent state-space model (RSSM)_ proposed by Hafner et al. (2019b)."
+    },
+    {
+      "index": 12,
+      "text": "An RSSM is composed of three key components: a latent dynamics model, a reward model, and an observation model. These components act on compact states formed from the concatenation of a deterministic latent state _ht_ and stochastic latent state _zt_ ."
+    },
+    {
+      "index": 13,
+      "text": "**Latent Dynamics Model** The latent dynamics model is made up of a number of smaller models. First, the _recurrent model ht_ = _f_ ( _ht\u2212_ 1 _, zt\u2212_ 1 _, at\u2212_ 1) is used to compute the deterministic latent state based on the previous compact state and action. From _ht_ and the current observation _ot_ , a"
+    },
+    {
+      "index": 14,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\ndistribution _q_ ( _zt|ht, ot_ ) over posterior stochastic latent states _zt_ is computed by the _representation model_ . At the same time, a distribution _p_ (\u02c6 _zt|ht_ ) over prior stochastic latent states _z_ \u02c6 _t_ is computed by the _transition model_ , based only on _ht_ . During training, the transition model attempts to minimise the _Kullback Leibler (KL)_ divergence between the prior and posterior stochastic latent state distributions. In doing this, the RSSM learns to predict future latent states (using the recurrent and transition models) without access to future observations."
+    },
+    {
+      "index": 15,
+      "text": "**Observation Model** The _observation model_ computes the distribution _p_ (\u02c6 _ot|ht, zt_ ) over observations _o_ \u02c6 _t_ for a particular state. Though not strictly needed, the observation model can prove useful for visualising predicted future states and providing a richer training signal."
+    },
+    {
+      "index": 16,
+      "text": "**Reward Model** The _reward model_ computes the distribution _p_ (\u02c6 _rt|ht, zt_ ) over rewards _r_ \u02c6 _t_ for a particular state."
+    },
+    {
+      "index": 17,
+      "text": "In practice, the distributions _p_ and _q_ are implemented with neural networks _p\u03b8_ and _q\u03b8_ respectively, parameterised by some set of parameters _\u03b8_ . These latent dynamics models define a fully-observable _Markov decision process (MDP)_ as the latent states in the agent\u2019s own internal model can always be observed by the agent (Hafner et al., 2019a). We denote the state space of this MDP (comprised of compact latent states) as _SI_ ."
+    },
+    {
+      "index": 18,
+      "text": "## 2.4 SHIELDING\n\nThe _classical_ formulation of shielding in RL is given by Alshiekh et al. (2018). It assumes access to two ingredients: an LTL safety specification and _abstraction_ (a MDP model of the environment that captures the aspects of the environment relevant for planning ahead with respect to the safety specification). These ingredients are used to construct a formally verifiable reactive system that monitors the agent\u2019s actions, overriding those which lead to violation states."
+    },
+    {
+      "index": 19,
+      "text": "Proposed by Giacobbe et al. (2021), _bounded prescience shielding (BPS)_ avoids the need for handcrafted abstractions by exploiting the fact that some agents are trained in computer simulations. The shield operates by leveraging access to the program underlying the simulation to look ahead into future states within some finite horizon. Using BPS over classical shielding does, however, come with a few disadvantages. Firstly, it requires access to the simulation at run-time which may prove difficult to provide (especially in cases where running the simulation is computationally expensive). Moreover, an agent using BPS, even when starting from a safe state, can find itself entering unsafe states in cases where the number of steps between a violation being caused by an action and the violation state itself exceeds the shield\u2019s look-ahead horizon. This is not the case for classical shielding which resembles BPS with an infinite horizon."
+    },
+    {
+      "index": 20,
+      "text": "## 2.5 BOUNDED SAFETY\n\nThe notion of safety used by BPS is defined over MDPs. For an arbitrary MDP with states _S_ and actions _A_ , a _bounded trajectory \u03c1_ of length _H_ is a sequence of states and actions _s_ 0 _\u2212\u2192a_ 0 _s_ 1 _\u2212\u2192a_ 1 _an\u2212_ 1 _. . . \u2212\u2212\u2212\u2192 sn_ comprised of no more than _H_ states and with the final state _sn_ either being a terminal state or _n_ = _H \u2212_ 1. We further denote the set of all finite trajectories starting from some arbitrary state _s \u2208S_ by _\u03f1_ ( _s_ ) and the set of all bounded trajectories of length _H_ that start from _s_ by _\u03f1H_ ( _s_ )."
+    },
+    {
+      "index": 21,
+      "text": "We say a bounded trajectory _\u03c1_ of length _H_ satisfies _H-bounded safety_ with respect to safety specification _\u03c6_ , written _SH_ ( _\u03c1, \u03c6_ ), if and only if for all _si \u2208 \u03c1_ , _L[\u03c6] E_[(] _[s][i]_[) =] _[ safe]_[.][Moreover, we can extend] the notion of _H_ -bounded safety over the set of policies: a policy _\u03c0_ is _H-bounded safe_ with respect to _\u03c6_ , denoted as _SH_ ( _\u03c0, \u03c6_ ), if and only if for all s _\u2208S_ ,"
+    },
+    {
+      "index": 22,
+      "text": "- either there exists some _\u03c1 \u2208 \u03f1H_ ( _s_ ) such that _SH_ ( _\u03c1, \u03c6_ ) and _\u03c0_ ( _s_ 0) = _a_ 0;\n\n- or for all _\u03c1 \u2208 \u03f1H_ ( _s_ ), _\u00acSH_ ( _\u03c1, \u03c6_ ) _._"
+    },
+    {
+      "index": 23,
+      "text": "In other words, the policy will choose a safe trajectory as long as one exists. Finally, we formally define a violation of _\u03c6_ to be _inevitable_ in state _s_ 0 _\u2208S_ if and only if for all _\u03c1 \u2208 \u03f1_ ( _s_ 0), _\u00acSH_ ( _\u03c1, \u03c6_ )."
+    },
+    {
+      "index": 24,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2021\n\nFigure 1: Safety RSSM. In this example, the model observes the environment for two time steps and predicts the subsequent two time steps. _at_ denotes the action taken at step _t_ , _ot_ the observation, _ht_ the deterministic component of the latent state, _zt_ the posterior stochastic component, _z_ \u02c6 _t_ the prior stochastic component, _\u03bb_[\u02c6] _t_ the violation prediction (our novel contribution, highlighted in yellow), \u02c6 _ot_ the predicted observation and \u02c6 _rt_ the predicted reward. Circles represent stochastic variables whereas squares represent deterministic variables. An arrow from one shape to another indicates that the source is used in the calculation of the destination."
+    },
+    {
+      "index": 25,
+      "text": "## 3 SHIELDED DREAMS\n\nWe introduce the notion of _latent shielding_ , a novel class of shielding approaches that replace abstractions used by shields with learned latent dynamics models thus allowing the enforcement of formal safety specifications while avoiding the need for an explicitly-defined abstraction of the environment. We further introduce the first such approach, _approximate bounded prescience shielding_ , a framework for latent shielding that leverages latent world models learnt by model-based _deep RL (DRL)_ agents. In this work, our model-based agent of choice is Dreamer (Hafner et al., 2021)[1] , which we modify to incorporate shielding into its data collection, training and deployment phases."
+    },
+    {
+      "index": 26,
+      "text": "## 3.1 SAFETY RSSM\n\nWe augment the standard RSSM with a labelling function _L[\u03c6] I_[:] _[ S][I][\u2192{][safe, unsafe][}]_[ which maps] latent states _st \u2208SI_ to whether they correspond to states in violation of _\u03c6_ . As with the other models, _L[\u03c6] I_[is implemented with a neural network with a categorical output] _[ l][\u03b8]_[also parameterised by] _[ \u03b8]_[.][This] yields an enhanced RSSM (illustrated in Figure 1) which we will refer to as a _safety RSSM (SRSSM)_ ."
+    },
+    {
+      "index": 27,
+      "text": "## We train _l\u03b8_ along with the other components of the SRSSM with the objective\n\nwhere the first three terms are as described in (Hafner et al., 2019a; 2021) and, for convenience, can be found in Appendix B. _Lviolation_ is a new term that we introduce that acts as a weighted binary cross-entropy loss over predictions by _l\u03b8_"
+    },
+    {
+      "index": 28,
+      "text": "where _D\u03bb \u2286S \u00d7 {_ 0 _,_ 1 _}_ is a dataset of state-label pairs (with 0 corresponding to _safe_ and 1 to _unsafe_ ) and _\u03b1 \u2208_ [0 _,_ 1] is a weighting term. The inclusion of the weighting hyperparameter _\u03b1_ is motivated by the observation that the number of observations of safe and unsafe states will generally be quite imbalanced. Thus, to prevent predictions by _l\u03b8_ from collapsing to a single class, we assign a greater weight to the less-represented class."
+    },
+    {
+      "index": 29,
+      "text": "## 3.2 APPROXIMATE BOUNDED PRESCIENCE SHIELDING\n\nWe now integrate the SRSSM as part of a latent shielding approach which we shall refer to as _approximate bounded prescience shielding (ABPS)_ . Though ABPS is inspired by BPS, it differs in"
+    },
+    {
+      "index": 30,
+      "text": "> 1In practice, any model-based agent with a latent dynamics model can be used.\n\n4\n\nUnder review as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 31,
+      "text": "two key aspects: (1) we approximate the labelling function _L[\u03c6] E_[and environmental dynamics using an] SRSSM; and (2) we sample a fixed number of potential future trajectories as opposed to exhaustively exploring all possibilities."
+    },
+    {
+      "index": 32,
+      "text": "Thus, our approach can be thought of as an approximation of some \u201cideal\u201d bounded prescience shield that uses the true environmental dynamics and labelling function. The advantage of the first difference should be obvious: it enables the shield to learn its own abstraction, removing the need for hand-crafting or access to a digital environment\u2019s underlying program. Why the second difference is advantageous may be slightly less obvious - it\u2019s a heuristic that allows us to increase the horizon _H_ . By directing the sampling of trajectories in accordance with states and actions the policy is biased towards (as opposed to uniformly), it may be possible to achieve comparable performance to a standard BPS in foreseeing unsafe states. The intuition behind this is that by not sampling trajectories the agent is unlikely to take, more of our computational budget can be dedicated into ensuring that the agent\u2019s most likely trajectories are safe. In other words, we will not spend time planning to correct actions that the agent is unlikely to take."
+    },
+    {
+      "index": 33,
+      "text": "More formally, our shielded policy _\u03c0[\u2217]_ can be written:\n\nwhere _\u03c0_ ( _st_ ) is the agent\u2019s policy without shielding; _st \u2208SI_ is some compact latent state; and _\u03c0alt_ is an alternative policy that ensures that, if a violation isn\u2019t already inevitable, the agent avoids a predicted unsafe state. In our implementation, _\u03c0alt_ simply considers all the other actions until a safe trajectory is found. In the event that no safe action is found, the agent takes a random action."
+    },
+    {
+      "index": 34,
+      "text": "Since the SRSSM models stochasticity, we can sample multiple futures arising from an action being taken and derive probabilistic estimates of whether an action will lead to a violation. In this way, we can estimate the safety of an action taken in a given state by checking whether the probability of a violation occurring (inferred by sampling) exceeds a fixed threshold _\u03f5_ (see Algorithm 1). Moreover, the sampling process can, in practice, be augmented to sample a wider range of trajectories (less likely to be taken by the agent) by adding a small amount of noise to actions suggested by the policy during sampling."
+    },
+    {
+      "index": 35,
+      "text": "**Algorithm 1:** Approximate Bounded Prescience Shielding in latent space.\n\n**Input:** Current compact latent state ( _h, z_ ), unshielded action _a_ , horizon _H_ , number of trajectories to sample _N_ , alternative policy _\u03c0alt_ and threshold _\u03f5_ . **Output:** A tuple containing an action and whether or not the shield had to interfere. **1** Initialise array of zeros \u039b with length _N_ . **2 for** _n = 1..N_ **do** _a a_ 1 _aH\u2212_ 1 \u02c6 **3** Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _._ **4 if** _\u2203i \u2208_ [1 _,_ 2 _, ..., H_ ] such that _l\u03b8_ ( _hi, zi_ ) = _unsafe_ **then** \u039b[ _n_ ] := 1. **5 end 6** _interfered_ := _false_ . **7 if** _N_[1] \ufffd _\u03bb\u2208_ \u039b _[\u03bb > \u03f5]_ **[ then] 8** _a, interfered_ := _\u03c0alt_ ( _hi, zi_ ) _, true_ . **9 end 10 return** _\u27e8a,interfered\u27e9._"
+    },
+    {
+      "index": 36,
+      "text": "3.3 TRAINING REGIME\n\nWe extend the training regime proposed in Hafner et al. (2019a) to include the training and application of ABPS. Though the full training procedure is detailed in Algorithm 2, we provide an overview below."
+    },
+    {
+      "index": 37,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2021\n\n## 3.3.1 OVERVIEW\n\nThe training procedure can be split into three phases: data collection, latent world model training and agent training (lines 10-22, 4-6 and 7-8 in Algorithm 2 respectively). These phases are cycled through until convergence."
+    },
+    {
+      "index": 38,
+      "text": "**Data Collection** In this phase, the agent interacts with the real environment to collect a dataset _D \u2286S \u00d7 A \u00d7 O \u00d7_ R _\u00d7 {_ 0 _,_ 1 _}_ of states, actions, observations, rewards and violations with which a latent world model can be learned. At the very start of training, we collect trajectories from _S_ seed episodes using a random policy; at all other times, we use the agent\u2019s shielded policy. An illustration of the components of the agent active during this phase can be found in Figure 4 in Appendix A."
+    },
+    {
+      "index": 39,
+      "text": "**Latent World Model Training** The goal of this phase is to improve the model of the world so that the policy has an accurate imagined environment to train in. To this end, we train the latent world model with respect to the objective in Equation 2 on _B_ data sequences of length _L_ sampled from _D_ . An illustration of the components of the agent active during this phase can be found in Figure 5 in Appendix A."
+    },
+    {
+      "index": 40,
+      "text": "**Agent Training** Agent training is composed of two steps. First, starting from states from the same _B_ data sequences from the latent world model training phase, the agent imagines _I_ trajectories of length _H_ with actions chosen from its current policy. Next, the unshielded policy _\u03c0_ is updated as in Hafner et al. (2019a; 2021)."
+    },
+    {
+      "index": 41,
+      "text": "## 3.3.2 KEY CHANGES AND CONTRIBUTIONS\n\nWe describe and discuss the key changes we have made that differentiate our agent from previous approaches."
+    },
+    {
+      "index": 42,
+      "text": "**Experience Dataset.** Elements in the experience dataset _D_ now contain a binary variable representing whether a violation has occurred _\u03bbt_ ."
+    },
+    {
+      "index": 43,
+      "text": "**Latent Shielding.** Before being sent to the environment _E_ , actions _at_ generated by the unshielded policy _\u03c0_ are routed through our newly-proposed latent shield (described in Algorithm 1). The shield returns a new approximately _H_ -bounded safe action _a[\u2032] t_[.]"
+    },
+    {
+      "index": 44,
+      "text": "**Intrinsic Punishment.** Whenever a violation occurs (whether detected by the latent shield or by the environment), we override the environment\u2019s reward function by instead assigning a reward _p <_ 0. This discourages the agent\u2019s unshielded policy _\u03c0_ from taking actions that lead to unsafe states through the standard RL setup. Over time, this means that the shield will have to interfere less as _\u03c0_ becomes biased away from unsafe states. This is a standard practice in the shielding literature (Alshiekh et al., 2018), however new to the Dreamer family of agents (Hafner et al., 2019a;b; 2021)."
+    },
+    {
+      "index": 45,
+      "text": "**Shield Introduction Schedule** We introduce the novel notion of a _shield introduction schedule_ \u03a0 which can enable and disable shielding during training. The rationale behind this is that a shield backed by an inaccurate world model will incorrectly label some safe states as unsafe, and vice versa. In some cases, this may prove detrimental to the training process: suppose _l\u03b8_ happens to be initialised in such a way that all states are labelled as unsafe. As a result, the shield can prevent the agent from exploring the environment and improving its internal model of the environment. This, in turn, can prevent the labelling function from learning to correctly differentiate safe states from unsafe states."
+    },
+    {
+      "index": 46,
+      "text": "To give the agent time to learn a good world model before restricting exploration through a learned shield, we augment the training procedure with \u03a0 which aims to gradually introduce shielding. To our knowledge, this is the first time such a system has been proposed. Though there exist a wide range of possible implementations of \u03a0, in this work we use a simple schedule that seems to work well empirically: start training with shielding disabled and enable shielding once the world model loss begins to plateau (see Appendix H for more details). A detailed comparison of different shield introduction schedules, however, is beyond the scope of this study and left for further work."
+    },
+    {
+      "index": 47,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2021\n\n**Algorithm 2:** Training Dreamer with Approximate Bounded Prescience Shielding."
+    },
+    {
+      "index": 48,
+      "text": "**Input:** Punishment for violation _rpunish_ , shield imagination horizon _H_ , number of steps to imagine ahead for training _I_ , number of seed episodes _S_ , number of training steps per episode _C_ , number of real environment interaction steps per episode _T_ , sequence length _L_ , batch size _B_ , environment _E_ , labelling function _L[\u03c6] E_[and shield introduction schedule] \u03a0. **1** Initialise dataset _D_ with _S_ seed episodes and neural network parameters _\u03b8_ randomly. **2 while** _not converged_ **do** /* Learning the internal world model and agent policy. *[/] **3 for** _c = 1..C_ **do 54** DrawCompute model states _B_ data sequences _h {t_ ,( _zatt_ and _, ot, rz_ \u02c6 _tt, \u03bb_ . _t_ ) _[k] t_ =[+] _k[L][} \u223cD]_[.] **6** Update _\u03b8_ using representation learning. **7** Imagine a trajectory _\u03c1_ of length _I_ for each state in each data sequence. **8** Update the unshielded policy _\u03c0_ based on the imagined trajectories. **9 end** /* Collecting data from the environment. *[/] **10 for** _t = 1..T_ **do 11** Compute model states _ht_ , _zt_ from history. **12** Select action _at_ with the unshielded policy, adding exploration noise if desired. **13 if** \u03a0 _has enabled shielding_ **then 14** Pass _ht_ , _zt_ and _at_ into Algorithm 1 to obtain the tuple _\u27e8a[\u2032] t[, interfered][\u27e9]_[.] **15 else 16** _a[\u2032] t[, interfered]_[ :=] _[ a][t][, false]_[.] **17 end 18** _rt, ot_ := _E._ step ( _a[\u2032] t_[).] **19** Check if _L[\u03c6] E_[has detected a violation and store the result as 0 or 1 in] _[ \u03bb][t]_[.] **20 if** _\u03bbt_ = 1 or _interfered_ **then** _rt_ := _rpunish_ . **21 end 22** Add experience to dataset _D_ := _D \u222a{_ ( _ot, at, rt, \u03bbt_ ) _[T] t_ =1 _[}]_[.] **23 end**"
+    },
+    {
+      "index": 49,
+      "text": "## 4 EXPERIMENTS\n\nIn this section, we compare our ABPS agent against Dreamer without shielding (Hafner et al., 2019a; 2021), Dreamer with BPS (Giacobbe et al., 2021), and CPO (Achiam et al., 2017). We also empirically investigate some aspects of the internal workings of our agent. A brief overview of the environments used can be found below with more detailed a discussion in Appendix C."
+    },
+    {
+      "index": 50,
+      "text": "**Visual Grid World** The _Visual Grid World (VGW)_ environment is a simple deterministic navigation benchmark with high-dimensional (64 _\u00d7_ 64 _\u00d7_ 3) visual observations (see Figure 2) and discrete actions. The agent\u2019s (in green) task is to navigate to randomly-placed targets (in black) while avoiding any unsafe locations (in red). We experiment with both _fixed_ and _procedurally generated_ grids. **Cliff Driver** The _Cliff Driver (CD)_ environment is a symbolic benchmark with stochastic dynamics and continuous actions. The agent controls the forward acceleration of a car and is tasked with driving to the edge of a cliff as quickly as possible without overshooting and falling into the sea. Stochasticity comes from the fact that at each time step there is a probability _pstick_ that car\u2019s controls become \u201cstuck\u201d (Machado et al., 2018)."
+    },
+    {
+      "index": 51,
+      "text": "4.1 PERFORMANCE EVALUATION\n\nWe evaluate our agents on three metrics: (1) average reward per episode at test-time; (2) average number of violations per episode at test-time; and (3)"
+    },
+    {
+      "index": 52,
+      "text": "Figure 2: Sample visual observation from the VGW environment.\n\n7\n\nUnder review as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 53,
+      "text": "||**Flavour**\n**Metric**\n**Latent**\n**Unshielded**\n**BPS**\n**CPO**|**Flavour**\n**Metric**\n**Latent**\n**Unshielded**\n**BPS**\n**CPO**|\n|---|---|---|\n||||\n|Visual\nGrid World|Testing Reward\nFixed\nTesting Violations\nTraining Violations|**15067 (434)**\n13148 (249)\n12468 (620)\n-2925 (1065)\n0.30 (0.76)\n2.25 (1.60)\n**0 (0)**\n13.43 (19.25)\n1262 (172)\n2306 (833)\n**0 (0)**\n16455 (1435)|\n||Testing Reward\nProcedural\nTesting Violations\nTraining Violations|**8084 (2221)**\n6825 (1427)\n1938 (3552)\n-1588 (2051)\n4.50 (3.59)\n33.7 (16.28)\n**0 (0)**\n19.60 (13.83)\n14018 (1852)\n15309 (4686)\n**0 (0)**\n18705 (3756)|\n|Cliff\nDriver|||\n||Testing Reward\n_pstick_ = 0_._1\nTesting Violations\nTraining Violations|8.57 (2.96)\n**10.76 (3.29)**\n10.50 (3.28)\n7.56 (2.86)\n**0 (0)**\n**0 (0)**\n**0 (0)**\n3.40 (1.91)\n58.2 (9.60)\n90.0 (9.10)\n**24.0 (13.02)**\n973.0 (357.7)|\n||Testing Reward\n_pstick_ = 0_._5\nTesting Violations|**8.10 (4.99)**\n6.63 (8.07)\n7.10 (9.52)\n6.44 (3.00)\n**0.18 (0.84)**\n0.54 (1.53)\n0.22 (1.18)\n0.48 (1.24)|\n||Training Violations\n91.8 (16.85)\n157.6 (18.4)\n**80.4 (17.43)**\n3126 (2823)||"
+    },
+    {
+      "index": 54,
+      "text": "Table 1: Comparison of trained agents with standard deviations in parentheses where applicable.\n\nFigure 3: Reward curves for the model-based agents on fixed (left) and procedurally generated (right) instances of the VGW environment. The shaded area denotes one standard deviation."
+    },
+    {
+      "index": 55,
+      "text": "total number of violations during training. Results are calculated by averaging over five trained versions of each agent. The latent shield horizon _H_ was 2 and 6 for the VGW and CD environments respectively. Moreover, since the action space of the CD environment is continuous, we discretise the actions into four bins when performing BPS (see Appendix D.5). Such modifications, however, are not needed for our agent. Full details on training and evaluation can be found in Appendix D. We also provide further evaluation of our agents on environment-specific metrics in Appendix F."
+    },
+    {
+      "index": 56,
+      "text": "As can be seen in Table 4, our agent collected more reward at test-time than both the unshielded and BPS agents in the VGW environment (reward curves during training can be seen in Figure 3 with further training curves showcased in Appendix E). Moreover, our agent saw a seven-fold reduction in test-time violations compared to the unshielded agent across both the fixed and procedurally generated environments, averaging at less than one violation per episode for the fixed VGW. This reduction in training violations is even more dramatic when compared to the model-free CPO agent. Our agent outperformed the other agents at test-time in the most stochastic CD environment ( _pstick_ = 0 _._ 5). This is possibly due to the SRSSM used by our latent shield being better able to capture non-determinism than BPS. Nevertheless, the result is still rather impressive given that the agent using BPS sampled 1024 trajectories at every time step whereas our agent only sampled 20."
+    },
+    {
+      "index": 57,
+      "text": "## 4.2 OTHER EXPERIMENTS\n\n**Qualitative Evaluation of Learned Latent Dynamics** We evaluate the quality of each agent\u2019s latent dynamics model by observing its trajectory predictions given a particular starting state and action sequence. Each agent is given the same starting observation and predefined sequence of 10 actions. The agents take these actions in their respective latent world models with the states traversed being decoded for inspection. Results can be seen in Appendix G and indicate that, qualitatively, our agent\u2019s decoder performed the best, accurately predicting 10 frames into the future. One possible reason for this observation is that the inclusion of the violation detection objective in the SRSSM encourages the model to focus on accurately capturing violation states. Another potential factor is that the BPS agent never actually enters unsafe states and thus finds it difficult to represent them."
+    },
+    {
+      "index": 58,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\n**Do Shield Introduction Schedules Actually Help?** We perform an ablation study with shield introduction schedules in the VGW environment. Results can be found in Appendix I and demonstrate decreased performance in the absence of shield introduction schedules."
+    },
+    {
+      "index": 59,
+      "text": "## 5 RELATED WORK AND DISCUSSION\n\n**Latent World Models** Learning latent world models from visual observations has seen growing interest from the RL community (Wahlstr\u00a8om et al., 2015; Watter et al., 2015; Racani`ere et al., 2017; Ha & Schmidhuber, 2018; Hafner et al., 2019a;b; Schrittwieser et al., 2020; Hafner et al., 2021). One key trend in the literature is that of training agents in their own learned world models (Ha & Schmidhuber, 2018; Hafner et al., 2019a; 2021). In this work, we extend the world model formulation used in Hafner et al. (2019a;b; 2021) to encode a notion of safety into state representations."
+    },
+    {
+      "index": 60,
+      "text": "**Safety By Filtering Actions** Overriding unsafe actions with safe ones has been a popular approach to safety-aware RL. Introduced into the RL scene by Alshiekh et al. (2018), shielding has received much research interest and has seen applications in real-world settings (Nikou et al., 2021). Various works have attempted to address some of its shortcomings of the original formulation. These include allowing the shield to be updated to aid exploration or correct model imperfections (Anderson et al., 2020; Pranger et al., 2021); improving performance in non-deterministic environments (Jansen et al., 2020; Li & Bastani, 2020); and extending shielding to multi-agent RL (ElSayed-Aly et al., 2021). To our knowledge, few works (Srinivasan et al., 2020; Thananjeyan et al., 2021; Bharadhwaj et al., 2021; Giacobbe et al., 2021) focus on removing the need for handcrafting an abstraction (among the most time-consuming and error-prone aspects of shielding), and only one of them (Giacobbe et al., 2021) achieves this without getting rid of the abstraction altogether, albeit by providing the agent with access to the program that controls the environment."
+    },
+    {
+      "index": 61,
+      "text": "In contrast, latent shielding tackles the problem head-on by directly learning an abstraction for use by the shield. In this work, the abstraction we use is an SRSSM, which captures stochasticity by design, a useful property for non-deterministic environments. Though our latent shield satisfies an approximation of _H_ -bounded safety (see Section 2.4) with respect to the learned abstraction, its safety with respect to the true environmental dynamics is not guaranteed and instead relies on the fidelity with which the true dynamics are captured. Furthermore, unlike for its formally-verified predecessors, it is a necessary sacrifice that the agent visits unsafe states during training in order to learn a notion of safety (unless, of course, pre-training is possible). Nevertheless, a learned abstraction may be advantageous in settings where handcrafting an abstraction is not feasible and privileged access to some simulation (as in Giacobbe et al. (2021)) cannot be assumed. Moreover, latent shielding may provide a greater degree of explainability over model-free methods which get rid of the abstraction altogether (Srinivasan et al., 2020; Thananjeyan et al., 2021; Bharadhwaj et al., 2021) - if the shield overrides an action, one can reconstruct the imagined unsafe trajectories that led to the interference."
+    },
+    {
+      "index": 62,
+      "text": "## 6 CONCLUSIONS\n\nIn this paper, we have presented _latent shielding_ , a new framework for shielding DRL agents without the need for a handcrafted abstraction of the environment. Using this framework, we have designed a novel shield and demonstrated that this method not only leads to improved adherence to safety specifications on two benchmark environments with respect to an unshielded agent, but also works out-of-the-box on both continuous and discrete environments (unlike its predecessor, BPS). Furthermore, we have demonstrated for the first time that shielding at inappropriate times may adversely impact the performance of model-based DRL agents and showed how this phenomenon can be counteracted using our novel notion of _shield introduction schedules_ ."
+    },
+    {
+      "index": 63,
+      "text": "Our work opens several exciting avenues for future work. For instance, this work uses a very simple shield introduction schedule; future work may provide a richer investigation into the properties of different schedules. Moreover, though demonstrating promising empirical results, our realisation of latent shielding loses the formally verifiable safety guarantees enjoyed by many symbolic shielding approaches - whether it is possible to construct a verifiable implementation of latent shielding, or compensate for the loss of formal guarantees, are open problems."
+    },
+    {
+      "index": 64,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Joshua Achiam, David Held, Aviv Tamar, and Pieter Abbeel. Constrained policy optimization. In Doina Precup and Yee Whye Teh (eds.), _Proceedings of the 34th International Conference on Machine Learning_ , volume 70 of _Proceedings of Machine Learning Research_ , pp. 22\u201331. PMLR, 06\u201311 Aug 2017. URL https://proceedings.mlr.press/v70/achiam17a.html."
+    },
+    {
+      "index": 65,
+      "text": "- Mohammed Alshiekh, Roderick Bloem, R\u00a8udiger Ehlers, Bettina K\u00a8onighofer, Scott Niekum, and Ufuk Topcu. Safe reinforcement learning via shielding. In _Proceedings of the AAAI Conference on Artificial Intelligence_ , volume 32, 2018."
+    },
+    {
+      "index": 66,
+      "text": "- Greg Anderson, Abhinav Verma, Isil Dillig, and Swarat Chaudhuri. Neurosymbolic reinforcement learning with formally verified exploration. In _Advances in Neural Information Processing Systems_ , volume 33, pp. 6172\u20136183, 2020. URL https://proceedings.neurips.cc/ paper/2020/file/448d5eda79895153938a8431919f4c9f-Paper.pdf."
+    },
+    {
+      "index": 67,
+      "text": "- Fahiem Bacchus and Froduald Kabanza. Using temporal logics to express search control knowledge for planning. _Artificial Intelligence_ , 116(1):123\u2013191, 2000. ISSN 0004-3702. doi: 10. 1016/S0004-3702(99)00071-5. URL https://www.sciencedirect.com/science/ article/pii/S0004370299000715."
+    },
+    {
+      "index": 68,
+      "text": "- Homanga Bharadhwaj, Aviral Kumar, Nicholas Rhinehart, Sergey Levine, Florian Shkurti, and Animesh Garg. Conservative safety critics for exploration. In _International Conference on Learning Representations_ , 2021. URL https://openreview.net/forum?id=iaO86DUuKi."
+    },
+    {
+      "index": 69,
+      "text": "- Yinlam Chow, Mohammad Ghavamzadeh, Lucas Janson, and Marco Pavone. Risk-constrained reinforcement learning with percentile risk criteria. _J. Mach. Learn. Res._ , 18(1):6070\u20136120, January 2017. ISSN 1532-4435."
+    },
+    {
+      "index": 70,
+      "text": "- Ingy ElSayed-Aly, Suda Bharadwaj, Christopher Amato, R\u00a8udiger Ehlers, Ufuk Topcu, and Lu Feng. Safe multi-agent reinforcement learning via shielding. In _Proceedings of the 20th International Conference on Autonomous Agents and MultiAgent Systems_ , AAMAS \u201921, pp. 483\u2013491, Richland, SC, 2021. International Foundation for Autonomous Agents and Multiagent Systems. ISBN 9781450383073."
+    },
+    {
+      "index": 71,
+      "text": "- Mirco Giacobbe, Mohammadhosein Hasanbeig, Daniel Kroening, and Hjalmar Wijk. Shielding atari games with bounded prescience. In _Proceedings of the 20th International Conference on Autonomous Agents and MultiAgent Systems_ , pp. 1507\u20131509, 2021. ISBN 9781450383073."
+    },
+    {
+      "index": 72,
+      "text": "- David Ha and J\u00a8urgen Schmidhuber. Recurrent world models facilitate policy evolution. In _Proceedings of the 32nd International Conference on Neural Information Processing Systems_ , pp. 2455\u20132467, 2018."
+    },
+    {
+      "index": 73,
+      "text": "- Danijar Hafner, Timothy Lillicrap, Jimmy Ba, and Mohammad Norouzi. Dream to control: Learning behaviors by latent imagination. In _International Conference on Learning Representations_ , 2019a."
+    },
+    {
+      "index": 74,
+      "text": "- Danijar Hafner, Timothy Lillicrap, Ian Fischer, Ruben Villegas, David Ha, Honglak Lee, and James Davidson. Learning latent dynamics for planning from pixels. In _Proceedings of the 36th International Conference on Machine Learning_ , pp. 2555\u20132565. PMLR, 2019b. URL http://proceedings.mlr.press/v97/hafner19a.html."
+    },
+    {
+      "index": 75,
+      "text": "- Danijar Hafner, Timothy P Lillicrap, Mohammad Norouzi, and Jimmy Ba. Mastering atari with discrete world models. In _International Conference on Learning Representations_ , 2021. URL https://openreview.net/forum?id=0oabwyZbOu."
+    },
+    {
+      "index": 76,
+      "text": "- Nils Jansen, Bettina K\u00a8onighofer, Sebastian Junges, Alex Serban, and Roderick Bloem. Safe Reinforcement Learning Using Probabilistic Shields (Invited Paper). In Igor Konnov and Laura Kov\u00b4acs (eds.), _31st International Conference on Concurrency Theory (CONCUR 2020)_ , volume 171 of _Leibniz International Proceedings in Informatics (LIPIcs)_ , pp. 3:1\u20133:16, Dagstuhl, Germany, 2020. Schloss Dagstuhl\u2013Leibniz-Zentrum f\u00a8ur Informatik. ISBN 978-3-95977-1603. doi: 10.4230/LIPIcs.CONCUR.2020.3. URL https://drops.dagstuhl.de/opus/ volltexte/2020/12815.\n\n10"
+    },
+    {
+      "index": 77,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__claude-opus-4.7": {
+      "label": "Progressive (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This paper tackles an important and timely problem\u2014safety-aware reinforcement learning in high-dimensional environments where a formal dynamics model is unavailable\u2014and proposes \"latent shielding,\" which leverages a learned world model (RSSM) to roll out imagined trajectories and filter unsafe actions. The motivation is clear, the positioning relative to prior shielding work is well-articulated, and the combination of model-based RL with scLTL specifications is a sensible and potentially useful contribution. However, several concerns are apparent from the outset. First, the central tradeoff is significant but under-examined in the introduction: by replacing a symbolic model with a learned latent one, the approach forfeits the formal safety guarantees that are arguably the primary appeal of shielding, leaving unclear what principled advantage remains over existing safety-critic or constrained-policy approaches that also learn from data. The authors acknowledge this loss but do not adequately argue why latent shielding should be preferred to those alternatives, nor do they characterize how model inaccuracies propagate into safety violations. Second, the contribution appears somewhat incremental\u2014essentially combining Dreamer-style world models with a rollout-based action filter\u2014and the novelty of the \"new method to aid exploration\" is asserted but not previewed. Third, the writing, while generally clear, leans on informal language (\"imagine,\" \"fledgling\") and the problem setup introduces a labelling function as a \"weaker assumption\" without rigorously comparing it to the abstractions used by prior shielding methods. Finally, the empirical claims in the abstract and introduction are vague (\"improved adherence,\" \"comparable to previous symbolic approaches\"), and the strength of the paper will hinge heavily on whether the experiments convincingly demonstrate safety gains during training without sacrificing task performance, and whether comparisons include strong safe-RL baselines beyond symbolic shielding.",
+      "comments": [
+        {
+          "id": "progressive__claude-opus-4.7_0",
+          "title": "Loss equation referenced but not shown",
+          "quote": "We train _l\u03b8_ along with the other components of the SRSSM with the objective\n\nwhere the first three terms are as described in (Hafner et al., 2019a; 2021)",
+          "explanation": "The text says 'with the objective' and then 'where the first three terms are as described...' but no actual equation appears in the passage between these phrases. This may be an OCR extraction issue where a displayed equation was dropped, but if it's actually missing in the paper, the reader cannot see the overall loss function being optimized. Similarly, the binary cross-entropy loss for L_violation is described ('acts as a weighted binary cross-entropy loss over predictions by l_\u03b8') but the formula itself appears to be missing from the passage. Without the explicit form, the role of \u03b1 and how weighting is applied (which class gets weight \u03b1 vs 1-\u03b1) is not fully specified.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_1",
+          "title": "Algorithm 1 notation and state indexing is inconsistent",
+          "quote": "Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _._ **4 if** _\u2203i \u2208_ [1 _,_ 2 _, ..., H_ ] such that _l\u03b8_ ( _hi, zi_ ) = _unsafe_ **then** \u039b[ _n_ ] := 1. **5 end 6** _interfered_ := _false_ . **7 if** _N_[1]  _\u03bb\u2208_ \u039b _[\u03bb > \u03f5]_ **[ then] 8** _a, interfered_ := _\u03c0alt_ ( _hi, zi_ ) _, true_ .",
+          "explanation": "The trajectory is defined over imagined (hatted) latent states (\u0125_i, \u1e91_i), but line 4 tests l\u03b8(h_i, z_i) and line 8 calls \u03c0alt(h_i, z_i) without hats, and with a loop-local index i that is only bound inside the existential on line 4. Additionally, \u03c0alt was described as a fallback from the current state, suggesting it should be called as \u03c0alt(h, z) rather than on an indexed imagined state. Even within line 3, a_i = \u03c0(\u0125_i, z_i) mixes hatted h with unhatted z. These notational inconsistencies (plus the loop-local i leaking outside its scope) make the shielding procedure ambiguous and hurt reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_2",
+          "title": "Input action a never used in Algorithm 1",
+          "quote": "**Input:** Current compact latent state ( _h, z_ ), unshielded action _a_ , horizon _H_ , number of trajectories to sample _N_ , alternative policy _\u03c0alt_ and threshold _\u03f5_ .",
+          "explanation": "The algorithm takes the unshielded action a as input, but in the body the imagined trajectory begins with an unlabeled transition (h,z) \u2192 (\u0125_1, \u1e91_1) and then uses a_i = \u03c0(\u0125_i, z_i) for i \u2265 1. The natural reading of a bounded-prescience shield is that the first step should use the proposed action a (the one being checked for safety), and only subsequent steps should sample from \u03c0. As written, the pseudocode omits this, so a reader cannot tell whether the shield is actually checking the proposed action or just checking whether \u03c0's rollout from (h,z) is safe. This materially affects the interpretation of the shielding procedure.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_3",
+          "title": "Reference to Table 4 but Table 1 is shown",
+          "quote": "As can be seen in Table 4, our agent collected more reward at test-time than both the unshielded and BPS agents in the VGW environment",
+          "explanation": "The passage presents results in a table labeled 'Table 1' (Comparison of trained agents with standard deviations in parentheses where applicable). The prose then refers to 'Table 4' when discussing these very results. This is a clear cross-reference error \u2014 the reader would immediately be confused about which table contains the numbers being discussed.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_4",
+          "title": "Training violations claim conflates test-time and training in prose",
+          "quote": "This reduction in training violations is even more dramatic when compared to the model-free CPO agent.",
+          "explanation": "The prior sentence talks about test-time violations ('seven-fold reduction in test-time violations'), and then this sentence says 'This reduction in training violations...' \u2014 switching metrics without warning. Looking at Table 1, the Latent agent's training violations in Fixed VGW are 1262 vs CPO's 16455 (~13\u00d7), and in Procedural VGW 14018 vs 18705 (~1.3\u00d7). So the 'more dramatic' claim is only partially supported (dramatic for fixed, modest for procedural). More importantly, the prose appears to treat 'test-time violations' and 'training violations' as the same thing within one sentence, which could mislead a reader skimming the table.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_5",
+          "title": "Intrinsic punishment on shield interference may mislead training",
+          "quote": "**if** _\u03bbt_ = 1 or _interfered_ **then** _rt_ := _rpunish_",
+          "explanation": "The shield's 'interfered' flag is set whenever the fraction of imagined unsafe trajectories exceeds \u03b5, not whenever a violation actually occurs. So the agent is punished with rpunish even when the shield's prediction was a false positive. This only works if the shield's predictions are reasonably accurate. The reliance on a possibly poorly-calibrated l_\u03b8 (especially early in training, motivating the shield introduction schedule) means intrinsic punishment can actively mislead the policy during training when l_\u03b8 is still learning. This interaction between intrinsic punishment and the shield introduction schedule deserves discussion.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_6",
+          "title": "Off-policy mismatch between shielded behavior and unshielded training not discussed",
+          "quote": "at all other times, we use the agent's shielded policy",
+          "explanation": "The data collection description says the shielded policy \u03c0* is used, while agent training updates only the unshielded \u03c0, and imagined trajectories for agent training use \u03c0 (not \u03c0*), meaning training does not directly credit the shield's overrides. This mismatch between behavior policy (shielded) and training policy (unshielded) creates an off-policy bias that the paper doesn't discuss explicitly.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_7",
+          "title": "Overstated novelty of shield introduction schedules",
+          "quote": "Furthermore, we have demonstrated for the first time that shielding at inappropriate times may adversely impact the performance of model-based DRL agents and showed how this phenomenon can be counteracted using our novel notion of *shield introduction schedules*.",
+          "explanation": "The authors claim this is the first demonstration that shielding at inappropriate times can hurt model-based DRL. While the specific combination may be novel, curriculum-style or delayed-constraint approaches to safety-aware RL are common, and the paper provides empirical evidence on just two benchmark environments. The 'for the first time' claim is strong and not well supported by the passage.",
+          "comment_type": "logical",
+          "paragraph_index": 62,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_8",
+          "title": "Claim of explainability advantage is asserted without support",
+          "quote": "Moreover, latent shielding may provide a greater degree of explainability over model-free methods which get rid of the abstraction altogether (Srinivasan et al., 2020; Thananjeyan et al., 2021; Bharadhwaj et al., 2021) - if the shield overrides an action, one can reconstruct the imagined unsafe trajectories that led to the interference.",
+          "explanation": "The authors claim explainability as an advantage, arguing that imagined unsafe trajectories can be reconstructed. However, these trajectories exist in latent space (compact states h_t, z_t), which are not inherently interpretable. The observation model could be used to decode them to image space, but this is not stated, and even decoded observations are not necessarily an 'explanation' of why a state is unsafe (that reasoning lies in the learned l_theta network, which is itself a black box). The claim of 'greater explainability' is asserted rather than demonstrated.",
+          "comment_type": "logical",
+          "paragraph_index": 61,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.2616,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 125405,
+      "completion_tokens": 25382
+    },
+    "progressive_original__claude-opus-4.7": {
+      "label": "Progressive Original (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This paper tackles an important and timely problem\u2014safety-aware reinforcement learning in high-dimensional environments where a formal dynamics model is unavailable\u2014and proposes \"latent shielding,\" which leverages a learned world model (RSSM) to roll out imagined trajectories and filter unsafe actions. The motivation is clear, the positioning relative to prior shielding work is well-articulated, and the combination of model-based RL with scLTL specifications is a sensible and potentially useful contribution. However, several concerns are apparent from the outset. First, the central tradeoff is significant but under-examined in the introduction: by replacing a symbolic model with a learned latent one, the approach forfeits the formal safety guarantees that are arguably the primary appeal of shielding, leaving unclear what principled advantage remains over existing safety-critic or constrained-policy approaches that also learn from data. The authors acknowledge this loss but do not adequately argue why latent shielding should be preferred to those alternatives, nor do they characterize how model inaccuracies propagate into safety violations. Second, the contribution appears somewhat incremental\u2014essentially combining Dreamer-style world models with a rollout-based action filter\u2014and the novelty of the \"new method to aid exploration\" is asserted but not previewed. Third, the writing, while generally clear, leans on informal language (\"imagine,\" \"fledgling\") and the problem setup introduces a labelling function as a \"weaker assumption\" without rigorously comparing it to the abstractions used by prior shielding methods. Finally, the empirical claims in the abstract and introduction are vague (\"improved adherence,\" \"comparable to previous symbolic approaches\"), and the strength of the paper will hinge heavily on whether the experiments convincingly demonstrate safety gains during training without sacrificing task performance, and whether comparisons include strong safe-RL baselines beyond symbolic shielding.",
+      "comments": [
+        {
+          "id": "progressive_original__claude-opus-4.7_0",
+          "title": "Grammar/wording error in Contributions",
+          "quote": "we propose a safe RL agent that makes uses of _latent shielding_",
+          "explanation": "This says 'makes uses of' which appears to be a typo (should be 'makes use of' or 'uses'). However, this is a minor wording issue and not a technical problem. Per the instructions, I should not flag formatting/typesetting issues, but this is a grammar error rather than typesetting. Still borderline \u2014 not flagging as a substantive issue.",
+          "comment_type": "logical",
+          "paragraph_index": 4,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_1",
+          "title": "RSSM described as three components but four are functionally present",
+          "quote": "An RSSM is composed of three key components: a latent dynamics model, a reward model, and an observation model.",
+          "explanation": "Initially I wondered if this was an inconsistency, since Section 2.3 later describes the latent dynamics model as itself containing a recurrent model, representation model, and transition model \u2014 and the full RSSM in later sections also includes the observation and reward models. On careful reading, the authors group the dynamics-related sub-models (recurrent, representation, transition) under 'latent dynamics model' as one component, giving three top-level components. This is self-consistent, even if the grouping differs slightly from some presentations (e.g., Hafner et al. sometimes separate the representation model). Not a real issue.",
+          "comment_type": "logical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_2",
+          "title": "Loss equation referenced but not shown",
+          "quote": "We train _l\u03b8_ along with the other components of the SRSSM with the objective\n\nwhere the first three terms are as described in (Hafner et al., 2019a; 2021)",
+          "explanation": "The text says 'with the objective' and then 'where the first three terms are as described...' but no actual equation appears in the passage between these phrases. This may be an OCR extraction issue where a displayed equation was dropped, but if it's actually missing in the paper, the reader cannot see the overall loss function being optimized. Similarly, the binary cross-entropy loss for L_violation is described ('acts as a weighted binary cross-entropy loss over predictions by l_\u03b8') but the formula itself appears to be missing from the passage. Without the explicit form, the role of \u03b1 and how weighting is applied (which class gets weight \u03b1 vs 1-\u03b1) is not fully specified.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_3",
+          "title": "Labelling function domain inconsistency in L_violation dataset",
+          "quote": "where _D\u03bb \u2286S \u00d7 {_ 0 _,_ 1 _}_ is a dataset of state-label pairs",
+          "explanation": "Earlier the paper defines L^\u03c6_I : S_I \u2192 {safe, unsafe}, mapping latent states (in S_I) to labels. Here the dataset D_\u03bb is written as a subset of S \u00d7 {0,1} without the I subscript. Given the surrounding context defines l_\u03b8 as operating on latent states (h_t, z_t), the intended space is presumably S_I. This is a minor notational inconsistency but a careful reader might wonder if D_\u03bb contains real environment states or latent states. Since the loss is over predictions by l_\u03b8 which takes latent states, the dataset should presumably be over S_I. The ambiguity is minor but resolvable from context.",
+          "comment_type": "logical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_4",
+          "title": "Bounded trajectory length condition appears inconsistent",
+          "quote": "a _bounded trajectory \u03c1_ of length _H_ is a sequence of states and actions _s_ 0 _\u2212\u2192a_ 0 _s_ 1 _\u2212\u2192a_ 1 _an\u2212_ 1 _. . . \u2212\u2212\u2212\u2192 sn_ comprised of no more than _H_ states and with the final state _sn_ either being a terminal state or _n_ = _H \u2212_ 1",
+          "explanation": "The definition says 'no more than H states' but then requires either the final state be terminal or n = H-1. If a trajectory has 'no more than H states' and the states are s_0, s_1, ..., s_n, then the number of states is n+1. For the trajectory to have exactly H states, we need n+1 = H, i.e., n = H-1. So 'n = H-1' is the condition for exactly H states, which matches 'no more than H states' at the upper bound. This is actually consistent, though slightly confusing: a trajectory of 'length H' here apparently means it contains H states (indices 0 to H-1). The definition is valid but could be clearer. This is more a presentation issue than an error.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_5",
+          "title": "Algorithm 1 uses hatted latent states in the imagination step but unhatted states in the labelling and \u03c0alt calls",
+          "quote": "Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _._ **4 if** _\u2203i \u2208_ [1 _,_ 2 _, ..., H_ ] such that _l\u03b8_ ( _hi, zi_ ) = _unsafe_ **then** \u039b[ _n_ ] := 1. **5 end 6** _interfered_ := _false_ . **7 if** _N_[1]  _\u03bb\u2208_ \u039b _[\u03bb > \u03f5]_ **[ then] 8** _a, interfered_ := _\u03c0alt_ ( _hi, zi_ ) _, true_ .",
+          "explanation": "The trajectory is explicitly defined over imagined (hatted) latent states (\u0125_i, \u1e91_i), since by definition the agent cannot access the true future latent states without an observation. However, line 4 tests l\u03b8(h_i, z_i) (without hats) and line 8 calls \u03c0alt(h_i, z_i). If these are meant to be the imagined states, the hats are missing; if they are meant to be the real states, the algorithm is ill-defined since those aren't available. Additionally, line 8 references a specific index i that was only introduced as an existential inside the condition on line 4 \u2014 it is unclear which i (or which trajectory n) is being passed to \u03c0alt when the average over \u039b exceeds \u03b5. This is a reproducibility gap: the reader cannot tell what state \u03c0alt receives as input. Also worth noting: the unshielded action a given as input to the algorithm does not appear anywhere in the pseudocode \u2014 it's unclear how the first transition in the imagined trajectory uses a vs. \u03c0(h,z).",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_6",
+          "title": "Input action a never used in Algorithm 1",
+          "quote": "**Input:** Current compact latent state ( _h, z_ ), unshielded action _a_ , horizon _H_ , number of trajectories to sample _N_ , alternative policy _\u03c0alt_ and threshold _\u03f5_ .",
+          "explanation": "The algorithm takes the unshielded action a as input, but in the body the imagined trajectory begins with an unlabeled transition (h,z) \u2192 (\u0125_1, \u1e91_1) and then uses a_i = \u03c0(\u0125_i, z_i) for i \u2265 1. The natural reading of a bounded-prescience shield is that the first step should use the proposed action a (the one being checked for safety), and only subsequent steps should sample from \u03c0. As written, the pseudocode omits this, so a reader cannot tell whether the shield is actually checking the proposed action or just checking whether \u03c0's rollout from (h,z) is safe. This materially affects the interpretation of the shielding procedure.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_7",
+          "title": "Shielded policy \u03c0* equation referenced but not shown",
+          "quote": "More formally, our shielded policy _\u03c0[\u2217]_ can be written:\n\nwhere _\u03c0_ ( _st_ ) is the agent\u2019s policy without shielding",
+          "explanation": "The text says 'our shielded policy \u03c0* can be written:' and then proceeds directly to the 'where' clause, with no equation in between. This is likely an OCR/extraction artifact from the PDF \u2014 the equation exists in the original document but was dropped. Flagging because, assuming the equation is present in the PDF, this isn't an issue; but if it is actually missing in the paper, the key formal definition of the shielded policy would be absent. Treating as minor on the assumption that the equation is present in the source.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_8",
+          "title": "Reference to Table 4 but Table 1 is shown",
+          "quote": "As can be seen in Table 4, our agent collected more reward at test-time than both the unshielded and BPS agents in the VGW environment",
+          "explanation": "The passage presents results in a table labeled 'Table 1' (Comparison of trained agents with standard deviations in parentheses where applicable). The prose then refers to 'Table 4' when discussing these very results. This is a clear cross-reference error \u2014 the reader would immediately be confused about which table contains the numbers being discussed. While this could be a benign numbering issue that will be fixed, it currently misdirects the reader.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_9",
+          "title": "Claim of 'seven-fold reduction' in test-time violations does not match reported numbers",
+          "quote": "our agent saw a seven-fold reduction in test-time violations compared to the unshielded agent across both the fixed and procedurally generated environments",
+          "explanation": "I wanted to verify this claim against Table 1. For Fixed VGW, the table reports Latent testing violations of 0.30 vs Unshielded 2.25 \u2014 that's roughly a 7.5\u00d7 reduction, consistent with the claim. For Procedural VGW, Latent is 4.50 vs Unshielded 33.7 \u2014 that's about 7.5\u00d7 as well, also consistent. So the claim 'seven-fold' does roughly hold across both. On reflection the claim is reasonable; I'm withdrawing this as an issue upon closer checking. (Leaving this note only to show I verified rather than flagging a false issue.)",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_10",
+          "title": "Training violations claim conflates test-time and training in prose",
+          "quote": "This reduction in training violations is even more dramatic when compared to the model-free CPO agent.",
+          "explanation": "The prior sentence talks about test-time violations ('seven-fold reduction in test-time violations'), and then this sentence says 'This reduction in training violations...' \u2014 switching metrics without warning. Looking at Table 1, the Latent agent's training violations in Fixed VGW are 1262 vs CPO's 16455 (~13\u00d7), and in Procedural VGW 14018 vs 18705 (~1.3\u00d7). So the 'more dramatic' claim is only partially supported (dramatic for fixed, modest for procedural). More importantly, the prose appears to treat 'test-time violations' and 'training violations' as the same thing within one sentence, which could mislead a reader skimming the table. A careful reader will reconcile it, but the transition is ambiguous.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_11",
+          "title": "Line 8 of Algorithm 1 passes wrong arguments to \u03c0_alt",
+          "quote": "_a, interfered_ := _\u03c0alt_ ( _hi, zi_ ) _, true_",
+          "explanation": "\u03c0_alt was defined as a fallback policy that tries alternative actions from the current state until a safe trajectory is found. The shield's input is the current latent state (h, z), but line 8 invokes \u03c0_alt(h_i, z_i) using indexed latent variables (h_i, z_i), which in context refer to imagined states from line 3 inside the loop over trajectories. These variables are loop-local and not well-defined outside. The intended call should surely be \u03c0_alt(h, z) \u2014 i.e., from the original current state \u2014 because the shield is deciding what action to take NOW, not at some imagined future step. This is a real ambiguity/error in the algorithm statement that affects reproducibility of the shielding procedure. Even granting OCR concerns, the subscripting is inconsistent with how \u03c0_alt is described in the surrounding text ('considers all the other actions' from the current state).",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_12",
+          "title": "Line 4 of Algorithm 1 uses l_\u03b8(h_i, z_i) with non-hatted variables",
+          "quote": "**if** _\u2203i \u2208_ [1 _,_ 2 _, ..., H_ ] such that _l\u03b8_ ( _hi, zi_ ) = _unsafe_",
+          "explanation": "In line 3 the imagined trajectory uses hatted variables (\u0125_i, \u1e91_i) for predicted future latent states. Line 4 then tests l_\u03b8(h_i, z_i) without hats. Since only imagined (hatted) future latent states exist in the trajectory \u03c1 beyond i=0, the labeling function should be applied to (\u0125_i, \u1e91_i). This is almost certainly an OCR or typesetting slip rather than a logic bug (the obvious intent is clear), so it is a minor notational inconsistency rather than a technical flaw \u2014 but combined with the (h_i, z_i) usage in line 8, it does suggest the algorithm's notation for hatted/unhatted indexed variables is not tight.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_13",
+          "title": "Shield action selection inside imagined trajectory uses inconsistent subscripts",
+          "quote": "Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _.",
+          "explanation": "The action a_i = \u03c0(\u0125_i, z_i) is written with \u0125 (hatted) but z (not hatted). For imagined states beyond step 0, both latent components are imagined/hatted, so this should be \u03c0(\u0125_i, \u1e91_i). This is consistent with my earlier flag that hat-notation is applied inconsistently throughout Algorithm 1. Again most likely an OCR/typesetting issue, and a careful reader can reconstruct intent, so severity is minor \u2014 but the authors should clean up the notation in Algorithm 1 for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_14",
+          "title": "Intrinsic punishment applied on 'interfered' conflates shield intervention with violation",
+          "quote": "**if** _\u03bbt_ = 1 or _interfered_ **then** _rt_ := _rpunish_",
+          "explanation": "Initially this seems fine \u2014 standard shielding literature punishes for being about to violate. But note the asymmetry this introduces: the shield's 'interfered' flag is set whenever the fraction of imagined unsafe trajectories exceeds \u03b5, not whenever a violation actually occurs. So the agent is punished with rpunish even when the shield's prediction was a false positive. Text earlier says 'Over time, this means that the shield will have to interfere less as \u03c0 becomes biased away from unsafe states' \u2014 but this only works if the shield's predictions are reasonably accurate. The reliance on a possibly poorly-calibrated l_\u03b8 (especially early in training, motivating the shield introduction schedule) means intrinsic punishment can actively mislead the policy during training when l_\u03b8 is still learning. This interaction between intrinsic punishment and the shield introduction schedule deserves discussion; as stated, it's a methodology choice that could hurt training stability. Moderate concern because it affects reproducibility/interpretation of results but is not obviously wrong.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_15",
+          "title": "Algorithm 2 collects only (o_t, a_t, r_t, \u03bb_t) but D is defined to include states",
+          "quote": "Add experience to dataset _D_ := _D \u222a{_ ( _ot, at, rt, \u03bbt_ ) _[T] t_ =1 _[}]_",
+          "explanation": "The paper earlier defines D \u2286 S \u00d7 A \u00d7 O \u00d7 R \u00d7 {0,1} as a dataset of (s, a, o, r, \u03bb) tuples, but line 22 of Algorithm 2 adds only (o_t, a_t, r_t, \u03bb_t) \u2014 the state s_t is omitted. For a POMDP where s_t is unobservable, this actually makes sense (the agent only has o_t), so omission of s from the stored tuple is correct. The inconsistency is in the paper's formal definition of D as including S, which contradicts the Algorithm 2 storage. Either the formal definition should be D \u2286 A \u00d7 O \u00d7 R \u00d7 {0,1} or the algorithm needs to store something more. This is a minor bookkeeping inconsistency between the definition and the algorithm, not a substantive error.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_16",
+          "title": "Data collection phase says it updates shielded policy but agent training only updates unshielded \u03c0",
+          "quote": "at all other times, we use the agent's shielded policy",
+          "explanation": "The data collection description says the shielded policy \u03c0* is used. Agent training (phase 3) updates only the unshielded \u03c0 ('Update the unshielded policy \u03c0 based on the imagined trajectories'). This is internally consistent \u2014 \u03c0 is the learned policy, \u03c0* = shield(\u03c0) is the behavior policy \u2014 and matches standard practice. However, imagined trajectories for agent training (line 7) use \u03c0 (not \u03c0*), meaning training does not directly credit the shield's overrides. This is a legitimate design choice but worth noting: the mismatch between behavior policy (shielded) and training policy (unshielded) creates an off-policy bias. The paper doesn't discuss this explicitly. Minor because it's consistent with Dreamer's actor-critic setup, but a careful reader might wonder about the implications.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_17",
+          "title": "Overstated novelty of shield introduction schedules",
+          "quote": "Furthermore, we have demonstrated for the first time that shielding at inappropriate times may adversely impact the performance of model-based DRL agents and showed how this phenomenon can be counteracted using our novel notion of *shield introduction schedules*.",
+          "explanation": "The authors claim this is the first demonstration that shielding at inappropriate times can hurt model-based DRL. While the specific combination (model-based DRL + latent shielding + schedule) may indeed be novel, curriculum-style or delayed-constraint approaches to safety-aware RL are common, and the paper provides empirical evidence on just two benchmark environments. The 'for the first time' claim is strong and not well supported by the passage - the authors themselves note elsewhere (Section 3.3.2) that they introduce shielding gradually 'to our knowledge' for the first time, which is a softer claim. The conclusion's phrasing is an overclaim relative to what has been shown.",
+          "comment_type": "logical",
+          "paragraph_index": 62,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_18",
+          "title": "Claim of explainability advantage is asserted without support",
+          "quote": "Moreover, latent shielding may provide a greater degree of explainability over model-free methods which get rid of the abstraction altogether (Srinivasan et al., 2020; Thananjeyan et al., 2021; Bharadhwaj et al., 2021) - if the shield overrides an action, one can reconstruct the imagined unsafe trajectories that led to the interference.",
+          "explanation": "The authors claim explainability as an advantage, arguing that imagined unsafe trajectories can be reconstructed. However, these trajectories exist in latent space (compact states h_t, z_t), which are not inherently interpretable. The observation model could be used to decode them to image space, but this is not stated, and even decoded observations are not necessarily an 'explanation' of why a state is unsafe (that reasoning lies in the learned l_theta network, which is itself a black box). The claim of 'greater explainability' is asserted rather than demonstrated, and is weakened by the fact that the latent abstraction is learned and opaque rather than symbolic. This is a minor overclaim in a discussion section.",
+          "comment_type": "logical",
+          "paragraph_index": 61,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.2616,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 125405,
+      "completion_tokens": 25382
+    },
+    "progressive__gpt-5.5": {
+      "label": "Progressive (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper addresses an important and timely problem\u2014bringing shielding-style safety mechanisms to high-dimensional RL settings without requiring a handcrafted symbolic dynamics model\u2014and the core idea of leveraging a learned latent world model to anticipate unsafe trajectories is promising and potentially impactful. The writing is generally clear at a high level, with a well-motivated introduction and useful positioning relative to classical shielding and model-based RL, but the exposition would benefit from sharper definitions of the safety objective, the role and availability of the labelling function, and how formal specifications are operationalized in partially observable latent space. The most significant issue is that the proposed approach appears to trade away the central advantage of shielding\u2014formal safety guarantees\u2014while still using terminology that may suggest stronger assurances than the method can provide; the paper should be much more explicit about what safety claims remain valid under learned, imperfect latent dynamics. Relatedly, the assumption that violations can be labelled online may be nontrivial in real-world settings and should be discussed as a potential bottleneck rather than presented as a clearly weaker assumption. The contribution would also need strong empirical evidence showing that latent shielding improves safety beyond simpler baselines such as reward shaping, model-predictive planning with a learned cost model, safety critics, or constrained RL, especially under model error, stochasticity, and distribution shift. Overall, the paper is well motivated and potentially valuable, but its quality will depend heavily on whether the method is precisely specified, its loss of formal guarantees is honestly framed, and the experiments convincingly isolate the benefit of \u201clatent shielding\u201d over existing model-based safety mechanisms.",
+      "comments": [
+        {
+          "id": "progressive__gpt-5.5_0",
+          "title": "Temporal/scLTL specifications are treated as state-local safety labels without enough semantic clarification",
+          "quote": "We assume the environment has been augmented with a labelling function L^\u03c6_E : S_E \u2192 {safe, unsafe} that, at each time step, informs us whether a violation has occurred with respect to some formal safety specification \u03c6. ... In this work, we use syntactically co-safe Linear Temporal Logic (scLTL) as our specification language.",
+          "explanation": "The paper treats violations of \u03c6 as if they can be labelled directly on the current environment state, but \u03c6 is later described as an scLTL formula. For temporal specifications, satisfaction or violation generally depends on a trace prefix, progression state, or monitor automaton state, not only on s \u2208 S_E. This is especially important because scLTL is co-safe: satisfaction can often be witnessed by a finite good prefix, whereas safety violations are witnessed by finite bad prefixes. Eventualities, for example, are not violated merely because they are not yet satisfied. The paper should clarify whether S_E is augmented with monitor/progression state, whether L^\u03c6_E is an oracle over histories/prefixes, or whether \u03c6 is restricted to safety-like formulas whose violations are detectable statewise.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_1",
+          "title": "Off-by-one ambiguity in the meaning of horizon H",
+          "quote": "a bounded trajectory \u03c1 of length H is a sequence ... comprised of no more than H states and with the final state s_n either being a terminal state or n = H \u2212 1. ... Algorithm 1 imagines states indexed up to H and checks i = 1,...,H.",
+          "explanation": "The formal trajectory definition appears to treat an H-bounded trajectory as containing at most H states, so a nonterminal trajectory has H\u22121 actions/transitions. Algorithm 1 instead appears to generate H successor states in addition to the current state, corresponding to H actions and H+1 states. This creates a real off-by-one ambiguity: for H = 1, the formal definition would contain only s_0 and no action, while later definitions refer to \u03c0(s_0)=a_0 and the algorithm checks one future successor. The paper should consistently specify whether H counts states, transitions, or lookahead steps.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_2",
+          "title": "H-bounded policy safety is defined by existence of one safe continuation rather than policy-induced safety",
+          "quote": "a policy \u03c0 is H-bounded safe ... if and only if for all s \u2208 S, either there exists some \u03c1 \u2208 P^H(s) such that S_H(\u03c1, \u03c6) and \u03c0(s_0)=a_0; or for all \u03c1 \u2208 P^H(s), \u00acS_H(\u03c1, \u03c6). In other words, the policy will choose a safe trajectory as long as one exists.",
+          "explanation": "The formal definition only requires that the policy\u2019s first action match some safe H-step trajectory. It does not require that the later actions on that trajectory are the actions \u03c0 would actually take, nor that all stochastic outcomes after the chosen action are safe. Thus the definition is closer to existential action admissibility than to policy-level bounded safety. If that is intended, the text should say so. If the intended notion is safety of the policy itself, the definition should quantify over trajectories induced by \u03c0 and specify whether safety is universal, almost-sure, or probabilistic in stochastic environments.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_3",
+          "title": "Definition of inevitable violation is ill-formed for finite trajectories",
+          "quote": "Finally, we formally define a violation of \u03c6 to be inevitable in state s_0 \u2208 S if and only if for all \u03c1 \u2208 P(s_0), \u00acS_H(\u03c1, \u03c6).",
+          "explanation": "The definition applies S_H, previously defined for H-bounded trajectories, to arbitrary finite trajectories P(s_0) without fixing or quantifying H. Moreover, if P(s_0) includes short finite prefixes, such as the one-state trajectory containing only s_0, then any currently safe state would normally have at least one safe prefix, making inevitability almost never hold literally. The intended concept is likely that all maximal or infinite continuations eventually reach an unsafe state, or that all H-bounded continuations are unsafe for a specified H. The paper should distinguish these possibilities because inevitability is later used to justify fallback behavior.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_4",
+          "title": "Replay and labelling datasets confuse environment states, observations, and latent states under partial observability",
+          "quote": "We augment the standard RSSM with a labelling function L^\u03c6_I : S_I \u2192 {safe, unsafe} which maps latent states s_t \u2208 S_I to whether they correspond to states in violation of \u03c6. ... the agent interacts with the real environment to collect a dataset D \u2286 S \u00d7 A \u00d7 O \u00d7 R \u00d7 {0,1} of states, actions, observations, rewards and violations",
+          "explanation": "The method is introduced for a POMDP, where the agent observes observations rather than full environment states, while the latent classifier l_\u03b8 takes compact RSSM states as input. The data descriptions do not clearly specify whether replay contains true simulator states, observations/history windows, posterior latent states, or some mixture of these. A reader can infer that environment-provided violation labels are attached to observed trajectories and used to supervise l_\u03b8 on corresponding posterior latent states, but this mapping is not stated. For reproducibility, the paper should specify exactly what is stored in D and any violation-label dataset, and how true environment labels are aligned with latent states used by L^\u03c6_I.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_5",
+          "title": "Policy-biased sampled rollouts change the bounded-safety semantics",
+          "quote": "By directing the sampling of trajectories in accordance with states and actions the policy is biased towards ... more of our computational budget can be dedicated into ensuring that the agent\u2019s most likely trajectories are safe.",
+          "explanation": "The computational motivation is reasonable, but sampling rollouts according to the current policy is not equivalent to the earlier BPS-style bounded-safety notion, which is universal over bounded continuations. On-policy sampling estimates likely risk under the current policy and may systematically miss low-probability but catastrophic stochastic outcomes or unsafe continuations under different future actions. This may be an acceptable approximation, but the text should explicitly state that the semantics become probabilistic and policy-dependent rather than standard bounded shielding.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_6",
+          "title": "Alternative policy is underspecified and its safety guarantee is overstated",
+          "quote": "\u03c0_alt is an alternative policy that ensures that, if a violation isn\u2019t already inevitable, the agent avoids a predicted unsafe state. In our implementation, \u03c0_alt simply considers all the other actions until a safe trajectory is found. ... a, interfered := \u03c0_alt(h_i, z_i), true. ... since the action space of the CD environment is continuous ... Such modifications, however, are not needed for our agent.",
+          "explanation": "The fallback mechanism is central to shielding but is not specified precisely enough. First, the word \u201censures\u201d is too strong because ABPS relies on a learned dynamics model, learned classifier, finite horizon, sampling, and a threshold; it can only avoid states judged unsafe under those approximations. Second, Algorithm 1 appears to call \u03c0_alt on h_i,z_i, where i is local to a previous check and does not denote the actual current state; the fallback should presumably choose an action for the current latent state. Third, the implementation statement that \u03c0_alt considers \u201call the other actions\u201d is meaningful in discrete action spaces but not in the continuous Cliff Driver setting. The paper should specify how candidate fallback actions are generated/evaluated, especially for continuous control, and qualify the guarantee as approximate and sampling-dependent.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__gpt-5.5_7",
+          "title": "Algorithm does not unambiguously force the candidate action to be the first imagined action",
+          "quote": "Input: Current compact latent state (h,z), unshielded action a, horizon H ... Imagine trajectory \u03c1 = (h,z) \u2192 ... where a_i = \u03c0(h_i, z_i).",
+          "explanation": "The prose suggests that the shield estimates whether the proposed current action a will lead to a violation, so the first imagined transition should be conditioned on a, with later actions drawn from \u03c0. However, the algorithm line says a_i = \u03c0(h_i,z_i) without explicitly stating the boundary condition a_0 = a. As written, the rollout could be read as simply following \u03c0 from the current state, making the input action redundant and making candidate-action evaluation unclear. The algorithm should explicitly state that the supplied action is used for the first model step.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_8",
+          "title": "Training imagination notation swaps or conflates I and H",
+          "quote": "the agent imagines I trajectories of length H with actions chosen from its current policy. ... Input: shield imagination horizon H, number of steps to imagine ahead for training I ... Imagine a trajectory \u03c1 of length I for each state in each data sequence.",
+          "explanation": "The overview says the agent imagines I trajectories of length H, while Algorithm 2 defines H as the shield horizon and I as the policy-training imagination length. These are distinct hyperparameters in Dreamer-style training: number of rollouts/starting states and rollout horizon are not interchangeable, and the shield horizon need not equal the actor-critic imagination horizon. The paper should align the notation and state whether H is used only for shielding or also for policy training.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_9",
+          "title": "Reward punishment on shield intervention is ambiguous and may be assigned to the wrong transition",
+          "quote": "Whenever a violation occurs (whether detected by the latent shield or by the environment), we override the environment\u2019s reward function by instead assigning a reward p < 0. ... if \u03bb_t = 1 or interfered then r_t := r_punish.",
+          "explanation": "Penalising shield interventions can be useful shaping, but the algorithm appears to assign the punishment to the transition generated after the shielded action is executed. If the shield replaces an unsafe proposed action with a safe fallback, then storing r_punish for the executed transition may train the reward model to associate the fallback action and resulting state with punishment. Conversely, if the punishment is intended only for the actor update of the rejected action, that should be stated explicitly. The paper should clarify whether r_punish is stored in replay, which action it is associated with, and how false positives from the learned shield are handled.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_10",
+          "title": "World-model data appear to store the proposed action rather than the executed shielded action",
+          "quote": "r_t, o_t := E.step(a'_t). ... Add experience to dataset D := D \u222a { (o_t, a_t, r_t, \u03bb_t)^T_{t=1} }.",
+          "explanation": "The environment is stepped with the possibly shielded action a'_t, but the replay tuple is written as containing a_t, the unshielded proposal. For world-model training, the action paired with the observed transition must be the action actually applied to the environment. If this is not merely a notation slip, the RSSM/SRSSM dynamics and reward models would be trained on incorrect action-transition pairs whenever the shield intervenes, directly undermining the learned model used for latent shielding.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__gpt-5.5_11",
+          "title": "Claim that SRSSM captures nondeterminism better than BPS is not well supported",
+          "quote": "This is possibly due to the SRSSM used by our latent shield being better able to capture non-determinism than BPS.",
+          "explanation": "The statement is hedged, but the explanation is questionable. BPS, as described, uses simulator rollouts at runtime and therefore samples from the true stochastic dynamics, whereas SRSSM is a learned approximation. With enough samples, BPS should capture environmental nondeterminism at least as faithfully as the learned model. Differences in continuous-action handling, discretisation, finite horizons, fallback-action selection, thresholds, or computational budgets are more plausible explanations and should be discussed instead.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_12",
+          "title": "Performance claims rely on overlapping means without statistical support",
+          "quote": "Our agent outperformed the other agents at test-time in the most stochastic CD environment (p_stick = 0.5).",
+          "explanation": "The latent agent has the best point-estimate mean in the reported p_stick = 0.5 setting, but the standard deviations are large and overlapping, and only five trained agents are reported. Without statistical tests or confidence intervals, the unqualified claim that it \u201coutperformed\u201d the others is stronger than the table supports. A safer phrasing would be that it achieved the best mean performance in that setting.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_13",
+          "title": "Claim of a more dramatic training-violation reduction versus CPO is only partly supported",
+          "quote": "This reduction in training violations is even more dramatic when compared to the model-free CPO agent.",
+          "explanation": "The fixed Visual Grid World results support a large reduction in training violations relative to CPO, but the procedural case shows a much smaller reduction. The phrase \u201cthis reduction\u201d is also ambiguous because the preceding sentence concerns test-time violations while this sentence switches to training violations. The claim should be qualified by environment or rephrased to more accurately match the table.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.4512,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 89078,
+      "completion_tokens": 40231
+    },
+    "progressive_original__gpt-5.5": {
+      "label": "Progressive Original (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper addresses an important and timely problem\u2014bringing shielding-style safety mechanisms to high-dimensional RL settings without requiring a handcrafted symbolic dynamics model\u2014and the core idea of leveraging a learned latent world model to anticipate unsafe trajectories is promising and potentially impactful. The writing is generally clear at a high level, with a well-motivated introduction and useful positioning relative to classical shielding and model-based RL, but the exposition would benefit from sharper definitions of the safety objective, the role and availability of the labelling function, and how formal specifications are operationalized in partially observable latent space. The most significant issue is that the proposed approach appears to trade away the central advantage of shielding\u2014formal safety guarantees\u2014while still using terminology that may suggest stronger assurances than the method can provide; the paper should be much more explicit about what safety claims remain valid under learned, imperfect latent dynamics. Relatedly, the assumption that violations can be labelled online may be nontrivial in real-world settings and should be discussed as a potential bottleneck rather than presented as a clearly weaker assumption. The contribution would also need strong empirical evidence showing that latent shielding improves safety beyond simpler baselines such as reward shaping, model-predictive planning with a learned cost model, safety critics, or constrained RL, especially under model error, stochasticity, and distribution shift. Overall, the paper is well motivated and potentially valuable, but its quality will depend heavily on whether the method is precisely specified, its loss of formal guarantees is honestly framed, and the experiments convincingly isolate the benefit of \u201clatent shielding\u201d over existing model-based safety mechanisms.",
+      "comments": [
+        {
+          "id": "progressive_original__gpt-5.5_0",
+          "title": "State-local violation labelling is underspecified for temporal specifications",
+          "quote": "We assume the environment has been augmented with a labelling function _L[\u03c6] E_[:] _[S][E][\u2192{][safe, unsafe][}]_[that,] at each time step, informs us whether a _violation_ has occurred with respect to some formal safety specification _\u03c6_ . For the avoidance of doubt, we define a violation to have occurred whenever _\u03c6_ does not hold.",
+          "explanation": "I understand the intended simplification: the authors want to avoid requiring a full symbolic abstraction and instead assume only a binary safety signal, analogous to an auxiliary reward. That is a reasonable and useful weakening relative to classical shielding. However, because \u03c6 is later said to be an scLTL formula, whether \u03c6 is violated generally depends on a trace prefix, progression state, or automaton monitor state, not just on the current POMDP state s \u2208 S_E. The later sentence about progression helps indicate that monitoring is possible, but it does not fully resolve the issue because the formal domain of the labelling function remains S_E rather than an augmented state space such as S_E \u00d7 Q_\u03c6 or histories. The phrase \u201cwhenever \u03c6 does not hold\u201d is also potentially misleading for temporal/co-safe formulas: for example, an eventuality \u22c4d is not satisfied until d occurs, but treating every earlier prefix as a violation would not match the usual monitoring semantics. This could be fixed by explicitly saying that S_E is augmented with the monitor/progression state, or that L_E^\u03c6 is an oracle over histories/prefixes rather than a memoryless state labeller.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_1",
+          "title": "Use of scLTL as a \u2018safety\u2019 specification language may conflate co-safety and safety",
+          "quote": "In this work, we use _syntactically co-safe Linear Temporal Logic (scLTL)_ (Kupferman & Vardi, 2001) as our specification language.",
+          "explanation": "The authors are careful to introduce scLTL as the formal language and later mention progression, which is standard for monitoring co-safe properties. Still, throughout the surrounding text the specifications are described as \u201csafety\u201d specifications and violations are described as states where \u03c6 does not hold. In temporal-logic terminology, co-safe properties are those whose satisfaction can be witnessed by a finite good prefix; they are not the same class as safety properties, whose violations can be witnessed by finite bad prefixes. Some formulas generated by the displayed grammar, such as eventualities, are naturally goal/reachability-style rather than safety-style. If the experiments only use formulas whose badness can be detected statewise or via a monitor, this may be harmless, but as written a reader could infer that arbitrary scLTL formulas directly define per-state unsafe conditions. The paper should clarify whether \u03c6 is restricted to safety-like formulas, whether the complement/progression monitor is being used to detect bad prefixes, or whether \u2018safety\u2019 is being used informally to include broader task constraints.",
+          "comment_type": "logical",
+          "paragraph_index": 9,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_2",
+          "title": "Off-by-one ambiguity in the definition of a horizon-H bounded trajectory",
+          "quote": "a _bounded trajectory \u03c1_ of length _H_ is a sequence of states and actions _s_ 0 _\u2212\u2192a_ 0 _s_ 1 _\u2212\u2192a_ 1 _an\u2212_ 1 _. . . \u2212\u2212\u2212\u2192 sn_ comprised of no more than _H_ states and with the final state _sn_ either being a terminal state or _n_ = _H \u2212_ 1.",
+          "explanation": "I initially read this as a standard finite-horizon rollout definition, but the indexing makes the horizon convention unclear. As written, a nonterminal trajectory with final index n = H \u2212 1 contains H states and only H \u2212 1 transitions/actions. Later, however, the shielding horizon appears to be used as a look-ahead over H future transitions/states after the current state, and Algorithm 1 imagines states indexed up to H and checks i = 1,...,H. This suggests the intended object may be H action steps, i.e. H + 1 states including the current state. The issue is not just cosmetic: for H = 1, the present definition gives a trajectory with only s0 and no defined a0, yet the subsequent policy-safety definition refers to \u03c0(s0) = a0. The authors are right to define bounded safety before using BPS/ABPS, but the current indexing leaves a real off-by-one ambiguity that could change which violations are detectable for a given horizon.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_3",
+          "title": "H-bounded policy safety is defined using existence of one safe trajectory rather than policy-induced safety",
+          "quote": "a policy _\u03c0_ is _H-bounded safe_ with respect to _\u03c6_ , denoted as _SH_ ( _\u03c0, \u03c6_ ), if and only if for all s _\u2208S_ ,\n\n- either there exists some _\u03c1 \u2208 \u03f1H_ ( _s_ ) such that _SH_ ( _\u03c1, \u03c6_ ) and _\u03c0_ ( _s_ 0) = _a_ 0;\n\n- or for all _\u03c1 \u2208 \u03f1H_ ( _s_ ), _\u00acSH_ ( _\u03c1, \u03c6_ ) _._\n\nIn other words, the policy will choose a safe trajectory as long as one exists.",
+          "explanation": "I can see the intended connection to shielding: if the policy\u2019s first action can begin some safe H-step rollout, the shield need not override it. However, the formal definition is weaker than the prose claim that the policy \u201cwill choose a safe trajectory.\u201d It only requires existence of some safe trajectory whose first action matches \u03c0(s0); it does not require that subsequent actions along that trajectory are the actions \u03c0 would actually take. In a stochastic MDP, it also does not require all possible successor trajectories under the chosen action to be safe; a single safe branch would suffice even if other branches lead to violations with high probability. If the authors intend an action-admissibility notion based on existence of a safe continuation, that should be stated explicitly. If they intend policy-level bounded safety in the usual sense, the definition should quantify over trajectories induced by \u03c0, and in stochastic/nondeterministic settings should specify whether safety is almost-sure, high-probability, or universal over outcomes.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_4",
+          "title": "Definition of inevitable violation appears ill-formed for finite trajectories",
+          "quote": "Finally, we formally define a violation of _\u03c6_ to be _inevitable_ in state _s_ 0 _\u2208S_ if and only if for all _\u03c1 \u2208 \u03f1_ ( _s_ 0), _\u00acSH_ ( _\u03c1, \u03c6_ ).",
+          "explanation": "The intended concept is clear and useful for shielding: a fallback policy cannot avoid a violation if every possible future eventually becomes unsafe. But as written, the definition uses SH, which was defined for bounded trajectories of length H, on arbitrary finite trajectories \u03f1(s0), and H is not quantified or fixed in this sentence. More importantly, since \u03f1(s0) is described as the set of all finite trajectories starting at s0, it would normally include short safe prefixes, possibly even the one-state trajectory containing only s0. If s0 is currently safe, such a prefix satisfies the earlier all-states-safe condition, making \u00acSH false and therefore making inevitability almost never hold under the literal definition. The authors likely mean all maximal/infinite continuations eventually contain an unsafe state, or all H-bounded continuations are unsafe for a specified H. That distinction matters because inevitability is later used to justify when the shield or alternative policy can no longer avoid unsafe states.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_5",
+          "title": "Training data domain for the latent labelling function is ambiguous",
+          "quote": "We augment the standard RSSM with a labelling function _L[\u03c6] I_[:] _[ S][I][\u2192{][safe, unsafe][}]_[ which maps] latent states _st \u2208SI_ to whether they correspond to states in violation of _\u03c6_ . As with the other models, _L[\u03c6] I_[is implemented with a neural network with a categorical output] _[ l][\u03b8]_[also parameterised by] _[ \u03b8]_[.]",
+          "explanation": "The latent labelling function itself is well motivated: the shield needs to classify imagined compact RSSM states as safe or unsafe. The ambiguity arises when this is combined with the subsequent description of the violation-loss dataset as state-label pairs over S rather than explicitly over SI. Earlier, S_E denotes environment states and SI denotes compact latent states; in a POMDP, environment states may not be directly observed, while l\u03b8 takes latent states as input. A careful reader can infer that the labels from the environment are attached to observations/trajectories and then used to supervise l\u03b8 on the corresponding posterior compact latent states, but that mapping is not stated in the passage. For reproducibility, the paper should specify whether D\u03bb contains compact latent states (h_t,z_t), observations/history windows converted through the representation model, or true simulator states paired with labels. Otherwise the loss for l\u03b8 is underspecified relative to its declared input space.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_6",
+          "title": "\u201cEnforcement\u201d overstates what the learned latent shield can guarantee",
+          "quote": "We introduce the notion of _latent shielding_ , a novel class of shielding approaches that replace abstractions used by shields with learned latent dynamics models thus allowing the enforcement of formal safety specifications while avoiding the need for an explicitly-defined abstraction of the environment.",
+          "explanation": "The surrounding context partly resolves this: the introduction explicitly says the framework loses the formal safety guarantees associated with traditional symbolic shielding, and Section 3.2 calls ABPS an approximation using a learned SRSSM and sampled trajectories. Still, the word \u201cenforcement\u201d here is stronger than what the method can support. With a learned dynamics model, learned violation classifier, finite horizon, and sampled rather than exhaustive rollouts, the shield can encourage or improve adherence to a formal specification, but it cannot enforce the specification in the formal shielding sense unless additional soundness assumptions or calibrated error bounds are provided. This is a framing issue rather than a mathematical error, but it could mislead readers about the guarantee being claimed.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_7",
+          "title": "Policy-biased sampling changes the bounded-safety semantics",
+          "quote": "By directing the sampling of trajectories in accordance with states and actions the policy is biased towards (as opposed to uniformly), it may be possible to achieve comparable performance to a standard BPS in foreseeing unsafe states. The intuition behind this is that by not sampling trajectories the agent is unlikely to take, more of our computational budget can be dedicated into ensuring that the agent\u2019s most likely trajectories are safe.",
+          "explanation": "I understand the intended computational tradeoff: exhaustive bounded lookahead is expensive, so sampling rollouts from the policy can allow a longer horizon under the same budget. The authors also correctly frame this as a heuristic rather than a formal guarantee. What remains problematic is that the earlier BPS-style bounded-safety definition is universal over bounded trajectories: an action is unsafe if some possible continuation within the horizon violates the specification, not merely if a likely policy-induced continuation does. Sampling only trajectories the current policy is biased toward changes the safety notion into an on-policy, probabilistic risk estimate. That may be appropriate for approximate shielding, but the text compares this to standard BPS without explicitly noting that low-probability but catastrophic stochastic outcomes, or unsafe continuations under slightly different future actions, can be systematically missed. This is especially important because shielding is normally motivated by avoiding rare unsafe events, not just likely ones.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_8",
+          "title": "Alternative policy is claimed to ensure safety despite learned, sampled, finite-horizon checks",
+          "quote": "\u03c0alt is an alternative policy that ensures that, if a violation isn\u2019t already inevitable, the agent avoids a predicted unsafe state. In our implementation, \u03c0alt simply considers all the other actions until a safe trajectory is found. In the event that no safe action is found, the agent takes a random action.",
+          "explanation": "The authors are trying to mirror the usual shielding idea: if the proposed action is unsafe, try a fallback action. The phrase \"predicted unsafe state\" partially qualifies the claim. However, the word \"ensures\" is too strong in this setting. ABPS uses a learned SRSSM, samples only N futures, and applies a violation-probability threshold, so \u03c0alt cannot ensure avoidance except relative to the model, horizon, sampling procedure, and threshold. Even within the algorithm, if no sampled-safe action is found, the fallback is random, which does not correspond to the earlier inevitable-violation definition: a genuinely safe action might exist but be missed due to model error or sampling variance. The method may still be reasonable, but the guarantee and the fallback procedure need to be stated as approximate and sampling-dependent.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_9",
+          "title": "Algorithm does not unambiguously fix the candidate action as the first imagined action",
+          "quote": "**Input:** Current compact latent state ( _h, z_ ), unshielded action _a_ , horizon _H_ , number of trajectories to sample _N_ , alternative policy _\u03c0alt_ and threshold _\u03f5_ . **Output:** A tuple containing an action and whether or not the shield had to interfere. **1** Initialise array of zeros \u039b with length _N_ . **2 for** _n = 1..N_ **do** _a a_ 1 _aH\u2212_ 1 \u02c6 **3** Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _._",
+          "explanation": "The surrounding prose says the shield estimates whether a particular action taken in the current state will lead to a violation, and the algorithm takes the unshielded action a as input. I therefore expected the first imagined transition to be forced to use a, with later rollout actions drawn from \u03c0. The arrow labels in the OCR appear to include an initial a, so this may be the authors' intent. But the formal line then says \"where ai = \u03c0(...)\" without specifying the boundary condition a0 = a or that the input action is used only for the first transition. As written, the sampled rollout could be read as simply following \u03c0 from the current state, making the input action redundant and making it unclear how candidate alternative actions are evaluated. This is a reproducibility-level ambiguity in the core shielding algorithm, not just a notation nicety.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_10",
+          "title": "Possible off-by-one mismatch in the meaning of horizon H",
+          "quote": "**3** Imagine trajectory _\u03c1_ = ( _h, z_ ) _\u2212\u2192_ (\u02c6 _h_ 1 _,_ \u02c6 _z_ 1) _\u2212\u2192 ... \u2212\u2212\u2212\u2192_ ( _h_[\u02c6] _H ,_ \u02c6 _zH_ ) where _ai_ = _\u03c0_ ( _h_[\u02c6] _i, zi_ ) _._ **4 if** _\u2203i \u2208_ [1 _,_ 2 _, ..., H_ ] such that _l\u03b8_ ( _hi, zi_ ) = _unsafe_ **then** \u039b[ _n_ ] := 1.",
+          "explanation": "Earlier, a bounded trajectory of length H was defined as having no more than H states, ending at n = H \u2212 1 in the non-terminal case. Under that convention, starting from the current state, an H-bounded trajectory contains the current state plus H\u22121 successors. Algorithm 1 instead appears to generate H successor states, from 1 through H, in addition to the current compact state, i.e. H actions and H+1 states. This may simply reflect a different convention where H means the number of lookahead steps rather than the number of states, but it is inconsistent with the preceding formal definition of H-bounded safety. Since comparisons to BPS and claims of approximately H-bounded safety depend on this horizon, the convention should be made explicit or aligned.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_11",
+          "title": "Call to \u03c0alt is underspecified and appears to use an out-of-scope imagined state",
+          "quote": "**7 if** _N_[1]  _\u03bb\u2208_ \u039b _[\u03bb > \u03f5]_ **[ then] 8** _a, interfered_ := _\u03c0alt_ ( _hi, zi_ ) _, true_ . **9 end 10 return** _\u27e8a,interfered\u27e9._",
+          "explanation": "I am not treating the garbled summation notation as a substantive issue, since it is plausibly OCR for an empirical mean over \u039b. The remaining concern is the argument to \u03c0alt. At the point of interference, the shield should presumably choose an alternative action for the current latent state (h, z), or evaluate each alternative first action from that current state. The expression \u03c0alt(hi, zi) uses an index i that was local to the preceding violation check and is not well-defined after the sampling loop. If the intended argument is the current state, this is a simple but important algorithmic typo; if the intended argument is the violating predicted state, that would not produce an action for the actual current environment state. In addition, the algorithm does not specify how \u03c0alt tests \"all the other actions\" using the same sampling threshold, horizon, and stochastic model.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_12",
+          "title": "Training rollout notation appears to swap number of trajectories and rollout length",
+          "quote": "**Agent Training** Agent training is composed of two steps. First, starting from states from the same _B_ data sequences from the latent world model training phase, the agent imagines _I_ trajectories of length _H_ with actions chosen from its current policy.",
+          "explanation": "The intended Dreamer-style procedure is clear at a high level: start from latent states inferred from replay data, imagine trajectories in the learned model, and update the actor/critic. However, this sentence conflicts with the algorithm input description immediately afterward: H is introduced as the shield imagination horizon, while I is introduced as the number of steps to imagine ahead for training. Algorithm 2 also appears to say to imagine a trajectory of length I for each state in each data sequence. Thus the sentence \"I trajectories of length H\" seems to have swapped the roles of I and H, or at least uses them differently from the formal algorithm. This matters because the shield horizon and the actor-training imagination horizon are distinct hyperparameters with different computational and safety implications.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_13",
+          "title": "Experience dataset includes states despite the environment being introduced as a POMDP",
+          "quote": "**Data Collection** In this phase, the agent interacts with the real environment to collect a dataset _D \u2286S \u00d7 A \u00d7 O \u00d7_ R _\u00d7 {_ 0 _,_ 1 _}_ of states, actions, observations, rewards and violations with which a latent world model can be learned.",
+          "explanation": "The authors previously model the environment as a POMDP, where the agent receives observations rather than full states, and the RSSM is trained from observations/actions/rewards plus violation labels. I can see why the true environment state might still exist mathematically and be used by the labelling function L_E^\u03c6. But saying that data collection stores elements in S \u00d7 A \u00d7 O \u00d7 R \u00d7 {0,1} suggests that true states are available in the replay dataset, which would be a stronger assumption than standard partial observability and different from how Dreamer is normally trained. If S here means latent states or reconstructed model states, that conflicts with the notation used elsewhere. The method would be clearer if the dataset were specified as containing observations, actions, rewards, and labels, with true states used only internally by the environment/labelling oracle if available.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_14",
+          "title": "Reward override on shield-detected violations is methodologically ambiguous",
+          "quote": "**Intrinsic Punishment.** Whenever a violation occurs (whether detected by the latent shield or by the environment), we override the environment\u2019s reward function by instead assigning a reward _p <_ 0.",
+          "explanation": "The motivation is standard and reasonable: penalize unsafe proposed behavior so the unshielded policy eventually learns not to rely on the shield. The ambiguity is how this punishment is applied when the violation is only \"detected by the latent shield\" before the unsafe action is executed. If the shield replaces the proposed action with a safe action, then storing the punishment as the reward for the executed transition could train the world model to associate the alternative safe action and resulting state with a punitive reward. Conversely, if the punishment is used only for the actor update of the rejected action, that should be stated because it is not the same as overriding the environment reward in the replay dataset. False positives from the learned shield further complicate this. The paper should specify exactly whether p is stored in D, which action it is associated with, and how this interacts with reward-model learning.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_15",
+          "title": "World-model data appear to record the proposed action rather than the executed shielded action",
+          "quote": "**18** _rt, ot_ := _E._ step ( _a[\u2032] t_[).] **19** Check if _L[\u03c6] E_[has detected a violation and store the result as 0 or 1 in] _[ \u03bb][t]_[.] **20 if** _\u03bbt_ = 1 or _interfered_ **then** _rt_ := _rpunish_ . **21 end 22** Add experience to dataset _D_ := _D \u222a{_ ( _ot, at, rt, \u03bbt_ ) _[T] t_ =1 _[}]_[.]",
+          "explanation": "The intended data-collection flow is clear: the unshielded policy proposes _a_t_, the shield may replace it by _a'_t_, and the environment is stepped with _a'_t_. I checked whether the surrounding text might intentionally store the unshielded proposal for policy learning, but the dataset is also used to train the RSSM/SRSSM dynamics model. For that purpose, the action paired with the observed transition must be the action actually applied to the environment. As written, the experience tuple contains _a_t_ rather than _a'_t_. If this is not just a notation slip, the learned dynamics and reward model would be trained on incorrect action-transition pairs whenever the shield intervenes. This is especially important because the paper\u2019s central method relies on the learned latent dynamics being accurate enough for shielding.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_16",
+          "title": "Fallback policy for continuous actions is underspecified despite being used in Cliff Driver",
+          "quote": "Moreover, since the action space of the CD environment is continuous, we discretise the actions into four bins when performing BPS (see Appendix D.5). Such modifications, however, are not needed for our agent.",
+          "explanation": "The point that ABPS can sample latent futures for continuous actions is plausible, and I understand why the authors distinguish it from BPS, which they discretise for exhaustive/sampled lookahead. However, earlier ABPS relies on an alternative policy _\u03c0alt_ that, in the authors\u2019 implementation, \u201csimply considers all the other actions until a safe trajectory is found.\u201d That procedure is well-defined for the discrete Visual Grid World action space but not for the continuous Cliff Driver control space. The statement that no modifications are needed for the latent agent leaves a key implementation detail unresolved: how are alternative continuous actions generated when the proposed action is judged unsafe\u2014random sampling, optimisation, discretisation, policy resampling with noise, CEM, clipping, or something else? This affects both safety and reward performance and is necessary for reproducing the CD results.",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_17",
+          "title": "Reward punishment on shield interference conflates predicted risk with an actual violation",
+          "quote": "**20 if** _\u03bbt_ = 1 or _interfered_ **then** _rt_ := _rpunish_ .",
+          "explanation": "I can see the intended motivation: penalising interventions should encourage the unshielded policy to stop proposing actions that the shield has to block, reducing future interference. That is a reasonable shaping mechanism. The concern is that the text elsewhere describes the punishment as occurring whenever a violation occurs, including one \u201cdetected by the latent shield,\u201d but an intervention is only a prediction that the proposed action may lead to a future violation; after intervention, the environment is actually stepped with the fallback action. Thus the algorithm assigns the punishment to a transition generated by the shielded action, not necessarily to an actual unsafe transition. This may be intended as intrinsic reward shaping, but it should be made explicit how this artificial reward is used in the world-model reward target and actor update, because otherwise the reward model can learn that safe fallback transitions have punitive rewards whenever they replaced unsafe proposals.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_18",
+          "title": "Imagination-horizon notation conflicts with the surrounding description of training",
+          "quote": "**Input:** Punishment for violation _rpunish_ , shield imagination horizon _H_ , number of steps to imagine ahead for training _I_ , number of seed episodes _S_ , number of training steps per episode _C_ , number of real environment interaction steps per episode _T_ , sequence length _L_ , batch size _B_ , environment _E_ , labelling function _L[\u03c6] E_[and shield introduction schedule] \u03a0. ... **7** Imagine a trajectory _\u03c1_ of length _I_ for each state in each data sequence.",
+          "explanation": "Within this algorithm alone, _I_ is consistently described as the number of imagined steps for policy training, while _H_ is the shield lookahead horizon. However, the preceding training-regime overview states that the agent imagines _I_ trajectories of length _H_ during agent training. That makes it unclear whether _I_ is a count of imagined rollouts, a rollout horizon, or both, and whether _H_ is used only for shielding or also for actor-critic imagination. In Dreamer-style algorithms this distinction matters because rollout horizon and number of starting states/trajectories are separate hyperparameters. The ambiguity is fixable, but as written it could lead to a materially different reproduction.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_19",
+          "title": "Explanation that SRSSM captures nondeterminism better than BPS is not well supported",
+          "quote": "This is possibly due to the SRSSM used by our latent shield being better able to capture non-determinism than BPS.",
+          "explanation": "The authors appropriately hedge this as a possible explanation, and the empirical observation that latent shielding performs well in the stochastic Cliff Driver setting is interesting. Still, the proposed explanation is hard to reconcile with the definition of BPS given earlier: BPS uses access to the simulator/program at run time, so its sampled rollouts come from the true stochastic dynamics rather than a learned approximation. With enough samples, BPS should represent environmental nondeterminism at least as faithfully as an SRSSM, though it may suffer from action discretisation, finite horizon, thresholding, or computational-budget choices. Since the paper later notes that BPS sampled 1024 trajectories while the latent agent sampled 20, the claim that SRSSM is \u201cbetter able to capture non-determinism\u201d needs more justification or should be replaced by a more plausible explanation such as continuous-action handling or differences in fallback-action selection.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_20",
+          "title": "Performance claims are based on overlapping means without statistical support",
+          "quote": "Our agent outperformed the other agents at test-time in the most stochastic CD environment ( _pstick_ = 0 _._ 5).",
+          "explanation": "The table does show the latent agent with the best mean reward and lowest mean test violations for _pstick = 0.5_, so the authors\u2019 reading of the point estimates is understandable. However, the reported standard deviations are large and heavily overlapping: for example, testing rewards are 8.10 (4.99), 6.63 (8.07), 7.10 (9.52), and 6.44 (3.00), and the violation means are all close. With only five trained agents, the unqualified word \u201coutperformed\u201d overstates what the table alone establishes unless statistical tests or confidence intervals support the comparison. A safer phrasing would say that the latent agent achieved the best mean performance in this setting.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_21",
+          "title": "Claim of more dramatic training-violation reduction versus CPO is only partly supported",
+          "quote": "This reduction in training violations is even more dramatic when compared to the model-free CPO agent.",
+          "explanation": "I understand the intended contrast: in the fixed Visual Grid World row, latent shielding has far fewer training violations than CPO, which supports the statement. But across the VGW results shown, the procedural case is much less dramatic: latent shielding has 14018 training violations versus 18705 for CPO, a reduction but not comparable to the large fixed-grid gap, nor obviously \u201ceven more dramatic\u201d than the seven-fold test-time reduction discussed in the previous sentence. The phrase \u201cthis reduction\u201d is also slightly ambiguous because the immediately preceding sentence concerns test-time violations, while this one switches to training violations. The claim should be qualified by environment or rephrased to match the table more precisely.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.4512,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 89078,
+      "completion_tokens": 40231
+    }
+  }
+}

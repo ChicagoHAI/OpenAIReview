@@ -1,0 +1,877 @@
+{
+  "slug": "iclr2021-QtTKTdVr-random-feature-attention",
+  "title": "Random Feature Attention",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## RANDOM FEATURE ATTENTION\n\n**Hao Peng** _[\u2660\u2217]_ **Nikolaos Pappas** _[\u2660]_ **Dani Yogatama** _[\u2663]_ **Roy Schwartz** _[\u2665]_ **Noah A. Smith** _[\u2660\u2666]_ **Lingpeng Kong**[\u2666] _[\u2217]_"
+    },
+    {
+      "index": 1,
+      "text": "> _\u2660_ Paul G. Allen School of Computer Science & Engineering, University of Washington\n\n> _\u2663_ DeepMind _\u2666_ Allen Institute for Artificial Intelligence"
+    },
+    {
+      "index": 2,
+      "text": "> _\u2665_ School of Computer Science & Engineering, Hebrew University of Jerusalem\n\n\u2666Department of Computer Science , The University of Hong Kong"
+    },
+    {
+      "index": 3,
+      "text": "_{_ hapeng,npappas,nasmith _}_ @cs.washington.edu dyogatama@google.com, roys@cs.huji.ac.il, lpk@cs.hku.hk"
+    },
+    {
+      "index": 4,
+      "text": "## ABSTRACT\n\nTransformers are state-of-the-art models for a variety of sequence modeling tasks. At their core is an attention function which models pairwise interactions between the inputs at every timestep. While attention is powerful, it does _not_ scale efficiently to long sequences due to its quadratic time and space complexity in the sequence length. We propose RFA, a linear time and space **a** ttention that uses **r** andom **f** eature methods to approximate the softmax function, and explore its application in transformers. RFA can be used as a drop-in replacement for conventional softmax attention and offers a straightforward way of learning with recency bias through an optional gating mechanism. Experiments on language modeling and machine translation demonstrate that RFA achieves similar or better performance compared to strong transformer baselines. In the machine translation experiment, RFA decodes twice as fast as a vanilla transformer. Compared to existing efficient transformer variants, RFA is competitive in terms of both accuracy and efficiency on three long text classification datasets. Our analysis shows that RFA\u2019s efficiency gains are especially notable on long sequences, suggesting that RFA will be particularly useful in tasks that require working with large inputs, fast decoding speed, or low memory footprints."
+    },
+    {
+      "index": 5,
+      "text": "## 1 INTRODUCTION\n\nTransformer architectures (Vaswani et al., 2017) have achieved tremendous success on a variety of sequence modeling tasks (Ott et al., 2018; Radford et al., 2018; Parmar et al., 2018; Devlin et al., 2019; Parisotto et al., 2020, _inter alia_ ). Under the hood, the key component is attention (Bahdanau et al., 2015), which models pairwise interactions of the inputs, regardless of their distances from each other. This comes with quadratic time and memory costs, making the transformers computationally expensive, especially for long sequences. A large body of research has been devoted to improving their time and memory efficiency (Tay et al., 2020c). Although better _asymptotic_ complexity and prominent gains for long sequences have been achieved (Lee et al., 2019; Child et al., 2019; Beltagy et al., 2020, _inter alia_ ), in practice, many existing approaches are less well-suited for moderatelength ones: the additional computation steps required by some approaches can overshadow the time and memory they save (Kitaev et al., 2020; Wang et al., 2020; Roy et al., 2020, _inter alia_ )."
+    },
+    {
+      "index": 6,
+      "text": "This work proposes **r** andom **f** eature **a** ttention (RFA), an efficient attention variant that scales linearly in sequence length in terms of time and space, and achieves practical gains for both long and moderate length sequences. RFA builds on a kernel perspective of softmax (Rawat et al., 2019). Using the well-established random feature maps (Rahimi & Recht, 2007; Avron et al., 2016; _\u00a7_ 2), RFA approximates the dot-then-exponentiate function with a kernel trick (Hofmann et al., 2008): exp( **x** _\u00b7_ **y** ) _\u2248_ _**\u03c6**_ ( **x** ) _\u00b7_ _**\u03c6**_ ( **y** ). Inspired by its connections to gated recurrent neural networks (Hochreiter & Schmidhuber, 1997; Cho et al., 2014) and fast weights (Schmidhuber, 1992), we further augment RFA with an optional gating mechanism, offering a straightforward way of learning with recency bias when locality is desired."
+    },
+    {
+      "index": 7,
+      "text": "> _\u2217_ The majority of this work was done while these authors were at DeepMind.\n\n1\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 8,
+      "text": "RFA and its gated variant ( _\u00a7_ 3) can be used as a drop-in substitute for the canonical softmax attention, and increase the number of parameters by less than 0.1%. We explore its applications in transformers on language modeling, machine translation, and long text classification ( _\u00a7_ 4). Our experiments show that RFA achieves comparable performance to vanilla transformer baselines in all tasks, while outperforming a recent related approach (Katharopoulos et al., 2020). The gating mechanism proves particularly useful in language modeling: the gated variant of RFA outperforms the transformer baseline on WikiText-103. RFA shines in decoding, even for shorter sequences. In our head-to-head comparison on machine translation benchmarks, RFA decodes around 2 _\u00d7_ faster than a transformer baseline, _without_ accuracy loss. Comparisons to several recent efficient transformer variants on three long text classification datasets show that RFA is competitive in terms of both accuracy and efficiency. Our analysis ( _\u00a7_ 5) shows that more significant time and memory efficiency improvements can be achieved for longer sequences: 12 _\u00d7_ decoding speedup with less than 10% of the memory for 2,048-length outputs."
+    },
+    {
+      "index": 9,
+      "text": "## 2 BACKGROUND\n\n## 2.1 ATTENTION IN SEQUENCE MODELING\n\nThe attention mechanism (Bahdanau et al., 2015) has been widely used in many sequence modeling tasks. Its dot-product variant is the key building block for the state-of-the-art transformer architectures (Vaswani et al., 2017). Let _{_ **q** _t}[N] t_ =1[denote a sequence of] _[ N]_ **[query]**[ vectors,][that attend to] sequences of _M_ **key** and **value** vectors. At each timestep, the attention linearly combines the values weighted by the outputs of a softmax:"
+    },
+    {
+      "index": 10,
+      "text": "_\u03c4_ is the temperature hyperparameter determining how \u201cflat\u201d the softmax is (Hinton et al., 2015).[1]"
+    },
+    {
+      "index": 11,
+      "text": "Calculating attention for a single query takes _O_ ( _M_ ) time and space. For the full sequence of _N_ queries the space amounts to _O_ ( _MN_ ). When the computation _cannot_ be parallelized across the queries, e.g., in autoregressive decoding, the time complexity is quadratic in the sequence length."
+    },
+    {
+      "index": 12,
+      "text": "## 2.2 RANDOM FEATURE METHODS\n\nThe theoretical backbone of this work is the unbiased estimation of the Gaussian kernel by Rahimi & Recht (2007). Based on Bochner\u2019s theorem (Bochner, 1955), Rahimi & Recht (2007) proposed random Fourier features to approximate a desired shift-invariant kernel. The method nonlinearly transforms a pair of vectors **x** and **y** using a **random feature map** _**\u03c6**_ ; the inner product between _**\u03c6**_ ( **x** ) and _**\u03c6**_ ( **y** ) approximates the kernel evaluation on **x** and **y** . More precisely:"
+    },
+    {
+      "index": 13,
+      "text": "**Theorem 1** (Rahimi & Recht, 2007) **.** _Let_ _**\u03c6**_ : R _[d] \u2192_ R[2] _[D] be a nonlinear transformation:_"
+    },
+    {
+      "index": 14,
+      "text": "Variance of the estimation is inversely proportional to _D_ (Appendix A.2; Yu et al., 2016).\n\nRandom feature methods proved successful in speeding up kernel methods (Oliva et al., 2015; Avron et al., 2017; Sun, 2019, _inter alia_ ), and more recently are used to efficiently approximate softmax (Rawat et al., 2019). In _\u00a7_ 3.1, we use it to derive an unbiased estimate to exp( _\u27e8_ _**\u00b7** ,_ _**\u00b7** \u27e9_ ) and then an efficient approximation to softmax attention."
+    },
+    {
+      "index": 15,
+      "text": "## 3 MODEL\n\nThis section presents RFA ( _\u00a7_ 3.1) and its gated variant ( _\u00a7_ 3.2). In _\u00a7_ 3.3 we lay out several design choices and relate RFA to prior works. We close by practically analyzing RFA\u2019s complexity ( _\u00a7_ 3.4)."
+    },
+    {
+      "index": 16,
+      "text": "> 1 _M_ = _N_ in self-attention; they may differ, e.g., in the cross attention of a sequence-to-sequence model."
+    },
+    {
+      "index": 17,
+      "text": "2\n\nPublished as a conference paper at ICLR 2021\n\n|_{_**q**_i}N_\n_i_=1\n\n_{_**k**_i}M_\n_i_=1\n\n_{_**v**_i}M_\n_i_=1||softmax\n_O_(_M_)\n_O_(_MN_)\n(**_\u00b7_**)\n(**_\u00b7_**)||_{_**h**_i}N_\n_i_=1\n_{_**q**_i}N_\n_i_=1\n_{_**k**_i}M_\n_i_=1\n_{_**v**_i}M_\n_i_=1||**_\u03c6_**(**_\u00b7_**)\n**_\u03c6_**(**_\u00b7_**)\n_O_(_M_)"
+    },
+    {
+      "index": 18,
+      "text": "_O_(_N_)\n\n(**_\u00b7_**)\n(**_\u00b7_**)||_{_**h**_i}N_\n_i_=1|\n|---|---|---|---|---|---|---|---|---|\n||||||||||\n||||||||||"
+    },
+    {
+      "index": 19,
+      "text": "(a) Softmax attention. (b) Random feature attention.\n\nFigure 1: Computation graphs for softmax attention (left) and random feature attention (right). Here, we assume cross attention with source length _M_ and target length _N_ ."
+    },
+    {
+      "index": 20,
+      "text": "3.1 RANDOM FEATURE ATTENTION\n\nRFA builds on an unbiased estimate to exp( _\u27e8_ _**\u00b7** ,_ _**\u00b7** \u27e9_ ) from Theorem 1, which we begin with:"
+    },
+    {
+      "index": 21,
+      "text": "The last line does _not_ have any nonlinear interaction between _**\u03c6**_ ( **x** ) and _**\u03c6**_ ( **y** ), allowing for a linear time/space approximation to attention. For clarity we assume the query and keys are unit vectors.[2]"
+    },
+    {
+      "index": 22,
+      "text": "_\u2297_ denotes the outer product between vectors, and _\u03c3_[2] corresponds to the temperature term _\u03c4_ in Eq. 1."
+    },
+    {
+      "index": 23,
+      "text": "RFA can be used as a drop-in-replacement for softmax-attention.\n\n- (a) The input is revealed in full to **cross attention** and **encoder self-attention** . Here RFA calculates attention using Eq. 5."
+    },
+    {
+      "index": 24,
+      "text": "- (b) In **causal attention** RFA attends only to the prefix.[3] This allows for a recurrent computation. Tuple ( **S** _t \u2208_ R[2] _[D][\u00d7][d] ,_ **z** _t \u2208_ R[2] _[D]_ ) is used as the \u201chidden state\u201d at time step _t_ to keep track of the history, similar to those in RNNs. Then RFA( **q** _t, {_ **k** _i}i\u2264t, {_ **v** _i}i\u2264t_ ) = _**\u03c6**_ ( **q** _t_ ) _[\u22a4]_ **S** _t/_ ( _**\u03c6**_ ( **q** _t_ ) _\u00b7_ **z** _t_ ), where"
+    },
+    {
+      "index": 25,
+      "text": "2 _D_ denotes the size of _**\u03c6**_ ( _**\u00b7**_ ) _._ Appendix A.1 summarizes the computation procedure of RFA, and Figure 1 compares it against the softmax attention. Appendix A.3 derives causal RFA in detail."
+    },
+    {
+      "index": 26,
+      "text": "Analogously to the softmax attention, RFA has its multiheaded variant (Vaswani et al., 2017). In our experiments we use causal RFA in a transformer language model ( _\u00a7_ 4.1), and both cross and causal RFA in the decoder of a sequence-to-sequence machine translation model."
+    },
+    {
+      "index": 27,
+      "text": "- 3.2 RFA-GATE: LEARNING WITH RECENCY BIAS\n\nThe canonical softmax attention does _not_ have any explicit modeling of distance or locality. In learning problems where such inductive bias is crucial (Ba et al., 2016; Parmar et al., 2018; Miconi et al., 2018; Li et al., 2019, _inter alia_ ), transformers heavily rely on positional encodings. Answering to this, many approaches have been proposed, e.g., learning the attention spans (Sukhbaatar et al.,"
+    },
+    {
+      "index": 28,
+      "text": "> 2This can be achieved by _\u2113_ 2-normalizing the query and keys. See _\u00a7_ 3.3 for a related discussion."
+    },
+    {
+      "index": 29,
+      "text": "> 3It is also sometimes called \u201cdecoder self-attention\u201d or \u201cautoregressive attention.\u201d\n\n3\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 30,
+      "text": "2019; Wu et al., 2020), and enhancing the attention computation with recurrent (Hao et al., 2019; Chen et al., 2019) or convolutional (Wu et al., 2019; Mohamed et al., 2019) components."
+    },
+    {
+      "index": 31,
+      "text": "RFA faces the same issue, but its causal attention variant (Eq. 6) offers a straightforward way of learning with recency bias. We draw inspiration from its connections to RNNs, and augment RFA with a learned gating mechanism (Hochreiter & Schmidhuber, 1997; Cho et al., 2014; Peng et al., 2018, _inter alia_ ):"
+    },
+    {
+      "index": 32,
+      "text": "**w** _g_ and _bg_ are learned parameters, and **x** _t_ is the input representation at timestep _t_ .[4] By multiplying the learned scalar gates 0 _< gt <_ 1 against the hidden state ( **S** _t,_ **z** _t_ ), history is exponentially decayed, favoring more recent context."
+    },
+    {
+      "index": 33,
+      "text": "The gating mechanism shows another benefit of RFA: it would be otherwise more difficult to build similar techniques into the softmax attention, where there is no clear sense of \u201crecurrence\u201d (Appendix A.5). It proves useful in our language modeling experiments ( _\u00a7_ 4.1)."
+    },
+    {
+      "index": 34,
+      "text": "## 3.3 DISCUSSION\n\n**On query and key norms, and learned random feature variance.** Eq. 5 assumes both the query and keys are of norm-1. It therefore approximates a softmax attention that normalizes the queries and keys before multiplying them, and then scales the logits by dividing them by _\u03c3_[2] . Empirically, this normalization step scales down the logits (Vaswani et al., 2017) and enforces that _\u2212_ 1 _\u2264_ **q** _[\u22a4]_ **k** _\u2264_ 1. In consequence, the softmax outputs would be \u201cflattened\u201d if not for _\u03c3_ , which can be set _a priori_ as a hyperparameter (Yu et al., 2016; Avron et al., 2017; Sun, 2019, _inter alia_ ). Here we instead learn it from data with the reparameterization trick (Kingma & Welling, 2014):"
+    },
+    {
+      "index": 35,
+      "text": "**I** vector _d_ is the _**\u03c3** d_ is learned, but random vectors _\u00d7 d_ identity matrix, and _\u25e6_ denotes elementwise product between vectors. **w** \ufffd _i_ are _not_ .[5] _d_ -dimensional"
+    },
+    {
+      "index": 36,
+      "text": "This norm-1 constraint is never mandatory. Rather, we employ it for notation clarity and easier implementation. In preliminary experiments we find it has little impact on the performance when _\u03c3_ is set properly or learned from data. Eq. 12 in Appendix A presents RFA _without_ imposing it."
+    },
+    {
+      "index": 37,
+      "text": "**Going beyond the Gaussian kernel.** More broadly, random feature methods can be applied to a family of shift-invariant kernels, with the Gaussian kernel being one of them. In the same family, the order-1 arc-cosine kernel (Cho & Saul, 2009) can be approximated with feature map: _**\u03c6**_ arccos( **x** ) = ~~\ufffd~~ 1 _/D_ [ReLU( **w** 1 _\u00b7_ **x** ) _, . . . ,_ ReLU( **w** _D \u00b7_ **x** )] _[\u22a4]_ (Alber et al., 2017).[6] In our experiments, the Gaussian and arc-cosine variants achieve similar performance. This supplements the exploration of alternatives to softmax in attention (Tsai et al., 2019; Gao et al., 2019)."
+    },
+    {
+      "index": 38,
+      "text": "**Relations to prior work.** Katharopoulos et al. (2020) inspire the causal attention variant of RFA. They use a feature map based on the exponential linear unit activation (Clevert et al., 2016): elu( _**\u00b7**_ ) + 1. It significantly _underperforms_ both the baseline and RFA in our controlled experiments, showing the importance of a properly-chosen feature map. Random feature approximation of attention is also explored by a concurrent work (Choromanski et al., 2021), with applications in masked language modeling for proteins. They propose positive random features to approximate softmax, aiming for a lower variance in critical regions. RFA instead normalizes the queries and keys before random projection to reduce variance. Going beyond both, RFA establishes the benefits of random feature methods as a more universal substitute for softmax across all attention variants, facilitating its applications in, e.g., sequence-to-sequence learning."
+    },
+    {
+      "index": 39,
+      "text": "> 4In multihead attention (Vaswani et al., 2017), **k** _t_ and **v** _t_ are calculated from **x** _t_ using learned affine transformations."
+    },
+    {
+      "index": 40,
+      "text": "> 5This departs from Eq. 2 by lifting the isotropic assumption imposed on the Gaussian distribution: note the difference between the vector _**\u03c3**_ in Eq. 8 and the scalar _\u03c3_ in Eq. 3. We find this improves the performance in practice ( _\u00a7_ 4), even though the same result in Theorem 1 may not directly apply."
+    },
+    {
+      "index": 41,
+      "text": "> 6 Apart from replacing the sinusoid functions with ReLU, it constructs **w** _i_ in the same way as Eq. 8."
+    },
+    {
+      "index": 42,
+      "text": "4\n\nPublished as a conference paper at ICLR 2021\n\nThere are interesting connections between gated RFA and fast weights (Schmidhuber, 1992; 1993; Ba et al., 2016; Miconi et al., 2018, _inter alia_ ). Emphasizing recent patterns, they learn a temporal memory to store history similarly to Eqs. 7. The main difference is that RFA additionally normalizes the output using _**\u03c6**_ ( **q** _t_ ) _\u00b7_ **z** as in Eq. 6, a by-product of approximating softmax\u2019s partition function. It is intriguing to study the role of this normalization term, which we leave to future work."
+    },
+    {
+      "index": 43,
+      "text": "## 3.4 COMPLEXITY ANALYSIS\n\n**Time.** Scaling linearly in the sequence lengths, RFA needs less computation (in terms of number of operations) for long sequences. This implies speedup wherever the quadratic-time softmax attention _cannot_ be fully-parallelized across time steps. More specifically:"
+    },
+    {
+      "index": 44,
+      "text": "- Significant speedup can be expected in autoregressive _decoding_ , both conditional (e.g., machine translation) and unconditional (e.g., sampling from a language model). For example, 1.9 _\u00d7_ speedup is achieved in our machine translation experiments ( _\u00a7_ 4.2); and more for longer sequences (e.g., 12 _\u00d7_ for 2,048-length ones; _\u00a7_ 5)."
+    },
+    {
+      "index": 45,
+      "text": "- Some applications (e.g., language modeling, text classification) reveal inputs to the model in full.[7] When there are enough threads to parallelize softmax attention across time steps, hardly any speedup from RFA can be achieved; when there are not, typically for very long sequences ( _>_ 1,000), substantial speed gain is possible. For example, RFA does _not_ achieve any speedup when working with 512-length context ( _\u00a7_ 4.1), but achieves a 5 _._ 3 _\u00d7_ speedup with 4,000-length context ( _\u00a7_ 4.2)."
+    },
+    {
+      "index": 46,
+      "text": "**Memory.** Asymptotically, RFA has a better memory efficiency than its softmax counterpart (linear vs. quadratic). To reach a more practical conclusion, we include in our analysis the cost of the feature maps. _**\u03c6**_ \u2019s memory overhead largely depends on its size _D_ . For example, let\u2019s consider the cross attention of a decoder. RFA uses _O_ (4 _D_ +2 _Dd_ ) space to store _**\u03c6**_ ( **q** _t_ ),[\ufffd] _i_ _**[\u03c6]**_[(] **[k]** _[i]_[)] _[\u2297]_ **[v]** _[i]_[, and][ \ufffd] _i_ _**[\u03c6]**_[(] **[k]** _[i]_[)] (Eq. 5; line 12 of Algo. 2).[8] In contrast, softmax cross attention stores the encoder outputs with _O_ ( _Md_ ) memory, with _M_ being the source length. In this case RFA has a lower memory overhead when 2 _D \u226a M_ . Typically _D_ should be no less than _d_ in order for reasonable approximation (Yu et al., 2016); In a transformer model, _d_ is the size of an attention head, which is usually around 64 or 128 (Vaswani et al., 2017; Ott et al., 2018). This suggests that RFA can achieve significant memory saving with longer sequences, which is supported by our empirical analysis in _\u00a7_ 5. Further, using moderate sized feature maps is also desirable, so that its overhead does not overshadow the time and memory RFA saves. We experiment with _D_ at _d_ and 2 _d_ ; the benefit of using _D >_ 2 _d_ is marginal."
+    },
+    {
+      "index": 47,
+      "text": "Appendix A.6 discusses the time and space complexity in more detail, and Appendix C.2 studies the effect of random feature size on performance."
+    },
+    {
+      "index": 48,
+      "text": "## 4 EXPERIMENTS\n\nWe evaluate RFA on language modeling, machine translation, and long text classification."
+    },
+    {
+      "index": 49,
+      "text": "## 4.1 LANGUAGE MODELING\n\n**Setting.** We experiment with WikiText-103 (Merity et al., 2017). It is based on English Wikipedia. Table 5 in Appendix B summarizes some of its statistics. We compare the following models:"
+    },
+    {
+      "index": 50,
+      "text": "- BASE is our implementation of the strong transformer-based language model by Baevski & Auli (2019)."
+    },
+    {
+      "index": 51,
+      "text": "- RFA builds on BASE, but replaces the softmax attention with random feature attention. We experiment with both Gaussian and arc-cosine kernel variants."
+    },
+    {
+      "index": 52,
+      "text": "- RFA-GATE additionally learns a sigmoid gate on top of RFA ( _\u00a7_ 3.2). It also has a Gaussian kernel variant and a arc-cosine kernel one.[9]"
+    },
+    {
+      "index": 53,
+      "text": "- _**\u03c6**_ elu is a baseline to RFA. Instead of the random feature methods it uses the elu( _**\u00b7**_ ) + 1 feature map, as in Katharopoulos et al. (2020)."
+    },
+    {
+      "index": 54,
+      "text": "- 7A causal masking is usually used to prevent the model from accessing future tokens in language models. 8 RFA _never_ constructs the _M \u00d7_ 2 _D \u00d7 d_ tensor [ _**\u03c6**_ ( **k** _i_ ) _\u2297_ **v** _i_ ] _i_ , but sequentially processes the sequence."
+    },
+    {
+      "index": 55,
+      "text": "> 9 This gating technique is specific to RFA variants, in the sense that it is less intuitive to apply it in BASE."
+    },
+    {
+      "index": 56,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\nTo ensure fair comparisons, we use comparable implementations, tuning, and training procedure. All models use a 512 block size during both training and evaluation, i.e., they read as input a segment of 512 consecutive tokens, _without_ access to the context from previous mini-batches. RFA variants use 64-dimensional random feature maps. We experiment with two model size settings, **small** (around 38M parameters) and **big** (around 242M parameters); they are described in Appendix B.1 along with other implementation details."
+    },
+    {
+      "index": 57,
+      "text": "|**Model**|**Small**\n**Dev.**\n**Test**|**Big**\n**Dev.**\n**Test**|\n|---|---|---|\n|BASE|33.0\n34.5|24.5\n26.2|\n|**_\u03c6_**elu (Katharopoulos et al., 2020)|38.4\n40.1|28.7\n30.2|\n|RFA-Gaussian\nRFA-arccos|33.6\n35.7\n36.0\n37.7|25.8\n27.5\n26.4\n28.1|\n|RFA-GATE-Gaussian\nRFA-GATE-arccos|**31.3**\n**32.7**\n**32.8**\n**34.0**|**23.2**\n**25.0**\n24.8\n26.3|\n|RFA-GATE-Gaussian-Stateful|**29.4**\n**30.5**|**22.0**\n**23.5**|"
+    },
+    {
+      "index": 58,
+      "text": "Table 1: Language model perplexity (lower is better) on the WikiText-103 development and test sets. Bolded numbers outperform BASE."
+    },
+    {
+      "index": 59,
+      "text": "**Results.** Table 1 compares the models\u2019 performance in perplexity on WikiText-103 development and test data. Both kernel variants of RFA, _without_ gating, outperform _**\u03c6**_ elu by more than 2.4 and 2.1 test perplexity for the small and big model respectively, confirming the benefits from using random feature approximation.[10] Yet both _underperform_ BASE, with RFA-Gaussian having a smaller gap. Comparing RFA against its gated variants, a more than 1.8 perplexity improvement can be attributed to the gating mechanism; and the gap is larger for small models. Notably, RFA-GATE-Gaussian outperforms BASE under both size settings by at least 1.2 perplexity. In general, RFA models with Gaussian feature maps outperform their arc-cosine counterparts.[11] From the analysis in _\u00a7_ 3.4 we would _not_ expect speedup by RFA models, nor do we see any in the experiments.[12]"
+    },
+    {
+      "index": 60,
+      "text": "Closing this section, we explore a \u201cstateful\u201d variant of RFA-GATE-Gaussian. It passes the last hidden state ( **S** _t,_ **z** _t_ ) to the next mini-batch during both training and evaluation, a technique commonly used in RNN language models (Merity et al., 2018). This is a consequence of RFA\u2019s RNN-style computation, and is less straightforward to be applicable in the vanilla transformer models.[13] From the last row of Table 1 we see that this brings a more than 1.5 test perplexity improvement."
+    },
+    {
+      "index": 61,
+      "text": "## 4.2 MACHINE TRANSLATION\n\n**Datasets.** We experiment with three standard machine translation datasets."
+    },
+    {
+      "index": 62,
+      "text": "- WMT14 EN-DE and EN-FR (Bojar et al., 2014). Our data split and preprocessing follow those of Vaswani et al. (2017). We share the source and target vocabularies within each language pair, with 32,768 byte pair encoding types (BPE; Sennrich et al., 2016)."
+    },
+    {
+      "index": 63,
+      "text": "- IWSLT14 DE-EN (Cettolo et al., 2014) is based on TED talks. The preprocessing follows Edunov et al. (2018). Separate vocabularies of 9K/7K BPE types are used for the source and target."
+    },
+    {
+      "index": 64,
+      "text": "Table 5 in Appendix B summarizes some statistics of the datasets.\n\n> 10All models are trained for 150K steps; this could be part of the reason behind the suboptimal performance of _**\u03c6**_ elu: it may need 3 times more gradient updates to reach similar performance to the softmax attention baseline (Katharopoulos et al., 2020)."
+    },
+    {
+      "index": 65,
+      "text": "> 11 We observe that RFA Gaussian variants are more stable and easier to train than the arc-cosine ones as well as _**\u03c6**_ elu. We conjecture that this is because the outputs of the Gaussian feature maps have an _\u2113_ 2-norm of 1, which can help stabilize training. To see why, sin[2] ( _x_ ) + cos[2] ( _x_ ) = cos( _x \u2212 x_ ) = 1."
+    },
+    {
+      "index": 66,
+      "text": "> 12 In fact, RFA _trains_ around 15% slower than BASE due to the additional overhead from the feature maps."
+    },
+    {
+      "index": 67,
+      "text": "> 13Some transformer models use a text segment from the previous mini-batch as a prefix (Baevski & Auli, 2019; Dai et al., 2019). Unlike RFA, this gives the model access to only a limited amount of context, and significantly increases the memory overhead."
+    },
+    {
+      "index": 68,
+      "text": "6\n\nPublished as a conference paper at ICLR 2021\n\n**Setting.** We compare the RFA variants described in _\u00a7_ 4.1. They build on a BASE model that is our implementation of the base-sized transformer (Vaswani et al., 2017). All RFA models apply random feature attention in decoder cross and causal attention, but use softmax attention in encoders. This setting yields the greatest decoding time and memory savings ( _\u00a7_ 3.4). We use 128/64 for _D_ in cross/causal attention. RFA-GATE learns sigmoid gates in the decoder causal attention. The _**\u03c6**_ elu baseline uses the same setting and applies feature map in both decoder cross and causal attention, but _not_ in the encoders. Further details are described in Appendix B.2."
+    },
+    {
+      "index": 69,
+      "text": "|**Model**|**WMT14**\n**EN-DE**\n**EN-FR**|**IWSLT14**\n**DE-EN**\n**Speed**|\n|---|---|---|\n|BASE|28.1\n39.0|34.6\n1_._0_\u00d7_|\n|**_\u03c6_**elu (Katharopoulos et al., 2020)|21.3\n34.0|29.9\n2_._0_\u00d7_|\n|RFA-Gaussian\nRFA-arccos|28.0\n39.2\n28.1\n38.9|34.5\n1_._8_\u00d7_\n34.4\n1_._9_\u00d7_|\n|RFA-GATE-Gaussian\nRFA-GATE-arccos|28.1\n39.0\n28.2\n39.2|34.6\n1_._8_\u00d7_\n34.4\n1_._9_\u00d7_|"
+    },
+    {
+      "index": 70,
+      "text": "Table 2: Machine translation test set BLEU. The decoding speed (last column) is relative to BASE. All models are tested on a single TPU v2 accelerator, with batch size 32."
+    },
+    {
+      "index": 71,
+      "text": "**Results.** Table 2 compares the models\u2019 test set BLEU on three machine translation datasets. Overall both Gaussian and arc-cosine variants of RFA achieve similar performance to BASE on all three datasets, significantly outperforming Katharopoulos et al. (2020). Differently from the trends in the language modeling experiments, here the gating mechanism does not lead to substantial gains. Notably, all RFA variants decode more than 1 _._ 8 _\u00d7_ faster than BASE."
+    },
+    {
+      "index": 72,
+      "text": "## 4.3 LONG TEXT CLASSIFICATION\n\nWe further evaluate RFA\u2019s accuracy and efficiency when used as text encoders on three NLP tasks from the recently proposed Long Range Arena benchmark (Tay et al., 2021), designed to evaluate efficient Transformer variants on tasks that require processing long sequences.[14]"
+    },
+    {
+      "index": 73,
+      "text": "**Experimental setting and datasets.** We compare RFA against baselines on the following datasets:\n\n- ListOps ( **LO** ; Nangia & Bowman, 2018) aims to diagnose the capability of modelling hierarchically structured data. Given a sequence of operations on single-digit integers, the model predicts the solution, also a single-digit integer. It is formulated as a 10-way classification. We follow Tay et al. (2021) and consider sequences with 500\u20132,000 symbols."
+    },
+    {
+      "index": 74,
+      "text": "- Character-level text classification with the **IMDb** movie review dataset (Maas et al., 2011). This is a binary sentiment classification task."
+    },
+    {
+      "index": 75,
+      "text": "- Character-level document retrieval with the ACL Anthology Network ( **AAN** ; Radev et al., 2009) dataset. The model classifies whether there is a citation between a pair of papers."
+    },
+    {
+      "index": 76,
+      "text": "To ensure fair comparisons, we implement RFA on top of the transformer baseline by Tay et al. (2021), and closely follow their preprocessing, data split, model size, and training procedure. Speed and memory are evaluated on the IMDb dataset. For our RFA model, we use _D_ = 64 for the IMDb dataset, and _D_ = 128 for others. We refer the readers to Tay et al. (2021) for further details."
+    },
+    {
+      "index": 77,
+      "text": "**Results.** From Table 3 we can see that RFA outperforms the transformer baseline on two out of the three datasets, achieving the best performance on IMDb with 66% accuracy. Averaging across three datasets, RFA outperforms the transformer by 0.3% accuracy, second only to Zaheer et al. (2020) with a 0.1% accuracy gap. In terms of time and memory efficiency, RFA is among the strongest. RFA speeds up over the transformer by 1 _._ 1\u20135 _._ 3 _\u00d7_ , varying by sequence length. Importantly, compared to the only two baselines that perform comparably to the baseline transformer model (Tay et al., 2020a; Zaheer et al., 2020), RFA has a clear advantage in both speed and memory efficiency, and is the only model that is competitive in both accuracy and efficiency."
+    },
+    {
+      "index": 78,
+      "text": "> 14https://github.com/google-research/long-range-arena\n\n7\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 79,
+      "text": "|**Accuracy**\n**Speed**\n**Memory**\n**Model**\n**LO**\n**IMDb**\n**AAN**\n**Avg.**\n**1K**\n**2K**\n**3K**\n**4K**\n**1K**\n**2K**\n**3K**\n**4K**|**Accuracy**\n**Speed**\n**Memory**\n**Model**\n**LO**\n**IMDb**\n**AAN**\n**Avg.**\n**1K**\n**2K**\n**3K**\n**4K**\n**1K**\n**2K**\n**3K**\n**4K**|\n|---|---|\n|Transformer\n36.4\n64.3|57.5\n52.7\n1.0\n1.0\n1.0\n1.0\n1.00\n1.00\n1.00\n1.00|\n|Wang et al. (2020)\n35.7\n53.9\nKitaev et al. (2020)\n**37.3**\n56.1\nTay et al. (2020b)\n17.1\n63.6\nTay et al. (2020a)\n37.0\n61.7\nZaheer et al. (2020)\n36.0\n64.0\nKatharopoulos et al. (2020)\n16.1\n65.9\nChoromanski et al. (2021)\n18.0\n65.4|52.3\n47.3\n1.2\n1.9\n3.7\n5.5\n**0.44**\n**0.21**\n0.18\n**0.10**\n53.4\n48.9\n0.5\n0.4\n0.7\n0.8\n0.56\n0.37\n0.28\n0.24\n**59.6**\n46.8\n1.1\n1.6\n2.9\n3.8\n0.55\n0.31\n0.20\n0.16\n54.7\n51.1\n1.1\n1.2\n2.9\n1.4\n0.76\n0.75\n0.74\n0.74\n59.3\n**53.1**\n0.9\n0.8\n1.2\n1.1\n0.90\n0.56\n0.40\n0.30\n53.1\n45.0\n1.1\n**1.9**\n3.7\n5.6\n0.44\n0.22\n**0.14**\n0.11\n53.8\n45.7\n**1.2**\n**1.9**\n**3.8**\n**5.7**\n0.44\n0.22\n0.15\n0.11|\n|RFA-Gaussian (This work)\n36.8\n**66.0**|56.1\n53.0\n1.1\n1.7\n3.4\n5.3\n0.53\n0.30\n0.21\n0.16|"
+    },
+    {
+      "index": 80,
+      "text": "Table 3: Accuracy (higher is better) of different models on LO, IMDb, and AAN, along with their speed (higher is better) and peak memory consumption (lower is better) varying sequence lengths (1\u20134K). Speed and memory are evaluated on the IMDb dataset and relative to the transformer\u2019s. Bold font indicates the best performance in each column, and underlined numbers outperform the transformer in accuracy. Transformer\u2019s and previous works\u2019 numbers are due to Tay et al. (2021)."
+    },
+    {
+      "index": 81,
+      "text": "**----- Start of picture text -----**\n\n9000\nSoftmax\n8000 5\nRFA-arccos\n7000\nRFA-Gaussian\n4\n6000\n5000 3\n4000\n2\n3000 Softmax\n2000 RFA-arccos 1\n1000 RFA-Gaussian\n0\n2 [3] 2 [4] 2 [5] 2 [6] 2 [7] 2 [8] 2 [9] 2 [10] 2 [11] 2 [3] 2 [4] 2 [5] 2 [6] 2 [7] 2 [8] 2 [9] 2 [10] 2 [11]\nSequence Length Sequence Length\n(a) Speed vs. lengths. (b) Memory vs. lengths.\nTokens/s GB\nSpeed: Memory:\nDecoding\n**----- End of picture text -----**"
+    },
+    {
+      "index": 82,
+      "text": "Figure 2: Conditional decoding speed (left) and memory overhead (right) varying the output lengths. All models are tested on a single TPU v2 accelerator, with greedy decoding and batch size 16."
+    },
+    {
+      "index": 83,
+      "text": "## 5 ANALYSIS\n\n**Decoding time and memory varying by sequence length.** _\u00a7_ 3.4 shows that RFA can potentially achieve more significant speedup and memory saving for longer sequences, which we now explore."
+    },
+    {
+      "index": 84,
+      "text": "We use a simulation conditional generation experiment on to compare RFA\u2019s sequence-to-sequence decoding speed and memory overhead against the baseline\u2019s. Here we assume the input and output sequences are of the same length. The compared models are of the same size as those described in _\u00a7_ 4.2, with 6-layer encoders and decoders. Other hyperparameters are summarized in Appendix B.2. All models are tested using greedy decoding with the same batch size of 16, on a TPU v2 accelerator."
+    },
+    {
+      "index": 85,
+      "text": "From Figures 2 (a) and (b) we observe clear trends. Varying the lengths, both RFA variants achieve consistent decoding speed with nearly-constant memory overhead. In contrast, the baseline decodes slower for longer sequences, taking an increasing amount of memory. Notably, for 2,048-length sequences, RFA decodes around 12 _\u00d7_ faster than the baseline while using less than 10% of the memory. RFA-arccos slightly outperforms RFA-Gaussian in terms of speed and memory efficiency. This is because when using the same _D_ (as we do here), the _**\u03c6**_ arccos is half the size of _**\u03c6**_ Gaussian. These results suggest that RFA can be particularly useful in sequence-to-sequence tasks with longer sequences, e.g., document-level machine translation (Miculicich et al., 2018)."
+    },
+    {
+      "index": 86,
+      "text": "Figure 3 in Appendix C.1 compares the speed and memory consumption in _unconditional_ decoding (e.g., sampling from a language model). The overall trends are similar to those in Figure 2."
+    },
+    {
+      "index": 87,
+      "text": "**Notes on decoding speed.** With a lower memory overhead, RFA can use a larger batch size than the baseline. As noted by Katharopoulos et al. (2020) and Kasai et al. (2021), if we had used mini-"
+    },
+    {
+      "index": 88,
+      "text": "8\n\nPublished as a conference paper at ICLR 2021\n\nbatches as large as the hardware allows, RFA could have achieved a more significant speed gain. Nonetheless, we control for batch size even though it is not the most favorable setting for RFA, since the conclusion translates better to common applications where one generates a single sequence at a time (e.g., instantaneous machine translation). For the softmax attention baseline, we follow Ott et al. (2018) and cache previously computed query/key/value representations, which significantly improves its decoding speed (over not caching)."
+    },
+    {
+      "index": 89,
+      "text": "**Further analysis results.** RFA achieves comparable performance to softmax attention. Appendix C.3 empirically shows that this _cannot_ be attributed to RFA learning a good approximation to softmax: when we train with one attention but evaluate with the other, the performance is hardly better than randomly-initialized untrained models. Yet, an RFA model initialized from a pretrained softmax transformer achieves decent training loss after a moderate amount of finetuning steps (Appendix C.4). This suggests some potential applications, e.g., transferring knowledge from a pretrained transformer (e.g., GPT-3; Brown et al., 2020) to an RFA model that is more efficient to sample from."
+    },
+    {
+      "index": 90,
+      "text": "## 6 RELATED WORK\n\nOne common motivation across the following studies, that is shared by this work and the research we have already discussed, is to scale transformers to long sequences. Note that there are plenty orthogonal choices for improving efficiency such as weight sharing (Dehghani et al., 2019), quantization (Shen et al., 2020), knowledge distillation (Sanh et al., 2020), and adapters (Houlsby et al., 2019). For a detailed overview we refer the reader to Tay et al. (2020c)."
+    },
+    {
+      "index": 91,
+      "text": "**Sparse attention patterns.** The idea behind these methods is to limit the reception field of attention computation. It motivates earlier attempts in improving attention\u2019s efficiency, and still receives lots of interest. The sparse patterns can be set _a priori_ (Liu et al., 2018; Qiu et al., 2020; Ho et al., 2020; You et al., 2020, _inter alia_ ) or learned from data (Sukhbaatar et al., 2019; Roy et al., 2020, _inter alia_ ). For most of these approaches, it is yet to be empirically verified that they are suitable for large-scale sequence-to-sequence learning; few of them have recorded decoding speed benefits."
+    },
+    {
+      "index": 92,
+      "text": "**Compressed context.** Wang et al. (2020) compress the context along the timesteps so that the effective sequence length for attention computation is reduced. Another line of work aims to store past context into a memory module with limited size (Lee et al., 2019; Ainslie et al., 2020; Rae et al., 2020, _inter alia_ ), so that accessing longer history only moderately increases the overhead. Reminiscent of RNN language models, RFA attends beyond a fixed context window through a stateful computation, _without_ increasing time or memory overhead."
+    },
+    {
+      "index": 93,
+      "text": "## 7 CONCLUSION\n\nWe presented random feature attention (RFA). It views the softmax attention through the lens of kernel methods, and approximates it with random feature methods. With an optional gating mechanism, RFA provides a straightforward way of learning with recency bias. RFA\u2019s time and space complexity is linear in the sequence length. We use RFA as a drop-in substitute for softmax attention in transformer models. On language modeling, machine translation, and long text classification benchmarks, RFA achieves comparable or better performance than strong baselines. In the machine translation experiment, RFA decodes twice as fast. Further time and memory efficiency improvements can be achieved for longer sequences."
+    },
+    {
+      "index": 94,
+      "text": "## ACKNOWLEDGMENTS\n\nWe would like to thank Phil Blunsom, Chris Dyer, Nando de Freitas, Jungo Kasai, Adhiguna Kuncoro, Dianqi Li, Ofir Press, Lianhui Qin, Swabha Swayamdipta, Sam Thomson, the language team at DeepMind and the ARK group at the University of Washington for their helpful feedback. We also thank Tay Yi for helping run the Long Range Arena experiments, Richard Tanburn for the advice on implementations, and the anonymous reviewers for their thoughtful comments. This work was supported in part by NSF grant 1562364 and a Google Fellowship. Nikolaos Pappas was supported by the Swiss National Science Foundation under grant number P400P2 ~~1~~ 83911 \u201cUNISON.\u201d"
+    },
+    {
+      "index": 95,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Joshua Ainslie, Santiago Ontanon, Chris Alberti, Vaclav Cvicek, Zachary Fisher, Philip Pham, Anirudh Ravula, Sumit Sanghai, Qifan Wang, and Li Yang. ETC: Encoding long and structured inputs in transformers. In _Proc. of EMNLP_ , 2020."
+    },
+    {
+      "index": 96,
+      "text": "- Maximilian Alber, Pieter-Jan Kindermans, Kristof Sch\u00a8utt, Klaus-Robert M\u00a8uller, and Fei Sha. An empirical study on the properties of random bases for kernel methods. In _Proc. of NeurIPS_ , 2017."
+    },
+    {
+      "index": 97,
+      "text": "- Haim Avron, Vikas Sindhwani, Jiyan Yang, and Michael W. Mahoney. Quasi-Monte Carlo feature maps for shift-invariant kernels. _Journal of Machine Learning Research_ , 17(120):1\u201338, 2016."
+    },
+    {
+      "index": 98,
+      "text": "- Haim Avron, L. Kenneth Clarkson, and P. David and Woodruff. Faster kernel ridge regression using sketching and preconditioning. _SIAM J. Matrix Analysis Applications_ , 2017."
+    },
+    {
+      "index": 99,
+      "text": "- Jimmy Ba, Geoffrey E Hinton, Volodymyr Mnih, Joel Z Leibo, and Catalin Ionescu. Using fast weights to attend to the recent past. In _Proc. of NeurIPS_ , 2016."
+    },
+    {
+      "index": 100,
+      "text": "- Alexei Baevski and Michael Auli. Adaptive input representations for neural language modeling. In _Proc. of ICLR_ , 2019."
+    },
+    {
+      "index": 101,
+      "text": "- Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate. In _Proc. of ICLR_ , 2015."
+    },
+    {
+      "index": 102,
+      "text": "- Iz Beltagy, Matthew E. Peters, and Arman Cohan. Longformer: The long-document transformer. _arXiv: 2004.05150_ , 2020."
+    },
+    {
+      "index": 103,
+      "text": "- S. Bochner. _Harmonic Analysis and the Theory of Probability_ . University of California Press, 1955."
+    },
+    {
+      "index": 104,
+      "text": "- Ond\u02c7rej Bojar, Christian Buck, Christian Federmann, Barry Haddow, Philipp Koehn, Johannes Leveling, Christof Monz, Pavel Pecina, Matt Post, Herve Saint-Amand, Radu Soricut, Lucia Specia, and Ale\u02c7s Tamchyna. Findings of the 2014 workshop on statistical machine translation. In _Proc. of WMT_ , 2014."
+    },
+    {
+      "index": 105,
+      "text": "- Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are few-shot learners. _arXiv: 2005.14165_ , 2020."
+    },
+    {
+      "index": 106,
+      "text": "- Mauro Cettolo, Jan Niehues, Sebastian St\u00a8uker, Luisa Bentivogli, and Marcello Federico. Report on the 11th IWSLT evaluation campaign. In _Proc. of IWSLT_ , 2014."
+    },
+    {
+      "index": 107,
+      "text": "- Kehai Chen, Rui Wang, Masao Utiyama, and Eiichiro Sumita. Recurrent positional embedding for neural machine translation. In _Proc. of EMNLP_ , 2019."
+    },
+    {
+      "index": 108,
+      "text": "- Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers. _arXiv: 1904.10509_ , 2019."
+    },
+    {
+      "index": 109,
+      "text": "- Kyunghyun Cho, Bart van Merri\u00a8enboer, Caglar Gulcehre, Dzmitry Bahdanau, Fethi Bougares, Holger Schwenk, and Yoshua Bengio. Learning phrase representations using RNN encoder\u2013decoder for statistical machine translation. In _Proc. of EMNLP_ , 2014."
+    },
+    {
+      "index": 110,
+      "text": "- Youngmin Cho and Lawrence K. Saul. Kernel methods for deep learning. In _Proc. of NeurIPS_ , 2009."
+    },
+    {
+      "index": 111,
+      "text": "- Krzysztof Marcin Choromanski, Valerii Likhosherstov, David Dohan, Xingyou Song, Andreea Gane, Tamas Sarlos, Peter Hawkins, Jared Quincy Davis, Afroz Mohiuddin, Lukasz Kaiser, David Benjamin Belanger, Lucy J Colwell, and Adrian Weller. Rethinking attention with performers. In _Proc. of ICLR_ , 2021."
+    },
+    {
+      "index": 112,
+      "text": "- Djork-Arn\u00b4e Clevert, Thomas Unterthiner, and Sepp Hochreiter. Fast and accurate deep network learning by exponential linear units (ELUs). In _Proc. of ICLR_ , 2016.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes Random Feature Attention (RFA), a linear-complexity attention mechanism using random feature maps to approximate the softmax kernel. The authors demonstrate its effectiveness across language modeling, machine translation, and long-range text classification, showing performance competitive with standard softmax attention while significantly improving decoding speed and memory usage on long sequences.\n\nRFA is a well-motivated and practically useful contribution to the efficient Transformer literature. The paper provides a clear theoretical derivation and strong empirical evidence, particularly regarding the trade-offs between approximation accuracy and computational efficiency.\n\nOverview issues:\n\n- Unclear Theoretical Justification for Normalization: In Section 3.1, the authors introduce a normalization step for queries and keys to ensure they are unit vectors, which is critical for the approximation in Equation 5. However, this constraint is applied heuristically, and the paper lacks a formal analysis of how this normalization affects the distribution of the attention weights compared to the standard softmax. Since the original softmax attention does not enforce unit-norm constraints, this modification could potentially alter the model's ability to represent high-confidence attention distributions. The authors should provide a brief theoretical justification or a sensitivity analysis demonstrating that this normalization does not significantly restrict the expressive power of the attention mechanism.\n\n- Lack of Variance Analysis for Downstream Tasks: While Theorem 1 notes that the variance of the random feature estimation is inversely proportional to D, the paper does not empirically evaluate how this variance manifests in the training stability or performance of the downstream models. The authors mention in Section 4.2 that Gaussian variants are more stable than arc-cosine ones, but they do not quantify this stability or link it to the variance of the kernel approximation. Adding a plot or discussion showing how the training loss or gradient variance correlates with different values of D would significantly strengthen the paper's claims regarding the robustness of the approximation.\n\n- Inconsistent Performance on Language Modeling: Table 1 shows that the base RFA-Gaussian model underperforms the standard Transformer baseline on WikiText-103, and only the 'stateful' variant with gating achieves superior results. This suggests that the random feature approximation itself may be insufficient for complex language modeling tasks without the added complexity of gating or stateful history. The paper should explicitly clarify whether the observed performance gap is due to the approximation error of the kernel or the loss of long-range dependency modeling, as this distinction is vital for researchers deciding whether to adopt RFA for their own tasks.\n\n- Ambiguity in 'Stateful' Training Procedure: The 'stateful' RFA-GATE-Gaussian variant described in Section 4.1 passes hidden states between mini-batches, which is a departure from standard Transformer training practices. This effectively turns the Transformer into a hybrid RNN-Transformer model, making it difficult to isolate the benefits of the RFA mechanism from the benefits of the recurrent state. To provide a fair comparison, the authors should include an ablation study that compares the stateful RFA with a standard Transformer that also incorporates a recurrent memory component, or clarify if the performance gain is purely an artifact of the RFA structure.\n\n- Absence of empirical approximation error analysis: The paper claims Rfa is a drop-in substitute for softmax attention, yet it lacks a direct empirical verification of the approximation error between the exact softmax kernel and the random feature map $\\phi(x) \\cdot \\phi(y)$. While the paper evaluates Rfa on downstream tasks, it does not quantify how closely the Rfa attention weights match the canonical softmax weights for a given sequence. A simple, illustrative experiment\u2014such as computing the Frobenius norm difference between the exact attention matrix and the Rfa-approximated matrix for a fixed set of pre-trained Transformer hidden states\u2014would demonstrate that the approximation is non-vacuous and holds across different sequence lengths.\n\n- Missing sensitivity analysis for the random projection dimension D: The paper relies on the random feature dimension $D$ to balance efficiency and accuracy, yet it provides no systematic look at how performance degrades as $D$ decreases below the values used in the experiments. Since the paper claims linear complexity, readers need to know the 'break-even' point where the approximation error significantly harms downstream task performance. A plot showing accuracy (e.g., BLEU or perplexity) versus $D$ for a representative task like WMT14 EN-DE would clarify the robustness of the method and provide practical guidance for practitioners choosing $D$ under varying memory constraints.\n\n- Lack of comparison to fixed-window or sparse attention baselines: The paper positions Rfa as a solution for long-sequence modeling, but its primary comparisons are against vanilla Transformers and other linear-attention variants. A natural question is how Rfa compares to simpler, non-approximated methods like fixed-window attention or local attention, which also achieve linear complexity. Including a comparison against a standard sliding-window attention baseline on the Long Range Arena tasks would help isolate whether Rfa's performance gains stem from its global (albeit approximated) context or simply from the linear-time computation.\n\nRecommendation: minor revision. The paper is technically sound and presents valuable results, but it requires further clarification on the impact of the unit-norm constraint and the source of performance gains in the stateful variant. Addressing these points will ensure the contribution is well-positioned within the existing literature on efficient Transformers.\n\nRevision targets:\n\n- Include an ablation study or theoretical discussion justifying the unit-norm constraint on queries and keys.\n\n- Quantify the training stability of RFA by showing how gradient variance or loss convergence changes with different random feature dimensions (D).\n\n- Clarify the performance contribution of the 'stateful' recurrent training versus the core RFA approximation through additional baselines or discussion.\n\n- Expand the discussion on why the Gaussian kernel variant consistently outperforms the arc-cosine variant in the context of the approximation error bounds.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inaccurate claim regarding WikiText-103 performance",
+          "quote": "The gating mechanism proves particularly useful in language modeling: the gated variant of Rfa outperforms the transformer baseline on WikiText-103.",
+          "explanation": "The claim that the gated variant outperforms the baseline is contradicted by Table 1. For the Big (Test) setting, the baseline achieves a perplexity of 26.2, while RFA-GATE-Gaussian achieves 25.0, which is an improvement. However, for the Small (Test) setting, the baseline is 34.5 and RFA-GATE-Gaussian is 32.7. While these results are positive, the text fails to mention that the base RFA-Gaussian model underperforms the baseline in all settings. Please revise the text to clarify that performance gains are contingent upon the gating mechanism and acknowledge that the base RFA model does not consistently outperform the baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Mathematical error in trigonometric identity",
+          "quote": "To see why,  $\\sin^2 (x) + \\cos^2 (x) = \\cos (x - x) = 1$",
+          "explanation": "The identity sin^2(x) + cos^2(x) = cos(x-x) is incorrect. While both sides equal 1, the equality does not hold as a general trigonometric identity, nor does it explain the l2-norm property of the Gaussian feature map. Please remove or correct this derivation.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Inconsistent gating mechanism description",
+          "quote": "By multiplying the learned scalar gates  $0 < g_{t} < 1$  against the hidden state  $(\\mathbf{S}_t,\\mathbf{z}_t)$ , history is exponentially decayed, favoring more recent context.\n\nThe gatin",
+          "explanation": "The description of the gating mechanism is inverted. In Equation 7, g_t acts as the retention coefficient for the previous state S_{t-1}. If g_t is close to 1, the model retains the history; if g_t is close to 0, the model emphasizes the current input. Please rewrite this to accurately reflect that smaller values of g_t favor more recent context.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguity in logit scaling notation",
+          "quote": "In consequence, the softmax outputs would be \"flattened\" if not for  $\\sigma$ , which can be set a priori as a hyperparameter (Yu et al., 2016; Avron et al., 2017; Sun, 2019, inter alia). Here we instead learn it from data with the reparameterization trick",
+          "explanation": "The text conflates the scalar hyperparameter sigma used for logit scaling with the d-dimensional vector sigma used in the random feature projection. Please clarify whether the vector sigma is derived from the scalar sigma or if they are independent parameters, and ensure the notation distinguishes between them.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistent complexity notation in Figure 1",
+          "quote": "n.\nFigure 1: Computation graphs for softmax attention (left) and random feature attention (right). Here, we assume cross attention with source length  $M$  and target length",
+          "explanation": "The caption introduces M and N but does not explicitly state the resulting complexity for each graph. To support the paper's core claim of linear efficiency, please add a note to the caption specifying the computational complexity (e.g., O(NM) vs O((N+M)D)) for each case.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0975,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes Random Feature Attention (RFA), a linear-complexity attention mechanism that approximates softmax using random Fourier features and an optional gating module. The approach is theoretically grounded and demonstrates competitive accuracy on language modeling and machine translation tasks. However, the evaluation framework omits standard efficient attention baselines, lacks detailed analysis of approximation error and training stability, and does not address how positional encodings integrate without breaking linear complexity. These gaps weaken the practical claims and reproducibility of the method.\n\nThe paper makes a solid contribution by adapting random feature kernel approximation to transformer attention and introducing a simple gating mechanism for recency bias. The linear complexity derivation is clear, and the method achieves competitive perplexity and BLEU scores on standard benchmarks. The work would be significantly stronger with more rigorous baselines and a deeper analysis of the approximation's behavior across sequence lengths.\n\nOverview issues:\n\n- Missing head-to-head comparison with established efficient attention baselines: The paper positions RFA as a drop-in replacement for softmax attention but only benchmarks against the vanilla transformer and the ELU-based baseline from Katharopoulos et al. (2020). It omits direct comparisons with Performer (Choromanski et al., 2020), Linformer, and BigBird, which are standard references in this space. Without head-to-head results under identical training budgets, it is impossible to determine whether RFA's linear complexity comes at a higher accuracy cost or if it simply matches weaker baselines. Readers will wonder how RFA scales relative to these methods on longer contexts. The authors should add a dedicated table or section comparing RFA against at least Performer and Linformer on WikiText-103 and the Long Range Arena tasks.\n\n- Inadequate treatment of positional encodings in linear attention: Section 3.2 acknowledges that RFA lacks inherent distance modeling and relies on positional encodings, but it never specifies how absolute or relative positional information is incorporated into the linear computation without breaking O(N) complexity. Standard positional encodings often require additional matrix multiplications or attention masks that can reintroduce quadratic terms or require careful state management. If positional information is simply added to queries and keys before projection, the linear structure holds, but the paper provides no ablation on which encoding strategy works best or how it affects long-range dependency capture. The authors need to explicitly detail the positional encoding integration in the methodology and include an ablation study comparing absolute, relative, and rotary encodings within the RFA framework.\n\n- Lack of analysis on approximation error and feature dimension scaling: The theoretical foundation relies on random Fourier features to approximate the Gaussian kernel, yet the paper does not analyze how approximation error scales with sequence length or feature dimension D. Table 3 reports results for sequences up to 4,000 tokens, but there is no discussion of whether the fixed D=64 or D=128 dimensions are sufficient to maintain low approximation error on longer sequences or across different attention heads. High variance in the random feature estimation can degrade gradient quality and limit the model's ability to capture fine-grained dependencies. The authors should provide a theoretical or empirical analysis of the bias-variance tradeoff as D increases, and include an ablation showing how performance degrades when D is reduced below the head dimension.\n\n- Insufficient discussion of training stability and normalization strategies: The derivation in Equation 5 assumes unit-norm queries and keys to simplify the softmax partition function approximation, but Section 3.3 casually states this constraint is optional and has little impact. Random feature attention is notoriously sensitive to initialization and normalization schemes, often suffering from unstable gradients or vanishing attention weights when the temperature parameter sigma is poorly calibrated. The paper mentions learning sigma via reparameterization but offers no discussion of training dynamics, gradient clipping strategies, or layer normalization adjustments required to stabilize RFA. Without this, reproducing the results or applying RFA to new architectures will be difficult. The revision should include a detailed discussion of the optimization landscape, report training loss curves for RFA versus baseline, and specify any modified initialization or normalization procedures.\n\n- Absence of comparison with exact efficient methods like FlashAttention: The efficiency claims overlook a major competitor in the field: algorithmic optimizations like FlashAttention, which achieve linear memory scaling and often faster wall-clock times on modern hardware without relying on kernel approximation. The literature context explicitly notes this gap, and the paper's conclusion that RFA is particularly useful for tasks requiring large inputs is weakened if it does not benchmark against exact attention implementations that also scale linearly in practice. Readers will question whether the speedups are due to the linear algorithm itself or simply the lower constant factors of the random feature projection. The authors should add a comparison with FlashAttention or similar exact linear-memory attention variants to clarify the practical trade-offs between approximation accuracy and hardware utilization.\n\n- Gating mechanism overhead and task-dependent ablation: The RFA-Gate variant introduces a learned scalar gate per timestep to induce recency bias, but the paper does not quantify its computational overhead or analyze its learnability across different tasks. Table 2 shows the gating mechanism provides negligible BLEU improvement on machine translation, yet the authors do not discuss why the gate fails to activate or provide useful signal in sequence-to-sequence tasks. The gating operation is technically O(N), but the additional parameter updates and potential interference with the recurrent state accumulation could slow down convergence. The authors should report the exact parameter count and FLOPs added by the gate, and include a detailed ablation on gate values over training to explain its task-dependent effectiveness.\n\n- Simulation of attention pattern fidelity across sequence lengths: The paper claims that random feature maps approximate softmax attention without performance loss, yet it never demonstrates how closely the learned attention patterns match the exact softmax distribution as sequences grow. In practice, the approximation can distort long-range dependencies or flatten attention weights, silently degrading model capacity. Readers will wonder whether the fixed feature dimension remains adequate for contexts exceeding a few thousand tokens. The authors should include a simulation that computes the cosine similarity between RFA and softmax attention matrices across varying sequence lengths and feature dimensions. Adding this analysis would verify that the linear approximation preserves the inductive biases of standard attention on the long sequences where RFA claims to shine.\n\n- Worked special case for the linear attention normalization term: Equation (5) introduces a normalized linear attention formula that divides by $\u03c6(q_t) \u00b7 \u2211_j \u03c6(k_j)$. The paper does not compute this expression for a simple, fully-specified model to let readers verify its behavior. A concrete example with a two-token sequence and explicit query and key vectors would clarify how the normalization term interacts with the feature map and whether it introduces pathological attention distributions. Computing this for a standard parametric setup would ground the theoretical claims and help readers understand the practical dynamics of the recurrent state update. Without this, the mechanism remains an abstract transformation rather than a clearly understood algorithm.\n\n- Implementation guidance for numerical stability during autoregressive decoding: The causal RFA variant maintains a hidden state $(S_t, z_t)$ for autoregressive generation, but the paper omits discussion of numerical stability during long-sequence decoding. As the sequence length grows, the denominator $z_t$ can accumulate floating-point errors or approach zero, leading to unstable gradients or NaN outputs. The authors need to specify how they handle state normalization, gradient clipping, or numerical safeguards during inference. Providing these implementation details is essential for reproducing the claimed decoding speedup and for practitioners who wish to deploy RFA in production settings. Standard linear attention methods often fail silently without careful state management, making these details non-negotiable for reproducibility.\n\nRecommendation: Major revision. The paper introduces a reasonable approximation but lacks critical comparisons with established baselines, omits analysis of positional encoding integration and training stability, and fails to benchmark against exact efficient methods. These gaps prevent a fair assessment of RFA's practical utility and theoretical soundness.\n\nRevision targets:\n\n- Add head-to-head comparisons with Performer, Linformer, and FlashAttention on identical datasets and training budgets.\n\n- Explicitly detail and ablate positional encoding strategies within the linear attention framework to verify O(N) complexity preservation.\n\n- Provide a theoretical or empirical analysis of approximation error scaling with feature dimension D and sequence length.\n\n- Include a detailed discussion and empirical analysis of training stability, including initialization, normalization, and gradient dynamics.\n\n- Report computational overhead and ablation studies for the gating mechanism across different tasks.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Index clash and non-standard transpose in attention formula",
+          "quote": "\\mathrm{attn}\\left(\\mathbf{q}_{t},\\{\\mathbf{k}_{i}\\},\\{\\mathbf{v}_{i}\\}\\right)=\\sum_{t}\\frac{\\exp\\left(\\mathbf{q}_{t}\\cdot\\mathbf{k}_{i}/\\tau\\right)}{\\sum_{j}\\exp\\left(\\mathbf{q}_{t}\\cdot\\mathbf{k}_{j}/\\tau\\right)}\\mathbf{v}_{i}^{\\top}.",
+          "explanation": "The summation index on the right-hand side is $t$, which directly conflicts with the query index $t$ on the left. It should iterate over the key and value indices, typically $i$. Transposing the value vector $\\mathbf{v}_i$ is also non-standard. Attention outputs are linear combinations of column vectors. Correct this to $\\sum_{i} \\dots \\mathbf{v}_i$ to align with standard notation and fix the variable collision.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Unit-norm assumption invalidates the exact recurrence",
+          "quote": "For clarity we assume the query and keys are unit vectors.",
+          "explanation": "The derivation of the additive recurrent update for $\\mathbf{z}_t$ in Eq. (6) relies on canceling the norm-dependent pre-factors $\\exp(\\|\\mathbf{k}_j\\|^2/2\\sigma^2)$ from the denominator sum. This cancellation is only exact if all keys share the same norm. If keys have varying norms, that term remains inside the summation, breaking the simple additive recurrence. The claim that RFA is a \"drop-in replacement\" is therefore mathematically contingent on key normalization. Please explicitly state this requirement or provide the modified recurrence that handles varying key norms.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Numerical instability in recurrent denominator accumulation",
+          "quote": "\\mathbf {z} _ {t} = \\mathbf {z} _ {t - 1} + \\phi (\\mathbf {k} _ {t}).",
+          "explanation": "The recurrent update for $\\mathbf{z}_t$ accumulates random features, which often include oscillatory components like sines and cosines that can take negative values. As $t$ increases, $\\mathbf{z}_t$ may approach zero or fluctuate wildly, causing the denominator $\\phi(\\mathbf{q}_t) \\cdot \\mathbf{z}_t$ to vanish or become numerically unstable. The derivation assumes this denominator stays well-conditioned. You should add a small constant $\\epsilon$ to the denominator or discuss normalization strategies to prevent vanishing attention weights during long-sequence decoding.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Incorrect space complexity calculation",
+          "quote": "Rfa uses $\\mathcal{O}(4D+2Dd)$ space to store $\\bm{\\phi}(\\mathbf{q}_{t})$, $\\sum_{i}\\bm{\\phi}(\\mathbf{k}_{i})\\otimes\\mathbf{v}_{i}$, and $\\sum_{i}\\bm{\\phi}(\\mathbf{k}_{i})$",
+          "explanation": "The three listed quantities have dimensions $D$, $D \\times d$, and $D$, respectively. Their sum is $2D + Dd$, not $4D + 2Dd$. The factors of two on each term are unexplained. If you intend to include the random projection matrix or account for backward-pass gradients, state that explicitly. Otherwise, correct the space complexity to $\\mathcal{O}(2D + Dd)$ to match the listed storage items.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Incorrect claim about Gaussian feature map norm",
+          "quote": "}}$ . We conjecture that this is because the outputs of the Gaussian feature maps have an  $\\ell_2$ -norm of 1, which can help stabilize training. To see why,  $\\sin^2 (x) + \\cos^2 (x) = \\cos (x - x",
+          "explanation": "The claim that Gaussian random feature maps have an $\\ell_2$-norm of exactly 1 is false. Even with trigonometric features, the squared $\\ell_2$-norm is $\\frac{2}{D} \\sum_{i=1}^D \\cos^2(\\mathbf{w}_i^\\top \\mathbf{x} + b_i)$, which is a random variable with expectation 1 but does not equal 1 for finite $D$. The cited identity applies to a single scalar argument, not a high-dimensional vector norm. Revise this to state that the expected squared norm is normalized to 1, as the actual norm only converges to 1 as $D \\to \\infty$.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Sparse attention claims lack empirical support",
+          "quote": "For most of these approaches, it is yet to be empirically verified that they are suitable for large-scale sequence-to-sequence learning; few of them have recorded decoding speed benefits.",
+          "explanation": "This characterization overlooks a substantial body of literature demonstrating the viability of sparse attention for large-scale sequence modeling. Architectures like Longformer and BigBird have been successfully applied to production-scale language models and explicitly report both training and inference speedups. The statement conflates training efficiency with autoregressive decoding latency. Temper this claim by acknowledging established successes in the field and clarifying whether you refer specifically to decoding latency or overall training throughput.",
+          "comment_type": "technical",
+          "paragraph_index": 91,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Misclassification of Longformer as a memory module",
+          "quote": "duced. Another line of work aims to store past context into a memory module with limited size *(Lee et al., 2019; Ainslie et al., 2020; Rae et al., 2020, inter alia)*, so that accessing longer history only moderately increases the overhead. Reminiscent o",
+          "explanation": "Categorizing Ainslie et al. (2020) as a memory-augmented approach misrepresents its core methodology. That paper introduces Longformer, which achieves long-sequence modeling through sparse attention patterns rather than a compressed memory state. Grouping sparse attention architectures alongside true memory-augmented models obscures the distinct algorithmic mechanisms each employs. Disentangle these categories to accurately reflect how different methods handle historical context.",
+          "comment_type": "technical",
+          "paragraph_index": 92,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Overhead claim contradicts experimental results",
+          "quote": "eminiscent of RNN language models, Rfa attends beyond a fixed context window through a stateful computation, *without* increasing time or memory overhead.",
+          "explanation": "This assertion directly conflicts with the paper's own experimental findings, which report that RFA trains approximately 15% slower than the baseline due to feature map computation. While RFA improves asymptotic complexity, the random feature projections and recurrent state maintenance introduce constant-factor overheads that affect wall-clock time. Clarify that the advantage lies in linear scaling rather than absolute overhead elimination, and acknowledge the practical computational costs of the feature maps.",
+          "comment_type": "technical",
+          "paragraph_index": 92,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Variance reduction claim lacks formal support",
+          "quote": "RFA instead normalizes the queries and keys before random projection to reduce variance.",
+          "explanation": "The formal results section introduces the unit-norm assumption for queries and keys with the explicit justification: \"For clarity we assume the query and keys are unit vectors.\" The discussion section later claims that this normalization is performed \"to reduce variance,\" but the provided mathematical derivation does not establish or derive variance properties of the approximation. Without a theoretical bound or empirical reference in the formal results, this claim is unsupported. Remove \"to reduce variance\" because the formal results only justify the unit-norm assumption for notation clarity.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Gating mechanism claim lacks formal support",
+          "quote": "With an optional gating mechanism, Rfa provides a straightforward way of learning with recency bias.",
+          "explanation": "The formal results in Section 3.1 derive the RFA approximation using random features and demonstrate how it yields linear time and space complexity. The conclusion, however, claims that an \"optional gating mechanism\" enables recency bias. This gating mechanism is neither defined nor analyzed in the formal results section, leaving the claim about recency bias unsupported by the provided theory. Move the gating discussion into the formal derivation or remove it from the conclusion's summary of theoretical contributions.",
+          "comment_type": "technical",
+          "paragraph_index": 93,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.475,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes Random Feature Attention (RFA), a linear-time approximation to softmax attention using random Fourier features. It claims comparable or better performance than exact attention on language modeling, machine translation, and long text classification, with significant speedups in decoding. The paper is well-written and the experiments are extensive, but several issues regarding theoretical justification, approximation error control, and empirical validation need attention.\n\nThe paper introduces a practical and well-motivated method for efficient attention. The core idea of using random features to linearize softmax is sound, and the experimental results are promising. However, the paper lacks a rigorous theoretical analysis of the approximation error and its impact on model performance, and some empirical comparisons are incomplete or potentially biased. The contribution is significant but would benefit from stronger theoretical grounding and more careful experimental validation.\n\nOverview issues:\n\n- Theoretical justification for the softmax approximation is incomplete: The paper relies on Theorem 1 (Rahimi & Recht, 2007) which provides an unbiased estimate of the Gaussian kernel exp(-||x-y||^2/(2\u03c3^2)). However, the softmax attention uses exp(q\u00b7k/\u03c4), not a Gaussian kernel. The derivation in Eq. 4 attempts to convert the Gaussian kernel into the desired form by factoring out exp(||x||^2/(2\u03c3^2) + ||y||^2/(2\u03c3^2)), but this assumes that the queries and keys are normalized to unit norm. The paper states this assumption for clarity (Section 3.1) but then says it is 'never mandatory' and claims it has little impact (Section 3.3). This is a critical gap: without normalization, the approximation error is uncontrolled and the theoretical guarantee from Bochner's theorem does not apply. The paper needs to either provide a theoretical bound on the approximation error for unnormalized vectors or justify why the assumption can be relaxed in practice.\n\n- Approximation error from random features is not empirically characterized: The paper does not directly measure the approximation error between the exact softmax attention and the RFA approximation. While perplexity and BLEU scores are reported, these are downstream metrics that may not reveal the fidelity of the attention approximation. A key concern is whether the random feature approximation degrades model performance compared to exact attention. The paper shows that RFA-Gaussian underperforms BASE in language modeling (Table 1) and matches it in translation (Table 2), but does not investigate whether this gap is due to approximation error or other factors. An ablation study varying the number of random features D and measuring the approximation error directly (e.g., L2 difference in attention outputs) would be valuable. The paper claims that using D > 2d yields marginal benefit (Section 3.4), but this is not supported by empirical evidence.\n\n- Complexity analysis does not account for overhead of random feature generation: The paper claims linear time and space complexity, but the analysis in Section 3.4 ignores the cost of generating random features. The random projection matrix W must be sampled from a normal distribution, which requires O(Dd) operations. For each query/key, computing \u03c6(x) involves D dot products with d-dimensional vectors, costing O(Dd). In multi-head attention with h heads, this overhead scales as O(hDd). The paper acknowledges that RFA trains 15% slower than BASE due to feature map overhead (footnote 12), but the theoretical complexity analysis should include these costs. More importantly, the decoding speedups reported (1.8-2x) may not generalize to all hardware or sequence lengths, as the overhead of random feature computation may dominate for short sequences. The paper should provide a more nuanced analysis of when linear complexity translates to actual speedups.\n\n- Recency bias mechanism (RFA-Gate) is not properly motivated or disentangled: The gating mechanism in Section 3.2 is presented as a way to learn recency bias, but its motivation is weak. The paper draws connections to RNNs and fast weights, but does not explain why recency bias is desirable for the tasks considered. In language modeling, RFA-Gate outperforms BASE, but in machine translation, it provides no benefit (Table 2). This suggests that the gating mechanism may be task-dependent, but the paper does not analyze when or why it helps. Furthermore, the gating mechanism introduces additional parameters and computational cost, which should be accounted for in the complexity analysis. The paper should include an ablation study that isolates the effect of gating from the random feature approximation, and discuss the inductive biases introduced by the gate.\n\n- Experimental setup has potential confounds and unfair comparisons: Several aspects of the experimental setup raise concerns. First, the language model baseline (Base) uses a block size of 512 tokens without access to previous context (Section 4.1), while the stateful RFA variant uses hidden states from previous mini-batches. This gives RFA an unfair advantage, as noted in the paper. Second, the machine translation experiments use softmax attention in the encoder and RFA only in the decoder (Section 4.2). This means the encoder still has quadratic complexity, which limits the overall speedup. The paper should report end-to-end speedups including encoder computation. Third, the comparison with Katharopoulos et al. (2020) may be unfair because the paper notes that \u03c6_elu may need 3x more training steps (footnote 10), but the paper uses the same number of steps for all models. This could explain the poor performance of \u03c6_elu. The paper should either train \u03c6_elu for more steps or acknowledge this limitation.\n\n- Long text classification experiments lack statistical significance and reproducibility details: The results on Long Range Arena (Table 3) show RFA achieving the best accuracy on IMDb (66.0%) but the paper does not report confidence intervals or multiple runs. Given the small differences between methods (e.g., 66.0 vs 65.9 for Katharopoulos et al.), it is unclear whether these differences are statistically significant. The paper should report standard deviations or confidence intervals. Additionally, the paper does not specify the random seed sensitivity of the random feature sampling. Since the random projection matrix is fixed after initialization (the paper mentions learning \u03c3 but not resampling w_i during training), the results may depend on the specific random seed. A sensitivity analysis with different seeds would strengthen the claims. Finally, the paper does not mention whether the code and random seeds are publicly available for reproducibility.\n\n- No direct measurement of approximation error: The paper claims RFA approximates softmax attention but never directly measures the approximation error between the exact attention outputs and the RFA outputs. Downstream metrics like perplexity and BLEU are reported, but these do not isolate the fidelity of the attention approximation. The paper should include an ablation study that computes, for a fixed model, the L2 or cosine distance between the attention distributions produced by exact softmax and RFA, varying the number of random features D. This would directly validate the core claim that RFA is a faithful approximation and would help readers calibrate how many random features are needed for a given tolerance.\n\n- Missing theoretical bound for unnormalized queries/keys: The derivation in Eq. 4 assumes queries and keys are unit vectors to convert the Gaussian kernel into the desired dot-product kernel. The paper later says this assumption is 'never mandatory' and claims little impact, but provides no theoretical justification or empirical evidence for unnormalized vectors. Without this assumption, the unbiasedness guarantee from Bochner's theorem no longer applies, and the approximation error is uncontrolled. The paper should either prove a bound on the approximation error for arbitrary query/key norms, or provide an experiment showing that the approximation quality (e.g., L2 error in attention outputs) is similar with and without normalization.\n\n- No worked example with a concrete parametric model: The paper presents RFA as a general method but never computes its attention outputs for a simple, fully-specified model where exact softmax attention can be computed in closed form. For instance, the paper could take a single-head attention with d=2, a specific set of queries and keys (e.g., q=(1,0), k1=(0,1), k2=(1,1)), and compute both the exact softmax attention and the RFA approximation for a given random seed and D. This would let readers see the approximation error numerically and understand how the random features work in practice. Such an example is standard in theory papers and would greatly improve clarity.\n\n- No discussion of how to choose random feature size D adaptively: The paper uses a fixed D (64 or 128) across all experiments and claims that D > 2d yields marginal benefit, but provides no guidance on how practitioners should choose D for their own tasks or sequence lengths. The approximation error of random features depends on the effective dimension of the data and the desired accuracy, which may vary across layers, heads, or sequence positions. The paper should discuss whether D can be chosen adaptively (e.g., based on a validation set or a heuristic like the spectral decay of the attention matrix), or at least provide a sensitivity analysis showing how performance changes with D across tasks. Without this, the method's practical utility is limited.\n\nRecommendation: Major revision. The paper presents a promising method but has significant gaps in theoretical justification and empirical validation. The core contribution is valuable, but the paper needs to address the approximation error characterization, complexity analysis, and experimental fairness before it meets the standards of a top venue.\n\nRevision targets:\n\n- Provide a theoretical bound on the approximation error of the softmax attention using random features, or justify why the unit-norm assumption can be relaxed without loss of guarantee.\n\n- Include an empirical analysis of the approximation error (e.g., L2 distance between exact and approximate attention outputs) as a function of D and sequence length.\n\n- Revise the complexity analysis to include the cost of random feature generation and projection, and provide a break-even analysis showing when linear complexity yields actual speedups.\n\n- Conduct an ablation study that isolates the effect of the gating mechanism from the random feature approximation, and discuss the inductive biases introduced by the gate.\n\n- Report confidence intervals or standard deviations for all experimental results, and conduct a sensitivity analysis with different random seeds for the feature sampling.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Unbiasedness guarantee does not apply to softmax without normalization",
+          "quote": "We propose Rfa, a linear time and space attention that uses random feature methods to approximate the softmax function",
+          "explanation": "The theoretical guarantee from Rahimi & Recht (2007) applies to shift-invariant kernels (Gaussian), not to the softmax kernel exp(q\u00b7k/\u03c4). The paper's derivation in Eq. 4 converts the Gaussian kernel into the softmax form by assuming queries and keys are unit vectors, but later states this assumption is 'never mandatory' and claims little impact without justification. Without unit-norm queries/keys, the unbiasedness guarantee does not hold, and the approximation error is uncontrolled. The paper should either provide a theoretical bound for unnormalized vectors or present empirical evidence that approximation quality is similar with and without normalization.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Gating mechanism lacks proof of unbiasedness",
+          "quote": "$$\n\\begin{array}{l} g _ {t} = \\operatorname {s i g m o i d} \\left(\\mathbf {w} _ {g} \\cdot \\mathbf {x} _ {t} + b _ {g}\\right), \\\\ \\mathbf {S} _ {t} = g _ {t} \\mathbf {S} _ {t - 1} + (1 - g _ {t}) \\phi (\\mathbf {k} _ {t}) \\otimes \\mathbf {v} _ {t}, \\tag {7} \\\\ \\mathbf {z} _ {t} = g _ {t} \\mathbf {z} _ {t - 1} + (1 - g _ {t}) \\phi (\\mathbf {k} _ {t}). \\\\ \\end{array}\n$$",
+          "explanation": "The gating mechanism changes the recurrence from the original RFA (Eq. 6), but the paper does not prove that the ratio S_t / z_t still yields an unbiased estimate of causal softmax attention. The contribution of an input at time s to the state at time t is multiplied by \u220f_{i=s+1}^{t} g_i, which decays but not necessarily with a fixed rate. The paper should add a proof or reference showing that the gated recurrence preserves the unbiased approximation property, or provide empirical validation.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Unsupported claim about norm-1 constraint impact",
+          "quote": "rm-1 constraint is never mandatory. Rather, we employ it for notation clarity and easier implementation. In preliminary experiments we find it has little impact on the performance when  $\\sigma$  is set properly or learned from data.",
+          "explanation": "The paper claims the norm-1 constraint has 'little impact on the performance' based on 'preliminary experiments,' but no details, results, or error bounds are provided. This is a critical gap because the theoretical guarantee from Bochner's theorem applies only to the Gaussian kernel, and the conversion in Eq. 4 relies on unit vectors. Without this assumption, the approximation error is uncontrolled. The paper should either provide a theoretical bound for unnormalized vectors or present empirical evidence (e.g., a table or figure) showing that approximation quality is similar with and without normalization.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Unsupported claim about arc-cosine kernel performance",
+          "quote": "In our experiments, the Gaussian and arc-cosine variants achieve similar performance.",
+          "explanation": "The paper states that the Gaussian and arc-cosine random feature variants achieve similar performance, but no experimental results are shown for the arc-cosine variant in the main paper (Tables 1-3 only report RFA-Gaussian and RFA-Gate). The claim is unsupported by data. The paper should either include the arc-cosine results in the relevant tables or remove the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Unfair comparison with \u03c6_elu baseline due to training steps",
+          "quote": "It significantly underperforms both the baseline and RFA in our controlled experiments, showing the importance of a properly-chosen feature map.",
+          "explanation": "The paper claims that \u03c6_elu (Katharopoulos et al., 2020) 'significantly underperforms' the baseline and RFA, but the only evidence provided is a footnote (footnote 10) suggesting that \u03c6_elu may need 3x more training steps. The paper uses the same number of training steps for all models, which is an unfair comparison. The paper should either train \u03c6_elu for more steps to ensure a fair comparison or acknowledge this limitation explicitly.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Unsupported claim about marginal benefit of D > 2d",
+          "quote": "We experiment with $D$ at $d$ and $2d$; the benefit of using $D>2d$ is marginal.",
+          "explanation": "The claim that using D > 2d yields marginal benefit is stated without any supporting evidence in this section. The paper references Appendix C.2 for a study of random feature size, but the main text should either provide a brief justification (e.g., citing Yu et al. 2016 or showing a quick empirical result) or qualify the claim as a conjecture. Add a sentence summarizing the empirical finding from Appendix C.2, e.g., 'In our experiments (Appendix C.2), increasing D beyond 2d gave less than 0.1 perplexity improvement on WikiText-103, confirming the marginal benefit.'",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Memory complexity omits storage for random projection matrix",
+          "quote": "Rfa uses $\\mathcal{O}(4D+2Dd)$ space to store $\\bm{\\phi}(\\mathbf{q}_{t})$, $\\sum_{i}\\bm{\\phi}(\\mathbf{k}_{i})\\otimes\\mathbf{v}_{i}$, and $\\sum_{i}\\bm{\\phi}(\\mathbf{k}_{i})$ (Eq. 5; line 12 of Algo. 2).",
+          "explanation": "The stated space complexity O(4D + 2Dd) accounts for the current query's feature map and the two cumulative sums, but omits the storage for the random projection matrix W (size D\u00d7d), which is O(Dd) and is needed throughout decoding. Including W would make the total O(3Dd + 4D). While this does not change the asymptotic linearity, it should be mentioned for a fair practical comparison. Add a note: 'plus O(Dd) for the fixed random projection matrix W.'",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Unfair comparison due to stateful variant advantage",
+          "quote": "All models use a 512 block size during both training and evaluation, i.e., they read as input a segment of 512 consecutive tokens, without access to the context from previous mini-batches.",
+          "explanation": "The paper states that all models use a 512 block size without access to previous context, yet later introduces a 'stateful' variant of RFA-GATE-Gaussian that passes the last hidden state to the next mini-batch. This stateful variant is compared directly with BASE in Table 1, but BASE does not have access to previous context. This is an unfair comparison because the stateful RFA variant effectively sees more context than BASE, which could explain its lower perplexity. The paper should either compare stateful RFA against a baseline that also has access to previous context or clearly separate the stateful results from the main comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Missing justification for fixed 64-dimensional random features",
+          "quote": "RFA variants use 64-dimensional random feature maps.",
+          "explanation": "The paper uses 64-dimensional random feature maps for all RFA variants in language modeling experiments, but does not provide any justification for this choice. The number of random features D directly controls the approximation error, and the paper earlier claims that D > 2d yields marginal benefit (Section 3.4). However, with d=512 (typical transformer dimension), 64 is much less than 2d=1024. The paper should explain why 64 was chosen and whether this choice is sufficient for the sequence length and model size used.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Contradiction between speedup expectation and actual results",
+          "quote": "From the analysis in \u00a73.4 we would not expect speedup by RFA models, nor do we see any in the experiments.",
+          "explanation": "The paper states that no speedup is expected from RFA models in language modeling, yet the complexity analysis in Section 3.4 claims linear time and space complexity. If RFA has linear complexity, it should be faster than the quadratic softmax attention for long sequences. The fact that no speedup is observed suggests that the overhead from random feature generation (O(Dd) per query/key) dominates the computation for the sequence length used (512 tokens). The paper should reconcile this by explicitly stating that for short sequences, the overhead of random features outweighs the savings, and that speedups are only expected for much longer sequences.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Unsubstantiated claim about gating mechanism improvement",
+          "quote": "Comparing RFA against its gated variants, a more than 1.8 perplexity improvement can be attributed to the gating mechanism; and the gap is larger for small models.",
+          "explanation": "The paper attributes a 1.8 perplexity improvement to the gating mechanism, but this comparison conflates the effect of gating with the random feature approximation. The gated variants (RFA-GATE) are compared against non-gated RFA, but both use random features. The improvement could be due to the gating mechanism compensating for approximation errors in the random features, rather than providing a genuine recency bias. The paper does not compare RFA-GATE against a gated version of exact softmax attention, so it is unclear whether the gating mechanism would also improve BASE. The claim should be rewritten to note that the interaction between gating and random feature approximation is not disentangled.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Mischaracterization of sparse attention methods",
+          "quote": "For most of these approaches, it is yet to be empirically verified that they are suitable for large-scale sequence-to-sequence learning; few of them have recorded decoding speed benefits.",
+          "explanation": "This claim is outdated for the time of publication (ICLR 2021). By 2020, several sparse attention methods had been empirically verified on large-scale seq2seq tasks. For example, Child et al. (2019) 'Generating Long Sequences with Sparse Transformers' demonstrated sparse attention on large-scale image and text generation. Beltagy et al. (2020) 'Longformer: The Long-Document Transformer' showed strong results on long-document QA and summarization. Kitaev et al. (2020) 'Reformer: The Efficient Transformer' reported decoding speedups. The statement should be revised to reflect the existing empirical evidence at the time.",
+          "comment_type": "technical",
+          "paragraph_index": 91,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Overstatement of RFA's advantage over compressed context methods",
+          "quote": "Reminiscent of RNN language models, Rfa attends beyond a fixed context window through a stateful computation, *without* increasing time or memory overhead.",
+          "explanation": "The claim that RFA attends beyond a fixed context window without increasing time or memory overhead is misleading. While RFA's core attention computation is linear in sequence length, the stateful computation (RFA-Gate) introduces additional parameters and operations (gating, hidden state updates) that add overhead. The paper's own footnote 12 acknowledges RFA trains ~15% slower than BASE due to feature map overhead. Furthermore, methods like Transformer-XL (Dai et al., 2019) also attend beyond fixed windows with stateful recurrence, and their overhead is well-documented. The comparison should be more nuanced.",
+          "comment_type": "technical",
+          "paragraph_index": 92,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Incomplete coverage of related efficient attention methods",
+          "quote": "One common motivation across the following studies, that is shared by this work and the research we have already discussed, is to scale transformers to long sequences.",
+          "explanation": "The related work section omits several directly relevant efficient attention methods that were published before ICLR 2021. Notably, it does not discuss Linformer (Wang et al., 2020), which uses low-rank projections to achieve linear attention, or Performer (Choromanski et al., 2020), which uses positive orthogonal random features (FAVOR+) to approximate softmax. These are direct competitors to RFA and should be compared in detail. The paper's positioning would be stronger if it explicitly contrasted RFA's random Fourier features with Performer's positive random features and Linformer's low-rank approach.",
+          "comment_type": "technical",
+          "paragraph_index": 90,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Overclaim of linear complexity without overhead accounting",
+          "quote": "Rfa\u2019s time and space complexity is linear in the sequence length. We use Rfa as a drop-in substitute for softmax attention in transformer models.",
+          "explanation": "The conclusion states that RFA's complexity is linear in sequence length, but this ignores the O(Dd) overhead per query/key for random feature generation, which the paper itself acknowledges leads to ~15% slower training (footnote 12). The claim of linear complexity is technically correct only if D is treated as a constant, but in practice D is often chosen proportional to d (e.g., D=2d), making the effective complexity O(nd) per layer, which is still linear but with a larger constant. The statement as written is misleading because it omits the overhead that practitioners must account for. Rewrite to include the overhead.",
+          "comment_type": "technical",
+          "paragraph_index": 93,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Unsubstantiated claim of comparable or better performance",
+          "quote": "On language modeling, machine translation, and long text classification benchmarks, Rfa achieves comparable or better performance than strong baselines.",
+          "explanation": "This claim is not fully supported by the paper's own results. In language modeling (Table 1), RFA-Gaussian underperforms BASE (perplexity 33.3 vs 32.5), and only RFA-Gate matches BASE. In machine translation (Table 2), RFA-Gaussian matches BASE but RFA-Gate underperforms. The claim 'comparable or better' glosses over these task-dependent differences. The paper should qualify this statement to reflect the actual pattern of results.",
+          "comment_type": "technical",
+          "paragraph_index": 93,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Reference formatting error",
+          "quote": "Haim Avron, L. Kenneth Clarkson, and P. David and Woodruff. Faster kernel ridge regression using sketching and preconditioning.",
+          "explanation": "The reference entry for Avron, Clarkson, and Woodruff reads 'P. David and Woodruff' \u2014 the middle initial is missing a period and the name is likely 'David P. Woodruff' (as in the original paper). This is a concrete error in the reference metadata. The fix is to correct the author name to 'David P. Woodruff' for proper attribution.",
+          "comment_type": "technical",
+          "paragraph_index": 98,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        }
+      ],
+      "cost_usd": 0.0518,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

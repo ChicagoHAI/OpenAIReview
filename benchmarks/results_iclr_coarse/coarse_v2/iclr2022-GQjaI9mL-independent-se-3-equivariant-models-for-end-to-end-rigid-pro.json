@@ -1,0 +1,681 @@
+{
+  "slug": "iclr2022-GQjaI9mL-independent-se-3-equivariant-models-for-end-to-end-rigid-pro",
+  "title": "Independent SE(3)-Equivariant Models for End-to-End Rigid Protein Docking",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## INDEPENDENT SE(3)-EQUIVARIANT MODELS FOR - END TO-END RIGID PROTEIN DOCKING"
+    },
+    {
+      "index": 1,
+      "text": "**Octavian-Eugen Ganea** _[\u2020\u2217]_ **Xinyuan Huang** _[\u00a7\u2217]_ **Charlotte Bunne Yatao Bian** _[\u2020]_ MIT ETH Zurich ETH Zurich Tencent AI Lab"
+    },
+    {
+      "index": 2,
+      "text": "**Regina Barzilay Tommi Jaakkola Andreas Krause** MIT MIT ETH Zurich\n\n## ABSTRACT\n\nProtein complex formation is a central problem in biology, being involved in most of the cell\u2019s processes, and essential for applications, e.g. drug design or protein engineering. We tackle _rigid body protein-protein docking_ , i.e., computationally predicting the 3D structure of a protein-protein complex from the individual unbound structures, assuming no conformational change within the proteins happens during binding. We design a novel pairwise-independent SE(3)-equivariant graph matching network to predict the rotation and translation to place one of the proteins at the right docked position relative to the second protein. We mathematically guarantee a basic principle: the predicted complex is always identical regardless of the initial locations and orientations of the two structures. Our model, named EQUIDOCK, approximates the binding pockets and predicts the docking poses using keypoint matching and alignment, achieved through optimal transport and a differentiable Kabsch algorithm. Empirically, we achieve significant running time improvements and often outperform existing docking software despite not relying on heavy candidate sampling, structure refinement, or templates.[1]"
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nIn a recent breakthrough, ALPHAFOLD 2 (Jumper et al., 2021; Senior et al., 2020) provides a solution to a grand challenge in biology\u2014inferring a protein\u2019s three-dimensional structure from its amino acid sequence (Baek et al., 2021), following the dogma _sequence determines structure_ ."
+    },
+    {
+      "index": 4,
+      "text": "Besides their complex three-dimensional nature, proteins dynamically alter their function and structure in response to cellular signals, changes in the environment, or upon _molecular docking_ . In par-"
+    },
+    {
+      "index": 5,
+      "text": "**----- Start of picture text -----**\n\na. protein Z b. protein Z-dependent\ninhibitor\nprotein Z-dependent  protein Z\ninhibitor\n**----- End of picture text -----**"
+    },
+    {
+      "index": 6,
+      "text": "Figure 1: **Different views of the 3D structure of a protein complex. a.** Surface and **b.** cartoon view of protein Z and its inhibitor."
+    },
+    {
+      "index": 7,
+      "text": "ticular, protein interactions are involved in various biological processes including signal transduction, protein synthesis, DNA replication and repair. Molecular docking is key to understanding protein interactions\u2019 mechanisms and effects, and, subsequently, to developing therapeutic interventions."
+    },
+    {
+      "index": 8,
+      "text": "We here address the problem of _rigid body protein-protein docking_ which refers to computationally predicting the 3D structure of a protein-protein complex given the 3D structures of the two proteins in unbound state. _Rigid body_ means no deformations occur within any protein during binding, which is a realistic assumption in many biological settings."
+    },
+    {
+      "index": 9,
+      "text": "Popular docking software (Chen et al., 2003; Venkatraman et al., 2009; De Vries et al., 2010; Torchala et al., 2013; Schindler et al., 2017; Sunny and Jayaraj, 2021) are typically computationally expensive,"
+    },
+    {
+      "index": 10,
+      "text": "> _\u2020_ Correspondence to: Octavian Ganea (oct@mit.edu) and Yatao Bian (yatao.bian@gmail.com).\n\n> _\u2217_ Equal contribution."
+    },
+    {
+      "index": 11,
+      "text": "> _\u00a7_ Work done during an internship at Tencent AI Lab.\n\n> 1 Our code is publicly available: https://github.com/octavian-ganea/equidock_public."
+    },
+    {
+      "index": 12,
+      "text": "1\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nligand complex\nX 1 2  R [3] [\u21e5][n] predict Z 1 , 2 2  R [3] [\u21e5] [(] [n] [+] [m] [)]\nR  2 SO (3) ,  t  2  R [3]\nreceptor X 2 2  R [3] [\u21e5][m] Z 1 =  RX 1 +  t and Z 2 =  X 2\ndifferent initial placement RMSD \ufffd Z 1 , 2 ,  Z [0] 1 , 2\ufffd = 0\nand roles swapped 8 Q 1 ,  Q 2 2 SO (3) , 8 b 1 ,  b 2 2  R [3]\npredict\nligand X [0] 2 [=] [ Q] [2] [X] [2] [+] [ g] [2] [2] [ R][3] [\u21e5][m] RZ [0] 2 [0] 2 [=]  SO [ R] [0] [X] (3) [0] 2 , [+]  t [ t] [0] 2 [0]  R [and][3] [Z] [0] 1 [=] [ X] [0] 1\nreceptor complex\nX [0] 1 [=] [ Q] [1] [X] [1] [+] [ g] [1] [2] [ R][3] [\u21e5][n] Z [0] 1 , 2 [2] [ R][3] [\u21e5] [(] [n] [+] [m] [)]\n**----- End of picture text -----**"
+    },
+    {
+      "index": 13,
+      "text": "Figure 2: **Same output guarantee of EQUIDOCK.** We predict a rigid transformation to place the ligand in the binding location w.r.t the receptor. We mathematically guarantee to output the same complex structure \u2014 up to an SE(3) transformation \u2014 independently of the initial unbound positions, rotations, or roles of both constituents. (RMSD = Root-mean-square deviation of atomic positions)"
+    },
+    {
+      "index": 14,
+      "text": "taking between minutes and hours to solve a single example pair, while not being guaranteed to find accurate complex structures. These methods largely follow the steps: i.) randomly sample a large number (e.g., millions) of candidate initial complex structures, ii.) employ a scoring function to rank the candidates, iii.) adjust and refine the top complex structures based on an energy model (e.g., force field). We here take a first step towards tackling these issues by using deep learning models for direct prediction of protein complex structures."
+    },
+    {
+      "index": 15,
+      "text": "**Contributions.** We design EQUIDOCK, a fast, end-to-end method for rigid body docking that directly predicts the SE(3) transformation to place one of the proteins (ligand) at the right location and orientation with respect to the second protein (receptor). Our method is based on the principle that the exact same complex structure should be predicted irrespectively of the initial 3D placements and roles of both constituents (see Fig. 2). We achieve this desideratum by incorporating the inductive biases of pairwise SE(3)\u2013equivariance and commutativity, and deriving novel theoretical results for necessary and sufficient model constraints (see Section 3). Next, we create EQUIDOCK to satisfy these properties by design, being a combination of: i) a novel type of pairwise independent SE(3)-equivariant graph matching networks, ii) an attention-based keypoint selection algorithm that discovers representative points and aligns them with the binding pocket residues using optimal transport, and iii) a differentiable superimposition model to recover the optimal global rigid transformation. Unlike prior work, our method does not use heavy candidate sampling or ranking, templates, task-specific geometric or chemical hand-crafted features, or pre-computed meshes. This enables us to achieve plausible structures with a speed-up of 80-500x compared to popular docking software, offering a promising competitive alternative to current solutions for this problem."
+    },
+    {
+      "index": 16,
+      "text": "## 2 RELATED WORK\n\n**Geometric Deep Learning.** Graph Neural Networks (GNNs) are becoming the de facto choice for learning with graph data (Bruna et al., 2013; Defferrard et al., 2016; Kipf and Welling, 2016; Gilmer et al., 2017; Xu et al., 2018; Li et al., 2019). Motivated by symmetries naturally occurring in different data types, architectures are tailored to explicitly incorporate such properties (Cohen and Welling, 2016a;b; Thomas et al., 2018; Fuchs et al., 2020; Finzi et al., 2020; Eismann et al., 2020; Satorras et al., 2021). GNNs are validated in a variety of tasks such as particle system dynamics or conformation-based energy estimation (Weiler and Cesa, 2019; Rezende et al., 2019)."
+    },
+    {
+      "index": 17,
+      "text": "**Euclidean Neural Networks (E(3)-NNs).** However, plain GNNs and other deep learning methods do not understand data naturally lying in the 3D Euclidean space. For example, how should the output deterministically change with the input, e.g. when it is rotated ? The recent Euclidean neural networks address this problem, being designed from geometric first-principles. They make use of SE(3)- equivariant and invariant neural layers, thus avoiding expensive data augmentation strategies. Such constrained models ease optimization and have shown important improvements in biology or chemistry \u2013 e.g. for molecular structures (Fuchs et al., 2020; Hutchinson et al., 2020; Wu et al., 2021;"
+    },
+    {
+      "index": 18,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\nJumper et al., 2021; Ganea et al., 2021) and different types of 3D point clouds (Thomas et al., 2018). Different from prior work, we here derive constraints for pairs of 3D objects via _pairwise independent SE(3)-equivariances_ , and design a principled approach for modeling rigid body docking."
+    },
+    {
+      "index": 19,
+      "text": "**Protein Folding.** Deep neural networks have been used to predict inter-residue contacts, distance and/or orientations (Adhikari and Cheng, 2018; Yang et al., 2020; Senior et al., 2020; Ju et al., 2021), that are subsequently transformed into additional constraints or differentiable energy terms for protein structure optimization. ALPHAFOLD 2 (Jumper et al., 2021) and Rosetta Fold (Baek et al., 2021) are state-of-the-art approaches, and directly predict protein structures from co-evolution information embedded in homologous sequences, using geometric deep learning and E(3)-NNs."
+    },
+    {
+      "index": 20,
+      "text": "**Protein-Protein Docking and Interaction.** Experimentally determining structures of protein complexes is often expensive and time-consuming, rendering a premium on computational methods (Vakser, 2014). Protein docking methods (Chen et al., 2003; Venkatraman et al., 2009; De Vries et al., 2010; Biesiada et al., 2011; Torchala et al., 2013; Schindler et al., 2017; Weng et al., 2019; Sunny and Jayaraj, 2021; Christoffer et al., 2021; Yan et al., 2020) typically run several steps: first, they sample thousands or millions of complex candidates; second, they use a scoring function for ranking (Moal et al., 2013; Basu and Wallner, 2016; Launay et al., 2020; Eismann et al., 2020); finally, top-ranked candidates undergo a structure refinement process using energy or geometric models (Verburgt and Kihara, 2021). Relevant to protein-protein interaction (PPI) is the task of protein interface prediction where GNNs have showed promise (Fout et al., 2017; Townshend et al., 2019; Liu et al., 2020; Xie and Xu, 2021; Dai and Bailey-Kellogg, 2021). Recently, ALPHAFOLD 2 and ROSETTAFOLD have been utilized as subroutines to improve PPIs from different aspects (Humphreys et al., 2021; Pei et al., 2021; Jovine), e.g., combining physics-based docking method CLUSPRO (Kozakov et al., 2017; Ghani et al., 2021), or using extended multiple-sequence alignments to predict the structure of heterodimeric protein complexes from the sequence information (Bryant et al., 2021). Concurrently to our work, Evans et al. (2021) extend ALPHAFOLD 2 to multiple chains during both training and inference."
+    },
+    {
+      "index": 21,
+      "text": "**Drug-Target Interaction (DTI).** DTI aims to compute drug-target binding poses and affinity, playing an essential role in understanding drugs\u2019 mechanism of action. Prior methods (Wallach et al., 2015; Li et al., 2021) predict binding affinity from protein-ligand co-crystal structures, but such data is expensive to obtain experimentally. These models are typically based on heavy candidate sampling and ranking (Trott and Olson, 2010; Koes et al., 2013; McNutt et al., 2021; Bao et al., 2021), being tailored for small drug-like ligands and often assuming known binding pocket. Thus, they are not immediately applicable to our use case. In contrast, our rigid docking approach is generic and could be extended to accelerate DTI research as part of future work."
+    },
+    {
+      "index": 22,
+      "text": "## 3 MATHEMATICAL CONSTRAINTS FOR RIGID BODY DOCKING\n\nWe start by introducing the rigid body docking problem and derive the geometric constraints for enforcing same output complex prediction regardless of the initial unbound positions or roles (Fig. 2)."
+    },
+    {
+      "index": 23,
+      "text": "**Rigid Protein-Protein Docking \u2013 Problem Setup.** We are given as input a pair of proteins forming a complex. They are (arbitrarily) denoted as the ligand and receptor, consisting of _n_ and _m_ residues, respectively. These proteins are represented in their bound (docked) state as 3D point clouds **X** _[\u2217]_ 1 _[\u2208]_[R][3] _[\u00d7][n][,]_ **[ X]** _[\u2217]_ 2 _[\u2208]_[R][3] _[\u00d7][m]_[, where each residue\u2019s location is given by the coordinates of its] corresponding _\u03b1_ -carbon atom. In the unbound state, the docked ligand is randomly rotated and translated in space, resulting in a modified point cloud **X** 1 _\u2208_ R[3] _[\u00d7][n]_ . For simplicity and w.l.o.g., the receptor remains in its bound location **X** 2 = **X** _[\u2217]_ 2[.]"
+    },
+    {
+      "index": 24,
+      "text": "_The task is to predict a rotation_ **R** _\u2208 SO_ (3) _and a translation_ **t** _\u2208_ R[3] _such that_ **RX** 1 + **t** = **X** _[\u2217]_ 1 _[,] using as input the proteins and their unbound positions_ **X** 1 _and_ **X** 2 _._"
+    },
+    {
+      "index": 25,
+      "text": "Here, **R** = **R** ( **X** 1 _|_ **X** 2) and **t** = **t** ( **X** 1 _|_ **X** 2) are functions of the two proteins, where we omit residue identity or other protein information in this notation, for brevity."
+    },
+    {
+      "index": 26,
+      "text": "Note that we assume rigid backbone and side-chains for both proteins. We therefore do not tackle the more challenging problem of _flexible docking_ , but our approach offers an important step towards it."
+    },
+    {
+      "index": 27,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\na. b. keypoints obtained via  c.\nmulti-head attention from the IEGMN  prediction\nG 1 = ( V 1 , E 1) G 2 = ( V 2 , E 2) X [\u21e4] 1 error \u2013 ligand\nh 1 x 11 h 3 \u00b5 1 ! 5 m 4\u21925 x 24 h 4 binding pocket points keypoint alignmentbinding pocket Y 2 Y 1 X [\u21e4] 2 LMSE RMSD\nm 1 ! 2 m 3 ! 2 x 13 \u00b5 2 \u00b5! 35 ! 5 x h 255 x 27 h 7 X [\u21e4] 2 X [\u21e4] 1 LOT Y 2 =  RY 1 +  t\nx 12 h 2 x 26 h 6 P 1 P 2 RX 1 +  t\nligand receptor P [\u21e4] 1 [=] [ P] [\u21e4] 2\nX 1 2  R [3] [\u21e5][n] X 2 2  R [3] [\u21e5][m] true docked complex  true binding  predicted docked structure  X 2\npocket location (train labels) undocked /  keypoints by superimposing  Y 1  and  Y 2 auxiliary loss for avoiding LNI\nunbound input   point cloud intersection\nFigure 3:  Details on EQUIDOCK\u2019s Architecture and Losses. a. The message passing operations in\nIEGMN guarantee pairwise independent SE(3)-equivariance as in Eq. (4),  b. We predict keypoints for\neach protein that are aligned with the binding pocket location using an additional optimal transport\n(OT) loss,  c. After predicting the docked position, we compute an MSE loss on the ligand, as well as\na loss to discourage body intersections.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 28,
+      "text": "We desire that the predicted complex structure is independent of the initial locations and orientations of the two proteins, as well as of their roles \u2013 see Fig. 2. Formally, we wish to guarantee that:"
+    },
+    {
+      "index": 29,
+      "text": "( **R** ( **Z** 1 _|_ **Z** 2) **Z** 1 + **t** ( **Z** 1 _|_ **Z** 2)) _\u2295_ **Z** 2 _\u2261_ ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _,_ (SE(3)-invariance) ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _\u2261_ **X** 1 _\u2295_ ( **R** ( **X** 2 _|_ **X** 1) **X** 2 + **t** ( **X** 2 _|_ **X** 1)) _,_ (commutativity) _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] ,_ **X** 2 _\u2208_ R[3] _[\u00d7][m] ,_ and **Z** _l_ = **Q** _l_ **X** _l_ + **g** _l, l \u2208{_ 1 _,_ 2 _}._ (1)"
+    },
+    {
+      "index": 30,
+      "text": "for any rotations **Q** 1 _,_ **Q** 2 and translations **g** 1 _,_ **g** 2, where _\u2295_ is concatenation along columns, and _\u2261_ denotes identity after superimposition, i.e. zero Root-Mean-Square Deviation (RMSD) between the two 3D point sets after applying the Kabsch algorithm (Kabsch, 1976). An immediate question arises:"
+    },
+    {
+      "index": 31,
+      "text": "_How do the constraints in Eq._ (1) _translate into constraints for_ **R** ( _\u00b7|\u00b7_ ) _and_ **t** ( _\u00b7|\u00b7_ ) _?_"
+    },
+    {
+      "index": 32,
+      "text": "The rotation **R** and translation **t** change in a systematic way when we apply _SE_ (3) transformations or swap proteins\u2019 roles. These properties restrict our class of functions as derived below."
+    },
+    {
+      "index": 33,
+      "text": "**SE(3)-equivariance Constraints.** If we apply any distinct _SE_ (3) transformations on the unbound ligand **X** 1 and receptor **X** 2, i.e. we dock **Q** 1 **X** 1 + **g** 1 onto **Q** 2 **X** 2 + **g** 2, then the rotation matrix **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) and translation vector **t** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) can be derived from the original **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2) assuming that we always do rotations first. In this case, **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) can be decomposed into three rotations: i.) apply **Q** _[\u22a4]_ 1[to][undo][the] rotation **Q** 1 applied on **X** 1, ii.) apply **R** ( **X** 1 _|_ **X** 2), iii.) apply **Q** 2 to rotate the docked ligand together with the receptor. This gives **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) = **Q** 2 **R** ( **X** 1 _|_ **X** 2) **Q** _[\u22a4]_ 1[,][which][in][turn] constraints the translation vector. We provide a formal statement and prove it in Appendix B.1:"
+    },
+    {
+      "index": 34,
+      "text": "**Proposition 1.** _For any_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _,_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, SE(3)-invariance of the predicted docked complex defined by Eq._ (1) _is guaranteed iff_"
+    },
+    {
+      "index": 35,
+      "text": "As a direct consequence of this proposition, we have the following statement.\n\n**Proposition 2.** _Any model satisfying Proposition 1 guarantees invariance of the predicted complex w.r.t. any SE(3) transformation on_ **X** 1 _, and equivariance w.r.t. any SE(3) transformation on_ **X** 2 _:_"
+    },
+    {
+      "index": 36,
+      "text": "**R** ( **Z** 1 _|_ **X** 2) **Z** 1 + **t** ( **Z** 1 _|_ **X** 2) = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2) _, where_ **Z** 1 = **Q** 1 **X** 1 + **g** 1 **R** ( **X** 1 _|_ **Z** 2) **X** 1 + **t** ( **X** 1 _|_ **Z** 2) = **Q** 2 [ **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)] + **g** 2 _, where_ **Z** 2 = **Q** 2 **X** 2 + **g** 2 _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] , \u2200_ **X** 2 _\u2208_ R[3] _[\u00d7][m] ._"
+    },
+    {
+      "index": 37,
+      "text": "**Commutativity.** Instead of docking **X** 1 with respect to **X** 2, we can also dock **X** 2 with respect to **X** 1. In this case, we require the final complex structures to be identical after superimposition, i.e., zero RMSD. This property is named _commutativity_ and it is satisfied as follows (proof in Appendix B.2)."
+    },
+    {
+      "index": 38,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\n**Proposition 3.** _Commutativity as defined by Eq._ (1) _is guaranteed iff_"
+    },
+    {
+      "index": 39,
+      "text": "**Point Permutation Invariance.** We also enforce residue permutation invariance. Formally, both **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2) should not depend on the order or columns of **X** 1 and, resp., of **X** 2."
+    },
+    {
+      "index": 40,
+      "text": "## 4 EQUIDOCK MODEL\n\n**Protein Representation.** A protein is a sequence of amino acid residues that folds in a 3D structure. Each residue has a general structure with a side-chain specifying its type, allowing us to define a _local frame_ and derive SE(3)-invariant features for any pair of residues \u2014see Appendix A."
+    },
+    {
+      "index": 41,
+      "text": "We represent a protein as a graph _G_ = ( _V, E_ ), similar to Fout et al. (2017); Townshend et al. (2019); Liu et al. (2020). Each node _i \u2208V_ represents one residue and has 3D coordinates **x** _i \u2208_ R[3] corresponding to the _\u03b1_ -carbon atom\u2019s location. Edges are given by a k-nearest-neighbor (k-NN) graph using Euclidean distance of the original 3D node coordinates."
+    },
+    {
+      "index": 42,
+      "text": "**Overview of Our Approach.** Our model is depicted in Fig. 3. We first build k-NN protein graphs _G_ 1 = ( _V_ 1 _, E_ 1) and _G_ 2 = ( _V_ 2 _, E_ 2). We then design SE(3)-invariant node features **F** 1 _\u2208_ R _[d][\u00d7][n] ,_ **F** 2 _\u2208_ R _[d][\u00d7][m]_ and edge features _{_ **f** _j\u2192i_ : _\u2200_ ( _i, j_ ) _\u2208E_ 1 _\u222aE_ 2 _}_ (see Appendix A)."
+    },
+    {
+      "index": 43,
+      "text": "Next, we apply several layers consisting of functions \u03a6 that jointly transform node coordinates and features. Crucially, we guarantee, by design, _pairwise independent SE(3)-equivariance_ for coordinate embeddings, and invariance for feature embeddings. This double constraint is formally defined:"
+    },
+    {
+      "index": 44,
+      "text": "We implement \u03a6 as a novel type of message-passing neural network (MPNN). We then use the output node coordinate and feature embeddings to compute **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2). These functions depend on pairwise interactions between the two proteins modeled as cross-messages, but also incorporate the 3D structure in a pairwise-independent SE(3)-equivariant way to satisfy Eq. (1), Proposition 1 and Proposition 3. We discover keypoints from each protein based on a neural attention mechanism and softly guide them to represent the respective binding pocket locations via an optimal transport based auxiliary loss. Finally, we obtain the SE(3) transformation by superimposing the two keypoint sets via a differentiable version of the Kabsch algorithm. An additional soft-constraint discourages point cloud intersections. We now detail each of these model components."
+    },
+    {
+      "index": 45,
+      "text": "**Independent E(3)-Equivariant Graph Matching Networks (IEGMNs).** Our architecture for \u03a6 satisfying Eq. (4) is called _Independent E(3)-Equivariant Graph Matching Network_ (IEGMN) \u2013 see Fig. 3. It extends both Graph Matching Networks (GMN) (Li et al., 2019) and E(3)-Equivariant Graph Neural Networks (E(3)-GNN) (Satorras et al., 2021). IEGMNs perform node coordinate and feature embedding updates for an input pair of graphs _G_ 1 = ( _V_ 1 _, E_ 1), _G_ 2 = ( _V_ 2 _, E_ 2), and use inter- and intranode messages, as well as E(3)-equivariant coordinate updates. The _l_ -th layer of IEGMNs transforms node latent/feature embeddings _{_ **h**[(] _i[l]_[)] _[}][i][\u2208V]_ 1 _[\u222aV]_ 2[and node coordinate embeddings] _[ {]_ **[x]**[(] _i[l]_[)] _[}][i][\u2208V]_ 1 _[\u222aV]_ 2[as]"
+    },
+    {
+      "index": 46,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\nwhere _N_ ( _i_ ) are the neighbors of node _i_ ; _\u03d5[x]_ is a real-valued (scalar) parametric function; **W** is a learnable matrix; _\u03d5[h] , \u03d5[e]_ are parametric functions (MLPs) outputting a vector R _[d]_ ; **f** _j\u2192i_ and **f** _i_ are the original edge and node features (extracted SE(3)-invariantly from the residues). _aj\u2192i_ is an attention based coefficient with trainable shallow neural networks _\u03c8[q]_ and _\u03c8[k]_ :"
+    },
+    {
+      "index": 47,
+      "text": "Note that all parameters of **W** _, \u03d5[x] , \u03d5[h] , \u03d5[e] , \u03c8[q] , \u03c8[k]_ can be shared or different for different IEGMN layers . The output of several IEGMN layers is then denoted as:"
+    },
+    {
+      "index": 48,
+      "text": "It is then straightforward to prove the following (see Appendix B.3):\n\n**Proposition 4.** _IEGMNs satisfy the pairwise independent SE(3)-equivariance property in Eq._ (4) _._"
+    },
+    {
+      "index": 49,
+      "text": "**Keypoints for Differentiable Protein Superimposition.** Next, we use multi-head attention to obtain _K_ points for each protein, **Y** 1 _,_ **Y** 2 _\u2208_ R[3] _[\u00d7][K]_ , which we name **keypoints** . We train them to become representative points for the binding pocket of the respective protein pair (softly-enforced by an additional loss described later). If this would holds perfectly, then the superimposition of **Y** 1 and **Y** 2 would give the corresponding ground truth superimposition of **X** 1 and **X** 2. Our model is :"
+    },
+    {
+      "index": 50,
+      "text": "where **z** 1 _i_ denotes the i-th column of matrix **Z** 1, and _\u03b1i[k]_[=] _[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores (similarly defined for _\u03b2j[k]_[), with] **[ W]** _k[\u2032][\u2208]_[R] _[d][\u00d7][d]_[a parametric matrix (different for each] attention head), _\u03d5_ a linear layer plus a LeakyReLU non-linearity, and _\u00b5_ ( _\u00b7_ ) is the mean vector."
+    },
+    {
+      "index": 51,
+      "text": "**Differentiable Kabsch Model.** We design the rotation and translation that docks protein 1 into protein 2 to be the same transformation used to superimpose **Y** 1 and **Y** 2 \u2014 see Fig. 3. For this, we compute a differentiable version of the Kabsch algorithm (Kabsch, 1976) as follows. Let ~~_\u22a4_~~ **A** = **Y** 2 **Y** 1 _[\u2208]_[R][3] _[\u00d7]_[3][computed][using][zero-mean][keypoints.][The][singular][value][decomposition] (SVD) is **A** = **U** 2 **SU** _[\u22a4]_ 1[, where] **[ U]**[2] _[,]_ **[ U]**[1] _[\u2208][O]_[(3)][.][Finally, we define the differentiable functions]"
+    },
+    {
+      "index": 52,
+      "text": "where _\u00b5_ ( _\u00b7_ ) is the mean vector of a point cloud. It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3). From a practical perspective, the gradient and backpropagation through the SVD operation was analyzed by (Ionescu et al., 2015; Papadopoulo and Lourakis, 2000) and implemented in the automatic differentiation frameworks such as PyTorch."
+    },
+    {
+      "index": 53,
+      "text": "**MSE Loss.** During training, we randomly decide which protein is the receptor (say protein 2), keep it in the docked position (i.e., **X** 2 = **X** _[\u2217]_ 2[), predict the SE(3) transformation using Eq. (][13][) and use it] to compute the final position of the ligand as **X**[\u02dc] 1 = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2). The mean squared _n_ error (MSE) loss is then _L_ MSE = _n_[1] \ufffd _i_ =1 _[\u2225]_ **[x]** _i[\u2217][\u2212]_ **[x]**[\u02dc] _[i][\u2225]_[2][.]"
+    },
+    {
+      "index": 54,
+      "text": "**Optimal Transport and Binding Pocket Keypoint Alignment.** As stated before, we desire that **Y** 1 and **Y** 2 are representative points for the binding pocket location of the respective protein pair. However, this needs to be encouraged explicitly, which we achieve using an additional loss."
+    },
+    {
+      "index": 55,
+      "text": "We first define the binding pocket point sets, inspiring from previous PPI work (Section 2). Given the residues\u2019 _\u03b1_ -carbon locations of the bound (docked) structures, **X** _[\u2217]_ 1[and] **[ X]** _[\u2217]_ 2[, we select all pairs] of residues at less than _\u03c4_ Euclidean distance ( _\u03c4_ = 8\u00c5 in our experiments). We assume these are all interacting residues. Denote these pairs as _{_ ( **x** _[\u2217]_ 1 _s[,]_ **[ x]** 2 _[\u2217] s_[)] _[, s][\u2208]_[1] _[, . . . , S][}]_[, where] _[ S]_[is variable] across data pairs. We compute midpoints of these segments, denoted as **P** _[\u2217]_ 1 _[,]_ **[ P]** _[\u2217]_ 2 _[\u2208]_[R][3] _[\u00d7][S]_[,][where]"
+    },
+    {
+      "index": 56,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\n**p** _[\u2217]_ 1 _s_[=] **[ p]** _[\u2217]_ 2 _s_[= 0] _[.]_[5] _[ \u00b7]_[ (] **[x]** _[\u2217]_ 1 _s_[+] **[ x]** _[\u2217]_ 2 _s_[)][.][We view] **[ P]** _[\u2217]_ 1[and] **[ P]** _[\u2217]_ 2[as binding pocket points.][In the unbound state,] these sets are randomly moved in space together with the respective protein residue coordinates **X** 1 and **X** 2. We denote them as **P** 1 _,_ **P** 2 _\u2208_ R[3] _[\u00d7][S]_ . For clarity, if **X** 1 = **QX** _[\u2217]_ 1[+] **[ g]**[, then] **[ P]**[1][=] **[ QP]** _[\u2217]_ 1[+] **[ g]**[.]"
+    },
+    {
+      "index": 57,
+      "text": "We desire that **Y** 1 is a representative set for the 3D set **P** 1 (and, similarly, **Y** 2 for **P** 2). However, while at training time we know that every point **p** 1 _s_ corresponds to the point **p** 2 _s_ (and, similarly, **y** 1 _k_ aligns with **y** 2 _k_ , by assumption), we unfortunately do not know the actual alignment between points in **Y** _l_ and **P** _l_ , for every _l \u2208{_ 1 _,_ 2 _}_ . This can be recovered using an additional optimal transport loss:"
+    },
+    {
+      "index": 58,
+      "text": "where _U_ ( _S, K_ ) is the set of _S \u00d7 K_ transport plans with uniform marginals. The optimal transport plan is computed using an Earth Mover\u2019s Distance and the POT library (Flamary et al., 2021), while being kept fixed during back-propagation and optimization when only the cost matrix is trained."
+    },
+    {
+      "index": 59,
+      "text": "Note that our approach assumes that **y** 1 _k_ corresponds to **y** 2 _k_ , for every _k \u2208{_ 1 _, . . . , K}_ . Intuitively, each attention head _k_ will identify a specific geometric/chemical local surface feature of protein 1 by **y** 1 _k_ , and match its complementary feature of protein 2 by **y** 2 _k_ ."
+    },
+    {
+      "index": 60,
+      "text": "**Avoiding Point Cloud Intersection.** In practice, our model does not enforce a useful inductive bias, namely that proteins forming complexes are never \"intersecting\" with each other. To address this issue, we first state a notion of the \"interior\" of a protein point cloud. Following previous work (Sverrisson et al., 2021; Venkatraman et al., 2009), we define the surface of a protein point cloud **X** _\u2208_ R[3] _[\u00d7][n]_ as _{_ **x** _\u2208_ R[3] : _G_ ( **x** ) = _\u03b3}_ , where _G_ ( **x** ) = _\u2212\u03c3_ ln([\ufffd] _[n] i_ =1[exp(] _[\u2212||]_ **[x]** _[ \u2212]_ **[x]** _[i][||]_[2] _[/\u03c3]_[))][.] The parameters _\u03c3_ and _\u03b3_ are chosen such that there exist no \"holes\" inside a protein (we found _\u03b3_ = 10 _, \u03c3_ = 25 to work well, see Appendix E). As a consequence, the interior of the protein is given by _{_ **x** _\u2208_ R[3] : _G_ ( **x** ) _< \u03b3}_ . Then, the condition for non-intersecting ligand and receptor can be written as _G_ 1( **x** 2 _j_ ) _> \u03b3, \u2200j \u2208_ 1 _, . . . , m_ and _G_ 2( **x** 1 _i_ ) _> \u03b3, \u2200i \u2208_ 1 _, . . . , n_ . As a loss function, this becomes"
+    },
+    {
+      "index": 61,
+      "text": "**Surface Aware Node Features.** Surface contact modeling is important for protein docking. We here design a novel surface feature type that differentiates residues closer to the surface of the protein from those in the interior. Similar to Sverrisson et al. (2021), we prioritize efficiency and avoid pre-computing meshes, but show that our new feature is a good proxy for residue\u2019s depth (i.e. distance to the protein surface). Intuitively, residues in the core of the protein are locally surrounded _in all directions_ by other residues. This is not true for residues on the surface, e.g., neighbors are in a half-space if the surface is locally flat. Building on this intuition, for each node (residue) _i_ in the _k_ -NN protein graph, we compute the norm of the weighted average of its neighbor forces, which can be interpreted as the normalized gradient of the _G_ ( **x** ) surface function. This SE(3)-invariant feature is"
+    },
+    {
+      "index": 62,
+      "text": "Intuitively, as depicted in Fig. 8, residues in the interior of the protein have values close to 0 since they are surrounded by vectors from all directions that cancel out, while residues near the surface have neighbors only in a narrower cone, with aperture depending on the local curvature of the surface. We show in Appendix C that this feature correlates well with more expensive residue depth estimation methods, e.g. based on MSMS, thus offering a computationally appealing alternative. We also compute an estimation of this feature for large dense point clouds based on the local surface angle."
+    },
+    {
+      "index": 63,
+      "text": "## 5 EXPERIMENTS\n\n**Datasets.** We leverage the following datasets: Docking Benchmark 5.5 (DB5.5) (Vreven et al., 2015) and Database of Interacting Protein Structures (DIPS) (Townshend et al., 2019). DB5.5 is a gold standard dataset in terms of data quality, but contains only 253 structures. DIPS is a larger protein complex structures dataset mined from the Protein Data Bank (Berman et al., 2000) and tailored for rigid body docking. Datasets information is given in Appendix D. We filter DIPS to only"
+    },
+    {
+      "index": 64,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\nTable 1: **Complex Prediction Results.** As in the main text, the proprietary baselines might internally use parts of the test sets (e.g. to extract templates or features), thus their numbers might be optimistic."
+    },
+    {
+      "index": 65,
+      "text": "|**Methods**|**DIPS Test Set**\n**DB5.5 Test Set**\nComplex RMSD\nInterface RMSD\nComplex RMSD\nInterface RMSD|\n|---|---|\n||Median Mean\nStd\nMedian Mean\nStd\nMedian Mean\nStd\nMedian Mean\nStd|\n|ATTRACT\nHDOCK\nCLUSPRO\nPATCHDOCK\n**EQUIDOCK**|17.17\n14.93 10.39\n12.41\n14.02 11.81\n9.55\n10.09 9.88\n7.48\n10.69 10.90\n6.23\n10.77 11.39\n3.90\n8.88 10.95\n0.30\n5.34 12.04\n0.24\n4.76 10.83\n15.76\n14.47 10.24\n12.54\n13.62 11.11\n3.38\n8.25\n7.92\n2.31\n8.71\n9.89\n15.24\n13.58 10.30\n11.44\n12.15 10.50\n18.26\n18.00 10.12\n18.88\n18.75 10.06\n13.29\n14.52 7.13\n10.18\n11.92 7.01\n14.13\n14.72 5.31\n11.97\n13.23 4.93|"
+    },
+    {
+      "index": 66,
+      "text": "Figure 4: **a.** Complex-RMSD distributions (DIPS test set); **b.** Interface-RMSD distributions (DIPS test set); **c.** scatter plot for C-RMSD vs I-RMSD (DIPS test set)."
+    },
+    {
+      "index": 67,
+      "text": "keep proteins with at most 10K atoms. Datasets are then randomly partitioned in train/val/test splits of sizes 203/25/25 (DB5.5) and 39,937/974/965 (DIPS). For DIPS, the split is based on protein family to separate similar proteins. For the final evaluation in Table 1, we use the full DB5.5 test set, and randomly sample 100 pairs from different protein families from the DIPS test set."
+    },
+    {
+      "index": 68,
+      "text": "**Baselines.** We compare our EQUIDOCK method with popular state-of-the-art docking software[2] CLUSPRO (PIPER) (Desta et al., 2020; Kozakov et al., 2017),ATTRACT (Schindler et al., 2017; de Vries et al., 2015), PATCHDOCK (Mashiach et al., 2010; SchneidmanDuhovny et al., 2005), and HDOCK (Yan et al., 2020; 2017b;a; Huang and Zou, 2014; 2008). These baselines provide user-friendly local packages suitable for automatic experiments or webservers for manual submissions."
+    },
+    {
+      "index": 69,
+      "text": "**Evaluation Metrics.** To measure prediction\u2019s quality, we Figure 5: Inference running time distrireport Complex Root Mean Square Deviation (CRMSD) butions (log10 scale). and Interface Root Mean Square Deviation (IRMSD), defined below. Given the ground truth and predicted complex structures, **Z** _[\u2217] \u2208_ R[3] _[\u00d7]_[(] _[n]_[+] _[m]_[)] and **Z** _\u2208_ R[3] _[\u00d7]_[(] _[n]_[+] _[m]_[)] , we first superimpose them using the Kabsch algorithm (Kabsch, 1976), and then 1 compute C-RMSD = \ufffd _n_ + _m[\u2225]_ **[Z]** _[\u2217][\u2212]_ **[Z]** _[\u2225] F_[2][.][We compute I-RMSD similarly, but using only the coor-] dinates of the interface residues with distance less than 8\u00c5 to the other protein\u2019s residues. For a fair comparison among baselines, we use only the _\u03b1_ -carbon coordinates to compute both metrics."
+    },
+    {
+      "index": 70,
+      "text": "Figure 5: Inference running time distributions (log10 scale).\n\n**Training Details.** We train our models on the train part of DIPS first, using Adam (Kingma and Ba, 2014) with learning rate 2e-4 and early stopping with patience of 30 epochs. We update the best validation model only when it achieves a score of less than 98% of the previous best validation score, where the score is the median of Ligand RMSD on the full DIPS validation set. The best DIPS validated model is then tested on the DIPS test set. For DB5.5, we fine tune the DIPS pre-trained"
+    },
+    {
+      "index": 71,
+      "text": "> 2ClusPro: https://cluspro.bu.edu/, Attract: www.attract.ph.tum.de/services/ ATTRACT/ATTRACT.vdi.gz, PatchDock: https://bioinfo3d.cs.tau.ac.il/PatchDock/, HDOCK: http://huanglab.phys.hust.edu.cn/software/HDOCK/"
+    },
+    {
+      "index": 72,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nEquiDock PatchDock HDOCK ClusPro Ground Truth\nCRMSD = 7.13 CRMSD = 17.37 CRMSD = 18.00 CRMSD = 18.56 PDB ID: 3DMP\n**----- End of picture text -----**"
+    },
+    {
+      "index": 73,
+      "text": "Figure 6: Visualization of a protein complex successfully predicted by EQUIDOCK. Note that all other methods find the binding interface on the wrong side of the black protein."
+    },
+    {
+      "index": 74,
+      "text": "model on the DB5.5 training set using learning rate 1e-4 and early stopping with 150 epochs patience. The best DB5.5 validated model is finally tested on DB5.5 test set. During training, we randomly assign the roles of ligand and receptor. Also, during both training and testing, we randomly rotate and translate the ligand in space (even though our model is invariant to this operation) for all baselines."
+    },
+    {
+      "index": 75,
+      "text": "**Complex Prediction Results.** Results are shown in Table 1, Fig. 4 and Appendix E. We note that our method is competitive and often outperforms the baselines. However, we do not use heavy candidate sampling and re-ranking, we do not rely on task-specific hand-crafted features, and we currently do not perform structure fine-tuning, aiming to predict the SE(3) ligand transformation in a direct shot. Moreover, we note that some of the baselines might have used part of our test set in validating their models, for example to learn surface templates, thus, their reported scores might be optimistic. Notably, HDOCK score function was validated on DB4 which overlaps with DB5.5. A more appropriate comparison would require us to re-build these baselines without information from our test sets, a task that is currently not possible without open-source implementations."
+    },
+    {
+      "index": 76,
+      "text": "**Computational Efficiency.** We show inference times in Fig. 5 and Table 4. Note that EQUIDOCK is between 80-500 times faster than the baselines. This is especially important for intensive screening applications that aim to scan over vast search spaces, e.g. for drug discovery. In addition, it is also relevant for de novo design of binding proteins (e.g. antibodies (Jin et al., 2021)) or for use cases when protein docking models are just a component of significantly larger end-to-end architectures targeting more involved biological scenarios, e.g., representing a drug\u2019s mechanism of action or modeling cellular processes with a single model as opposed to a multi-pipeline architecture."
+    },
+    {
+      "index": 77,
+      "text": "**Visualization.** We show in Fig. 6 a successful example of a test DIPS protein pair for which our model significantly outperforms all baselines."
+    },
+    {
+      "index": 78,
+      "text": "## 6 CONCLUSION\n\nWe have presented an extremely fast, end-to-end rigid protein docking approach that does not rely on candidate sampling, templates, task-specific features or pre-computed meshes. Our method smartly incorporates useful rigid protein docking priors including commutativity and pairwise independent SE(3)-equivariances, thus avoiding the computational burden of data augmentation."
+    },
+    {
+      "index": 79,
+      "text": "We look forward to incorporating more domain knowledge in EQUIDOCK and extend it for flexible docking and docking molecular dynamics, as well as adapt it to other related tasks such as drug binding prediction. On the long term, we envision that fast and accurate deep learning models would allow us to tackle more complex and involved biological scenarios, for example to model the mechanism of action of various drugs or to design de novo binding proteins and drugs to specific targets (e.g. for antibody generation). Last, we hope that our architecture can inspire the design of other types of biological 3D interactions."
+    },
+    {
+      "index": 80,
+      "text": "**Limitations.** First, our presented model does not incorporate protein flexibility which is necessary for various protein families, e.g., antibodies. Unfortunately, both DB5 and DIPS datasets are biased towards rigid body docking . Second, we only prevent steric clashes using a soft constraint (Eq. (15)) which has limitations (see Table 6). Future extensions would hard-constrain the model to prevent such artifacts."
+    },
+    {
+      "index": 81,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n## ACKNOWLEDGEMENTS\n\nThe authors thank Hannes St\u00e4rk, Gabriele Corso, Patrick Walters, Tian Xie, Xiang Fu, Jacob Stern, Jason Yim, Lewis Martin, Jeremy Wohlwend, Jiaxiang Wu, Wei Liu, and Ding Xue for insightful and helpful discussions. OEG is funded by the Machine Learning for Pharmaceutical Discovery and Synthesis (MLPDS) consortium, the Abdul Latif Jameel Clinic for Machine Learning in Health, the DTRA Discovery of Medical Countermeasures Against New and Emerging (DOMANE) threats program, and the DARPA Accelerated Molecular Discovery program. This publication was created as part of NCCR Catalysis (grant number 180544), a National Centres of Competence in Research funded by the Swiss National Science Foundation. RB and TJ also acknowledge support from NSF Expeditions grant (award 1918839): Collaborative Research: Understanding the World Through Code."
+    },
+    {
+      "index": 82,
+      "text": "## REFERENCES\n\n- B. Adhikari and J. Cheng. Confold2: Improved contact-driven ab initio protein structure modeling. _BMC bioinformatics_ , 19(1):1\u20135, 2018. 3"
+    },
+    {
+      "index": 83,
+      "text": "- M. Baek, F. DiMaio, I. Anishchenko, J. Dauparas, S. Ovchinnikov, G. R. Lee, J. Wang, Q. Cong, L. N. Kinch, R. D. Schaeffer, et al. Accurate prediction of protein structures and interactions using a three-track neural network. _Science_ , 373(6557):871\u2013876, 2021. 1, 3"
+    },
+    {
+      "index": 84,
+      "text": "- J. Bao, X. He, and J. Z. Zhang. Deepbsp\u2014a machine learning method for accurate prediction of protein\u2013ligand docking structures. _Journal of Chemical Information and Modeling_ , 2021. 3"
+    },
+    {
+      "index": 85,
+      "text": "- S. Basu and B. Wallner. Dockq: a quality measure for protein-protein docking models. _PloS one_ , 11 (8):e0161879, 2016. 3"
+    },
+    {
+      "index": 86,
+      "text": "- H. M. Berman, J. Westbrook, Z. Feng, G. Gilliland, T. N. Bhat, H. Weissig, I. N. Shindyalov, and P. E. Bourne. The protein data bank. _Nucleic acids research_ , 28(1):235\u2013242, 2000. 7"
+    },
+    {
+      "index": 87,
+      "text": "- J. Biesiada, A. Porollo, P. Velayutham, M. Kouril, and J. Meller. Survey of public domain software for docking simulations and virtual screening. _Human genomics_ , 5(5):1\u20139, 2011. 3"
+    },
+    {
+      "index": 88,
+      "text": "- J. Bruna, W. Zaremba, A. Szlam, and Y. LeCun. Spectral networks and locally connected networks on graphs. _arXiv preprint arXiv:1312.6203_ , 2013. 2"
+    },
+    {
+      "index": 89,
+      "text": "- P. Bryant, G. Pozzati, and A. Elofsson. Improved prediction of protein-protein interactions using alphafold2 and extended multiple-sequence alignments. _bioRxiv_ , 2021. 3"
+    },
+    {
+      "index": 90,
+      "text": "- R. Chen, L. Li, and Z. Weng. Zdock: an initial-stage protein-docking algorithm. _Proteins: Structure, Function, and Bioinformatics_ , 52(1):80\u201387, 2003. 1, 3"
+    },
+    {
+      "index": 91,
+      "text": "- C. Christoffer, S. Chen, V. Bharadwaj, T. Aderinwale, V. Kumar, M. Hormati, and D. Kihara. Lzerd webserver for pairwise and multiple protein\u2013protein docking. _Nucleic Acids Research_ , 2021. 3"
+    },
+    {
+      "index": 92,
+      "text": "- T. Cohen and M. Welling. Group equivariant convolutional networks. In _International conference on machine learning_ , pages 2990\u20132999. PMLR, 2016a. 2"
+    },
+    {
+      "index": 93,
+      "text": "- T. S. Cohen and M. Welling. Steerable cnns. _arXiv preprint arXiv:1612.08498_ , 2016b. 2\n\n- B. Dai and C. Bailey-Kellogg. Protein interaction interface region prediction by geometric deep learning. _Bioinformatics_ , 2021. 3"
+    },
+    {
+      "index": 94,
+      "text": "- S. J. De Vries, M. Van Dijk, and A. M. Bonvin. The haddock web server for data-driven biomolecular docking. _Nature protocols_ , 5(5):883\u2013897, 2010. 1, 3"
+    },
+    {
+      "index": 95,
+      "text": "- S. J. de Vries, C. E. Schindler, I. C. de Beauch\u00eane, and M. Zacharias. A web interface for easy flexible protein-protein docking with attract. _Biophysical journal_ , 108(3):462\u2013465, 2015. 8"
+    },
+    {
+      "index": 96,
+      "text": "- M. Defferrard, X. Bresson, and P. Vandergheynst. Convolutional neural networks on graphs with fast localized spectral filtering. _arXiv preprint arXiv:1606.09375_ , 2016. 2\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "EquiDock introduces a novel SE(3)-equivariant graph matching framework for rigid protein-protein docking, utilizing optimal transport and a differentiable Kabsch algorithm to bypass traditional sampling-based pipelines. While the approach is theoretically elegant and computationally efficient, the current evaluation lacks depth regarding the model's sensitivity to structural noise and its performance on truly novel, non-homologous protein complexes.\n\nThe paper provides a strong theoretical contribution by enforcing pairwise independent SE(3)-equivariance, which is a significant step forward for geometric deep learning in molecular biology. The speed gains over traditional methods are impressive, though the performance gap on standard benchmarks suggests that the current architecture may struggle with the high-precision requirements of real-world docking.\n\nOverview issues:\n\n- Sensitivity to Binding Pocket Identification: The model relies on an optimal transport (OT) mechanism to align predicted keypoints with binding pocket residues. However, Section 4 (Optimal Transport and Binding Pocket Keypoint Alignment) assumes that the OT plan is fixed during backpropagation, which may lead to suboptimal keypoint placement if the initial graph embeddings do not capture the binding interface accurately. If the network fails to identify the correct pocket, the subsequent Kabsch alignment will be inherently biased. The authors should provide an ablation study that evaluates the model's accuracy when the binding pocket definition is noisy or incomplete, as is often the case in real-world unbound structures.\n\n- Lack of Steric Clash Analysis: While the authors introduce a loss term (Eq. 15) to discourage point cloud intersections, the paper does not quantify the frequency or severity of steric clashes in the final predicted poses. Given that rigid docking is highly sensitive to atomic overlaps, a model that produces physically impossible structures is of limited utility. The paper should include a diagnostic metric reporting the percentage of output complexes that exhibit significant steric clashes, and compare this against the baseline methods to determine if the soft constraint is sufficient for biological relevance.\n\n- Generalization to Novel Folds: The evaluation relies on the DIPS and DB5.5 datasets, which are heavily populated by well-characterized protein families. Section 5 mentions that the DIPS split is based on protein family, but it remains unclear how well the model generalizes to entirely novel folds or complexes that lack structural homologs in the training set. To demonstrate the true utility of the model, the authors should perform a cross-fold validation or test the model on a set of proteins with low sequence identity to the training data, ensuring the results are not simply memorizing known interface patterns.\n\n- Inference of Confidence Estimates: Unlike recent diffusion-based docking models, EquiDock provides a deterministic output without an associated confidence score. In practical drug design, knowing the reliability of a docking pose is as important as the pose itself. The authors should consider adding a module to estimate the model's uncertainty, perhaps by leveraging the variance in the attention-based keypoint selection or by incorporating a secondary scoring function that evaluates the final predicted complex.\n\n- Demonstration of failure cases for the soft clash constraint: The paper acknowledges that the soft constraint in Eq. (15) is a limitation, but it provides no analysis of the resulting physical validity of the predicted poses. To demonstrate that the result has bite, the authors should compute the percentage of docked complexes that violate standard van der Waals radii thresholds (e.g., using a tool like ProCheck or MolProbity) for a subset of the test set. Providing a specific example of a complex where the model fails to resolve steric clashes would clarify the boundary of the model's utility for structural biology applications.\n\n- Comparison against a baseline without geometric inductive biases: The paper emphasizes the necessity of SE(3)-equivariance, yet it does not perform an ablation study comparing the proposed IEGMN against a standard GNN architecture (e.g., a standard message-passing network without coordinate updates or equivariant layers). To justify the complexity of the proposed architecture, the authors must show that the geometric inductive bias is actually driving the performance gains rather than simply the capacity of the model. A direct comparison of RMSD metrics on the DB5.5 test set between EQUIDOCK and a non-equivariant baseline would provide the necessary evidence for the contribution of the SE(3)-equivariant design.\n\n- Analysis of keypoint alignment under realistic noise: The reliance on an optimal transport (OT) mechanism to align keypoints with binding pockets is a core component, yet its performance under realistic noise is not characterized. The authors should perform a sensitivity analysis by adding Gaussian noise to the input unbound coordinates and observing the degradation in keypoint alignment accuracy. This would demonstrate whether the OT mechanism is robust enough for practical use, where unbound structures often exhibit minor coordinate errors or deviations from the ideal rigid-body assumption.\n\nRecommendation: minor revision. The core methodology is sound and theoretically well-grounded, but the paper needs to address the physical validity of the predicted poses and provide more rigorous evidence regarding generalization to novel protein structures. These additions will solidify the paper's claims and demonstrate its readiness for practical application.\n\nRevision targets:\n\n- Include a quantitative analysis of steric clashes in the predicted complexes to assess the effectiveness of the current soft constraint.\n\n- Perform a more rigorous evaluation of generalization by testing on a subset of complexes with low sequence identity (e.g., <30%) to the training set.\n\n- Add an ablation study on the sensitivity of the optimal transport mechanism to noisy binding pocket definitions.\n\n- Provide a discussion or preliminary experiment on how to derive a confidence metric for the predicted docking poses.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency regarding the role of the ligand and receptor",
+          "quote": "Our method is based on the principle that the exact same complex structure should be predicted irrespectively of the initial 3D placements and roles of both constituents (see Fig. 2).",
+          "explanation": "The paper asserts that the output is independent of the roles of the constituents, yet the mathematical setup and Proposition 2 explicitly distinguish between a fixed receptor and a transformed ligand. If the roles are truly interchangeable, the model would require symmetry with respect to the input order. Please clarify that the model is equivariant to the input order rather than invariant to the roles of the constituents, as the current phrasing is misleading.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Missing reference for steric clash analysis",
+          "quote": "Second, we only prevent steric clashes using a soft constraint (Eq. (15)) which has limitations (see Table 6).",
+          "explanation": "The conclusion references a Table 6 to illustrate the limitations of the soft constraint, but this table is absent from the document. Please remove the reference to Table 6 or include the corresponding data.",
+          "comment_type": "technical",
+          "paragraph_index": 80,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in non-intersection loss boundary condition",
+          "quote": "Then, the condition for non-intersecting ligand and receptor can be written as $G_{1}(\\mathbf{x}_{2j})>\\gamma,\\forall j\\in 1,\\ldots,m$ and $G_{2}(\\mathbf{x}_{1i})>\\gamma,\\forall i\\in 1",
+          "explanation": "Defining the surface as G(x) = gamma creates an ambiguity where points on the surface satisfy neither the interior nor the exterior condition. While this is a minor issue in practice, the mathematical definition of 'non-intersecting' is technically inconsistent with the loss function's behavior at the boundary. Please clarify the definition of the interior as {x : G(x) <= gamma} or adjust the loss to strictly enforce the boundary.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.0908,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces EQUIDOCK, a pairwise-independent SE(3)-equivariant graph matching network for rigid protein docking. It combines attention-based keypoint extraction, optimal transport for pocket alignment, and a differentiable Kabsch algorithm to predict docking poses. The theoretical derivation of SE(3) constraints is clear, and the method offers significant speedups over traditional sampling-based baselines. However, the empirical results show a notable gap between the claimed performance and the actual metrics reported, and several architectural and evaluation aspects require further clarification and validation.\n\nThe paper tackles a well-defined problem in structural biology with a geometrically principled approach. The derivation of SE(3)-invariance and commutativity constraints is mathematically sound and provides a strong theoretical foundation. The focus on speed and direct pose prediction is valuable for high-throughput screening. Nevertheless, the manuscript would benefit from reconciling the performance claims with the reported results, clarifying the differentiability of the optimal transport module, and providing deeper ablation and scalability analyses.\n\nOverview issues:\n\n- Discrepancy between performance claims and empirical results: The abstract and introduction state that the method often outperforms existing docking software, yet Table 1 shows that EQUIDOCK achieves higher median and mean Complex RMSD and Interface RMSD than HDOCK on both the DB5.5 and DIPS test sets. For example, on DB5.5, HDOCK reports a median CRMSD of 0.30 \u00c5, while EQUIDOCK reports 14.13 \u00c5. This contradiction undermines confidence in the method's accuracy claims. The authors should revise the manuscript to accurately reflect the empirical findings, perhaps emphasizing the speed-accuracy trade-off or identifying specific protein classes where EQUIDOCK excels. Additionally, statistical significance testing across the test sets would clarify whether the differences are consistent.\n\n- Broken end-to-end differentiability in the Optimal Transport layer: The title and abstract emphasize an end-to-end differentiable architecture, but Section 4 explicitly states that the optimal transport plan is kept fixed during back-propagation and optimization when only the cost matrix is trained. This design choice interrupts gradient flow through the OT module, meaning the model does not truly optimize the transport plan jointly with the keypoint predictions. This limitation also prevents the keypoint predictions from learning directly from the final docking pose error via the transport plan. To maintain the end-to-end claim, the authors should either implement a fully differentiable OT layer using backpropagation through Sinkhorn iterations or adjust the framing to describe the OT loss as a decoupled auxiliary objective.\n\n- Absence of ablation studies for core components: The proposed pipeline integrates several novel components: the IEGMN architecture, attention-based keypoint selection, the OT-based pocket alignment loss, and the differentiable Kabsch superimposition. The paper does not include ablation studies to isolate the contribution of each module. Without this analysis, it is difficult to determine whether the performance gains or speed improvements stem from the equivariant message passing, the keypoint mechanism, or the alignment losses. The authors should add a systematic ablation table removing or replacing each component to quantify its impact on RMSD metrics and training stability.\n\n- Unaddressed computational scaling with protein size: The cross-message passing equations in Eq. (6) and (8) compute interactions between all residues of the two input proteins, resulting in O(N\u00d7M) complexity. While the authors mention filtering the DIPS dataset to proteins with at most 10,000 atoms, they do not provide scaling laws, memory profiling, or runtime analysis for larger complexes. This omission limits the practical assessment of the method for large macromolecular assemblies or multi-domain proteins. Including a scaling analysis and discussing memory bottlenecks would help readers understand the method's limits and potential for optimization.\n\n- Numerical stability concerns in the differentiable Kabsch algorithm: The rotation matrix is computed via singular value decomposition in Eq. (13). SVD gradients are known to be ill-conditioned or vanish when singular values are close, which frequently occurs at symmetric or degenerate protein interfaces. The paper cites prior work on SVD gradients but does not discuss how numerical stability is maintained during training or how singular value degeneracy affects convergence. Adding a discussion on gradient clipping, regularization of the covariance matrix, or empirical monitoring of gradient norms would strengthen the implementation details.\n\n- Lack of robustness evaluation under realistic structural noise: The method relies on predicting keypoints that align with binding pocket midpoints derived from the bound state. Real-world docking often involves coordinate noise, missing residues, or low-resolution cryo-EM maps. The paper does not evaluate how EQUIDOCK performs under these conditions, nor does it discuss the robustness of the keypoint extraction mechanism to structural perturbations. Conducting a robustness analysis by injecting Gaussian noise into input coordinates or testing on low-resolution structures would better demonstrate the model's practical applicability.\n\n- Worked special case for theoretical equivariance constraints: The paper derives Propositions 1-3 to guarantee SE(3) equivariance and commutativity, but leaves the verification to abstract matrix algebra. Readers cannot easily see how these constraints restrict the model's behavior on a concrete input. The authors should compute the predicted transformation for a simple synthetic protein pair, such as two small point clouds with a known ground-truth alignment, and walk through how the IEGMN layers propagate the SE(3) transformations step-by-step. This would ground the theoretical claims and help practitioners implement the constraints correctly.\n\n- Scaling analysis of the keypoint count hyperparameter: The architecture relies on extracting K keypoints per protein to approximate binding pockets, yet the manuscript never specifies how K is chosen or how it scales with protein size. Since the optimal transport cost matrix scales as S \u00d7 K and the attention mechanism computes scores over all residues, the choice of K directly impacts both memory usage and alignment accuracy. The authors need to report the exact value of K used in experiments, provide a sensitivity analysis across different K values, and discuss whether K should scale with the number of residues or remain fixed.\n\n- Evaluation on symmetric interfaces and homodimers: The optimal transport loss and attention-based keypoint selection assume a one-to-one correspondence between keypoints on the two proteins. This assumption breaks down for symmetric binding interfaces or homodimers, where multiple equivalent alignments exist and the transport plan can collapse to degenerate solutions. The paper does not report performance on homodimers or complexes with rotational symmetry, which are common in docking benchmarks. Adding a dedicated evaluation subset for symmetric complexes would reveal whether the model handles degenerate optima or requires symmetry-breaking modifications.\n\nRecommendation: Major revision. The theoretical framework is solid and the speed advantage is promising, but the manuscript contains a direct contradiction between its performance claims and the reported results. Furthermore, the architectural description conflicts with the training procedure regarding end-to-end differentiability, and critical analyses such as ablation studies, scaling laws, and robustness checks are missing. Addressing these issues is necessary before the paper can be considered for publication.\n\nRevision targets:\n\n- Correct the performance claims in the abstract and introduction to align with Table 1, and add statistical significance testing to compare EQUIDOCK against baselines.\n\n- Clarify or modify the optimal transport implementation to either support full end-to-end backpropagation or explicitly reframe the OT loss as a decoupled auxiliary objective.\n\n- Include a comprehensive ablation study quantifying the contribution of the IEGMN, keypoint selection, OT alignment, and non-intersection loss components.\n\n- Provide a computational scaling analysis (runtime and memory vs. protein size) and discuss how the O(N\u00d7M) cross-attention scales for larger complexes.\n\n- Add a robustness evaluation testing the model's sensitivity to coordinate noise, missing residues, or low-resolution input structures.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Performance claim contradicts empirical results",
+          "quote": "Empirically, we achieve significant running time improvements and often outperform existing docking software despite not relying on heavy candidate sampling, structure refinement, or templates.",
+          "explanation": "Table 1 directly contradicts this assertion. On the DIPS test set, EQUIDOCK reports higher (worse) median and mean Complex RMSD and Interface RMSD than HDOCK, CLUSPRO, and ATTRACT. On the DB5.5 test set, it only outperforms PATCHDOCK on Complex RMSD but remains worse than HDOCK, CLUSPRO, and ATTRACT across all metrics. The blanket claim of outperforming existing software is misleading. The authors should revise the manuscript to accurately reflect the empirical findings, perhaps emphasizing the speed-accuracy trade-off or identifying specific protein classes where EQUIDOCK excels.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Training efficiency claim lacks formal or empirical support",
+          "quote": "Our method smartly incorporates useful rigid protein docking priors including commutativity and pairwise independent SE(3)-equivariances, thus avoiding the computational burden of data augmentation.",
+          "explanation": "The formal results in Section 3 derive necessary and sufficient conditions for SE(3)-invariance and commutativity. These propositions guarantee geometric consistency of the output structure. They do not, however, analyze training dynamics, sample complexity, or computational cost. The claim that these priors 'avoid the computational burden of data augmentation' is an empirical assertion about training efficiency, not a mathematical consequence of the symmetry constraints. The authors should rephrase this to state that the constraints theoretically permit training without explicit symmetry augmentation, and provide empirical evidence if they wish to claim efficiency gains.",
+          "comment_type": "technical",
+          "paragraph_index": 78,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Missing pose extraction step in equivariance claim",
+          "quote": "It is then straightforward to prove the following (see Appendix B.3):\n\n###### Proposition 4.\n\nIEGMNs satisfy the pairwise independent SE(3)-equivariance property in Eq. (4).",
+          "explanation": "The section defines $\u03a6$ as the IEGMN that updates node coordinates and features, but the abstract and Proposition 4 claim that the model predicts the docking pose with SE(3)-equivariance. The post-processing step that converts the updated node coordinates $\u019a_1, \u019a_2$ into a relative rigid-body transformation (via optimal transport and Kabsch alignment) is not described in this section. Without this step, the claim that $\u03a6$ satisfies Eq. (4) for pose prediction is incomplete. The authors should append a concise description of the pose extraction step that maps the GNN output to the final SE(3) transformation, thereby linking the architecture to the equivariance guarantee.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Mischaracterization of prior docking software sampling strategies",
+          "quote": "These methods largely follow the steps: i.) randomly sample a large number (e.g., millions) of candidate initial complex structures, ii.) employ a scoring function to rank the candidates, iii.) adjust and refine the top complex structures based on an energy model (e.g., force field).",
+          "explanation": "The description of popular docking software as primarily relying on 'randomly sample a large number' of candidates is inaccurate for modern state-of-the-art methods. Tools like ZDOCK, ClusPro, and HADDOCK predominantly use deterministic grid-based FFT sampling or systematic search, not random sampling. This mischaracterization weakens the paper's motivation, as the computational advantage of deep learning in docking stems from bypassing exhaustive grid searches, not merely replacing random sampling with a neural network. The authors should revise this passage to accurately reflect the deterministic or systematic sampling strategies used in current docking software.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "DTI section conflates sequence-based and structure-based predictors",
+          "quote": " *(Wallach et al., 2015; Li et al., 2021)* predict binding affinity from protein-ligand co-crystal structures, but such data is expensive to obtain experimentally. These models are typically based on heavy candidate sampling and ranking *(Trott and",
+          "explanation": "The citation of Wallach et al. (2015) as a method that predicts affinity from co-crystal structures is inaccurate. That work introduces a sequence-based affinity predictor that operates on amino acid sequences rather than 3D coordinates. Grouping it with structure-based docking software like AutoDock Vina conflates fundamentally different computational paradigms. The related work should clearly separate sequence-based DTI predictors from structure-based docking methods. This distinction is important because it highlights why the proposed rigid docking approach, which takes 3D structures as input, addresses a different problem space than many prior DTI models.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "AlphaFold and RoseTTAFold mischaracterized as E(3)-NNs",
+          "quote": "imization. AlphaFold 2 *(Jumper et al., 2021)* and Rosetta Fold *(Baek et al., 2021)* are state-of-the-art approaches, and directly predict protein structures from co-evolution information embedded in homologous sequences, using geometric deep learning and E(3)-NNs.\n\nProtein-Protein Docking and Interaction. Ex",
+          "explanation": "Describing AlphaFold 2 and RoseTTAFold as relying on E(3)-NNs is technically imprecise. While both models incorporate geometric constraints and SE(3) frames within their structure modules, their core architectures are built on attention mechanisms and distogram/angle prediction rather than the message-passing equivariant graph neural networks discussed in the preceding paragraphs. This conflation obscures the architectural distinction between attention-based folding models and the equivariant GNNs that form the basis of the proposed method. Clarifying that these models use geometric constraints within attention frameworks would provide a more accurate positioning of the literature.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Imprecise description of local frame construction",
+          "quote": "Each residue has a general structure with a side-chain specifying its type, allowing us to define a local frame and derive SE(3)-invariant features for any pair of residues \u2014see Appendix A.",
+          "explanation": "The phrasing implies that the residue type (via the side-chain) is sufficient to define a local frame in 3D space. Geometrically, a local frame requires coordinate data, typically constructed from the positions of backbone atoms or specific side-chain atoms. The residue type only provides a categorical label or chemical prior, not the spatial orientation. Additionally, since nodes are defined solely by C\u03b1 coordinates, the text should clarify how the local frame is computed from these reduced coordinates. The authors should explicitly state that the local frame is derived from atomic coordinates as detailed in Appendix A, rather than from the residue type.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Typo in cross-graph attention coefficient index",
+          "quote": "\\bm{\\mu}_{j\\rightarrow i}$ $=a_{j\\rightarrow l}\\mathbf{W}\\mathbf{h}_{j}^{(l)},\\forall i\\in\\mathcal{V}_{1},j\\in\\mathcal{V}_{2}\\text{ or }i\\in\\mathcal{V}_{2},j\\in\\mathcal{V}_{1}$ (6)",
+          "explanation": "The subscript in the attention coefficient is written as $a_{j\\rightarrow l}$, which incorrectly uses the layer index $l$ instead of the target node index $i$. This breaks the logical consistency of the cross-graph attention mechanism and contradicts the definition provided in Eq. (11). The authors should correct $a_{j\\rightarrow l}$ to $a_{j\\rightarrow i}$ to align the attention weight with the receiving node $i$.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Unspecified summation domain in attention normalization",
+          "quote": "$a_{j\\rightarrow i}=\\frac{\\text{exp}(\\langle\\psi^{q}(\\mathbf{h}^{(l)}_{i}),\\psi^{k}(\\mathbf{h}^{(l)}_{j})\\rangle)}{\\sum_{j^{\\prime}}\\text{exp}(\\langle\\psi^{q}(\\mathbf{h}^{(l)}_{i}),\\psi^{k}(\\mathbf{h}^{(l)}_{j^{\\prime}})\\rangle)},$ (11)",
+          "explanation": "The denominator sums over $j'$ without specifying the index set. Since the attention weights are computed for cross-graph pairs, the normalization must be restricted to the corresponding target graph's nodes. Without this domain specification, the softmax normalization is mathematically undefined. The authors should add the explicit summation range (e.g., $\\sum_{j^{\\prime}\\in\\mathcal{V}_{2}}$ when $i\\in\\mathcal{V}_{1}$) to the denominator.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Global mean reduces attention to local-global interaction",
+          "quote": "$\\alpha_{i}^{k}=softmax_{i}(\\frac{1}{\\sqrt{d}}\\mathbf{h}_{1i}^{\\top}\\mathbf{W}_{k}^{\\prime}\\mu(\\varphi(\\mathbf{H}_{2})))$ are attention scores",
+          "explanation": "The attention score for query $\\mathbf{h}_{1i}$ depends on $\\mu(\\varphi(\\mathbf{H}_{2}))$, which is a single mean vector aggregated over all $m$ points of protein 2. This means the attention mechanism does not compute pairwise interactions between individual points of protein 1 and protein 2; instead, it computes a global-local interaction where every query attends to the same aggregate feature of protein 2. This significantly reduces the model's capacity to capture specific local binding interactions compared to standard pairwise attention. The authors should explicitly state this design choice and discuss the trade-off between computational complexity and interaction modeling.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Superimposition claim overstates alignment guarantee",
+          "quote": "If this would holds perfectly, then the superimposition of $\\mathbf{Y}_{1}$ and $\\mathbf{Y}_{2}$ would give the corresponding ground truth superimposition of $\\mathbf{X}_{1}$ and $\\mathbf{X}_{2}$.",
+          "explanation": "The claim assumes that aligning the keypoints via the Kabsch algorithm yields the exact ground truth transformation for the full proteins. However, the Kabsch algorithm only minimizes the RMSD for the provided keypoints. Even if the keypoints are representative of the binding pocket, aligning a subset does not guarantee optimal alignment of the entire protein structure, particularly if the pocket is small or asymmetric relative to the protein's center of mass. The authors should temper this claim to state that Kabsch alignment of the keypoints yields the optimal rigid transformation for the pocket, which serves as an approximation for the full protein superimposition.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        }
+      ],
+      "cost_usd": 0.3147,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents EquiDock, a novel deep learning method for rigid protein-protein docking that enforces SE(3)-equivariance and commutativity through a carefully designed graph matching network. The theoretical framework for pairwise-independent equivariance is a genuine contribution, and the empirical speedups over classical methods are impressive. However, the paper has several significant weaknesses that limit its impact: the empirical results on standard benchmarks are not clearly superior to existing methods, the evaluation metrics and baselines have important limitations, and several key methodological choices lack adequate justification or ablation.\n\nOverview issues:\n\n- Empirical performance is not convincingly state-of-the-art: Table 1 shows that EquiDock's median C-RMSD on DIPS is 13.29 \u00c5, which is worse than HDOCK's 6.23 \u00c5 and only marginally better than ATTRACT and CLUSPRO. On DB5.5, EquiDock's median C-RMSD of 14.13 \u00c5 is substantially worse than HDOCK (0.30 \u00c5) and CLUSPRO (3.38 \u00c5). The paper claims to 'often outperform existing docking software,' but the data show the opposite for the most important metrics. The authors note that baselines may have seen test data, but this is speculative and does not constitute evidence. A fair comparison would require retraining baselines on the same splits or using only methods with known training/test separation. The paper would benefit from a more honest assessment of where EquiDock excels (e.g., speed) and where it falls short (accuracy), and from reporting additional metrics like DockQ and success rates at standard thresholds (e.g., CAPRI criteria).\n\n- No ablation study isolating key architectural components: The paper introduces several novel components: the IEGMN architecture, the keypoint attention mechanism, the optimal transport loss, the differentiable Kabsch, and the non-intersection loss. Yet there is no ablation study showing the contribution of each component to overall performance. For instance, how much does the OT loss improve keypoint alignment versus a simpler MSE loss on keypoints? How does performance degrade if the non-intersection loss is removed? Without such ablations, it is impossible to know which design choices are essential and which are superfluous. The paper would be substantially strengthened by a table showing performance after removing or simplifying each component, ideally on both DIPS and DB5.5.\n\n- The optimal transport loss formulation has a conceptual mismatch: Equation (14) defines the OT loss with a cost matrix C_{s,k} = ||y_{1k} - p_{1s}||^2 + ||y_{2k} - p_{2s}||^2. This cost encourages y_{1k} to be close to p_{1s} and y_{2k} to be close to p_{2s} simultaneously for the same assignment between keypoints and binding pocket points. However, the binding pocket points p_{1s} and p_{2s} are midpoints of interacting residue pairs and are defined to be identical in the bound state (p*_{1s} = p*_{2s}). In the unbound state, they are transformed separately with their respective proteins, so they are not generally the same point. The cost function does not enforce that y_{1k} and y_{2k} correspond to each other (i.e., that they are the same physical point after docking), which is the intended behavior. A more natural formulation would be to minimize ||R y_{1k} + t - y_{2k}||^2 or to use a cost that directly encourages the keypoints to be aligned after the predicted transformation.\n\n- The non-intersection loss is heuristic and may not be effective: The non-intersection loss in Equation (15) uses a Gaussian-based surface function G(x) with fixed parameters sigma=25 and gamma=10. The paper does not provide any analysis of how well this function approximates the true protein surface, nor does it show the impact of the loss on actual steric clashes. Table 6 (referenced but not shown in the provided text) apparently shows limitations, but the paper does not discuss what fraction of predictions have steric clashes or how the loss affects RMSD. Moreover, the loss is a soft penalty, so it may not prevent intersections when the model is confident about an incorrect pose. The paper should report the fraction of predictions with steric clashes and show that the loss reduces this fraction without harming accuracy.\n\n- Evaluation on DB5.5 uses a very small test set and fine-tuning procedure is unclear: The DB5.5 test set has only 25 complexes, which is too small to draw reliable conclusions about performance. The paper reports that the DIPS pre-trained model is fine-tuned on DB5.5 training set (203 complexes), but does not specify how hyperparameters are chosen or whether the fine-tuning leads to overfitting. Given that DB5.5 is the gold standard benchmark, the paper should either use a cross-validation approach or report confidence intervals on the metrics. Additionally, the random sampling of 100 DIPS test pairs from different families is not justified; the paper should report metrics on the full DIPS test set (965 pairs) to ensure representativeness.\n\n- The commutativity property is not empirically verified: Proposition 3 derives necessary and sufficient conditions for commutativity (swapping ligand and receptor yields the same complex). The model is designed to satisfy this property by construction, but the paper does not empirically verify it. A simple experiment would be to swap the roles of ligand and receptor for a set of test complexes and measure the RMSD between the two predicted complexes. If the property holds exactly (up to numerical precision), this would be a strong validation of the theoretical claims. If it does not hold due to numerical issues in the Kabsch algorithm or asymmetry in the IEGMN, this should be reported and discussed.\n\n- No comparison with deep learning baselines for rigid docking: The paper compares only with classical docking software (ATTRACT, HDOCK, CLUSPRO, PATCHDOCK) and does not compare with other deep learning methods for rigid docking, such as DiffDock-PP or methods based on equivariant diffusion. While some of these may be concurrent or later work, the paper should at least discuss how EquiDock's approach differs from and potentially improves upon other deep learning docking methods. The literature context mentions DiffDock-PP as a direct competitor achieving state-of-the-art on DIPS with median C-RMSD of 4.85 \u00c5, which is substantially better than EquiDock's 13.29 \u00c5. Even if this work appeared after EquiDock, the paper should acknowledge this gap and discuss why the equivariant approach might still be valuable (e.g., speed, theoretical guarantees).\n\n- No empirical verification of SE(3)-invariance property: The paper claims a mathematical guarantee that the predicted complex is identical regardless of initial positions and orientations. However, it never numerically tests this property. A standard practice in this field is to apply random rotations and translations to the input proteins and measure the RMSD between the resulting predictions. The paper should include a table or figure showing that EquiDock's predictions are invariant up to numerical precision (e.g., RMSD < 1e-5 \u00c5) under random SE(3) transformations of the ligand, and also under simultaneous transformations of both proteins. This would validate that the theoretical guarantee holds in practice and that the differentiable Kabsch and IEGMN layers are numerically stable.\n\n- Missing comparison with deep learning docking methods: The paper compares only with classical docking software (ATTRACT, HDOCK, CLUSPRO, PATCHDOCK) and does not compare with other deep learning methods for rigid docking, such as DiffDock-PP or methods based on equivariant diffusion. The literature context mentions DiffDock-PP as a direct competitor achieving state-of-the-art on DIPS with median C-RMSD of 4.85 \u00c5, substantially better than EquiDock's 13.29 \u00c5. Even if this work appeared after EquiDock, the paper should acknowledge this gap and discuss why the equivariant approach might still be valuable (e.g., speed, theoretical guarantees). Adding a comparison with at least one deep learning baseline on the same test sets would help position the contribution.\n\n- No worked example or special case computation: The paper derives theoretical constraints (Propositions 1-4) but never computes its main quantities for a concrete, fully-specified model. A natural special case would be to take two proteins with known bound structures, apply a known rotation and translation to the ligand, and verify that EquiDock recovers the correct transformation exactly (or with small error) under ideal conditions. Alternatively, the paper could compute the keypoint alignment and Kabsch output for a simple toy example (e.g., two point clouds with known correspondence). Such a worked example would help readers calibrate intuitions about how the model components interact and whether the theoretical guarantees translate to practical behavior.\n\n- Missing analysis of computational complexity scaling: The paper claims significant speed improvements (80-500x) over baselines but does not analyze how inference time scales with protein size (number of residues). The IEGMN uses k-NN graphs and cross-attention, which could become expensive for large complexes (e.g., >10,000 residues). The paper should report inference time as a function of protein size, or at least discuss the asymptotic complexity of each component (k-NN construction, message passing, optimal transport, SVD). Without this, readers cannot assess whether the speed advantage holds for the full range of protein sizes encountered in practice.\n\nRecommendation: major revision. The paper introduces a novel theoretical framework for SE(3)-equivariant docking and demonstrates impressive speedups, but the empirical results do not convincingly show state-of-the-art accuracy, and several key design choices lack ablation or validation. The paper would need substantial additional experiments (ablations, commutativity verification, comparison with deep learning baselines, analysis of steric clashes) and a more honest assessment of limitations before it meets the standards of a top venue.\n\nRevision targets:\n\n- Add a comprehensive ablation study that isolates the contribution of each architectural component (IEGMN, keypoint attention, OT loss, differentiable Kabsch, non-intersection loss) on both DIPS and DB5.5, reporting C-RMSD, I-RMSD, and DockQ.\n\n- Empirically verify the commutativity property by swapping ligand/receptor roles on a test set and reporting the RMSD between the two predicted complexes.\n\n- Report the fraction of predictions with steric clashes and show that the non-intersection loss reduces this fraction without degrading accuracy.\n\n- Compare with at least one deep learning rigid docking baseline (e.g., DiffDock-PP or a reimplementation of a related method) on the same test splits, and discuss the trade-offs between accuracy and speed.\n\n- Provide confidence intervals or standard errors for all reported metrics, especially on the small DB5.5 test set, and report results on the full DIPS test set rather than a random 100-pair subset.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Random rotation/translation applied to baselines invalidates comparison",
+          "quote": "Also, during both training and testing, we randomly rotate and translate the ligand in space (even though our model is invariant to this operation) for all baselines.",
+          "explanation": "Applying random rotations and translations to the ligand before feeding it to baselines (ATTRACT, HDOCK, CLUSPRO, PATCHDOCK) is a methodological error. These classical docking methods are not SE(3)-invariant; they rely on the initial pose to guide sampling or scoring. Randomizing the ligand pose will degrade their performance artificially, making EquiDock look better by comparison. A fair comparison would either (a) provide the baselines with the original (unrotated) ligand coordinates, or (b) run the baselines multiple times with different random seeds and report the best result. The current procedure invalidates the comparison. Remove this randomization for baselines, or at least report results both with and without it.",
+          "comment_type": "technical",
+          "paragraph_index": 76,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Claim of outperforming baselines contradicts Table 1 data",
+          "quote": "We note that our method is competitive and often outperforms the baselines.",
+          "explanation": "This claim is directly contradicted by the numbers in Table 1. On the DIPS test set, EquiDock's median C-RMSD is 13.29 \u00c5, which is worse than HDOCK's 6.23 \u00c5 and only marginally better than ATTRACT (17.17 \u00c5) and CLUSPRO (15.76 \u00c5). On DB5.5, EquiDock's median C-RMSD of 14.13 \u00c5 is far worse than HDOCK (0.30 \u00c5) and CLUSPRO (3.38 \u00c5). The only metric where EquiDock leads is standard deviation, which is not a measure of accuracy. The text should honestly state that EquiDock underperforms the best baselines in accuracy, and highlight its advantages (speed, theoretical guarantees) instead. Rewrite the sentence as: 'Our method is competitive with several baselines in terms of C-RMSD and I-RMSD, though it does not match the accuracy of HDOCK or CLUSPRO on DB5.5. However, EquiDock achieves these results without candidate sampling, refinement, or templates, and is 80-500 times faster.'",
+          "comment_type": "technical",
+          "paragraph_index": 77,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Inconsistent test set sizes between text and Table 1",
+          "quote": "For the final evaluation in Table 1, we use the full DB5.5 test set, and randomly sample 100 pairs from different protein families from the DIPS test set.",
+          "explanation": "The text states that the DIPS test set has 965 pairs, but only 100 are sampled for evaluation. This is a severe reduction (roughly 10% of the test set) and is not justified. Sampling 100 pairs from different families may introduce selection bias and makes the reported metrics non-representative of the full test set. The paper should report results on the full 965-pair DIPS test set, or at least provide a justification for the sample size and show that the 100 pairs are representative (e.g., by comparing distributions of protein sizes or sequence identities). Additionally, the DB5.5 test set has only 25 complexes, which is very small; confidence intervals should be reported for all metrics.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Figure 6 claim of outperforming all baselines is unsubstantiated",
+          "quote": "We show in Fig. 6 a successful example of a test DIPS protein pair for which our model significantly outperforms all baselines.",
+          "explanation": "The paper presents a single cherry-picked example as evidence of superior performance. This is not statistically meaningful. Without quantitative metrics for this specific complex (e.g., C-RMSD for each method), the reader cannot verify the claim. Moreover, the figure shows a visualization but no numerical comparison. The paper should either remove this claim or provide a table with per-complex metrics for this example. A single success case does not compensate for the overall worse performance shown in Table 1.",
+          "comment_type": "technical",
+          "paragraph_index": 79,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Optimal transport loss uses fixed transport plan during backpropagation",
+          "quote": "ls. The optimal transport plan is computed using an Earth Mover\u2019s Distance and the POT library *(Flamary et al., 2021)*, while being kept fixed during back-propagation and optimization when only the cost matrix i",
+          "explanation": "The paper states that the transport plan T is kept fixed during backpropagation, meaning gradients do not flow through the OT solver. This is a standard technique (e.g., using the Sinkhorn algorithm with stop-gradient), but it means the loss only updates the keypoints y to minimize the cost given the current assignment, rather than also updating the assignment to better match the keypoints. This could lead to suboptimal alignment because the assignment is never refined based on the evolving keypoint positions. The paper should justify why fixing the transport plan is sufficient, or consider using a differentiable OT solver (e.g., Sinkhorn with soft assignments) to allow end-to-end training.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Non-intersection loss uses fixed parameters without justification",
+          "quote": "meters $\\sigma$ and $\\gamma$ are chosen such that there exist no \"holes\" inside a protein (we found $\\gamma=10,\\sigma=25$ to work well, see Appendix",
+          "explanation": "The paper states that sigma=25 and gamma=10 work well but does not provide any analysis or empirical evidence for this choice. The claim that these parameters ensure no holes inside a protein is unsupported. Without a sensitivity analysis or a principled method for setting these parameters, the non-intersection loss may be ineffective or counterproductive. The paper should include a justification for the chosen values, such as a calibration on a validation set or a theoretical derivation linking sigma and gamma to protein size or density. Add a brief explanation or reference to Appendix E that demonstrates why these values are appropriate.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Unsubstantiated claim about dataset bias",
+          "quote": "Unfortunately, both DB5 and DIPS datasets are biased towards rigid body docking.",
+          "explanation": "The claim that DB5 and DIPS are 'biased towards rigid body docking' is not supported by any evidence or citation in the paper. DB5 (Docking Benchmark 5.0) contains a mix of rigid and flexible cases, and DIPS is derived from the Protein Data Bank which includes many complexes with conformational changes. The paper does not provide any analysis of the flexibility distribution in these datasets. This statement appears to be a post-hoc justification for the model's limitations rather than a known property of the benchmarks. Remove the sentence 'Unfortunately, both DB5 and DIPS datasets are biased towards rigid body docking.' because it is an unsubstantiated claim that mischaracterizes the benchmarks.",
+          "comment_type": "technical",
+          "paragraph_index": 82,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        }
+      ],
+      "cost_usd": 0.0576,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

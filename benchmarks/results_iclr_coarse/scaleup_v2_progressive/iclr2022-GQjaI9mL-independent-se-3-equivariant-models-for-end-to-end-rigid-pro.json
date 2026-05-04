@@ -1,0 +1,1046 @@
+{
+  "slug": "iclr2022-GQjaI9mL-independent-se-3-equivariant-models-for-end-to-end-rigid-pro",
+  "title": "INDEPENDENT SE(3)-EQUIVARIANT MODELS FOR - END TO-END RIGID PROTEIN DOCKING [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## INDEPENDENT SE(3)-EQUIVARIANT MODELS FOR - END TO-END RIGID PROTEIN DOCKING"
+    },
+    {
+      "index": 1,
+      "text": "**Octavian-Eugen Ganea** _[\u2020\u2217]_ **Xinyuan Huang** _[\u00a7\u2217]_ **Charlotte Bunne Yatao Bian** _[\u2020]_ MIT ETH Zurich ETH Zurich Tencent AI Lab"
+    },
+    {
+      "index": 2,
+      "text": "**Regina Barzilay Tommi Jaakkola Andreas Krause** MIT MIT ETH Zurich\n\n## ABSTRACT\n\nProtein complex formation is a central problem in biology, being involved in most of the cell\u2019s processes, and essential for applications, e.g. drug design or protein engineering. We tackle _rigid body protein-protein docking_ , i.e., computationally predicting the 3D structure of a protein-protein complex from the individual unbound structures, assuming no conformational change within the proteins happens during binding. We design a novel pairwise-independent SE(3)-equivariant graph matching network to predict the rotation and translation to place one of the proteins at the right docked position relative to the second protein. We mathematically guarantee a basic principle: the predicted complex is always identical regardless of the initial locations and orientations of the two structures. Our model, named EQUIDOCK, approximates the binding pockets and predicts the docking poses using keypoint matching and alignment, achieved through optimal transport and a differentiable Kabsch algorithm. Empirically, we achieve significant running time improvements and often outperform existing docking software despite not relying on heavy candidate sampling, structure refinement, or templates.[1]"
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nIn a recent breakthrough, ALPHAFOLD 2 (Jumper et al., 2021; Senior et al., 2020) provides a solution to a grand challenge in biology\u2014inferring a protein\u2019s three-dimensional structure from its amino acid sequence (Baek et al., 2021), following the dogma _sequence determines structure_ ."
+    },
+    {
+      "index": 4,
+      "text": "Besides their complex three-dimensional nature, proteins dynamically alter their function and structure in response to cellular signals, changes in the environment, or upon _molecular docking_ . In par-"
+    },
+    {
+      "index": 5,
+      "text": "**----- Start of picture text -----**\n\na. protein Z b. protein Z-dependent\ninhibitor\nprotein Z-dependent  protein Z\ninhibitor\n**----- End of picture text -----**"
+    },
+    {
+      "index": 6,
+      "text": "Figure 1: **Different views of the 3D structure of a protein complex. a.** Surface and **b.** cartoon view of protein Z and its inhibitor."
+    },
+    {
+      "index": 7,
+      "text": "ticular, protein interactions are involved in various biological processes including signal transduction, protein synthesis, DNA replication and repair. Molecular docking is key to understanding protein interactions\u2019 mechanisms and effects, and, subsequently, to developing therapeutic interventions."
+    },
+    {
+      "index": 8,
+      "text": "We here address the problem of _rigid body protein-protein docking_ which refers to computationally predicting the 3D structure of a protein-protein complex given the 3D structures of the two proteins in unbound state. _Rigid body_ means no deformations occur within any protein during binding, which is a realistic assumption in many biological settings."
+    },
+    {
+      "index": 9,
+      "text": "Popular docking software (Chen et al., 2003; Venkatraman et al., 2009; De Vries et al., 2010; Torchala et al., 2013; Schindler et al., 2017; Sunny and Jayaraj, 2021) are typically computationally expensive,"
+    },
+    {
+      "index": 10,
+      "text": "> _\u2020_ Correspondence to: Octavian Ganea (oct@mit.edu) and Yatao Bian (yatao.bian@gmail.com).\n\n> _\u2217_ Equal contribution."
+    },
+    {
+      "index": 11,
+      "text": "> _\u00a7_ Work done during an internship at Tencent AI Lab.\n\n> 1 Our code is publicly available: https://github.com/octavian-ganea/equidock_public."
+    },
+    {
+      "index": 12,
+      "text": "1\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nligand complex\nX 1 2  R [3] [\u21e5][n] predict Z 1 , 2 2  R [3] [\u21e5] [(] [n] [+] [m] [)]\nR  2 SO (3) ,  t  2  R [3]\nreceptor X 2 2  R [3] [\u21e5][m] Z 1 =  RX 1 +  t and Z 2 =  X 2\ndifferent initial placement RMSD \ufffd Z 1 , 2 ,  Z [0] 1 , 2\ufffd = 0\nand roles swapped 8 Q 1 ,  Q 2 2 SO (3) , 8 b 1 ,  b 2 2  R [3]\npredict\nligand X [0] 2 [=] [ Q] [2] [X] [2] [+] [ g] [2] [2] [ R][3] [\u21e5][m] RZ [0] 2 [0] 2 [=]  SO [ R] [0] [X] (3) [0] 2 , [+]  t [ t] [0] 2 [0]  R [and][3] [Z] [0] 1 [=] [ X] [0] 1\nreceptor complex\nX [0] 1 [=] [ Q] [1] [X] [1] [+] [ g] [1] [2] [ R][3] [\u21e5][n] Z [0] 1 , 2 [2] [ R][3] [\u21e5] [(] [n] [+] [m] [)]\n**----- End of picture text -----**"
+    },
+    {
+      "index": 13,
+      "text": "Figure 2: **Same output guarantee of EQUIDOCK.** We predict a rigid transformation to place the ligand in the binding location w.r.t the receptor. We mathematically guarantee to output the same complex structure \u2014 up to an SE(3) transformation \u2014 independently of the initial unbound positions, rotations, or roles of both constituents. (RMSD = Root-mean-square deviation of atomic positions)"
+    },
+    {
+      "index": 14,
+      "text": "taking between minutes and hours to solve a single example pair, while not being guaranteed to find accurate complex structures. These methods largely follow the steps: i.) randomly sample a large number (e.g., millions) of candidate initial complex structures, ii.) employ a scoring function to rank the candidates, iii.) adjust and refine the top complex structures based on an energy model (e.g., force field). We here take a first step towards tackling these issues by using deep learning models for direct prediction of protein complex structures."
+    },
+    {
+      "index": 15,
+      "text": "**Contributions.** We design EQUIDOCK, a fast, end-to-end method for rigid body docking that directly predicts the SE(3) transformation to place one of the proteins (ligand) at the right location and orientation with respect to the second protein (receptor). Our method is based on the principle that the exact same complex structure should be predicted irrespectively of the initial 3D placements and roles of both constituents (see Fig. 2). We achieve this desideratum by incorporating the inductive biases of pairwise SE(3)\u2013equivariance and commutativity, and deriving novel theoretical results for necessary and sufficient model constraints (see Section 3). Next, we create EQUIDOCK to satisfy these properties by design, being a combination of: i) a novel type of pairwise independent SE(3)-equivariant graph matching networks, ii) an attention-based keypoint selection algorithm that discovers representative points and aligns them with the binding pocket residues using optimal transport, and iii) a differentiable superimposition model to recover the optimal global rigid transformation. Unlike prior work, our method does not use heavy candidate sampling or ranking, templates, task-specific geometric or chemical hand-crafted features, or pre-computed meshes. This enables us to achieve plausible structures with a speed-up of 80-500x compared to popular docking software, offering a promising competitive alternative to current solutions for this problem."
+    },
+    {
+      "index": 16,
+      "text": "## 2 RELATED WORK\n\n**Geometric Deep Learning.** Graph Neural Networks (GNNs) are becoming the de facto choice for learning with graph data (Bruna et al., 2013; Defferrard et al., 2016; Kipf and Welling, 2016; Gilmer et al., 2017; Xu et al., 2018; Li et al., 2019). Motivated by symmetries naturally occurring in different data types, architectures are tailored to explicitly incorporate such properties (Cohen and Welling, 2016a;b; Thomas et al., 2018; Fuchs et al., 2020; Finzi et al., 2020; Eismann et al., 2020; Satorras et al., 2021). GNNs are validated in a variety of tasks such as particle system dynamics or conformation-based energy estimation (Weiler and Cesa, 2019; Rezende et al., 2019)."
+    },
+    {
+      "index": 17,
+      "text": "**Euclidean Neural Networks (E(3)-NNs).** However, plain GNNs and other deep learning methods do not understand data naturally lying in the 3D Euclidean space. For example, how should the output deterministically change with the input, e.g. when it is rotated ? The recent Euclidean neural networks address this problem, being designed from geometric first-principles. They make use of SE(3)- equivariant and invariant neural layers, thus avoiding expensive data augmentation strategies. Such constrained models ease optimization and have shown important improvements in biology or chemistry \u2013 e.g. for molecular structures (Fuchs et al., 2020; Hutchinson et al., 2020; Wu et al., 2021;"
+    },
+    {
+      "index": 18,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\nJumper et al., 2021; Ganea et al., 2021) and different types of 3D point clouds (Thomas et al., 2018). Different from prior work, we here derive constraints for pairs of 3D objects via _pairwise independent SE(3)-equivariances_ , and design a principled approach for modeling rigid body docking."
+    },
+    {
+      "index": 19,
+      "text": "**Protein Folding.** Deep neural networks have been used to predict inter-residue contacts, distance and/or orientations (Adhikari and Cheng, 2018; Yang et al., 2020; Senior et al., 2020; Ju et al., 2021), that are subsequently transformed into additional constraints or differentiable energy terms for protein structure optimization. ALPHAFOLD 2 (Jumper et al., 2021) and Rosetta Fold (Baek et al., 2021) are state-of-the-art approaches, and directly predict protein structures from co-evolution information embedded in homologous sequences, using geometric deep learning and E(3)-NNs."
+    },
+    {
+      "index": 20,
+      "text": "**Protein-Protein Docking and Interaction.** Experimentally determining structures of protein complexes is often expensive and time-consuming, rendering a premium on computational methods (Vakser, 2014). Protein docking methods (Chen et al., 2003; Venkatraman et al., 2009; De Vries et al., 2010; Biesiada et al., 2011; Torchala et al., 2013; Schindler et al., 2017; Weng et al., 2019; Sunny and Jayaraj, 2021; Christoffer et al., 2021; Yan et al., 2020) typically run several steps: first, they sample thousands or millions of complex candidates; second, they use a scoring function for ranking (Moal et al., 2013; Basu and Wallner, 2016; Launay et al., 2020; Eismann et al., 2020); finally, top-ranked candidates undergo a structure refinement process using energy or geometric models (Verburgt and Kihara, 2021). Relevant to protein-protein interaction (PPI) is the task of protein interface prediction where GNNs have showed promise (Fout et al., 2017; Townshend et al., 2019; Liu et al., 2020; Xie and Xu, 2021; Dai and Bailey-Kellogg, 2021). Recently, ALPHAFOLD 2 and ROSETTAFOLD have been utilized as subroutines to improve PPIs from different aspects (Humphreys et al., 2021; Pei et al., 2021; Jovine), e.g., combining physics-based docking method CLUSPRO (Kozakov et al., 2017; Ghani et al., 2021), or using extended multiple-sequence alignments to predict the structure of heterodimeric protein complexes from the sequence information (Bryant et al., 2021). Concurrently to our work, Evans et al. (2021) extend ALPHAFOLD 2 to multiple chains during both training and inference."
+    },
+    {
+      "index": 21,
+      "text": "**Drug-Target Interaction (DTI).** DTI aims to compute drug-target binding poses and affinity, playing an essential role in understanding drugs\u2019 mechanism of action. Prior methods (Wallach et al., 2015; Li et al., 2021) predict binding affinity from protein-ligand co-crystal structures, but such data is expensive to obtain experimentally. These models are typically based on heavy candidate sampling and ranking (Trott and Olson, 2010; Koes et al., 2013; McNutt et al., 2021; Bao et al., 2021), being tailored for small drug-like ligands and often assuming known binding pocket. Thus, they are not immediately applicable to our use case. In contrast, our rigid docking approach is generic and could be extended to accelerate DTI research as part of future work."
+    },
+    {
+      "index": 22,
+      "text": "## 3 MATHEMATICAL CONSTRAINTS FOR RIGID BODY DOCKING\n\nWe start by introducing the rigid body docking problem and derive the geometric constraints for enforcing same output complex prediction regardless of the initial unbound positions or roles (Fig. 2)."
+    },
+    {
+      "index": 23,
+      "text": "**Rigid Protein-Protein Docking \u2013 Problem Setup.** We are given as input a pair of proteins forming a complex. They are (arbitrarily) denoted as the ligand and receptor, consisting of _n_ and _m_ residues, respectively. These proteins are represented in their bound (docked) state as 3D point clouds **X** _[\u2217]_ 1 _[\u2208]_[R][3] _[\u00d7][n][,]_ **[ X]** _[\u2217]_ 2 _[\u2208]_[R][3] _[\u00d7][m]_[, where each residue\u2019s location is given by the coordinates of its] corresponding _\u03b1_ -carbon atom. In the unbound state, the docked ligand is randomly rotated and translated in space, resulting in a modified point cloud **X** 1 _\u2208_ R[3] _[\u00d7][n]_ . For simplicity and w.l.o.g., the receptor remains in its bound location **X** 2 = **X** _[\u2217]_ 2[.]"
+    },
+    {
+      "index": 24,
+      "text": "_The task is to predict a rotation_ **R** _\u2208 SO_ (3) _and a translation_ **t** _\u2208_ R[3] _such that_ **RX** 1 + **t** = **X** _[\u2217]_ 1 _[,] using as input the proteins and their unbound positions_ **X** 1 _and_ **X** 2 _._"
+    },
+    {
+      "index": 25,
+      "text": "Here, **R** = **R** ( **X** 1 _|_ **X** 2) and **t** = **t** ( **X** 1 _|_ **X** 2) are functions of the two proteins, where we omit residue identity or other protein information in this notation, for brevity."
+    },
+    {
+      "index": 26,
+      "text": "Note that we assume rigid backbone and side-chains for both proteins. We therefore do not tackle the more challenging problem of _flexible docking_ , but our approach offers an important step towards it."
+    },
+    {
+      "index": 27,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\na. b. keypoints obtained via  c.\nmulti-head attention from the IEGMN  prediction\nG 1 = ( V 1 , E 1) G 2 = ( V 2 , E 2) X [\u21e4] 1 error \u2013 ligand\nh 1 x 11 h 3 \u00b5 1 ! 5 m 4\u21925 x 24 h 4 binding pocket points keypoint alignmentbinding pocket Y 2 Y 1 X [\u21e4] 2 LMSE RMSD\nm 1 ! 2 m 3 ! 2 x 13 \u00b5 2 \u00b5! 35 ! 5 x h 255 x 27 h 7 X [\u21e4] 2 X [\u21e4] 1 LOT Y 2 =  RY 1 +  t\nx 12 h 2 x 26 h 6 P 1 P 2 RX 1 +  t\nligand receptor P [\u21e4] 1 [=] [ P] [\u21e4] 2\nX 1 2  R [3] [\u21e5][n] X 2 2  R [3] [\u21e5][m] true docked complex  true binding  predicted docked structure  X 2\npocket location (train labels) undocked /  keypoints by superimposing  Y 1  and  Y 2 auxiliary loss for avoiding LNI\nunbound input   point cloud intersection\nFigure 3:  Details on EQUIDOCK\u2019s Architecture and Losses. a. The message passing operations in\nIEGMN guarantee pairwise independent SE(3)-equivariance as in Eq. (4),  b. We predict keypoints for\neach protein that are aligned with the binding pocket location using an additional optimal transport\n(OT) loss,  c. After predicting the docked position, we compute an MSE loss on the ligand, as well as\na loss to discourage body intersections.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 28,
+      "text": "We desire that the predicted complex structure is independent of the initial locations and orientations of the two proteins, as well as of their roles \u2013 see Fig. 2. Formally, we wish to guarantee that:"
+    },
+    {
+      "index": 29,
+      "text": "( **R** ( **Z** 1 _|_ **Z** 2) **Z** 1 + **t** ( **Z** 1 _|_ **Z** 2)) _\u2295_ **Z** 2 _\u2261_ ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _,_ (SE(3)-invariance) ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _\u2261_ **X** 1 _\u2295_ ( **R** ( **X** 2 _|_ **X** 1) **X** 2 + **t** ( **X** 2 _|_ **X** 1)) _,_ (commutativity) _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] ,_ **X** 2 _\u2208_ R[3] _[\u00d7][m] ,_ and **Z** _l_ = **Q** _l_ **X** _l_ + **g** _l, l \u2208{_ 1 _,_ 2 _}._ (1)"
+    },
+    {
+      "index": 30,
+      "text": "for any rotations **Q** 1 _,_ **Q** 2 and translations **g** 1 _,_ **g** 2, where _\u2295_ is concatenation along columns, and _\u2261_ denotes identity after superimposition, i.e. zero Root-Mean-Square Deviation (RMSD) between the two 3D point sets after applying the Kabsch algorithm (Kabsch, 1976). An immediate question arises:"
+    },
+    {
+      "index": 31,
+      "text": "_How do the constraints in Eq._ (1) _translate into constraints for_ **R** ( _\u00b7|\u00b7_ ) _and_ **t** ( _\u00b7|\u00b7_ ) _?_"
+    },
+    {
+      "index": 32,
+      "text": "The rotation **R** and translation **t** change in a systematic way when we apply _SE_ (3) transformations or swap proteins\u2019 roles. These properties restrict our class of functions as derived below."
+    },
+    {
+      "index": 33,
+      "text": "**SE(3)-equivariance Constraints.** If we apply any distinct _SE_ (3) transformations on the unbound ligand **X** 1 and receptor **X** 2, i.e. we dock **Q** 1 **X** 1 + **g** 1 onto **Q** 2 **X** 2 + **g** 2, then the rotation matrix **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) and translation vector **t** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) can be derived from the original **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2) assuming that we always do rotations first. In this case, **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) can be decomposed into three rotations: i.) apply **Q** _[\u22a4]_ 1[to][undo][the] rotation **Q** 1 applied on **X** 1, ii.) apply **R** ( **X** 1 _|_ **X** 2), iii.) apply **Q** 2 to rotate the docked ligand together with the receptor. This gives **R** ( **Q** 1 **X** 1 + **g** 1 _|_ **Q** 2 **X** 2 + **g** 2) = **Q** 2 **R** ( **X** 1 _|_ **X** 2) **Q** _[\u22a4]_ 1[,][which][in][turn] constraints the translation vector. We provide a formal statement and prove it in Appendix B.1:"
+    },
+    {
+      "index": 34,
+      "text": "**Proposition 1.** _For any_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _,_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, SE(3)-invariance of the predicted docked complex defined by Eq._ (1) _is guaranteed iff_"
+    },
+    {
+      "index": 35,
+      "text": "As a direct consequence of this proposition, we have the following statement.\n\n**Proposition 2.** _Any model satisfying Proposition 1 guarantees invariance of the predicted complex w.r.t. any SE(3) transformation on_ **X** 1 _, and equivariance w.r.t. any SE(3) transformation on_ **X** 2 _:_"
+    },
+    {
+      "index": 36,
+      "text": "**R** ( **Z** 1 _|_ **X** 2) **Z** 1 + **t** ( **Z** 1 _|_ **X** 2) = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2) _, where_ **Z** 1 = **Q** 1 **X** 1 + **g** 1 **R** ( **X** 1 _|_ **Z** 2) **X** 1 + **t** ( **X** 1 _|_ **Z** 2) = **Q** 2 [ **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)] + **g** 2 _, where_ **Z** 2 = **Q** 2 **X** 2 + **g** 2 _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] , \u2200_ **X** 2 _\u2208_ R[3] _[\u00d7][m] ._"
+    },
+    {
+      "index": 37,
+      "text": "**Commutativity.** Instead of docking **X** 1 with respect to **X** 2, we can also dock **X** 2 with respect to **X** 1. In this case, we require the final complex structures to be identical after superimposition, i.e., zero RMSD. This property is named _commutativity_ and it is satisfied as follows (proof in Appendix B.2)."
+    },
+    {
+      "index": 38,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\n**Proposition 3.** _Commutativity as defined by Eq._ (1) _is guaranteed iff_"
+    },
+    {
+      "index": 39,
+      "text": "**Point Permutation Invariance.** We also enforce residue permutation invariance. Formally, both **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2) should not depend on the order or columns of **X** 1 and, resp., of **X** 2."
+    },
+    {
+      "index": 40,
+      "text": "## 4 EQUIDOCK MODEL\n\n**Protein Representation.** A protein is a sequence of amino acid residues that folds in a 3D structure. Each residue has a general structure with a side-chain specifying its type, allowing us to define a _local frame_ and derive SE(3)-invariant features for any pair of residues \u2014see Appendix A."
+    },
+    {
+      "index": 41,
+      "text": "We represent a protein as a graph _G_ = ( _V, E_ ), similar to Fout et al. (2017); Townshend et al. (2019); Liu et al. (2020). Each node _i \u2208V_ represents one residue and has 3D coordinates **x** _i \u2208_ R[3] corresponding to the _\u03b1_ -carbon atom\u2019s location. Edges are given by a k-nearest-neighbor (k-NN) graph using Euclidean distance of the original 3D node coordinates."
+    },
+    {
+      "index": 42,
+      "text": "**Overview of Our Approach.** Our model is depicted in Fig. 3. We first build k-NN protein graphs _G_ 1 = ( _V_ 1 _, E_ 1) and _G_ 2 = ( _V_ 2 _, E_ 2). We then design SE(3)-invariant node features **F** 1 _\u2208_ R _[d][\u00d7][n] ,_ **F** 2 _\u2208_ R _[d][\u00d7][m]_ and edge features _{_ **f** _j\u2192i_ : _\u2200_ ( _i, j_ ) _\u2208E_ 1 _\u222aE_ 2 _}_ (see Appendix A)."
+    },
+    {
+      "index": 43,
+      "text": "Next, we apply several layers consisting of functions \u03a6 that jointly transform node coordinates and features. Crucially, we guarantee, by design, _pairwise independent SE(3)-equivariance_ for coordinate embeddings, and invariance for feature embeddings. This double constraint is formally defined:"
+    },
+    {
+      "index": 44,
+      "text": "We implement \u03a6 as a novel type of message-passing neural network (MPNN). We then use the output node coordinate and feature embeddings to compute **R** ( **X** 1 _|_ **X** 2) and **t** ( **X** 1 _|_ **X** 2). These functions depend on pairwise interactions between the two proteins modeled as cross-messages, but also incorporate the 3D structure in a pairwise-independent SE(3)-equivariant way to satisfy Eq. (1), Proposition 1 and Proposition 3. We discover keypoints from each protein based on a neural attention mechanism and softly guide them to represent the respective binding pocket locations via an optimal transport based auxiliary loss. Finally, we obtain the SE(3) transformation by superimposing the two keypoint sets via a differentiable version of the Kabsch algorithm. An additional soft-constraint discourages point cloud intersections. We now detail each of these model components."
+    },
+    {
+      "index": 45,
+      "text": "**Independent E(3)-Equivariant Graph Matching Networks (IEGMNs).** Our architecture for \u03a6 satisfying Eq. (4) is called _Independent E(3)-Equivariant Graph Matching Network_ (IEGMN) \u2013 see Fig. 3. It extends both Graph Matching Networks (GMN) (Li et al., 2019) and E(3)-Equivariant Graph Neural Networks (E(3)-GNN) (Satorras et al., 2021). IEGMNs perform node coordinate and feature embedding updates for an input pair of graphs _G_ 1 = ( _V_ 1 _, E_ 1), _G_ 2 = ( _V_ 2 _, E_ 2), and use inter- and intranode messages, as well as E(3)-equivariant coordinate updates. The _l_ -th layer of IEGMNs transforms node latent/feature embeddings _{_ **h**[(] _i[l]_[)] _[}][i][\u2208V]_ 1 _[\u222aV]_ 2[and node coordinate embeddings] _[ {]_ **[x]**[(] _i[l]_[)] _[}][i][\u2208V]_ 1 _[\u222aV]_ 2[as]"
+    },
+    {
+      "index": 46,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\nwhere _N_ ( _i_ ) are the neighbors of node _i_ ; _\u03d5[x]_ is a real-valued (scalar) parametric function; **W** is a learnable matrix; _\u03d5[h] , \u03d5[e]_ are parametric functions (MLPs) outputting a vector R _[d]_ ; **f** _j\u2192i_ and **f** _i_ are the original edge and node features (extracted SE(3)-invariantly from the residues). _aj\u2192i_ is an attention based coefficient with trainable shallow neural networks _\u03c8[q]_ and _\u03c8[k]_ :"
+    },
+    {
+      "index": 47,
+      "text": "Note that all parameters of **W** _, \u03d5[x] , \u03d5[h] , \u03d5[e] , \u03c8[q] , \u03c8[k]_ can be shared or different for different IEGMN layers . The output of several IEGMN layers is then denoted as:"
+    },
+    {
+      "index": 48,
+      "text": "It is then straightforward to prove the following (see Appendix B.3):\n\n**Proposition 4.** _IEGMNs satisfy the pairwise independent SE(3)-equivariance property in Eq._ (4) _._"
+    },
+    {
+      "index": 49,
+      "text": "**Keypoints for Differentiable Protein Superimposition.** Next, we use multi-head attention to obtain _K_ points for each protein, **Y** 1 _,_ **Y** 2 _\u2208_ R[3] _[\u00d7][K]_ , which we name **keypoints** . We train them to become representative points for the binding pocket of the respective protein pair (softly-enforced by an additional loss described later). If this would holds perfectly, then the superimposition of **Y** 1 and **Y** 2 would give the corresponding ground truth superimposition of **X** 1 and **X** 2. Our model is :"
+    },
+    {
+      "index": 50,
+      "text": "where **z** 1 _i_ denotes the i-th column of matrix **Z** 1, and _\u03b1i[k]_[=] _[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores (similarly defined for _\u03b2j[k]_[), with] **[ W]** _k[\u2032][\u2208]_[R] _[d][\u00d7][d]_[a parametric matrix (different for each] attention head), _\u03d5_ a linear layer plus a LeakyReLU non-linearity, and _\u00b5_ ( _\u00b7_ ) is the mean vector."
+    },
+    {
+      "index": 51,
+      "text": "**Differentiable Kabsch Model.** We design the rotation and translation that docks protein 1 into protein 2 to be the same transformation used to superimpose **Y** 1 and **Y** 2 \u2014 see Fig. 3. For this, we compute a differentiable version of the Kabsch algorithm (Kabsch, 1976) as follows. Let ~~_\u22a4_~~ **A** = **Y** 2 **Y** 1 _[\u2208]_[R][3] _[\u00d7]_[3][computed][using][zero-mean][keypoints.][The][singular][value][decomposition] (SVD) is **A** = **U** 2 **SU** _[\u22a4]_ 1[, where] **[ U]**[2] _[,]_ **[ U]**[1] _[\u2208][O]_[(3)][.][Finally, we define the differentiable functions]"
+    },
+    {
+      "index": 52,
+      "text": "where _\u00b5_ ( _\u00b7_ ) is the mean vector of a point cloud. It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3). From a practical perspective, the gradient and backpropagation through the SVD operation was analyzed by (Ionescu et al., 2015; Papadopoulo and Lourakis, 2000) and implemented in the automatic differentiation frameworks such as PyTorch."
+    },
+    {
+      "index": 53,
+      "text": "**MSE Loss.** During training, we randomly decide which protein is the receptor (say protein 2), keep it in the docked position (i.e., **X** 2 = **X** _[\u2217]_ 2[), predict the SE(3) transformation using Eq. (][13][) and use it] to compute the final position of the ligand as **X**[\u02dc] 1 = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2). The mean squared _n_ error (MSE) loss is then _L_ MSE = _n_[1] \ufffd _i_ =1 _[\u2225]_ **[x]** _i[\u2217][\u2212]_ **[x]**[\u02dc] _[i][\u2225]_[2][.]"
+    },
+    {
+      "index": 54,
+      "text": "**Optimal Transport and Binding Pocket Keypoint Alignment.** As stated before, we desire that **Y** 1 and **Y** 2 are representative points for the binding pocket location of the respective protein pair. However, this needs to be encouraged explicitly, which we achieve using an additional loss."
+    },
+    {
+      "index": 55,
+      "text": "We first define the binding pocket point sets, inspiring from previous PPI work (Section 2). Given the residues\u2019 _\u03b1_ -carbon locations of the bound (docked) structures, **X** _[\u2217]_ 1[and] **[ X]** _[\u2217]_ 2[, we select all pairs] of residues at less than _\u03c4_ Euclidean distance ( _\u03c4_ = 8\u00c5 in our experiments). We assume these are all interacting residues. Denote these pairs as _{_ ( **x** _[\u2217]_ 1 _s[,]_ **[ x]** 2 _[\u2217] s_[)] _[, s][\u2208]_[1] _[, . . . , S][}]_[, where] _[ S]_[is variable] across data pairs. We compute midpoints of these segments, denoted as **P** _[\u2217]_ 1 _[,]_ **[ P]** _[\u2217]_ 2 _[\u2208]_[R][3] _[\u00d7][S]_[,][where]"
+    },
+    {
+      "index": 56,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\n**p** _[\u2217]_ 1 _s_[=] **[ p]** _[\u2217]_ 2 _s_[= 0] _[.]_[5] _[ \u00b7]_[ (] **[x]** _[\u2217]_ 1 _s_[+] **[ x]** _[\u2217]_ 2 _s_[)][.][We view] **[ P]** _[\u2217]_ 1[and] **[ P]** _[\u2217]_ 2[as binding pocket points.][In the unbound state,] these sets are randomly moved in space together with the respective protein residue coordinates **X** 1 and **X** 2. We denote them as **P** 1 _,_ **P** 2 _\u2208_ R[3] _[\u00d7][S]_ . For clarity, if **X** 1 = **QX** _[\u2217]_ 1[+] **[ g]**[, then] **[ P]**[1][=] **[ QP]** _[\u2217]_ 1[+] **[ g]**[.]"
+    },
+    {
+      "index": 57,
+      "text": "We desire that **Y** 1 is a representative set for the 3D set **P** 1 (and, similarly, **Y** 2 for **P** 2). However, while at training time we know that every point **p** 1 _s_ corresponds to the point **p** 2 _s_ (and, similarly, **y** 1 _k_ aligns with **y** 2 _k_ , by assumption), we unfortunately do not know the actual alignment between points in **Y** _l_ and **P** _l_ , for every _l \u2208{_ 1 _,_ 2 _}_ . This can be recovered using an additional optimal transport loss:"
+    },
+    {
+      "index": 58,
+      "text": "where _U_ ( _S, K_ ) is the set of _S \u00d7 K_ transport plans with uniform marginals. The optimal transport plan is computed using an Earth Mover\u2019s Distance and the POT library (Flamary et al., 2021), while being kept fixed during back-propagation and optimization when only the cost matrix is trained."
+    },
+    {
+      "index": 59,
+      "text": "Note that our approach assumes that **y** 1 _k_ corresponds to **y** 2 _k_ , for every _k \u2208{_ 1 _, . . . , K}_ . Intuitively, each attention head _k_ will identify a specific geometric/chemical local surface feature of protein 1 by **y** 1 _k_ , and match its complementary feature of protein 2 by **y** 2 _k_ ."
+    },
+    {
+      "index": 60,
+      "text": "**Avoiding Point Cloud Intersection.** In practice, our model does not enforce a useful inductive bias, namely that proteins forming complexes are never \"intersecting\" with each other. To address this issue, we first state a notion of the \"interior\" of a protein point cloud. Following previous work (Sverrisson et al., 2021; Venkatraman et al., 2009), we define the surface of a protein point cloud **X** _\u2208_ R[3] _[\u00d7][n]_ as _{_ **x** _\u2208_ R[3] : _G_ ( **x** ) = _\u03b3}_ , where _G_ ( **x** ) = _\u2212\u03c3_ ln([\ufffd] _[n] i_ =1[exp(] _[\u2212||]_ **[x]** _[ \u2212]_ **[x]** _[i][||]_[2] _[/\u03c3]_[))][.] The parameters _\u03c3_ and _\u03b3_ are chosen such that there exist no \"holes\" inside a protein (we found _\u03b3_ = 10 _, \u03c3_ = 25 to work well, see Appendix E). As a consequence, the interior of the protein is given by _{_ **x** _\u2208_ R[3] : _G_ ( **x** ) _< \u03b3}_ . Then, the condition for non-intersecting ligand and receptor can be written as _G_ 1( **x** 2 _j_ ) _> \u03b3, \u2200j \u2208_ 1 _, . . . , m_ and _G_ 2( **x** 1 _i_ ) _> \u03b3, \u2200i \u2208_ 1 _, . . . , n_ . As a loss function, this becomes"
+    },
+    {
+      "index": 61,
+      "text": "**Surface Aware Node Features.** Surface contact modeling is important for protein docking. We here design a novel surface feature type that differentiates residues closer to the surface of the protein from those in the interior. Similar to Sverrisson et al. (2021), we prioritize efficiency and avoid pre-computing meshes, but show that our new feature is a good proxy for residue\u2019s depth (i.e. distance to the protein surface). Intuitively, residues in the core of the protein are locally surrounded _in all directions_ by other residues. This is not true for residues on the surface, e.g., neighbors are in a half-space if the surface is locally flat. Building on this intuition, for each node (residue) _i_ in the _k_ -NN protein graph, we compute the norm of the weighted average of its neighbor forces, which can be interpreted as the normalized gradient of the _G_ ( **x** ) surface function. This SE(3)-invariant feature is"
+    },
+    {
+      "index": 62,
+      "text": "Intuitively, as depicted in Fig. 8, residues in the interior of the protein have values close to 0 since they are surrounded by vectors from all directions that cancel out, while residues near the surface have neighbors only in a narrower cone, with aperture depending on the local curvature of the surface. We show in Appendix C that this feature correlates well with more expensive residue depth estimation methods, e.g. based on MSMS, thus offering a computationally appealing alternative. We also compute an estimation of this feature for large dense point clouds based on the local surface angle."
+    },
+    {
+      "index": 63,
+      "text": "## 5 EXPERIMENTS\n\n**Datasets.** We leverage the following datasets: Docking Benchmark 5.5 (DB5.5) (Vreven et al., 2015) and Database of Interacting Protein Structures (DIPS) (Townshend et al., 2019). DB5.5 is a gold standard dataset in terms of data quality, but contains only 253 structures. DIPS is a larger protein complex structures dataset mined from the Protein Data Bank (Berman et al., 2000) and tailored for rigid body docking. Datasets information is given in Appendix D. We filter DIPS to only"
+    },
+    {
+      "index": 64,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\nTable 1: **Complex Prediction Results.** As in the main text, the proprietary baselines might internally use parts of the test sets (e.g. to extract templates or features), thus their numbers might be optimistic."
+    },
+    {
+      "index": 65,
+      "text": "|**Methods**|**DIPS Test Set**\n**DB5.5 Test Set**\nComplex RMSD\nInterface RMSD\nComplex RMSD\nInterface RMSD|\n|---|---|\n||Median Mean\nStd\nMedian Mean\nStd\nMedian Mean\nStd\nMedian Mean\nStd|\n|ATTRACT\nHDOCK\nCLUSPRO\nPATCHDOCK\n**EQUIDOCK**|17.17\n14.93 10.39\n12.41\n14.02 11.81\n9.55\n10.09 9.88\n7.48\n10.69 10.90\n6.23\n10.77 11.39\n3.90\n8.88 10.95\n0.30\n5.34 12.04\n0.24\n4.76 10.83\n15.76\n14.47 10.24\n12.54\n13.62 11.11\n3.38\n8.25\n7.92\n2.31\n8.71\n9.89\n15.24\n13.58 10.30\n11.44\n12.15 10.50\n18.26\n18.00 10.12\n18.88\n18.75 10.06\n13.29\n14.52 7.13\n10.18\n11.92 7.01\n14.13\n14.72 5.31\n11.97\n13.23 4.93|"
+    },
+    {
+      "index": 66,
+      "text": "Figure 4: **a.** Complex-RMSD distributions (DIPS test set); **b.** Interface-RMSD distributions (DIPS test set); **c.** scatter plot for C-RMSD vs I-RMSD (DIPS test set)."
+    },
+    {
+      "index": 67,
+      "text": "keep proteins with at most 10K atoms. Datasets are then randomly partitioned in train/val/test splits of sizes 203/25/25 (DB5.5) and 39,937/974/965 (DIPS). For DIPS, the split is based on protein family to separate similar proteins. For the final evaluation in Table 1, we use the full DB5.5 test set, and randomly sample 100 pairs from different protein families from the DIPS test set."
+    },
+    {
+      "index": 68,
+      "text": "**Baselines.** We compare our EQUIDOCK method with popular state-of-the-art docking software[2] CLUSPRO (PIPER) (Desta et al., 2020; Kozakov et al., 2017),ATTRACT (Schindler et al., 2017; de Vries et al., 2015), PATCHDOCK (Mashiach et al., 2010; SchneidmanDuhovny et al., 2005), and HDOCK (Yan et al., 2020; 2017b;a; Huang and Zou, 2014; 2008). These baselines provide user-friendly local packages suitable for automatic experiments or webservers for manual submissions."
+    },
+    {
+      "index": 69,
+      "text": "**Evaluation Metrics.** To measure prediction\u2019s quality, we Figure 5: Inference running time distrireport Complex Root Mean Square Deviation (CRMSD) butions (log10 scale). and Interface Root Mean Square Deviation (IRMSD), defined below. Given the ground truth and predicted complex structures, **Z** _[\u2217] \u2208_ R[3] _[\u00d7]_[(] _[n]_[+] _[m]_[)] and **Z** _\u2208_ R[3] _[\u00d7]_[(] _[n]_[+] _[m]_[)] , we first superimpose them using the Kabsch algorithm (Kabsch, 1976), and then 1 compute C-RMSD = \ufffd _n_ + _m[\u2225]_ **[Z]** _[\u2217][\u2212]_ **[Z]** _[\u2225] F_[2][.][We compute I-RMSD similarly, but using only the coor-] dinates of the interface residues with distance less than 8\u00c5 to the other protein\u2019s residues. For a fair comparison among baselines, we use only the _\u03b1_ -carbon coordinates to compute both metrics."
+    },
+    {
+      "index": 70,
+      "text": "Figure 5: Inference running time distributions (log10 scale).\n\n**Training Details.** We train our models on the train part of DIPS first, using Adam (Kingma and Ba, 2014) with learning rate 2e-4 and early stopping with patience of 30 epochs. We update the best validation model only when it achieves a score of less than 98% of the previous best validation score, where the score is the median of Ligand RMSD on the full DIPS validation set. The best DIPS validated model is then tested on the DIPS test set. For DB5.5, we fine tune the DIPS pre-trained"
+    },
+    {
+      "index": 71,
+      "text": "> 2ClusPro: https://cluspro.bu.edu/, Attract: www.attract.ph.tum.de/services/ ATTRACT/ATTRACT.vdi.gz, PatchDock: https://bioinfo3d.cs.tau.ac.il/PatchDock/, HDOCK: http://huanglab.phys.hust.edu.cn/software/HDOCK/"
+    },
+    {
+      "index": 72,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nEquiDock PatchDock HDOCK ClusPro Ground Truth\nCRMSD = 7.13 CRMSD = 17.37 CRMSD = 18.00 CRMSD = 18.56 PDB ID: 3DMP\n**----- End of picture text -----**"
+    },
+    {
+      "index": 73,
+      "text": "Figure 6: Visualization of a protein complex successfully predicted by EQUIDOCK. Note that all other methods find the binding interface on the wrong side of the black protein."
+    },
+    {
+      "index": 74,
+      "text": "model on the DB5.5 training set using learning rate 1e-4 and early stopping with 150 epochs patience. The best DB5.5 validated model is finally tested on DB5.5 test set. During training, we randomly assign the roles of ligand and receptor. Also, during both training and testing, we randomly rotate and translate the ligand in space (even though our model is invariant to this operation) for all baselines."
+    },
+    {
+      "index": 75,
+      "text": "**Complex Prediction Results.** Results are shown in Table 1, Fig. 4 and Appendix E. We note that our method is competitive and often outperforms the baselines. However, we do not use heavy candidate sampling and re-ranking, we do not rely on task-specific hand-crafted features, and we currently do not perform structure fine-tuning, aiming to predict the SE(3) ligand transformation in a direct shot. Moreover, we note that some of the baselines might have used part of our test set in validating their models, for example to learn surface templates, thus, their reported scores might be optimistic. Notably, HDOCK score function was validated on DB4 which overlaps with DB5.5. A more appropriate comparison would require us to re-build these baselines without information from our test sets, a task that is currently not possible without open-source implementations."
+    },
+    {
+      "index": 76,
+      "text": "**Computational Efficiency.** We show inference times in Fig. 5 and Table 4. Note that EQUIDOCK is between 80-500 times faster than the baselines. This is especially important for intensive screening applications that aim to scan over vast search spaces, e.g. for drug discovery. In addition, it is also relevant for de novo design of binding proteins (e.g. antibodies (Jin et al., 2021)) or for use cases when protein docking models are just a component of significantly larger end-to-end architectures targeting more involved biological scenarios, e.g., representing a drug\u2019s mechanism of action or modeling cellular processes with a single model as opposed to a multi-pipeline architecture."
+    },
+    {
+      "index": 77,
+      "text": "**Visualization.** We show in Fig. 6 a successful example of a test DIPS protein pair for which our model significantly outperforms all baselines."
+    },
+    {
+      "index": 78,
+      "text": "## 6 CONCLUSION\n\nWe have presented an extremely fast, end-to-end rigid protein docking approach that does not rely on candidate sampling, templates, task-specific features or pre-computed meshes. Our method smartly incorporates useful rigid protein docking priors including commutativity and pairwise independent SE(3)-equivariances, thus avoiding the computational burden of data augmentation."
+    },
+    {
+      "index": 79,
+      "text": "We look forward to incorporating more domain knowledge in EQUIDOCK and extend it for flexible docking and docking molecular dynamics, as well as adapt it to other related tasks such as drug binding prediction. On the long term, we envision that fast and accurate deep learning models would allow us to tackle more complex and involved biological scenarios, for example to model the mechanism of action of various drugs or to design de novo binding proteins and drugs to specific targets (e.g. for antibody generation). Last, we hope that our architecture can inspire the design of other types of biological 3D interactions."
+    },
+    {
+      "index": 80,
+      "text": "**Limitations.** First, our presented model does not incorporate protein flexibility which is necessary for various protein families, e.g., antibodies. Unfortunately, both DB5 and DIPS datasets are biased towards rigid body docking . Second, we only prevent steric clashes using a soft constraint (Eq. (15)) which has limitations (see Table 6). Future extensions would hard-constrain the model to prevent such artifacts."
+    },
+    {
+      "index": 81,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n## ACKNOWLEDGEMENTS\n\nThe authors thank Hannes St\u00e4rk, Gabriele Corso, Patrick Walters, Tian Xie, Xiang Fu, Jacob Stern, Jason Yim, Lewis Martin, Jeremy Wohlwend, Jiaxiang Wu, Wei Liu, and Ding Xue for insightful and helpful discussions. OEG is funded by the Machine Learning for Pharmaceutical Discovery and Synthesis (MLPDS) consortium, the Abdul Latif Jameel Clinic for Machine Learning in Health, the DTRA Discovery of Medical Countermeasures Against New and Emerging (DOMANE) threats program, and the DARPA Accelerated Molecular Discovery program. This publication was created as part of NCCR Catalysis (grant number 180544), a National Centres of Competence in Research funded by the Swiss National Science Foundation. RB and TJ also acknowledge support from NSF Expeditions grant (award 1918839): Collaborative Research: Understanding the World Through Code."
+    },
+    {
+      "index": 82,
+      "text": "## REFERENCES\n\n- B. Adhikari and J. Cheng. Confold2: Improved contact-driven ab initio protein structure modeling. _BMC bioinformatics_ , 19(1):1\u20135, 2018. 3"
+    },
+    {
+      "index": 83,
+      "text": "- M. Baek, F. DiMaio, I. Anishchenko, J. Dauparas, S. Ovchinnikov, G. R. Lee, J. Wang, Q. Cong, L. N. Kinch, R. D. Schaeffer, et al. Accurate prediction of protein structures and interactions using a three-track neural network. _Science_ , 373(6557):871\u2013876, 2021. 1, 3"
+    },
+    {
+      "index": 84,
+      "text": "- J. Bao, X. He, and J. Z. Zhang. Deepbsp\u2014a machine learning method for accurate prediction of protein\u2013ligand docking structures. _Journal of Chemical Information and Modeling_ , 2021. 3"
+    },
+    {
+      "index": 85,
+      "text": "- S. Basu and B. Wallner. Dockq: a quality measure for protein-protein docking models. _PloS one_ , 11 (8):e0161879, 2016. 3"
+    },
+    {
+      "index": 86,
+      "text": "- H. M. Berman, J. Westbrook, Z. Feng, G. Gilliland, T. N. Bhat, H. Weissig, I. N. Shindyalov, and P. E. Bourne. The protein data bank. _Nucleic acids research_ , 28(1):235\u2013242, 2000. 7"
+    },
+    {
+      "index": 87,
+      "text": "- J. Biesiada, A. Porollo, P. Velayutham, M. Kouril, and J. Meller. Survey of public domain software for docking simulations and virtual screening. _Human genomics_ , 5(5):1\u20139, 2011. 3"
+    },
+    {
+      "index": 88,
+      "text": "- J. Bruna, W. Zaremba, A. Szlam, and Y. LeCun. Spectral networks and locally connected networks on graphs. _arXiv preprint arXiv:1312.6203_ , 2013. 2"
+    },
+    {
+      "index": 89,
+      "text": "- P. Bryant, G. Pozzati, and A. Elofsson. Improved prediction of protein-protein interactions using alphafold2 and extended multiple-sequence alignments. _bioRxiv_ , 2021. 3"
+    },
+    {
+      "index": 90,
+      "text": "- R. Chen, L. Li, and Z. Weng. Zdock: an initial-stage protein-docking algorithm. _Proteins: Structure, Function, and Bioinformatics_ , 52(1):80\u201387, 2003. 1, 3"
+    },
+    {
+      "index": 91,
+      "text": "- C. Christoffer, S. Chen, V. Bharadwaj, T. Aderinwale, V. Kumar, M. Hormati, and D. Kihara. Lzerd webserver for pairwise and multiple protein\u2013protein docking. _Nucleic Acids Research_ , 2021. 3"
+    },
+    {
+      "index": 92,
+      "text": "- T. Cohen and M. Welling. Group equivariant convolutional networks. In _International conference on machine learning_ , pages 2990\u20132999. PMLR, 2016a. 2"
+    },
+    {
+      "index": 93,
+      "text": "- T. S. Cohen and M. Welling. Steerable cnns. _arXiv preprint arXiv:1612.08498_ , 2016b. 2\n\n- B. Dai and C. Bailey-Kellogg. Protein interaction interface region prediction by geometric deep learning. _Bioinformatics_ , 2021. 3"
+    },
+    {
+      "index": 94,
+      "text": "- S. J. De Vries, M. Van Dijk, and A. M. Bonvin. The haddock web server for data-driven biomolecular docking. _Nature protocols_ , 5(5):883\u2013897, 2010. 1, 3"
+    },
+    {
+      "index": 95,
+      "text": "- S. J. de Vries, C. E. Schindler, I. C. de Beauch\u00eane, and M. Zacharias. A web interface for easy flexible protein-protein docking with attract. _Biophysical journal_ , 108(3):462\u2013465, 2015. 8"
+    },
+    {
+      "index": 96,
+      "text": "- M. Defferrard, X. Bresson, and P. Vandergheynst. Convolutional neural networks on graphs with fast localized spectral filtering. _arXiv preprint arXiv:1606.09375_ , 2016. 2\n\n10"
+    },
+    {
+      "index": 97,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a well-structured and scientifically compelling introduction to a novel approach in rigid protein-protein docking. The clarity of the exposition is high, particularly in how it frames the \"grand challenge\" of structural biology and explicitly differentiates its end-to-end, SE(3)-equivariant methodology from the computationally expensive, sampling-heavy routines of traditional docking software. The inclusion of the mathematical grounding (the \"same output guarantee\") provides a strong, rigorous backbone, and the contributions are articulated with logical precision. The most significant issue, however, lies in the potential for a \"knowledge gap\" regarding the underlying hardware or software infrastructure: while the authors claim significant speed-ups, the paper must be careful to distinguish between the inference efficiency of their model versus the training overhead, as well as clarifying how the \"differentiable Kabsch algorithm\" maintains stability when dealing with highly variable protein binding patches. Overall, the foundational setup is exemplary, successfully mapping the complex task of rigid-body alignment onto the elegant framework of equivariant graph matching.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistent Rotation Logic in Proposition 1 Proof Description",
+          "quote": "i.) apply $Q^\\top$ to undo the rotation $Q$ applied on $X$ 1, ii.) apply $R(X_1 | X_2)$, iii.) apply $Q_2$ to rotate the docked ligand together with the receptor.",
+          "explanation": "In Section 3, the authors describe the decomposition of the equivariance property. Specifically, they mention applying $Q_1^\\top$ to 'undo' the rotation $Q_1$ applied to $X_1$. However, the subsequent equality $R(Q_1 X_1 + g_1 | Q_2 X_2 + g_2) = Q_2 R(X_1 | X_2) Q_1^\\top$ suggests that the operation $Q_1^\\top$ is actually acting as a change of basis (or inverse rotation). While the intuition is clear, the phrasing 'undo' is slightly loose, and the order of operations in the text (ii followed by iii) is ambiguous regarding their composition order ($Q_2$ should act on the result of the previous transformation). This is a minor clarity issue for the justification of Proposition 1.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguous/Truncated Mathematical Statement in Proposition 1",
+          "quote": "SE(3)-invariance of the predicted docked complex defined by Eq. (1) is guaranteed iff",
+          "explanation": "The text states 'guaranteed iff' followed by a paragraph break without providing the mathematical condition (the specific equality). While this is clearly an OCR/layout artifact where the formula was lost between the text and the subsequent paragraph, it is a significant gap in the Methodology section. A reader cannot verify the claim without the explicit constraint formula that follows 'iff'.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Unspecified/Truncated Commutativity Condition",
+          "quote": "Commutativity as defined by Eq. (1) is guaranteed iff",
+          "explanation": "Similar to the issue with Proposition 1, the text introduces a 'guaranteed iff' clause for Proposition 3, but the corresponding mathematical expression is missing from the provided text. Since the paper relies heavily on this property to establish the model's validity, the lack of the formal condition renders the derivation incomplete.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguous Definition of Superimposition Identity in Commutativity Constraint",
+          "quote": "(R(X_1 | X_2) X_1 + t(X_1 | X_2)) \u2295 X_2 \u2261 X_1 \u2295 (R(X_2 | X_1) X_2 + t(X_2 | X_1))",
+          "explanation": "In Eq 1, the authors define commutativity such that docking X1 to X2 is equivalent to docking X2 to X1. However, the expression 'X_1 \u2295 (R(X_2 | X_1) X_2 + t(X_2 | X_1))' implies that the output of reversing roles is represented as the original X1 concatenated with the transformed X2. While the '\u2261' operator (defined as identity after Kabsch superimposition) likely handles the frame-of-reference shift, the notation is slightly confusing because the 'docked' X1 (the result of the first function) is on the left side of the \u2295, whereas it is positioned as the 'fixed' anchor on the right side. While technically consistent with a 'set-based' interpretation, a more precise notation (e.g., using a set-equivalence or noting the transformation required to bring the complex into a canonical frame) would clarify why the concatenation order is swapped relative to the transformation logic.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_4",
+          "title": "Unclear Definition of Input Transformation in Proposition 2",
+          "quote": "where Z_1 = Q_1 X_1 + g_1 ... R(X_1 | Z_2) X_1 + t(X_1 | Z_2) = Q_2 [ R(X_1 | X_2) X_1 + t(X_1 | X_2)] + g_2",
+          "explanation": "In Proposition 2, the authors claim equivariance with respect to transformations on the receptor (X_2). The expression 'R(X_1 | Z_2) X_1 + t(X_1 | Z_2) = Q_2 [ R(X_1 | X_2) X_1 + t(X_1 | X_2)] + g_2' appears to describe how the predicted coordinates of the ligand change when the receptor is moved by (Q_2, g_2). However, the definition of the function R(X_1 | Z_2) implies the transformation R and t act on X_1 relative to Z_2. If the receptor is rigidly transformed, the ligand's target position in the global frame must also be transformed by the same (Q_2, g_2). The equation as written essentially says the output coordinate is G_2(X_1, 2) = Q_2 * G_1(X_1, 2) + g_2. It is mathematically sound but potentially confusing regarding whether the rotation R itself should stay consistent or if it accounts for the relative frame change. Given the context of SE(3)-equivariance, this is likely correct, but the notation 'R(X_1 | Z_2)' without explicit decomposition of how R changes relative to Q_2 leaves the derivation of R obscured.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_5",
+          "title": "Unsubstantiated claim of sufficiency for Proposition 1",
+          "quote": "is guaranteed iff",
+          "explanation": "The text states that SE(3)-invariance of the complex is 'guaranteed iff' a formal condition follows, but the condition is missing from the provided passage. While it points to Appendix B.1, the claim of 'if and only if' (necessary and sufficient) is a strong mathematical assertion. Given that the paper defines R(X1|X2) and t(X1|X2) as arbitrary functions of the two proteins, asserting a general 'iff' condition without providing the explicit functional constraints in the main text makes it difficult for a reader to verify the theoretical foundations of the equivariance claim.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguous definition of R and t as functions of input sets",
+          "quote": "are functions of the two proteins, where we omit residue identity or other protein information in this notation, for brevity.",
+          "explanation": "The authors define R and t as functions of the two proteins (sets of coordinates), but later introduce latent features H1 and H2. It is ambiguous whether the model treats the transformation strictly as a function of Euclidean coordinates (in which case the equivariance holds by construction of IEGMNs) or if it incorporates learned latent representations that might not inherently satisfy the equivariance requirements. The interaction between the 'geometric' transformation R/t and the 'feature-based' keypoint selection (via attention on H1, H2) requires that the attention mechanism itself be SE(3)-invariant for the whole pipeline to remain sound. The text glosses over this dependency.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_7",
+          "title": "Missing explicit definition of the Kabsch rotation constraint",
+          "quote": "where $\\mu$ ( $\\cdot$ ) is the mean vector of a point cloud. It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3).",
+          "explanation": "The authors assert that the Kabsch-based transformation satisfies the equivariance properties. While the Kabsch algorithm is indeed optimal for superimposition, the proof of equivariance for the *entire* learnable model (IEGMNs + Attention + Kabsch) hinges on the attention mechanism producing coordinates that transform covariantly. The current text labels the derivation as 'straightforward' but skips the step connecting the attention-based keypoint generation to the global rotation matrix output, which is the primary mechanism of the model.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_8",
+          "title": "Inconsistent Orthogonality Notation in SVD",
+          "quote": "The singular value decomposition (SVD) is A = U2 SU\u22a41, where U2, U1 \u2208 O(3).",
+          "explanation": "In standard SVD for square matrices (or in the Kabsch algorithm context), the decomposition is typically written as A = U\u03a3V\u1d40, where U and V are orthogonal matrices. The authors write 'S' for the singular value matrix and 'U2 SU\u22a41'. While U2 and U1 are orthogonal (contained in O(3)), defining them within O(3) rather than SO(3) is an important detail for the Kabsch algorithm (which requires the determinant of UV\u1d40 to be +1). However, the specific notation 'U2, U1 \u2208 O(3)' combined with 'A = U2 SU\u22a41' is mathematically non-standard and could imply a reflection if U2 or U1 has a determinant of -1. While the Kabsch algorithm is robust, the notation here is slightly sloppy regarding the SO(3) vs O(3) requirement.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_9",
+          "title": "Ambiguous Definition of Surface Function G",
+          "quote": "G(x) = \u2212\u03c3 ln(1/n \u2211i=1^n exp(\u2212||x \u2212 xi||2 /\u03c3)).",
+          "explanation": "The formula for G(x) is essentially the Log-Sum-Exp smoothing of the distance point cloud. There is a missing '1/n' inside the logarithm expansion that appears in the context of typical soft-min/max functions but is missing here (the OCR shows a stray bracket structure). More importantly, the definition of the interior as G(x) < \u03b3 is sensitive to the choice of \u03c3. The text states that parameters \u03b3=10 and \u03c3=25 were chosen such that no holes exist, but this is a global threshold applied to a potentially non-convex protein surface. The claim that this represents the 'interior' is a heuristic that is likely to fail on proteins with complex cavity structures, which represent a significant portion of real protein-protein interfaces. While this is a common approximation, presenting it as a rigorous definition without acknowledging these potential internal cavities is a bit misleading.",
+          "comment_type": "logical",
+          "paragraph_index": 60,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_10",
+          "title": "Potential Notation Conflict in Optimal Transport Loss",
+          "quote": "We desire that Y1 is a representative set for the 3D set P1... we unfortunately do not know the actual alignment between points in Yl and Pl... The optimal transport loss is: L_OT = inf_\u03c0 \u2208 U(S,K) \u2211s,k \u03c0_s,k ||p_l,s - y_l,k ||^2",
+          "explanation": "In Section 4, the authors define L_OT. The problem is that the summation indices s and k imply an alignment between the predicted keypoints Y and the pocket points P. However, because Y are generated by an attention mechanism conditioned on the *entire* graph, they are order-invariant and permutation-equivariant. The loss function L_OT assumes a specific S x K transport plan, but it is unclear if the model forces the keypoints to index consistently across different inputs or if the transport plan is recomputed per-instance. Given the goal of consistent docking, if the keypoints aren't topologically fixed, the model might struggle to learn a stable transformation in the limited dataset (DB5.5). The mathematical justification for why an OT loss over 'unlabeled' keypoints will converge to a functional rigid body alignment is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_11",
+          "title": "Possible inconsistency in C-RMSD definition index notation",
+          "quote": "1 compute C-RMSD = \\frac{1}{n + m} \\sum \\| Z^* - Z \\|_F^2",
+          "explanation": "The definition of C-RMSD provided in the text appears to be the Mean Squared Error (MSE), not the Root Mean Square Deviation (RMSD). Standard definition of RMSD is \\sqrt{\\frac{1}{n} \\sum \\| \\dots \\|^2}. The text includes the sum but lacks the square root. Furthermore, using the Frobenius norm (\\|_\\|_F^2) for a sum of vectors implies the sum of the squared Euclidean norms of the residuals; while mathematically equivalent to the squared Euclidean distance between concatenated points, notationally this is slightly unusual for residue-wise RMSD, and the missing square root is a standard but significant oversight in definition.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_12",
+          "title": "Ambiguity in 'equal contribution' and 'correspondence' symbol usage",
+          "quote": "[\\dagger] Correspondence to: Octavian Ganea (oct@mit.edu) and Yatao Bian (yatao.bian@gmail.com).",
+          "explanation": "While 'correspondence' is standard for authors, the use of a dagger symbol is common. However, the summary section later uses \\dagger for 'Correspondence' and \\ast for 'Equal contribution'. In the footer of page 1, the footnote references \\dagger for correspondence and \\ast for equal contribution. This is consistent, but the prompt asks to flag potential inconsistencies. While not an error in the paper itself, the summary's structural representation of these symbols is slightly mismatched with how the footnotes are actually mapped (the summary list has \\dagger as [\u2020*] and \\ast as [\u00a7*], which is slightly confusing vs the paper's actual footnote).",
+          "comment_type": "logical",
+          "paragraph_index": 10,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_13",
+          "title": "Inconsistent Orthogonal Group Notation",
+          "quote": "SVD) is $A = U_2 SU_1^\\top$, where $U_2 , U_1 \\in O(3)$.",
+          "explanation": "In Section 3's description of the Kabsch algorithm, the text defines the SVD of A as $U_2 S U_1^\\top$ where $U_2, U_1 \\in O(3)$. In standard Kabsch implementation, $A = U_2 S U_1^\\top$ involves the orthogonal matrices $U_1$ and $U_2$. However, if these matrices are from $O(3)$ (which includes reflections with determinant -1), the resulting rotation $R = U_2 U_1^\\top$ might have a determinant of -1 (a reflection), violating the requirement $R \\in SO(3)$. The standard Kabsch algorithm employs a corrected rotation matrix ($R = U_2 V U_1^\\top$ where $V$ is diagonal to ensure $det(R) = 1$) to avoid improper rotations. While this is likely an OCR or transcription simplification of the SVD, it is technically an error in the definition of a rotation matrix.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_14",
+          "title": "Ambiguity in Keypoint Attention Formulation",
+          "quote": "where $z_i$ denotes the i-th column of matrix $Z_1$, and $\\alpha_i^{(k)} = \\text{softmax}_i( \\frac{1}{\\sqrt{d}} h_i^\\top W_k' \\mu(\\phi(H_2)))$",
+          "explanation": "The expression $\\mu(\\phi(H_2))$ appears to aggregate the entire receptor latent representation into a single feature vector before calculating attention scores. While this is a valid architectural choice, the notation is slightly ambiguous regarding whether $\\phi$ is applied per node (mapping $H_2 \\in \\mathbb{R}^{d \\times m}$ to a new feature space) or to the global mean. Since $\\mu$ is the mean operator, the order of operations should be clearer. Additionally, $\\text{softmax}_i$ is used, but the input to the softmax depends on index $i$ solely through $h_i$, which is a standard attention mechanism\u2014however, the dimension $\\frac{1}{\\sqrt{d}}$ suggests a scaled dot-product attention, yet $h_i^\\top W_k' \\mu(\\phi(H_2))$ results in a scalar, making the scaling factor look like it might be misapplied if $h_i$ and the mean are already vectors.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0384,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 89605,
+      "completion_tokens": 10659
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a well-structured and scientifically compelling introduction to a novel approach in rigid protein-protein docking. The clarity of the exposition is high, particularly in how it frames the \"grand challenge\" of structural biology and explicitly differentiates its end-to-end, SE(3)-equivariant methodology from the computationally expensive, sampling-heavy routines of traditional docking software. The inclusion of the mathematical grounding (the \"same output guarantee\") provides a strong, rigorous backbone, and the contributions are articulated with logical precision. The most significant issue, however, lies in the potential for a \"knowledge gap\" regarding the underlying hardware or software infrastructure: while the authors claim significant speed-ups, the paper must be careful to distinguish between the inference efficiency of their model versus the training overhead, as well as clarifying how the \"differentiable Kabsch algorithm\" maintains stability when dealing with highly variable protein binding patches. Overall, the foundational setup is exemplary, successfully mapping the complex task of rigid-body alignment onto the elegant framework of equivariant graph matching.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistent Rotation Logic in Proposition 1 Proof Description",
+          "quote": "i.) apply $Q^\\top$ to undo the rotation $Q$ applied on $X$ 1, ii.) apply $R(X_1 | X_2)$, iii.) apply $Q_2$ to rotate the docked ligand together with the receptor.",
+          "explanation": "In Section 3, the authors describe the decomposition of the equivariance property. Specifically, they mention applying $Q_1^\\top$ to 'undo' the rotation $Q_1$ applied to $X_1$. However, the subsequent equality $R(Q_1 X_1 + g_1 | Q_2 X_2 + g_2) = Q_2 R(X_1 | X_2) Q_1^\\top$ suggests that the operation $Q_1^\\top$ is actually acting as a change of basis (or inverse rotation). While the intuition is clear, the phrasing 'undo' is slightly loose, and the order of operations in the text (ii followed by iii) is ambiguous regarding their composition order ($Q_2$ should act on the result of the previous transformation). This is a minor clarity issue for the justification of Proposition 1.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguous/Truncated Mathematical Statement in Proposition 1",
+          "quote": "SE(3)-invariance of the predicted docked complex defined by Eq. (1) is guaranteed iff",
+          "explanation": "The text states 'guaranteed iff' followed by a paragraph break without providing the mathematical condition (the specific equality). While this is clearly an OCR/layout artifact where the formula was lost between the text and the subsequent paragraph, it is a significant gap in the Methodology section. A reader cannot verify the claim without the explicit constraint formula that follows 'iff'.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "Unspecified/Truncated Commutativity Condition",
+          "quote": "Commutativity as defined by Eq. (1) is guaranteed iff",
+          "explanation": "Similar to the issue with Proposition 1, the text introduces a 'guaranteed iff' clause for Proposition 3, but the corresponding mathematical expression is missing from the provided text. Since the paper relies heavily on this property to establish the model's validity, the lack of the formal condition renders the derivation incomplete.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguous Definition of Superimposition Identity in Commutativity Constraint",
+          "quote": "(R(X_1 | X_2) X_1 + t(X_1 | X_2)) \u2295 X_2 \u2261 X_1 \u2295 (R(X_2 | X_1) X_2 + t(X_2 | X_1))",
+          "explanation": "In Eq 1, the authors define commutativity such that docking X1 to X2 is equivalent to docking X2 to X1. However, the expression 'X_1 \u2295 (R(X_2 | X_1) X_2 + t(X_2 | X_1))' implies that the output of reversing roles is represented as the original X1 concatenated with the transformed X2. While the '\u2261' operator (defined as identity after Kabsch superimposition) likely handles the frame-of-reference shift, the notation is slightly confusing because the 'docked' X1 (the result of the first function) is on the left side of the \u2295, whereas it is positioned as the 'fixed' anchor on the right side. While technically consistent with a 'set-based' interpretation, a more precise notation (e.g., using a set-equivalence or noting the transformation required to bring the complex into a canonical frame) would clarify why the concatenation order is swapped relative to the transformation logic.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Unclear Definition of Input Transformation in Proposition 2",
+          "quote": "where Z_1 = Q_1 X_1 + g_1 ... R(X_1 | Z_2) X_1 + t(X_1 | Z_2) = Q_2 [ R(X_1 | X_2) X_1 + t(X_1 | X_2)] + g_2",
+          "explanation": "In Proposition 2, the authors claim equivariance with respect to transformations on the receptor (X_2). The expression 'R(X_1 | Z_2) X_1 + t(X_1 | Z_2) = Q_2 [ R(X_1 | X_2) X_1 + t(X_1 | X_2)] + g_2' appears to describe how the predicted coordinates of the ligand change when the receptor is moved by (Q_2, g_2). However, the definition of the function R(X_1 | Z_2) implies the transformation R and t act on X_1 relative to Z_2. If the receptor is rigidly transformed, the ligand's target position in the global frame must also be transformed by the same (Q_2, g_2). The equation as written essentially says the output coordinate is G_2(X_1, 2) = Q_2 * G_1(X_1, 2) + g_2. It is mathematically sound but potentially confusing regarding whether the rotation R itself should stay consistent or if it accounts for the relative frame change. Given the context of SE(3)-equivariance, this is likely correct, but the notation 'R(X_1 | Z_2)' without explicit decomposition of how R changes relative to Q_2 leaves the derivation of R obscured.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Unsubstantiated claim of sufficiency for Proposition 1",
+          "quote": "is guaranteed iff",
+          "explanation": "The text states that SE(3)-invariance of the complex is 'guaranteed iff' a formal condition follows, but the condition is missing from the provided passage. While it points to Appendix B.1, the claim of 'if and only if' (necessary and sufficient) is a strong mathematical assertion. Given that the paper defines R(X1|X2) and t(X1|X2) as arbitrary functions of the two proteins, asserting a general 'iff' condition without providing the explicit functional constraints in the main text makes it difficult for a reader to verify the theoretical foundations of the equivariance claim.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguous definition of R and t as functions of input sets",
+          "quote": "are functions of the two proteins, where we omit residue identity or other protein information in this notation, for brevity.",
+          "explanation": "The authors define R and t as functions of the two proteins (sets of coordinates), but later introduce latent features H1 and H2. It is ambiguous whether the model treats the transformation strictly as a function of Euclidean coordinates (in which case the equivariance holds by construction of IEGMNs) or if it incorporates learned latent representations that might not inherently satisfy the equivariance requirements. The interaction between the 'geometric' transformation R/t and the 'feature-based' keypoint selection (via attention on H1, H2) requires that the attention mechanism itself be SE(3)-invariant for the whole pipeline to remain sound. The text glosses over this dependency.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_7",
+          "title": "Missing explicit definition of the Kabsch rotation constraint",
+          "quote": "where $\\mu$ ( $\\cdot$ ) is the mean vector of a point cloud. It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3).",
+          "explanation": "The authors assert that the Kabsch-based transformation satisfies the equivariance properties. While the Kabsch algorithm is indeed optimal for superimposition, the proof of equivariance for the *entire* learnable model (IEGMNs + Attention + Kabsch) hinges on the attention mechanism producing coordinates that transform covariantly. The current text labels the derivation as 'straightforward' but skips the step connecting the attention-based keypoint generation to the global rotation matrix output, which is the primary mechanism of the model.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_8",
+          "title": "Inconsistent Orthogonality Notation in SVD",
+          "quote": "The singular value decomposition (SVD) is A = U2 SU\u22a41, where U2, U1 \u2208 O(3).",
+          "explanation": "In standard SVD for square matrices (or in the Kabsch algorithm context), the decomposition is typically written as A = U\u03a3V\u1d40, where U and V are orthogonal matrices. The authors write 'S' for the singular value matrix and 'U2 SU\u22a41'. While U2 and U1 are orthogonal (contained in O(3)), defining them within O(3) rather than SO(3) is an important detail for the Kabsch algorithm (which requires the determinant of UV\u1d40 to be +1). However, the specific notation 'U2, U1 \u2208 O(3)' combined with 'A = U2 SU\u22a41' is mathematically non-standard and could imply a reflection if U2 or U1 has a determinant of -1. While the Kabsch algorithm is robust, the notation here is slightly sloppy regarding the SO(3) vs O(3) requirement.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_9",
+          "title": "Ambiguous Definition of Surface Function G",
+          "quote": "G(x) = \u2212\u03c3 ln(1/n \u2211i=1^n exp(\u2212||x \u2212 xi||2 /\u03c3)).",
+          "explanation": "The formula for G(x) is essentially the Log-Sum-Exp smoothing of the distance point cloud. There is a missing '1/n' inside the logarithm expansion that appears in the context of typical soft-min/max functions but is missing here (the OCR shows a stray bracket structure). More importantly, the definition of the interior as G(x) < \u03b3 is sensitive to the choice of \u03c3. The text states that parameters \u03b3=10 and \u03c3=25 were chosen such that no holes exist, but this is a global threshold applied to a potentially non-convex protein surface. The claim that this represents the 'interior' is a heuristic that is likely to fail on proteins with complex cavity structures, which represent a significant portion of real protein-protein interfaces. While this is a common approximation, presenting it as a rigorous definition without acknowledging these potential internal cavities is a bit misleading.",
+          "comment_type": "logical",
+          "paragraph_index": 60,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_10",
+          "title": "Potential Notation Conflict in Optimal Transport Loss",
+          "quote": "We desire that Y1 is a representative set for the 3D set P1... we unfortunately do not know the actual alignment between points in Yl and Pl... The optimal transport loss is: L_OT = inf_\u03c0 \u2208 U(S,K) \u2211s,k \u03c0_s,k ||p_l,s - y_l,k ||^2",
+          "explanation": "In Section 4, the authors define L_OT. The problem is that the summation indices s and k imply an alignment between the predicted keypoints Y and the pocket points P. However, because Y are generated by an attention mechanism conditioned on the *entire* graph, they are order-invariant and permutation-equivariant. The loss function L_OT assumes a specific S x K transport plan, but it is unclear if the model forces the keypoints to index consistently across different inputs or if the transport plan is recomputed per-instance. Given the goal of consistent docking, if the keypoints aren't topologically fixed, the model might struggle to learn a stable transformation in the limited dataset (DB5.5). The mathematical justification for why an OT loss over 'unlabeled' keypoints will converge to a functional rigid body alignment is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_11",
+          "title": "Possible inconsistency in C-RMSD definition index notation",
+          "quote": "1 compute C-RMSD = \\frac{1}{n + m} \\sum \\| Z^* - Z \\|_F^2",
+          "explanation": "The definition of C-RMSD provided in the text appears to be the Mean Squared Error (MSE), not the Root Mean Square Deviation (RMSD). Standard definition of RMSD is \\sqrt{\\frac{1}{n} \\sum \\| \\dots \\|^2}. The text includes the sum but lacks the square root. Furthermore, using the Frobenius norm (\\|_\\|_F^2) for a sum of vectors implies the sum of the squared Euclidean norms of the residuals; while mathematically equivalent to the squared Euclidean distance between concatenated points, notationally this is slightly unusual for residue-wise RMSD, and the missing square root is a standard but significant oversight in definition.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_12",
+          "title": "Ambiguity in 'equal contribution' and 'correspondence' symbol usage",
+          "quote": "[\\dagger] Correspondence to: Octavian Ganea (oct@mit.edu) and Yatao Bian (yatao.bian@gmail.com).",
+          "explanation": "While 'correspondence' is standard for authors, the use of a dagger symbol is common. However, the summary section later uses \\dagger for 'Correspondence' and \\ast for 'Equal contribution'. In the footer of page 1, the footnote references \\dagger for correspondence and \\ast for equal contribution. This is consistent, but the prompt asks to flag potential inconsistencies. While not an error in the paper itself, the summary's structural representation of these symbols is slightly mismatched with how the footnotes are actually mapped (the summary list has \\dagger as [\u2020*] and \\ast as [\u00a7*], which is slightly confusing vs the paper's actual footnote).",
+          "comment_type": "logical",
+          "paragraph_index": 10,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_13",
+          "title": "Inconsistent Orthogonal Group Notation",
+          "quote": "SVD) is $A = U_2 SU_1^\\top$, where $U_2 , U_1 \\in O(3)$.",
+          "explanation": "In Section 3's description of the Kabsch algorithm, the text defines the SVD of A as $U_2 S U_1^\\top$ where $U_2, U_1 \\in O(3)$. In standard Kabsch implementation, $A = U_2 S U_1^\\top$ involves the orthogonal matrices $U_1$ and $U_2$. However, if these matrices are from $O(3)$ (which includes reflections with determinant -1), the resulting rotation $R = U_2 U_1^\\top$ might have a determinant of -1 (a reflection), violating the requirement $R \\in SO(3)$. The standard Kabsch algorithm employs a corrected rotation matrix ($R = U_2 V U_1^\\top$ where $V$ is diagonal to ensure $det(R) = 1$) to avoid improper rotations. While this is likely an OCR or transcription simplification of the SVD, it is technically an error in the definition of a rotation matrix.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_14",
+          "title": "Ambiguity in Keypoint Attention Formulation",
+          "quote": "where $z_i$ denotes the i-th column of matrix $Z_1$, and $\\alpha_i^{(k)} = \\text{softmax}_i( \\frac{1}{\\sqrt{d}} h_i^\\top W_k' \\mu(\\phi(H_2)))$",
+          "explanation": "The expression $\\mu(\\phi(H_2))$ appears to aggregate the entire receptor latent representation into a single feature vector before calculating attention scores. While this is a valid architectural choice, the notation is slightly ambiguous regarding whether $\\phi$ is applied per node (mapping $H_2 \\in \\mathbb{R}^{d \\times m}$ to a new feature space) or to the global mean. Since $\\mu$ is the mean operator, the order of operations should be clearer. Additionally, $\\text{softmax}_i$ is used, but the input to the softmax depends on index $i$ solely through $h_i$, which is a standard attention mechanism\u2014however, the dimension $\\frac{1}{\\sqrt{d}}$ suggests a scaled dot-product attention, yet $h_i^\\top W_k' \\mu(\\phi(H_2))$ results in a scalar, making the scaling factor look like it might be misapplied if $h_i$ and the mean are already vectors.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0384,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 89605,
+      "completion_tokens": 10659
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "## High-Level Feedback\n\n**Overall assessment:** This paper presents a technically sound and theoretically principled approach to rigid protein-protein docking, with the key strength being its rigorous treatment of SE(3) equivariance and commutativity. The mathematical guarantees that the predicted complex is invariant to initial poses and protein role assignments represent a significant conceptual advancement over existing docking pipelines that rely on heavy candidate sampling. The methodological contributions\u2014pairwise-independent equivariant graph matching, attention-based keypoint selection via optimal transport, and differentiable Kabsch alignment\u2014are well-motivated and coherently integrated into the EQUIDOCK framework. The empirical results showing 80-500x speed improvements with competitive accuracy are compelling.\n\n**Clarity issues:** The paper suffers from notable clarity problems, particularly in the figures. Figure 2 is nearly illegible due to overlapping mathematical notation and missing symbols (e.g., missing operators, unclear matrix dimensions), which undermines its purpose of illustrating the invariance guarantee. The abstract mentions \"pairwise-independent SE(3)-equivariant graph matching network\" but does not clearly define what \"pairwise-independent\" means in this context\u2014a crucial omission given that this is a core architectural claim. The introduction's description of the problem setup would benefit from explicitly distinguishing between the rigid body assumption and more flexible docking scenarios. The notation for ligand/receptor roles and transformations could be streamlined to improve readability.\n\n**Most significant issue:** The paper does not adequately address the biological validity of the rigid body assumption for their test cases. While the authors claim this assumption is \"realistic in many biological settings,\" they provide no analysis of how frequently real protein-protein interactions involve significant conformational changes, nor do they discuss the limitations of their approach for flexible docking cases. Given that many biologically relevant protein interactions involve induced-fit or conformational selection mechanisms, the practical applicability of EQUIDOCK may be substantially narrower than suggested. The paper would be strengthened by either: (a) providing benchmark results specifically on complexes known to undergo minimal conformational change, (b) discussing failure cases where flexibility matters, or (c) acknowledging this limitation more prominently rather than deferring it. This oversight weakens the otherwise strong technical contribution and limits the paper's impact for the broader structural biology community.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Ambiguous and underspecified attention score formula in keypoint generation",
+          "quote": "where **z** 1 _i_ denotes the i-th column of matrix **Z** 1, and _\u03b1i[k]_[=] _[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores",
+          "explanation": "The formula for computing attention scores is garbled by OCR and contains ambiguous notation. It likely involves a denominator of \u221ad, but the typesetting shows '~~_\u221a_~~[1] _d_' which is unclear. Additionally, the closing parentheses are mismatched (three consecutive ')))'). Furthermore, the function \u03bc is described only as 'the mean vector' without specifying the set of vectors; in \u03bc(\u03c6(H\u2082)), it is natural to assume the mean over the nodes of the second protein, but this is not explicitly stated. This ambiguity could lead to different implementations and hinder reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Ambiguous matrix product for cross-covariance in Kabsch",
+          "quote": "Let ~~_\u22a4_~~ A = Y2 Y1 \u2208 R^{3\u00d73} computed using zero-mean keypoints.",
+          "explanation": "The product Y2 Y1 is dimensionally inconsistent: Y1 and Y2 are 3\u00d7K matrices, so Y2 Y1 is not defined. The tilde-strikethrough is an OCR artifact; the intended expression is almost certainly A = Y2 Y1^T (or possibly Y1 Y2^T). In standard Kabsch, the cross-covariance matrix is computed as the product of the mean-centered point sets, typically H = P Q^T. The notation as printed would confuse a reader attempting to reproduce the algorithm. The ambiguity could be resolved by assuming the transpose, but the text does not make it explicit, and the OCR corruption leaves the symbol unclear.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Insufficient justification for equivariance claims of the Kabsch module",
+          "quote": "It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3).",
+          "explanation": "While the paper earlier derives necessary and sufficient conditions (Propositions 1\u20133), the argument that the differentiable Kabsch with keypoints satisfies all of them is non-trivial. In particular, the SVD decomposition introduces sign ambiguities and the rotation must be ensured to lie in SO(3) (determinant +1). The text does not mention how reflections are avoided, nor does it discuss why the keypoint sets Y1, Y2 guarantee commutativity. A reader familiar with the field would want to see at least a sketch of the reasoning; claiming 'straightforward' without any derivation or reference to an appendix is a gap in rigor for a paper that otherwise provides formal proofs for earlier propositions.",
+          "comment_type": "logical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0268,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 91124,
+      "completion_tokens": 49679
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "## High-Level Feedback\n\n**Overall assessment:** This paper presents a technically sound and theoretically principled approach to rigid protein-protein docking, with the key strength being its rigorous treatment of SE(3) equivariance and commutativity. The mathematical guarantees that the predicted complex is invariant to initial poses and protein role assignments represent a significant conceptual advancement over existing docking pipelines that rely on heavy candidate sampling. The methodological contributions\u2014pairwise-independent equivariant graph matching, attention-based keypoint selection via optimal transport, and differentiable Kabsch alignment\u2014are well-motivated and coherently integrated into the EQUIDOCK framework. The empirical results showing 80-500x speed improvements with competitive accuracy are compelling.\n\n**Clarity issues:** The paper suffers from notable clarity problems, particularly in the figures. Figure 2 is nearly illegible due to overlapping mathematical notation and missing symbols (e.g., missing operators, unclear matrix dimensions), which undermines its purpose of illustrating the invariance guarantee. The abstract mentions \"pairwise-independent SE(3)-equivariant graph matching network\" but does not clearly define what \"pairwise-independent\" means in this context\u2014a crucial omission given that this is a core architectural claim. The introduction's description of the problem setup would benefit from explicitly distinguishing between the rigid body assumption and more flexible docking scenarios. The notation for ligand/receptor roles and transformations could be streamlined to improve readability.\n\n**Most significant issue:** The paper does not adequately address the biological validity of the rigid body assumption for their test cases. While the authors claim this assumption is \"realistic in many biological settings,\" they provide no analysis of how frequently real protein-protein interactions involve significant conformational changes, nor do they discuss the limitations of their approach for flexible docking cases. Given that many biologically relevant protein interactions involve induced-fit or conformational selection mechanisms, the practical applicability of EQUIDOCK may be substantially narrower than suggested. The paper would be strengthened by either: (a) providing benchmark results specifically on complexes known to undergo minimal conformational change, (b) discussing failure cases where flexibility matters, or (c) acknowledging this limitation more prominently rather than deferring it. This oversight weakens the otherwise strong technical contribution and limits the paper's impact for the broader structural biology community.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Ambiguous attention score formula in keypoint generation",
+          "quote": "where **z** 1 _i_ denotes the i-th column of matrix **Z** 1, and _\u03b1i[k]_[=] _[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores",
+          "explanation": "The formula for computing attention scores is garbled by OCR and contains ambiguous notation. The intended expression almost certainly involves a denominator of \u221ad (as in standard scaled dot-product attention), but the typesetting shows '~~_\u221a_~~[1] _d_' which is unclear. Additionally, the closing parentheses are mismatched (three consecutive ')))'). This obscures the precise arithmetic of the attention mechanism, which is a critical component of the keypoint generation. While the general structure of multi-head attention is discernible, the exact formula cannot be confidently reconstructed from the text alone, which may hinder reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Underspecified mean vector in keypoint attention",
+          "quote": "and _\u00b5_ ( _\u00b7_ ) is the mean vector.",
+          "explanation": "The function \u03bc is described only as 'the mean vector' without specifying the set of vectors over which the mean is taken. In the attention score expression, \u03bc appears as \u03bc(\u03c6(H\u2082)). It is natural to assume that \u03bc computes the mean over the nodes of the second protein (i.e., the columns of \u03c6(H\u2082)), but this is not explicitly stated. Given that keypoint generation is central to the model's ability to predict binding pockets, this ambiguity could lead to different implementations and should be clarified.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Ambiguous matrix product for cross-covariance in Kabsch",
+          "quote": "Let ~~_\u22a4_~~ A = Y2 Y1 \u2208 R^{3\u00d73} computed using zero-mean keypoints.",
+          "explanation": "The product Y2 Y1 is dimensionally inconsistent: Y1 and Y2 are 3\u00d7K matrices, so Y2 Y1 is not defined. The tilde-strikethrough is an OCR artifact; the intended expression is almost certainly A = Y2 Y1^T (or possibly Y1 Y2^T). In standard Kabsch, the cross-covariance matrix is computed as the product of the mean-centered point sets, typically H = P Q^T. The notation as printed would confuse a reader attempting to reproduce the algorithm. The ambiguity could be resolved by assuming the transpose, but the text does not make it explicit, and the OCR corruption leaves the symbol unclear.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Insufficient justification for equivariance claims of the Kabsch module",
+          "quote": "It is straightforward to prove that this model satisfies all the equivariance properties in Eqs. (1) to (3).",
+          "explanation": "While the paper earlier derives necessary and sufficient conditions (Propositions 1\u20133), the argument that the differentiable Kabsch with keypoints satisfies all of them is non-trivial. In particular, the SVD decomposition introduces sign ambiguities and the rotation must be ensured to lie in SO(3) (determinant +1). The text does not mention how reflections are avoided, nor does it discuss why the keypoint sets Y1, Y2 guarantee commutativity. A reader familiar with the field would want to see at least a sketch of the reasoning; claiming 'straightforward' without any derivation or reference to an appendix is a gap in rigor for a paper that otherwise provides formal proofs for earlier propositions.",
+          "comment_type": "logical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0268,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 91124,
+      "completion_tokens": 49679
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript introduces EQUIDOCK, a theoretically grounded and methodologically innovative framework for rigid protein-protein docking that successfully integrates pairwise-independent SE(3)-equivariance with optimal transport and differentiable alignment. The work is of high quality, distinguished by rigorous mathematical guarantees ensuring invariance to initial poses and role commutativity, which addresses a fundamental desideratum in geometric deep learning for molecular systems. The writing is clear and persuasive, effectively contextualizing the limitations of traditional sampling-based docking pipelines and highlighting the model's efficiency gains through a streamlined, template-free architecture. However, the most significant issue concerns the biological scope of the rigid body assumption; while the authors posit this as a realistic approximation in many contexts, this constraint inherently precludes the model from addressing induced-fit phenomena, which are ubiquitous in drug design and functional protein interactions. Consequently, the claims regarding superior performance and applicability to drug design require nuanced framing, as the evaluation must carefully distinguish between rigid docking benchmarks and the broader biological reality where flexibility is often essential, and the discussion should explicitly quantify the trade-off between computational speed and the potential loss in accuracy for flexible complexes.",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Missing SE(3) invariance condition in Proposition 1",
+          "quote": "SE(3)-invariance of the predicted docked complex defined by Eq._ (1) _is guaranteed iff_\n\nAs a direct consequence of this proposition, we have the following statement.\n\n**Proposition 2.** _Any model satisfying Proposition 1 guarantees invariance of the predicted complex w.r.t. any SE(3) transformation on_ **X** 1 _, and equivariance w.r.t. any SE(3) transformation on_ **X** 2 _:_",
+          "explanation": "The authors set up Proposition 1 to formally state the exact transformation rules for the predicted rotation and translation that guarantee the SE(3)-invariance property from Eq. (1). The sentence ends with 'is guaranteed iff' but the required mathematical formula is completely absent, jumping straight to Proposition 2. Given the authors' claim that Proposition 1 is the theoretical foundation for the model design, omitting the core constraint equation undermines the logical flow and makes it impossible to verify how the model satisfies the invariance requirement. While likely an OCR/layout truncation, the gap remains a critical mathematical omission.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Missing commutativity condition in Proposition 3",
+          "quote": "**Proposition 3.** _Commutativity as defined by Eq._ (1) _is guaranteed iff_\n_Point Permutation Invariance._ We also enforce residue permutation invariance.",
+          "explanation": "The text introduces Proposition 3 regarding the necessary and sufficient conditions for commutativity, but the mathematical formula is completely absent, jumping immediately to the next subsection. Similar to the omission in Proposition 1, the formal condition required to guarantee commutativity (i.e., how the predicted rotation and translation functions must relate under input role-swap) is stated but omitted. This leaves the precise mathematical structure for role-swapping invariance undefined and hinders verification/reproduction. Highly likely an OCR or layout truncation, but remains a critical technical gap.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Misapplied notation `Z_1` in Keypoints attention definition",
+          "quote": "where z 1 i denotes the i-th column of matrix Z 1, and \u03b1i[k][=]_[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores",
+          "explanation": "The Keypoints section defines attention scores using the symbol `Z_1`, but `Z_1` was previously and consistently defined as the arbitrarily rotated/translated input ligand coordinates (`Z_1 = Q_1 X_1 + g_1`). Context and subsequent equations introduce `Y_1` and `Y_2` as the extracted keypoint point clouds. The text likely contains a typo or OCR error where `Z_1` was mistakenly used instead of `Y_1` when defining the columns of the keypoint matrix. This breaks notational consistency and could mislead readers into thinking the attention mechanism and Kabsch alignment operate on the raw rotated inputs rather than the extracted keypoints. Assuming the intended symbol is `Y_1` resolves the mathematical consistency, but the notation error must be corrected for clarity and reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Overclaim of \"identical\" in abstract without SE(3) qualification",
+          "quote": "We mathematically guarantee a basic principle: the predicted complex is always identical regardless of the initial locations and orientations of the two structures.",
+          "explanation": "The abstract claims the predicted complex is 'always identical' regardless of initial poses. However, as correctly clarified in Figure 2's caption ('up to an SE(3) transformation') and Eq. (1) (using `\\equiv` for superimposition identity), the model guarantees SE(3)-equivariance/invariance, meaning the *relative* structure is identical, but the absolute 3D coordinates will transform according to the input transformations. Claiming the output is 'always identical' without this qualification could mislead a reader into thinking the absolute output is fixed, which is physically impossible for a 3D predictor. This is a minor framing overclaim, as the necessary clarification appears immediately in the caption and Section 3.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Labeling of Eq. (1) as SE(3)-invariance vs. actual equivariance of parameters",
+          "quote": "( **R** ( **Z** 1 _|_ **Z** 2) **Z** 1 + **t** ( **Z** 1 _|_ **Z** 2)) _\u2295_ **Z** 2 _\u2261_ ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _,_ (SE(3)-invariance)",
+          "explanation": "The inline label '(SE(3)-invariance)' technically describes the property of the *final predicted complex structure* (which remains identical up to superposition regardless of input rotations/translations), rather than the mapping functions R(\u00b7|\u00b7) and t(\u00b7|\u00b7) themselves. In geometric deep learning, the output R and t are actually SE(3)-*equivariant* (they transform consistently with the inputs), while the composite docked pose is invariant. The authors do clarify this distinction in Proposition 1 and 2, but the immediate label could cause a brief moment of confusion for readers checking the symmetry of the learned parameters. I recommend labeling it as 'Invariance of the output complex' or explicitly noting the equivariance of R and t.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Concatenated equations in Proposition 2 impair readability",
+          "quote": "**R** ( **Z** 1 _|_ **X** 2) **Z** 1 + **t** ( **Z** 1 _|_ **X** 2) = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2) _, where_ **Z** 1 = **Q** 1 **X** 1 + **g** 1 **R** ( **X** 1 _|_ **Z** 2) **X** 1 + **t** ( **X** 1 _|_ **Z** 2) = **Q** 2 [ **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)] + **g** 2 _, where_ **Z** 2 = **Q** 2 **X** 2 + **g** 2 _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] , \u2200_ **X** 2 _\u2208_ R[3] _[\u00d7][m] _.",
+          "explanation": "The two distinct mathematical statements in Proposition 2 (invariance to ligand SE(3) transforms and equivariance to receptor SE(3) transforms) are merged into a single run-on line without line breaks or punctuation. The mathematics themselves are correct and consistent with Eq. (1), but the formatting severely impairs readability and increases the risk of a reader misaligning the 'where' clauses or misparsing the constraints. A clear separator or line break is necessary for technical precision.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_6",
+          "title": "Missing architecture equations in Section 4",
+          "quote": "This double constraint is formally defined:\n\nWe implement \u03a6 as a novel type of message-passing neural network (MPNN).",
+          "explanation": "The text explicitly states 'This double constraint is formally defined:' but omits the actual mathematical formulation (likely Eq. 4). Subsequent sections similarly drop the update equations for the IEGMN layers and the keypoint attention aggregation formula. Since the paper's core claim rests on provably satisfying pairwise independent SE(3)-equivariance by design, the absence of the defining equations makes it impossible to evaluate whether the implemented message-passing and attention mechanisms actually satisfy the stated geometric constraints. Context does not resolve this gap.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.1279,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 100463,
+      "completion_tokens": 102101
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript introduces EQUIDOCK, a theoretically grounded and methodologically innovative framework for rigid protein-protein docking that successfully integrates pairwise-independent SE(3)-equivariance with optimal transport and differentiable alignment. The work is of high quality, distinguished by rigorous mathematical guarantees ensuring invariance to initial poses and role commutativity, which addresses a fundamental desideratum in geometric deep learning for molecular systems. The writing is clear and persuasive, effectively contextualizing the limitations of traditional sampling-based docking pipelines and highlighting the model's efficiency gains through a streamlined, template-free architecture. However, the most significant issue concerns the biological scope of the rigid body assumption; while the authors posit this as a realistic approximation in many contexts, this constraint inherently precludes the model from addressing induced-fit phenomena, which are ubiquitous in drug design and functional protein interactions. Consequently, the claims regarding superior performance and applicability to drug design require nuanced framing, as the evaluation must carefully distinguish between rigid docking benchmarks and the broader biological reality where flexibility is often essential, and the discussion should explicitly quantify the trade-off between computational speed and the potential loss in accuracy for flexible complexes.",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Missing mathematical condition in Proposition 3",
+          "quote": "**Proposition 3.** _Commutativity as defined by Eq._ (1) _is guaranteed iff_\n_Point Permutation Invariance._ We also enforce residue permutation invariance.",
+          "explanation": "The text introduces Proposition 3 regarding the necessary and sufficient conditions for commutativity, but the mathematical formula is completely absent, jumping immediately to the next subsection. Given the paper's rigorous style and the explicit reference to Eq. (1), a formal equation is expected here. This is highly likely an OCR failure resulting from a two-column PDF layout, but as it stands, it leaves the formal condition for commutativity undefined. A reader cannot verify or reproduce the claim without the missing equation. I flag this as moderate because it creates a gap in the formal specification, though I acknowledge the probable OCR origin.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Undefined notation `**Z**_1` in Keypoints selection",
+          "quote": "where **z**_1 _i_ denotes the i-th column of matrix **Z**_1, and _\u03b1i[k]_[=] _[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]**_1 _[\u22a4]_ i **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][))))",
+          "explanation": "The Keypoints section uses the symbol `**Z**_1` to denote a matrix whose columns are indexed by `i`, but `**Z**_1` is never defined in this context. Given the surrounding notation (`**h**_1`, `**H**_2`, and standard attention mechanisms), the authors almost certainly intend `**H**_1` (the node feature matrix) or possibly `**X**_1`. The undefined symbol creates ambiguity in the algorithm description and would hinder reproduction if taken literally. Assuming the most plausible intended symbol (`**H**_1`) resolves the mathematical inconsistency, but the notation error remains problematic for clarity.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Overclaim of \"identical\" in the abstract without SE(3) qualification",
+          "quote": "We mathematically guarantee a basic principle: the predicted complex is always identical regardless of the initial locations and orientations of the two structures.",
+          "explanation": "The abstract claims the predicted complex is 'always identical' regardless of initial poses. However, as correctly clarified in Figure 2's caption ('up to an SE(3) transformation') and Eq. (1) (using `\\equiv` for superimposition identity), the model guarantees SE(3)-equivariance/invariance, meaning the *relative* structure is identical, but the absolute 3D coordinates will transform according to the input transformations. Claiming the output is 'always identical' without this qualification could mislead a reader into thinking the absolute output is fixed, which is physically impossible for a 3D predictor. This is a minor framing overclaim, as the necessary clarification appears immediately in the caption and Section 3.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Labeling of Eq. (1) as SE(3)-invariance vs. actual equivariance of parameters",
+          "quote": "( **R** ( **Z** 1 _|_ **Z** 2) **Z** 1 + **t** ( **Z** 1 _|_ **Z** 2)) _\u2295_ **Z** 2 _\u2261_ ( **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)) _\u2295_ **X** 2 _,_ (SE(3)-invariance)",
+          "explanation": "The inline label '(SE(3)-invariance)' technically describes the property of the *final predicted complex structure* (which remains identical up to superposition regardless of input rotations/translations), rather than the mapping functions R(\u00b7|\u00b7) and t(\u00b7|\u00b7) themselves. In geometric deep learning, the output R and t are actually SE(3)-*equivariant* (they transform consistently with the inputs), while the composite docked pose is invariant. The authors do clarify this distinction in Proposition 1 and 2, but the immediate label could cause a brief moment of confusion for readers checking the symmetry of the learned parameters. I recommend labeling it as 'Invariance of the output complex' or explicitly noting the equivariance of R and t.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Implicit broadcasting in transformation definition",
+          "quote": "**Z** _l_ = **Q** _l_ **X** _l_ + **g** _l, l \u2208{_ 1 _,_ 2 _}._",
+          "explanation": "The equation adds a translation vector **g** _l_ \u2208 \u211d\u00b3 to a point cloud matrix **X** _l_ \u2208 \u211d^{3\u00d7n}. This relies on implicit broadcasting (adding **g** _l_ to each of the n residue coordinates). While this is standard practice in modern geometric deep learning implementations and clear in context, strictly mathematical formulations usually prefer **X** _l_ + **g** _l_ **1**_n^\u22a4 or explicitly state the broadcasting convention. Given the paper's focus on deriving formal necessary and sufficient constraints, a brief note or explicit broadcast notation would enhance rigor without cluttering the prose.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Quantifier scope placement in Eq. (1)",
+          "quote": "_\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] ,_ **X** 2 _\u2208_ R[3] _[\u00d7][m] ,_ and **Z** _l_ = **Q** _l_ **X** _l_ + **g** _l, l \u2208{_ 1 _,_ 2 _}._ (1)",
+          "explanation": "The quantifiers bind the independent variables (**Q**, **g**, **X**), and **Z** _l_ is introduced as a dependent variable via 'and **Z** _l_ = ...'. While mathematically equivalent to defining **Z** _l_ beforehand, placing a variable definition inside the universal quantifier scope is slightly unconventional in formal mathematical writing. It would be cleaner to separate the quantifiers from the definition: '\u2200 **Q**\u2081, **Q**\u2082 \u2208 SO(3), \u2200 **g**\u2081, **g**\u2082 \u2208 \u211d\u00b3, \u2200 **X**\u2081 \u2208 \u211d^{3\u00d7n}, **X**\u2082 \u2208 \u211d^{3\u00d7m}, let **Z** _l_ = **Q** _l_ **X** _l_ + **g** _l, l \u2208 {1, 2}. Then, the following holds: ...'",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Missing Necessary/Sufficient Condition in Proposition 1",
+          "quote": "SE(3)-invariance of the predicted docked complex defined by Eq._ (1) _is guaranteed iff_\n\nAs a direct consequence of this proposition, we have the following statement.\n\n**Proposition 2.** _Any model satisfying Proposition 1 guarantees invariance of the predicted complex w.r.t. any SE(3) transformation on_ **X** 1 _, and equivariance w.r.t. any SE(3) transformation on_ **X** 2 _:_",
+          "explanation": "The authors set up Proposition 1 to formally state the exact transformation rules for the predicted rotation and translation that guarantee the SE(3)-invariance property from Eq. (1). The sentence ends with 'is guaranteed iff' but the required mathematical formula is completely absent, jumping straight to Proposition 2. Given the authors' claim that Proposition 1 is the theoretical foundation for the model design, omitting the core constraint equation undermines the logical flow and makes it impossible to verify how the model satisfies the invariance requirement. While likely an OCR/layout truncation, the gap remains a critical mathematical omission.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_7",
+          "title": "Missing Commutativity Condition in Proposition 3",
+          "quote": "**Proposition 3.** _Commutativity as defined by Eq._ (1) _is guaranteed iff_",
+          "explanation": "Similar to Proposition 1, the formal condition required to guarantee commutativity (i.e., how R(X2|X1) and t(X2|X1) must relate to R(X1|X2) and t(X1|X2)) is stated but immediately omitted. Without this equation, the precise mathematical structure the architecture must enforce for role-swapping invariance cannot be inspected or reproduced. The intent is clearly to mirror the symmetry of Eq. (1), but the missing formula leaves a gap in the theoretical justification.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_8",
+          "title": "Unseparated/Concatenated Equations in Proposition 2",
+          "quote": "**R** ( **Z** 1 _|_ **X** 2) **Z** 1 + **t** ( **Z** 1 _|_ **X** 2) = **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2) _, where_ **Z** 1 = **Q** 1 **X** 1 + **g** 1 **R** ( **X** 1 _|_ **Z** 2) **X** 1 + **t** ( **X** 1 _|_ **Z** 2) = **Q** 2 [ **R** ( **X** 1 _|_ **X** 2) **X** 1 + **t** ( **X** 1 _|_ **X** 2)] + **g** 2 _, where_ **Z** 2 = **Q** 2 **X** 2 + **g** 2 _\u2200_ **Q** 1 _,_ **Q** 2 _\u2208 SO_ (3) _, \u2200_ **g** 1 _,_ **g** 2 _\u2208_ R[3] _, \u2200_ **X** 1 _\u2208_ R[3] _[\u00d7][n] , \u2200_ **X** 2 _\u2208_ R[3] _[\u00d7][m] _.",
+          "explanation": "The two distinct mathematical statements in Proposition 2 (invariance to ligand SE(3) transforms and equivariance to receptor SE(3) transforms) are merged into a single run-on line without line breaks or punctuation. The mathematics themselves are correct and consistent with Eq. (1), but the formatting severely impairs readability and increases the risk of a reader misaligning the 'where' clauses or misparsing the constraints. A clear separator or line break is necessary for technical precision.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_9",
+          "title": "Missing Architecture Equations in Section 4",
+          "quote": "This double constraint is formally defined:\n\nWe implement \u03a6 as a novel type of message-passing neural network (MPNN).",
+          "explanation": "The text explicitly states 'This double constraint is formally defined:' but omits the actual mathematical formulation (likely Eq. 4). Subsequent sections similarly drop the update equations for the IEGMN layers and the keypoint attention aggregation formula. Since the paper's core claim rests on provably satisfying pairwise independent SE(3)-equivariance by design, the absence of the defining equations makes it impossible to evaluate whether the implemented message-passing and attention mechanisms actually satisfy the stated geometric constraints. Context does not resolve this gap.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_10",
+          "title": "Non-standard SVD Notation",
+          "quote": "The[singular][value][decomposition] (SVD) is **A** = **U** 2 **SU** _[\u22a4]_ 1[, where] **[ U]**[2] _[,]_ **[ U]**[1] _[\u2208][O]_[(3)][.",
+          "explanation": "The SVD of matrix **A** is denoted as **U**\u2082**S****U**\u2081\u1d40. Standard convention in mathematics and geometric deep learning uses **U****\u03a3****V**\u1d40. While mathematically equivalent if one renames the diagonal singular value matrix as **S** and the right singular vectors as **U**\u2081, the notation deviates from field standards. This could cause confusion for practitioners attempting to implement or integrate the differentiable Kabsch step with existing libraries that expect standard SVD returns, and it breaks notational consistency if **U** was previously used elsewhere.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_11",
+          "title": "Notation inconsistency in keypoint attention definition",
+          "quote": "where z 1 i denotes the i-th column of matrix Z 1, and \u03b1i[k][=]_[softmax][i]_[(] ~~_\u221a_~~[1] _d_ **[h]** 1 _[\u22a4] i_ **[W]** _k[\u2032][\u00b5]_[(] _[\u03d5]_[(] **[H]**[2][)))][are] attention scores",
+          "explanation": "Initially, the reference to `Z 1` in the keypoint paragraph is confusing. Checking the context reveals that `Z 1` was previously and consistently defined as the arbitrarily rotated and translated input ligand coordinates (`Z 1 = Q 1 X 1 + g 1`). However, the paragraph in question explicitly introduces `Y 1` and `Y 2` as the `K` keypoint point clouds extracted via attention. The text here appears to contain a typographical or OCR error where `Z 1` was mistakenly used instead of `Y 1` when defining the columns of the keypoint matrix. This breaks notational consistency and could mislead a reader into thinking the attention mechanism and the subsequent differentiable Kabsch alignment operate on the rotated input coordinates rather than the extracted keypoints. Assuming the most plausible intended symbol is `Y 1`, this is a localized notation error that should be corrected for clarity and reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.1279,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 100463,
+      "completion_tokens": 102101
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper introduces EQUIDOCK, a novel deep learning framework for rigid body protein-protein docking that promises substantial computational speed-ups over existing software. The introduction is clear and effectively motivates the work by contrasting the high computational cost of traditional docking pipelines with the potential of an SE(3)-equivariant graph matching approach. A central claim is that the model is designed to output the same complex structure regardless of the initial placement and roles of the input proteins. However, the most significant technical challenge\u2014and a critical potential issue for the submission\u2014lies in the feasibility of these \"pairwise-independent\" guarantees; ensuring that strictly independent graph networks can maintain geometric fidelity and competitive accuracy without relying on global interaction modeling or sampling is a non-trivial requirement that must be rigorously justified in the methodology section.",
+      "comments": [
+        {
+          "id": "progressive__glm-4.7-flash_0",
+          "title": "Missing formal definition of constraints",
+          "quote": "This double constraint is formally defined:\n\nWe implement \u03a6 as a novel type of message-passing neural network (MPNN).",
+          "explanation": "The text explicitly promises a formal definition for the 'pairwise independent SE(3)-equivariance' constraint referenced immediately before. However, the mathematical equation (likely Eq. 4) defining this constraint is missing, and the text proceeds directly to describing the implementation of \u03a6. Without this equation, the reader cannot verify the authors' strong claim that they 'guarantee, by design' these properties, which is central to the paper's contribution. It disrupts the logical flow from theoretical constraints to architectural design.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_1",
+          "title": "Confusing reuse of symbol Z",
+          "quote": "\"$Z_l$: Rotation and translation parameters used to generate arbitrary input states for verifying invariance ($Z_l = Q_l X_l + g_l$).\" ... \"where **z** 1 i denotes the i-th column of matrix **Z** 1.\"",
+          "explanation": "In the Summary, $Z_l$ is formally defined as an abstract transformed input state ($Q_l X_l + g_l$) used for verifying invariance. In Section 4 (Keypoints), the symbol **Z** 1 appears in the notation 'where **z** 1 i denotes the i-th column of matrix **Z** 1'. While the context of the Keypoint section (working with node coordinates) suggests **Z** 1 refers to the structural points or their embeddings, reusing the variable name $Z$ for both an abstract transformation variable and a concrete coordinate matrix introduces ambiguity about whether the author is manipulating the dummy input variable or the actual protein coordinates.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_2",
+          "title": "Ambiguity in I-RMSD normalization",
+          "quote": "We compute I-RMSD similarly, but using only the coor-dinates of the interface residues with distance less than 8\u00c5 to the other protein\u2019s residues.",
+          "explanation": "The passage defines C-RMSD using the Frobenius norm normalized by the total number of atoms ($n+m$). When applying the phrase 'similarly' for I-RMSD, one might assume the same normalization factor ($\frac{1}{n+m}$) is applied to the subset of interface residues. However, in the field of protein docking (and RMSD definitions in general), the normalization factor is typically equal to the size of the subset of points being compared (i.e., $\frac{1}{N_{int}}$, where $N_{int}$ is the number of interface atoms). Applying the total number of atoms to the denominator of a subset calculation would artificially penalize models with larger interfaces. While the superimposition step is clear, the lack of specification regarding the denominator for the error calculation constitutes a logical ambiguity in the definition of the metric.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0498,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 97722,
+      "completion_tokens": 107695
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper introduces EQUIDOCK, a novel deep learning framework for rigid body protein-protein docking that promises substantial computational speed-ups over existing software. The introduction is clear and effectively motivates the work by contrasting the high computational cost of traditional docking pipelines with the potential of an SE(3)-equivariant graph matching approach. A central claim is that the model is designed to output the same complex structure regardless of the initial placement and roles of the input proteins. However, the most significant technical challenge\u2014and a critical potential issue for the submission\u2014lies in the feasibility of these \"pairwise-independent\" guarantees; ensuring that strictly independent graph networks can maintain geometric fidelity and competitive accuracy without relying on global interaction modeling or sampling is a non-trivial requirement that must be rigorously justified in the methodology section.",
+      "comments": [
+        {
+          "id": "progressive_original__glm-4.7-flash_0",
+          "title": "Missing formal definition of constraints",
+          "quote": "This double constraint is formally defined:\n\nWe implement \u03a6 as a novel type of message-passing neural network (MPNN).",
+          "explanation": "The text explicitly promises a formal definition for the 'pairwise independent SE(3)-equivariance' constraint referenced immediately before. However, the mathematical equation (likely Eq. 4) defining this constraint is missing, and the text proceeds directly to describing the implementation of \u03a6. Without this equation, the reader cannot verify the authors' strong claim that they 'guarantee, by design' these properties, which is central to the paper's contribution. It disrupts the logical flow from theoretical constraints to architectural design.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_1",
+          "title": "Confusing reuse of symbol Z",
+          "quote": "\"$Z_l$: Rotation and translation parameters used to generate arbitrary input states for verifying invariance ($Z_l = Q_l X_l + g_l$).\" ... \"where **z** 1 i denotes the i-th column of matrix **Z** 1.\"",
+          "explanation": "In the Summary, $Z_l$ is formally defined as an abstract transformed input state ($Q_l X_l + g_l$) used for verifying invariance. In Section 4 (Keypoints), the symbol **Z** 1 appears in the notation 'where **z** 1 i denotes the i-th column of matrix **Z** 1'. While the context of the Keypoint section (working with node coordinates) suggests **Z** 1 refers to the structural points or their embeddings, reusing the variable name $Z$ for both an abstract transformation variable and a concrete coordinate matrix introduces ambiguity about whether the author is manipulating the dummy input variable or the actual protein coordinates.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_2",
+          "title": "Ambiguity in I-RMSD normalization",
+          "quote": "We compute I-RMSD similarly, but using only the coor-dinates of the interface residues with distance less than 8\u00c5 to the other protein\u2019s residues.",
+          "explanation": "The passage defines C-RMSD using the Frobenius norm normalized by the total number of atoms ($n+m$). When applying the phrase 'similarly' for I-RMSD, one might assume the same normalization factor ($\frac{1}{n+m}$) is applied to the subset of interface residues. However, in the field of protein docking (and RMSD definitions in general), the normalization factor is typically equal to the size of the subset of points being compared (i.e., $\frac{1}{N_{int}}$, where $N_{int}$ is the number of interface atoms). Applying the total number of atoms to the denominator of a subset calculation would artificially penalize models with larger interfaces. While the superimposition step is clear, the lack of specification regarding the denominator for the error calculation constitutes a logical ambiguity in the definition of the metric.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0498,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 97722,
+      "completion_tokens": 107695
+    }
+  }
+}

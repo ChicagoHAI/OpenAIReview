@@ -1,0 +1,768 @@
+{
+  "slug": "neurips2022-H4DqfPSi-flashattention-fast-and-memory-efficient-exact-attention-wit",
+  "title": "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **FLASHATTENTION: Fast and Memory-Efficient Exact Attention with IO-Awareness**\n\n**Tri Dao**[\u2020] **, Daniel Y. Fu**[\u2020] **, Stefano Ermon**[\u2020] **, Atri Rudra**[\u2021] **, Christopher R\u00e9**[\u2020]"
+    },
+    {
+      "index": 1,
+      "text": "\u2020 Department of Computer Science, Stanford University\n\n\u2021 Department of Computer Science and Engineering, University at Buffalo, SUNY"
+    },
+    {
+      "index": 2,
+      "text": "`{trid,danfu}@stanford.edu` , `ermon@stanford.edu` , `atri@buffalo.edu` , `chrismre@cs.stanford.edu`"
+    },
+    {
+      "index": 3,
+      "text": "## **Abstract**\n\nTransformers are slow and memory-hungry on long sequences, since the time and memory complexity of self-attention are quadratic in sequence length. Approximate attention methods have attempted to address this problem by trading off model quality to reduce the compute complexity, but often do not achieve wall-clock speedup. We argue that a missing principle is making attention algorithms _IO-aware_ \u2014 accounting for reads and writes between levels of GPU memory. We propose FLASHATTENTION, an IO-aware exact attention algorithm that uses tiling to reduce the number of memory reads/writes between GPU high bandwidth memory (HBM) and GPU on-chip SRAM. We analyze the IO complexity of FLASHATTENTION, showing that it requires fewer HBM accesses than standard attention, and is optimal for a range of SRAM sizes. We also extend FLASHATTENTION to block-sparse attention, yielding an approximate attention algorithm that is faster than any existing approximate attention method. FLASHATTENTION trains Transformers faster than existing baselines: 15% end-to-end wall-clock speedup on BERT-large (seq. length 512) compared to the MLPerf 1.1 training speed record, 3\u00d7 speedup on GPT-2 (seq. length 1K), and 2.4\u00d7 speedup on long-range arena (seq. length 1K-4K). FLASHATTENTION and block-sparse FLASHATTENTION enable longer context in Transformers, yielding higher quality models (0.7 better perplexity on GPT-2 and 6.4 points of lift on long-document classification) and entirely new capabilities: the first Transformers to achieve better-than-chance performance on the Path-X challenge (seq. length 16K, 61.4% accuracy) and Path-256 (seq. length 64K, 63.1% accuracy)."
+    },
+    {
+      "index": 4,
+      "text": "## **1 Introduction**\n\nTransformer models [86] have emerged as the most widely used architecture in applications such as natural language processing and image classification. Transformers have grown larger [5] and deeper [87], but equipping them with longer context remains difficult [83], since the self-attention module at their heart has time and memory complexity quadratic in sequence length. An important question is whether making attention faster and more memory-efficient can help Transformer models address their runtime and memory challenges for long sequences."
+    },
+    {
+      "index": 5,
+      "text": "Many approximate attention methods have aimed to reduce the compute and memory requirements of attention. These methods range from sparse-approximation [53, 77] to low-rank approximation [13, 52, 88], and their combinations [3, 9, 96]. Although these methods reduce the compute requirements to linear or near-linear in sequence length, many of them do not display wall-clock speedup against standard attention and have not gained wide adoption. One main reason is that they focus on FLOP reduction (which may not correlate with wall-clock speed) and tend to ignore overheads from memory access (IO)."
+    },
+    {
+      "index": 6,
+      "text": "In this paper, we argue that a missing principle is making attention algorithms _IO-aware_ [1]\u2014that is, carefully accounting for reads and writes to different levels of fast and slow memory (e.g., between fast GPU on-chip SRAM and relatively slow GPU high bandwidth memory, or HBM [47], Figure 1"
+    },
+    {
+      "index": 7,
+      "text": "36th Conference on Neural Information Processing Systems (NeurIPS 2022).\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "Outer Loop\nK [T] :  d x N\nAttention on GPT-2\nCopy Block to  SRAM\nQ:  N x d Outer Loop V:  N X d 15 Matmul\nGPU SRAM: 19 TB/s (20 MB)\nSRAM Dropout\nGPU HBM: 1.5 TB/s (40 GB) Copy 10\nHBM Compute  Block Softmax\non  SRAM\nMain Memory(CPU DRAM) DRAM                (>1 TB): 12.8 GB/s Copy 5 Mask KernelFused\nMatmul\nMemory Hierarchy with Output to HBM 0\nBandwidth & Memory Size sm (QK [T] )V:  N x d PyTorch FlashAttention\nInner Loop\nFlashAttention\nTQK N x N :  Time (ms)\nInner Loop Outer Loop\nInner Loop\n**----- End of picture text -----**"
+    },
+    {
+      "index": 9,
+      "text": "Figure 1: **Left:** FLASHATTENTION uses tiling to prevent materialization of the large _\ud835\udc41_ \u00d7 _\ud835\udc41_ attention matrix (dotted box) on (relatively) slow GPU HBM. In the outer loop (red arrows), FLASHATTENTION loops through blocks of the **K** and **V** matrices and loads them to fast on-chip SRAM. In each block, FLASHATTENTION loops over blocks of **Q** matrix (blue arrows), loading them to SRAM, and writing the output of the attention computation back to HBM. **Right:** Speedup over the PyTorch implementation of attention on GPT-2. FLASHATTENTION does not read and write the large _\ud835\udc41_ \u00d7 _\ud835\udc41_ attention matrix to HBM, resulting in an 7.6\u00d7 speedup on the attention computation."
+    },
+    {
+      "index": 10,
+      "text": "left). On modern GPUs, compute speed has out-paced memory speed [64\u201366], and most operations in Transformers are bottlenecked by memory accesses [45]. IO-aware algorithms have been critical for similar memory-bound operations, when reading and writing data can account for a large portion of the runtime\u2014such as database joins [74], image processing [73], numerical linear algebra [4], and more [42, 89]. However, common Python interfaces to deep learning such as PyTorch and Tensorflow do not allow fine-grained control of memory access."
+    },
+    {
+      "index": 11,
+      "text": "We propose FLASHATTENTION, a new attention algorithm that computes exact attention with far fewer memory accesses. Our main goal is to avoid reading and writing the attention matrix to and from HBM. This requires (i) computing the softmax reduction without access to the whole input (ii) not storing the large intermediate attention matrix for the backward pass. We apply two well-established techniques to address these challenges. (i) We restructure the attention computation to split the input into blocks and make several passes over input blocks, thus incrementally performing the softmax reduction (also known as **tiling** ). (ii) We store the softmax normalization factor from the forward pass to quickly **recompute** attention on-chip in the backward pass, which is faster than the standard approach of reading the intermediate attention matrix from HBM. We implement FLASHATTENTION in CUDA to achieve fine-grained control over memory access and fuse all the attention operations into one GPU kernel. Even with the increased FLOPs due to recomputation, our algorithm both **runs faster** (up to 7.6x on GPT-2 [70], Figure 1 right) and **uses less memory** \u2014linear in sequence length\u2014than standard attention, thanks to the massively reduced amount of HBM access."
+    },
+    {
+      "index": 12,
+      "text": "We analyze the IO complexity [1] of FLASHATTENTION, proving that it requires _\ud835\udc42_ ( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) HBM accesses where _\ud835\udc51_ is the head dimension and _\ud835\udc40_ is the size of SRAM, as compared to \u03a9( _\ud835\udc41\ud835\udc51_ + _\ud835\udc41_[2] ) of standard attention. For typical values of _\ud835\udc51_ and _\ud835\udc40_ , FLASHATTENTION requires many times fewer HBM accesses compared to standard attention (up to 9\u00d7 fewer, as shown in Fig. 2). Moreover, we provide a lower bound, showing that no exact attention algorithm can asymptotically improve on the number of HBM accesses over all SRAM sizes."
+    },
+    {
+      "index": 13,
+      "text": "We also show that FLASHATTENTION can serve as a useful primitive for realizing the potential of approximate attention algorithms by overcoming their issues with memory access overhead. As a proof of concept, we implement block-sparse FLASHATTENTION, a sparse attention algorithm that is 2-4\u00d7 faster than even FLASHATTENTION, scaling up to sequence length of 64k. We prove that block-sparse FLASHATTENTION has better IO complexity than FLASHATTENTION by a factor proportional to the sparsity ratio. We discuss further extensions to other operations (attention on multi-GPU, kernel regression, block-sparse matrix multiply) in Section 5. We open-source FLASHATTENTION to make it easier to build on this primitive[1] ."
+    },
+    {
+      "index": 14,
+      "text": "> 1FLASHATTENTION code is available at `https://github.com/HazyResearch/flash-attention`\n\n2\n\nWe empirically validate that FLASHATTENTION speeds up model training and improves model quality by modeling longer context. We also benchmark the runtime and memory footprint of FLASHATTENTION and block-sparse FLASHATTENTION compared to prior attention implementations."
+    },
+    {
+      "index": 15,
+      "text": "- **Faster Model Training.** FLASHATTENTION trains Transformer models faster in wall-clock time. We train BERT-large (seq. length 512) 15% faster than the training speed record in MLPerf 1.1 [60], GPT2 (seq. length 1K) 3\u00d7 faster than baseline implementations from HuggingFace [91] and Megatron-LM [80], and long-range arena (seq. length 1K-4K) 2.4\u00d7 faster than baselines."
+    },
+    {
+      "index": 16,
+      "text": "- **Higher Quality Models.** FLASHATTENTION scales Transformers to longer sequences, which improves their quality and enables new capabilities. We observe a 0.7 improvement in perplexity on GPT-2 and 6.4 points of lift from modeling longer sequences on long-document classification [14]. FLASHATTENTION enables the first Transformer that can achieve better-than-chance performance on the Path-X [83] challenge, solely from using a longer sequence length (16K). Block-sparse FLASHATTENTION enables a Transformer to scale to even longer sequences (64K), resulting in the first model that can achieve better-than-chance performance on Path-256."
+    },
+    {
+      "index": 17,
+      "text": "- **Benchmarking Attention.** FLASHATTENTION is up to 3\u00d7 faster than the standard attention implementation across common sequence lengths from 128 to 2K and scales up to 64K. Up to sequence length of 512, FLASHATTENTION is both faster and more memory-efficient than any existing attention method, whereas for sequence length beyond 1K, some approximate attention methods (e.g., Linformer) start to become faster. On the other hand, block-sparse FLASHATTENTION is faster than all existing approximate attention methods that we know of."
+    },
+    {
+      "index": 18,
+      "text": "## **2 Background**\n\nWe provide some background on the performance characteristics of common deep learning operations on modern hardware (GPUs). We also describe the standard implementation of attention."
+    },
+    {
+      "index": 19,
+      "text": "## **2.1 Hardware Performance**\n\nWe focus here on GPUs. Performance on other hardware accelerators are similar [48, 50]."
+    },
+    {
+      "index": 20,
+      "text": "**GPUMemoryHierarchy.** The GPU memory hierarchy (Fig. 1 left) comprises multiple forms of memory of different sizes and speeds, with smaller memory being faster. As an example, the A100 GPU has 40-80GB of high bandwidth memory (HBM) with bandwidth 1.5-2.0TB/s and 192KB of on-chip SRAM per each of 108 streaming multiprocessors with bandwidth estimated around 19TB/s [46, 47]. The on-chip SRAM is an order of magnitude faster than HBM but many orders of magnitude smaller in size. As compute has gotten faster relative to memory speed [64\u201366], operations are increasingly bottlenecked by memory (HBM) accesses. Thus exploiting fast SRAM becomes more important."
+    },
+    {
+      "index": 21,
+      "text": "**Execution Model.** GPUs have a massive number of threads to execute an operation (called a kernel). Each kernel loads inputs from HBM to registers and SRAM, computes, then writes outputs to HBM."
+    },
+    {
+      "index": 22,
+      "text": "**Performance characteristics.** Depending on the balance of computation and memory accesses, operations can be classified as either compute-bound or memory-bound. This is commonly measured by the _arithmetic intensity_ [89], which is the number of arithmetic operations per byte of memory access."
+    },
+    {
+      "index": 23,
+      "text": "1. Compute-bound: the time taken by the operation is determined by how many arithmetic operations there are, while time accessing HBM is much smaller. Typical examples are matrix multiply with large inner dimension, and convolution with large number of channels."
+    },
+    {
+      "index": 24,
+      "text": "2. Memory-bound: the time taken by the operation is determined by the number of memory accesses, while time spent in computation is much smaller. Examples include most other operations: elementwise (e.g., activation, dropout), and reduction (e.g., sum, softmax, batch norm, layer norm)."
+    },
+    {
+      "index": 25,
+      "text": "**Kernel fusion.** The most common approach to accelerate memory-bound operations is kernel fusion: if there are multiple operations applied to the same input, the input can be loaded once from HBM, instead of multiple times for each operation. Compilers can automatically fuse many elementwise operations [55, 68, 78]. However, in the context of model training, the intermediate values still need to be written to HBM to save for the backward pass, reducing the effectiveness of naive kernel fusion."
+    },
+    {
+      "index": 26,
+      "text": "## **2.2 Standard Attention Implementation**\n\nGiven input sequences **Q** _,_ **K** _,_ **V** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ where _\ud835\udc41_ is the sequence length and _\ud835\udc51_ is the head dimension, we want to compute the attention output **O** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ : **S** = **QK**[\u22a4] \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc41] ,_ **P** = softmax( **S** ) \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc41] ,_ **O** = **PV** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51] ,_"
+    },
+    {
+      "index": 27,
+      "text": "3\n\nwhere softmax is applied row-wise.\n\nStandard attention implementations materialize the matrices **S** and **P** to HBM, which takes _\ud835\udc42_ ( _\ud835\udc41_[2] ) memory. Often _\ud835\udc41_ \u226b _\ud835\udc51_ (e.g., for GPT2, _\ud835\udc41_ = 1024 and _\ud835\udc51_ = 64). We describe the standard attention implementation in Algorithm 0. As some or most of the operations are memory-bound (e.g., softmax), the large number of memory accesses translates to slow wall-clock time."
+    },
+    {
+      "index": 28,
+      "text": "This problem is exacerbated by other elementwise operations applied to the attention matrix, such as masking applied to **S** or dropout applied to **P** . As a result, there have been many attempts to fuse several elementwise operations, such as fusing masking with softmax [80]."
+    },
+    {
+      "index": 29,
+      "text": "In Section 3.2, we will show that the standard attention implementation performs HBM accesses quadratic in the sequence length _\ud835\udc41_ . We also compare the number of FLOPs and number of HBM accesses of standard attention and of our method (FLASHATTENTION)."
+    },
+    {
+      "index": 30,
+      "text": "**Algorithm 0** Standard Attention Implementation\n\n**Require:** Matrices **Q** _,_ **K** _,_ **V** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ in HBM."
+    },
+    {
+      "index": 31,
+      "text": "- 1: Load **Q** _,_ **K** by blocks from HBM, compute **S** = **QK**[\u22a4] , write **S** to HBM.\n\n- 2: Read **S** from HBM, compute **P** = softmax( **S** ), write **P** to HBM."
+    },
+    {
+      "index": 32,
+      "text": "- 3: Load **P** and **V** by blocks from HBM, compute **O** = **PV** , write **O** to HBM.\n\n- 4: Return **O** ."
+    },
+    {
+      "index": 33,
+      "text": "## **3 FLASHATTENTION: Algorithm, Analysis, and Extensions**\n\nWe show how to compute exact attention with fewer HBM reads/writes and without storing large intermediate matrices for the backward pass. This yields an attention algorithm that is both memory efficient and faster in wall-clock time. We analyze its IO complexity, showing that our method requires much fewer HBM accesses compared to standard attention. We further show that FLASHATTENTION can serve as a useful primitive by extending it to handle block-sparse attention."
+    },
+    {
+      "index": 34,
+      "text": "We focus here on the forward pass for ease of exposition; Appendix B contains details for the backward."
+    },
+    {
+      "index": 35,
+      "text": "## **3.1 An Efficient Attention Algorithm With Tiling and Recomputation**\n\nGiven the inputs **Q** _,_ **K** _,_ **V** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ in HBM, we aim to compute the attention output **O** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ and write it to HBM. Our goal is to reduce the amount of HBM accesses (to sub-quadratic in _\ud835\udc41_ )."
+    },
+    {
+      "index": 36,
+      "text": "We apply two established techniques (tiling, recomputation) to overcome the technical challenge of computing exact attention in sub-quadratic HBM accesses. We describe this in Algorithm 1. The main idea is that we split the inputs **Q** _,_ **K** _,_ **V** into blocks, load them from slow HBM to fast SRAM, then compute the attention output with respect to those blocks. By scaling the output of each block by the right normalization factor before adding them up, we get the correct result at the end."
+    },
+    {
+      "index": 37,
+      "text": "**Tiling.** We compute attention by blocks. Softmax couples columns of **K** , so we decompose the large softmax with scaling [53, 62, 69]. For numerical stability, the softmax of vector _\ud835\udc65_ \u2208 R _[\ud835\udc35]_ is computed:"
+    },
+    {
+      "index": 38,
+      "text": "_\ud835\udc5a_ ( _\ud835\udc65_ ) := max _\ud835\udc56 \ud835\udc65\ud835\udc56, \ud835\udc53_ ( _\ud835\udc65_ ) := \ufffd _\ud835\udc52[\ud835\udc65]_[1][\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)] _... \ud835\udc52[\ud835\udc65][\ud835\udc35]_[\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)][\ufffd] _, \u2113_ ( _\ud835\udc65_ ) := \u2211\ufe01 _\ud835\udc56 \ud835\udc53_ ( _\ud835\udc65_ ) _\ud835\udc56,_ softmax( _\ud835\udc65_ ) := _\u2113[\ud835\udc53]_ ([(] _\ud835\udc65[\ud835\udc65]_ )[)] _[.]_ For vectors _\ud835\udc65_[(][1][)] _,\ud835\udc65_[(][2][)] \u2208 R _[\ud835\udc35]_ , we can decompose the softmax of the concatenated _\ud835\udc65_ = \ufffd _\ud835\udc65_[(][1][)] _\ud835\udc65_[(][2][)][\ufffd] \u2208 R[2] _[\ud835\udc35]_ as: _\ud835\udc5a_ ( _\ud835\udc65_ ) = _\ud835\udc5a_ ( \ufffd _\ud835\udc65_[(][1][)] _\ud835\udc65_[(][2][)][\ufffd] ) = max( _\ud835\udc5a_ ( _\ud835\udc65_[(][1][)] ) _,\ud835\udc5a_ ( _\ud835\udc65_[(][2][)] )) _, \ud835\udc53_ ( _\ud835\udc65_ ) = \ufffd _\ud835\udc52[\ud835\udc5a]_[(] _[\ud835\udc65]_[(][1][)][)\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)] _\ud835\udc53_ ( _\ud835\udc65_[(][1][)] ) _\ud835\udc52[\ud835\udc5a]_[(] _[\ud835\udc65]_[(][2][)][)\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)] _\ud835\udc53_ ( _\ud835\udc65_[(][2][)] )\ufffd _, \u2113_ ( _\ud835\udc65_ ) = _\u2113_ ( \ufffd _\ud835\udc65_[(][1][)] _\ud835\udc65_[(][2][)][\ufffd] ) = _\ud835\udc52[\ud835\udc5a]_[(] _[\ud835\udc65]_[(][1][)][)\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)] _\u2113_ ( _\ud835\udc65_[(][1][)] )+ _\ud835\udc52[\ud835\udc5a]_[(] _[\ud835\udc65]_[(][2][)][)\u2212] _[\ud835\udc5a]_[(] _[\ud835\udc65]_[)] _\u2113_ ( _\ud835\udc65_[(][2][)] ) _,_ softmax( _\ud835\udc65_ ) = _[\ud835\udc53]_[(] _[\ud835\udc65]_[)] _\u2113_ ( _\ud835\udc65_ ) _[.]_"
+    },
+    {
+      "index": 39,
+      "text": "Therefore if we keep track of some extra statistics ( _\ud835\udc5a_ ( _\ud835\udc65_ ) _,\u2113_ ( _\ud835\udc65_ )), we can compute softmax one block at a time.[2] We thus split the inputs **Q** _,_ **K** _,_ **V** into blocks (Algorithm 1 line 1), compute the softmax values along with extra statistics (Algorithm 1 line 1), and combine the results (Algorithm 1 line 1)."
+    },
+    {
+      "index": 40,
+      "text": "**Recomputation.** One of our goals is to not store _\ud835\udc42_ ( _\ud835\udc41_[2] ) intermediate values for the backward pass. The backward pass typically requires the matrices **S** _,_ **P** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc41]_ to compute the gradients with respect to **Q** _,_ **K** _,_ **V** . However, by storing the output **O** and the softmax normalization statistics ( _\ud835\udc5a,\u2113_ ), we can recompute the attention matrix **S** and **P** easily in the backward pass from blocks of **Q** _,_ **K** _,_ **V** in SRAM. This can be seen as a form of selective gradient checkpointing [10, 36]. While gradient"
+    },
+    {
+      "index": 41,
+      "text": "> 2This style of aggregation is called _algebraic aggregation_ [35].\n\n4\n\ncheckpointing has been suggested to reduce the maximum amount of memory required [69], all implementations (that we know off) have to trade speed for memory. In contrast, even with more FLOPs, our recomputation speeds up the backward pass due to reduced HBM accesses (Fig. 2). The full backward pass description is in Appendix B."
+    },
+    {
+      "index": 42,
+      "text": "**Implementation details: Kernel fusion.** Tiling enables us to implement our algorithm in one CUDA kernel, loading input from HBM, performing all the computation steps (matrix multiply, softmax, optionally masking and dropout, matrix multiply), then write the result back to HBM (masking and dropout in Appendix B). This avoids repeatedly reading and writing of inputs and outputs from and to HBM."
+    },
+    {
+      "index": 43,
+      "text": "**Algorithm 1** FLASHATTENTION\n\n**Require:** Matrices **Q** _,_ **K** _,_ **V** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ in HBM, on-chip SRAM of size _\ud835\udc40_ . 1: Set block sizes _\ud835\udc35\ud835\udc50_ = \ufffd 4 _\ud835\udc40\ud835\udc51_ \ufffd _,\ud835\udc35\ud835\udc5f_ = min[\ufffd\ufffd] 4 _[\ud835\udc40] \ud835\udc51_ \ufffd _,\ud835\udc51_[\ufffd] . 2: Initialize **O** = (0) _\ud835\udc41_ \u00d7 _\ud835\udc51_ \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51] ,\u2113_ = (0) _\ud835\udc41_ \u2208 R _[\ud835\udc41] ,\ud835\udc5a_ = (\u2212\u221e) _\ud835\udc41_ \u2208 R _[\ud835\udc41]_ in HBM. 3: Divide **Q** into _\ud835\udc47\ud835\udc5f_ = \ufffd _\ud835\udc35\ud835\udc41\ud835\udc5f_ \ufffd blocks **Q** 1 _,...,_ **Q** _\ud835\udc47\ud835\udc5f_ of size _\ud835\udc35\ud835\udc5f_ \u00d7 _\ud835\udc51_ each, and divide **K** _,_ **V** in to _\ud835\udc47\ud835\udc50_ = \ufffd _\ud835\udc35\ud835\udc41\ud835\udc50_ \ufffd blocks **K** 1 _,...,_ **K** _\ud835\udc47\ud835\udc50_ and **V** 1 _,...,_ **V** _\ud835\udc47\ud835\udc50_ , of size _\ud835\udc35\ud835\udc50_ \u00d7 _\ud835\udc51_ each."
+    },
+    {
+      "index": 44,
+      "text": "4: Divide **O** into _\ud835\udc47\ud835\udc5f_ blocks **O** _\ud835\udc56,...,_ **O** _\ud835\udc47\ud835\udc5f_ of size _\ud835\udc35\ud835\udc5f_ \u00d7 _\ud835\udc51_ each, divide _\u2113_ into _\ud835\udc47\ud835\udc5f_ blocks _\u2113\ud835\udc56,...,\u2113\ud835\udc47\ud835\udc5f_ of size _\ud835\udc35\ud835\udc5f_ each, divide _\ud835\udc5a_ into _\ud835\udc47\ud835\udc5f_ blocks _\ud835\udc5a_ 1 _,...,\ud835\udc5a\ud835\udc47\ud835\udc5f_ of size _\ud835\udc35\ud835\udc5f_ each."
+    },
+    {
+      "index": 45,
+      "text": "5: **for** 1 \u2264 _\ud835\udc57_ \u2264 _\ud835\udc47\ud835\udc50_ **do** 6: Load **K** _\ud835\udc57 ,_ **V** _\ud835\udc57_ from HBM to on-chip SRAM. 7: **for** 1 \u2264 _\ud835\udc56_ \u2264 _\ud835\udc47\ud835\udc5f_ **do** 8: Load **Q** _\ud835\udc56,_ **O** _\ud835\udc56,\u2113\ud835\udc56,\ud835\udc5a\ud835\udc56_ from HBM to on-chip SRAM. 9: On chip, compute **S** _\ud835\udc56\ud835\udc57_ = **Q** _\ud835\udc56_ **K** _[\ud835\udc47] \ud835\udc57_[\u2208][R] _[\ud835\udc35][\ud835\udc5f]_[\u00d7] _[\ud835\udc35][\ud835\udc50]_[.] \u02dc \u02dc 10: On\u02dc chip, compute _\ud835\udc5a\ud835\udc56\ud835\udc57_ = rowmax( **S** _\ud835\udc56\ud835\udc57_ ) \u2208 R _[\ud835\udc35][\ud835\udc5f]_ , **P**[\u02dc] _\ud835\udc56\ud835\udc57_ = exp( **S** _\ud835\udc56\ud835\udc57_ \u2212 _\ud835\udc5a\ud835\udc56\ud835\udc57_ ) \u2208 R _[\ud835\udc35][\ud835\udc5f]_[\u00d7] _[\ud835\udc35][\ud835\udc50]_ (pointwise), _\u2113\ud835\udc56\ud835\udc57_ = rowsum( \u02dc **P** _\ud835\udc56\ud835\udc57_ ) \u2208 R _[\ud835\udc35] \ud835\udc5f_ . \u02dc 11: On chip, compute _\ud835\udc5a\ud835\udc56_[new] = max( _\ud835\udc5a\ud835\udc56,_ \u02dc _\ud835\udc5a\ud835\udc56\ud835\udc57_ ) \u2208 R _[\ud835\udc35][\ud835\udc5f]_ , _\u2113\ud835\udc56_[new] = _\ud835\udc52[\ud835\udc5a][\ud835\udc56]_[\u2212] \u02dc _[\ud835\udc5a] \ud835\udc56_[new] _\u2113\ud835\udc56_ + _\ud835\udc52[\ud835\udc5a]_[\u02dc] _[\ud835\udc56\ud835\udc57]_[\u2212] _[\ud835\udc5a] \ud835\udc56_[new] _\u2113\ud835\udc56\ud835\udc57_ \u2208 R _[\ud835\udc35] \ud835\udc5f_ . 12: Write **O** _\ud835\udc56_ \u2190 diag( _\u2113\ud835\udc56_[new] )[\u2212][1] (diag( _\u2113\ud835\udc56_ ) _\ud835\udc52[\ud835\udc5a][\ud835\udc56]_[\u2212] _[\ud835\udc5a] \ud835\udc56_[new] **O** _\ud835\udc56_ + _\ud835\udc52[\ud835\udc5a]_[\u02dc] _[\ud835\udc56\ud835\udc57]_[\u2212] _[\ud835\udc5a] \ud835\udc56_[new] **P** _\ud835\udc56\ud835\udc57_ **V** _\ud835\udc57_ ) to HBM. 13: Write _\u2113\ud835\udc56_ \u2190 _\u2113\ud835\udc56_[new] , _\ud835\udc5a\ud835\udc56_ \u2190 _\ud835\udc5a\ud835\udc56_[new] to HBM. 14: **end for** 15: **end for**"
+    },
+    {
+      "index": 46,
+      "text": "- 16: Return **O** .\n\nWe show FLASHATTENTION\u2019s correctness, runtime, and memory requirement (proof in Appendix C). **Theorem 1.** _Algorithm 1 returns_ **O** = softmax( **QK**[\u22a4] ) **V** _with \ud835\udc42_ ( _\ud835\udc41_[2] _\ud835\udc51_ ) _FLOPs and requires \ud835\udc42_ ( _\ud835\udc41_ ) _additional memory beyond inputs and output._"
+    },
+    {
+      "index": 47,
+      "text": "## **3.2 Analysis: IO Complexity of FLASHATTENTION**\n\nWe analyze the IO complexity of FLASHATTENTION, showing significant reduction in HBM accesses compared to standard attention. We also provide a lower bound, proving that no exact attention algorithm can asymptotically improve on HBM accesses over all SRAM sizes. Proofs are in Appendix C."
+    },
+    {
+      "index": 48,
+      "text": "**Theorem 2.** _Let \ud835\udc41 be the sequence length, \ud835\udc51 be the head dimension, and \ud835\udc40 be size of SRAM with \ud835\udc51_ \u2264 _\ud835\udc40_ \u2264 _\ud835\udc41\ud835\udc51. Standard attention (Algorithm 0) requires_ \u0398( _\ud835\udc41\ud835\udc51_ + _\ud835\udc41_[2] ) _HBM accesses, while_ FLASHATTENTION _(Algorithm 1) requires_ \u0398( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) _HBM accesses._"
+    },
+    {
+      "index": 49,
+      "text": "For typical values of _\ud835\udc51_ (64-128) and _\ud835\udc40_ (around 100KB), _\ud835\udc51_[2] is many times smaller than _\ud835\udc40_ , and thus FLASHATTENTION requires many times fewer HBM accesses than standard implementation. This leads to both faster execution and lower memory footprint, which we validate in Section 4.3."
+    },
+    {
+      "index": 50,
+      "text": "The main idea of the proof is that given the SRAM size of _\ud835\udc40_ , we can load blocks of **K** _,_ **V** of size \u0398( _\ud835\udc40_ ) each (Algorithm 1 line 1). For each block of **K** and **V** , we iterate over all blocks of **Q** (Algorithm 1 line 1) to compute the intermediate values, resulting in \u0398( _\ud835\udc41\ud835\udc51\ud835\udc40_[\u2212][1] ) passes over **Q** . Each pass loads \u0398( _\ud835\udc41\ud835\udc51_ ) elements, which amounts to \u0398( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) HBM accesses. We similarly prove that the backward pass of standard attention requires \u0398( _\ud835\udc41\ud835\udc51_ + _\ud835\udc41_[2] ) HBM accesses while the backward pass of FLASHATTENTION requires \u0398( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) HBM accesses (Appendix B)."
+    },
+    {
+      "index": 51,
+      "text": "We prove a lower-bound: one cannot asymptotically improve on the number of HBM accesses for all values of _\ud835\udc40_ (the SRAM size) when computing exact attention."
+    },
+    {
+      "index": 52,
+      "text": "5\n\n**----- Start of picture text -----**\n\nEffect of Block Size Sparsity Speedup\n6 Dense\nAttention Standard FLASHATTENTION 6 150 FlashAttention\nGFLOPs 66.6 75.2 4 Runtime 100\nHBM R/W (GB) 35.3 4.4 2\nRuntime (ms) 35.1 11.7 2 50\n64 128 256 512 20 60\nBlock Size % Non-Zero Blocks\nHBM\nAccesses\nBlock-Sparse\nFlashAttention\nFwd + Bwd (ms)\nHBM Accesses (GB) Fwd Runtime (ms)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 53,
+      "text": "Figure 2: **Left** : Forward + backward runtime of standard attention and FLASHATTENTION for seq. length 1024, head dim. 64, 16 heads, batch size 64, key-padding mask and no dropout on A100 GPU. HBM access is one of the primary factors affecting runtime. **Middle** : Forward runtime of FLASHATTENTION (seq. length 1024, head dim. 64, 16 heads, batch size 64) on A100 GPU. Fewer HBM accesses result in faster runtime, up to a point. **Right** : The runtime (for seq. length 4K) of block-sparse FLASHATTENTION is faster than FLASHATTENTION by a factor proportional to the sparsity."
+    },
+    {
+      "index": 54,
+      "text": "**Proposition 3.** _Let \ud835\udc41 be the sequence length, \ud835\udc51 be the head dimension, and \ud835\udc40 be size of SRAM with \ud835\udc51_ \u2264 _\ud835\udc40_ \u2264 _\ud835\udc41\ud835\udc51. There does not exist an algorithm to compute exact attention with \ud835\udc5c_ ( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) _HBM accesses for all \ud835\udc40 in the range_ [ _\ud835\udc51,\ud835\udc41\ud835\udc51_ ] _._"
+    },
+    {
+      "index": 55,
+      "text": "The proof relies on the fact that for _\ud835\udc40_ =\u0398( _\ud835\udc41\ud835\udc51_ ) any algorithm must perform \u03a9( _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] ) =\u03a9( _\ud835\udc41\ud835\udc51_ ) HBM accesses. This type of lower bound over a subrange of _\ud835\udc40_ is common in the streaming algorithms literature [92]. We leave proving parameterized complexity [29] lower bounds in terms of _\ud835\udc40_ as exciting future work."
+    },
+    {
+      "index": 56,
+      "text": "We validate that the number of HBM accesses is the main determining factor of attention run-time. In Fig. 2 (left), we see that even though FLASHATTENTION has higher FLOP count compared to standard attention (due to recomputation in the backward pass), it has much fewer HBM accesses, resulting in much faster runtime. In Fig. 2 (middle), we vary the block size _\ud835\udc35\ud835\udc50_ of FLASHATTENTION, which results in different amounts of HBM accesses, and measure the runtime of the forward pass. As block size increases, the number of HBM accesses decreases (as we make fewer passes over the input), and runtime decreases. For large enough block size (beyond 256), the runtime is then bottlenecked by other factors (e.g., arithmetic operations). Moreover, larger block size will not fit into the small SRAM size."
+    },
+    {
+      "index": 57,
+      "text": "## **3.3 Extension: Block-Sparse FLASHATTENTION**\n\nWe extend FLASHATTENTION to approximate attention: we propose block-sparse FLASHATTENTION, whose IO complexity is smaller than FLASHATTENTION by a factor proportional to the sparsity. Given inputs **Q** _,_ **K** _,_ **V** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51]_ and a mask matrix **M**[\u02dc] \u2208{0 _,_ 1} _[\ud835\udc41]_[\u00d7] _[\ud835\udc41]_ , we want to compute:"
+    },
+    {
+      "index": 58,
+      "text": "**S** = **QK**[\u22a4] \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc41] ,_ **P** = softmax( **S** \u2299\ud835\udfd9 **M** \u02dc ) \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc41] ,_ **O** = **PV** \u2208 R _[\ud835\udc41]_[\u00d7] _[\ud835\udc51] ,_ where ( **S** \u2299 \ud835\udfd9 **M** \u02dc ) _\ud835\udc58\ud835\udc59_ = **S** _\ud835\udc58\ud835\udc59_ if **M**[\u02dc] _\ud835\udc58\ud835\udc59_ = 1 and \u2212\u221e if **M** _\ud835\udc58\ud835\udc59_ = 0. We require **M**[\u02dc] to have block form: for some block sizes _\ud835\udc35\ud835\udc5f ,\ud835\udc35\ud835\udc50_ , for all _\ud835\udc58,\ud835\udc59_ , **M**[\u02dc] _\ud835\udc58,\ud835\udc59_ = **M** _\ud835\udc56\ud835\udc57_ with _\ud835\udc56_ = \u230a _\ud835\udc58_ / _\ud835\udc35\ud835\udc5f_ \u230b _,\ud835\udc57_ = \u230a _\ud835\udc59_ / _\ud835\udc35\ud835\udc50_ \u230b for some **M** \u2208{0 _,_ 1} _[\ud835\udc41]_[/] _[\ud835\udc35][\ud835\udc5f]_[\u00d7] _[\ud835\udc41]_[/] _[\ud835\udc35][\ud835\udc50]_ ."
+    },
+    {
+      "index": 59,
+      "text": "Given a predefined block sparsity mask **M** \u2208{0 _,_ 1} _[\ud835\udc41]_[/] _[\ud835\udc35][\ud835\udc5f]_[\u00d7] _[\ud835\udc41]_[/] _[\ud835\udc35][\ud835\udc50]_ we can easily adapt Algorithm 1 to only compute the nonzero blocks of the attention matrix. The algorithm is identical to Algorithm 1, except we skip zero blocks. We reproduce the algorithm description in Algorithm 5 in Appendix B."
+    },
+    {
+      "index": 60,
+      "text": "We also analyze the IO complexity of block-sparse FLASHATTENTION.\n\n**Proposition 4.** _Let \ud835\udc41 be the sequence length, \ud835\udc51 be the head dimension, and \ud835\udc40 be size of SRAM with \ud835\udc51_ \u2264 _\ud835\udc40_ \u2264 _\ud835\udc41\ud835\udc51. Block-sparse_ FLASHATTENTION _(Algorithm 5) requires_ \u0398( _\ud835\udc41\ud835\udc51_ + _\ud835\udc41_[2] _\ud835\udc51_[2] _\ud835\udc40_[\u2212][1] _\ud835\udc60_ ) _HBM accesses where \ud835\udc60 is the fraction of nonzero blocks in the block-sparsity mask._"
+    },
+    {
+      "index": 61,
+      "text": "We see that applying block-sparsity yields a direct improvement by the sparsity to the larger term in the IO complexity. For large sequence lengths _\ud835\udc41_ , _\ud835\udc60_ is often set to _\ud835\udc41_[\u2212][1][/][2] [12] or _\ud835\udc41_[\u2212][1] log _\ud835\udc41_ [3, 18, 96], resulting in \u0398( _\ud835\udc41_ \u221a _\ud835\udc41_ ) or \u0398( _\ud835\udc41_ log _\ud835\udc41_ ) IO complexity. For downstream experiments, we use the fixed butterfly sparsity pattern [18], which has been shown to be able to approximate arbitrary sparsity [17]."
+    },
+    {
+      "index": 62,
+      "text": "In Fig. 2 (right), we validate that as the sparsity increases, the runtime of block-sparse FLASHATTENTION improves proportionally. On the LRA benchmark, block-sparse FLASHATTENTION achieves 2.8\u00d7 speedup, while performing on par with standard attention (Section 4)."
+    },
+    {
+      "index": 63,
+      "text": "## **4 Experiments**\n\nWe evaluate the impact of using FLASHATTENTION to train Transformer models. We validate two claims about training time and model accuracy, and report attention runtime and memory benchmarks."
+    },
+    {
+      "index": 64,
+      "text": "6\n\n- **Training Speed.** FLASHATTENTION outperforms the MLPerf 1.1 [60] speed record for BERT by 15%, and speeds up GPT-2 up to 3\u00d7 over HuggingFace [91] and 1 _._ 8\u00d7 over Megatron [80] over standard Transformers. FLASHATTENTION speeds up the long-range arena (LRA) benchmark 2.4\u00d7."
+    },
+    {
+      "index": 65,
+      "text": "- **Quality.** FLASHATTENTION scales Transformers to longer sequences, yielding higher quality. FLASHATTENTION trains GPT-2 with context length 4K faster than Megatron trains GPT-2 with context length 1K, while achieving 0.7 better perplexity. Modeling longer sequences yields 6.4 points of lift on two long-document classification tasks. Finally, FLASHATTENTION yields the **first Transformer** that can achieve better-than-random performance on the challenging Path-X task (sequence length 16K), and block-sparse FLASHATTENTION yields the **first sequence model** that we know of that can achieve better-than-random performance on Path-256 (sequence length 64K)."
+    },
+    {
+      "index": 66,
+      "text": "- **Benchmarking Attention.** We measure the runtime and memory performance of FLASHATTENTION and block-sparse FLASHATTENTION based on sequence length. We confirm that the memory footprint of FLASHATTENTION scales linearly with seq. length and is up to 3\u00d7 faster than standard attention for common seq. lengths (up to 2K). We confirm that runtime of block-sparse FLASHATTENTION scales linearly in seq. length and is faster than all existing approximate attention baselines."
+    },
+    {
+      "index": 67,
+      "text": "Additional experiment details are in Appendix E.\n\n## **4.1 Faster Models with FLASHATTENTION**\n\n**BERT.** FLASHATTENTION yields the fastest single-node BERT training speed that we know of. We train a BERT-large [24] model with FLASHATTENTION on Wikipedia. Table 1 compares our training time to the implementation from Nvidia that set the training speed record for MLPerf 1.1 [60, 63]. Our implementation is 15% faster."
+    },
+    {
+      "index": 68,
+      "text": "Table 1: Training time of BERT-large, starting from the same initialization provided by the MLPerf benchmark, to reach the target accuracy of 72.0% on masked language modeling. Averaged over 10 runs on 8\u00d7A100 GPUs."
+    },
+    {
+      "index": 69,
+      "text": "|BERT Implementation|Trainingtime(minutes)|\n|---|---|\n|Nvidia MLPerf 1.1 [63]|20.0\u00b11.5|\n|FLASHATTENTION(ours)|**17.4**\u00b11.4|"
+    },
+    {
+      "index": 70,
+      "text": "**GPT-2.** FLASHATTENTION yields faster training times for GPT-2 [70] on the large OpenWebtext dataset [34] than the widely used HuggingFace [91] and Megatron-LM [80] implementations. Table 2 shows up to 3\u00d7 end-to-end speedup compared to Huggingface and 1.7\u00d7 speedup compared to Megatron-LM. FLASHATTENTION achieves the same perplexity as the other two implementations, as we do not change the model definition. Appendix E includes plots of the validation perplexity throughout training, confirming that FLASHATTENTION is as numerically stable as the baselines and produces the same training / validation curves."
+    },
+    {
+      "index": 71,
+      "text": "Table 2: GPT-2 small and medium using FLASHATTENTION achieve up to 3\u00d7 speed up compared to Huggingface implementation and up to 1.7\u00d7 compared to Megatron-LM. Training time reported on 8\u00d7A100s GPUs."
+    },
+    {
+      "index": 72,
+      "text": "|Model implementations|OpenWebText(ppl)\nTrainingtime(speedup)|\n|---|---|\n|GPT-2 small - Huggingface [91]\nGPT-2 small - Megatron-LM [80]\nGPT-2 small - FLASHATTENTIO|18.2\n9.5 days (1.0\u00d7)\n \n18.2\n4.7 days (2.0\u00d7)\nN\n18.2\n**2.7 days (3.5**\u00d7**)**|\n|GPT-2 medium - Huggingface [91\nGPT-2 medium - Megatron-LM [8\nGPT-2 medium - FLASHATTENTIO|]\n14.2\n21.0 days (1.0\u00d7)\n0]\n14.2\n11.5 days (1.8\u00d7)\nN\n14.2\n**6.9 days (3.0**\u00d7**)**|"
+    },
+    {
+      "index": 73,
+      "text": "**Long-range Arena.** We compare vanilla Transformer (with either standard implementation or FLASHATTENTION) on the long-range arena (LRA [83]) benchmark. We measure accuracy, throughput, and training time of all models. Each task has a different sequence length varying between 1024 and 4096. We follow the implementation and experimental setting in Tay et al. [83]and Xiong et al. [94].[3] Table 3 shows that FLASHATTENTION achieves up 2.4\u00d7 speed-up compared to standard attention. Block-sparse FLASHATTENTION is faster than all of the approximate attention methods that we have tested."
+    },
+    {
+      "index": 74,
+      "text": "## **4.2 Better Models with Longer Sequences**\n\n**Language Modeling with Long Context.** The runtime and memory-efficiency of FLASHATTENTION allow us to increase the context length of GPT-2 by 4\u00d7 while still running faster than the optimized implementation from Megatron-LM. Table 4 shows that that GPT-2 with 3LRA accuracy results are known to be highly dependent on the tuning procedure [94]. Our reproduced baselines perform better than as reported in the original comparison [83]."
+    },
+    {
+      "index": 75,
+      "text": "7\n\nTable 3: The performance of standard attention, FLASHATTENTION, block-sparse FLASHATTENTION, and approximate attention baselines on the Long-Range-Arena benchmarks."
+    },
+    {
+      "index": 76,
+      "text": "|Models|ListOps\nText\nRetrieval\nImage\nPathfnder|Avg|Speedup|\n|---|---|---|---|\n|Transformer\nFLASHATTENTION\nBlock-sparse FLASHATTENTION|36.0\n63.6\n81.6\n42.3\n72.7\n37.6\n63.9\n81.4\n43.5\n72.7\n37.0\n63.0\n81.3\n43.6\n73.3|59.3\n59.8\n59.6|-\n2.4\u00d7\n**2.8**\u00d7|\n|Linformer [88]\nLinear Attention [52]\nPerformer [13]\nLocal Attention [83]\nReformer [53]\nSmyrf [20]|35.6\n55.9\n77.7\n37.8\n67.6\n38.8\n63.2\n80.7\n42.6\n72.5\n36.8\n63.6\n82.2\n42.1\n69.9\n36.1\n60.2\n76.7\n40.6\n66.6\n36.5\n63.8\n78.5\n39.6\n69.4\n36.1\n64.1\n79.0\n39.6\n70.5|54.9\n59.6\n58.9\n56.0\n57.6\n57.9|2.5\u00d7\n2.3\u00d7\n1.8\u00d7\n1.7\u00d7\n1.3\u00d7\n1.7\u00d7|"
+    },
+    {
+      "index": 77,
+      "text": "FLASHATTENTION and context length 4K is still 30% faster than GPT-2 from Megatron with context length 1K, while achieving 0.7 better perplexity."
+    },
+    {
+      "index": 78,
+      "text": "Table 4: GPT-2 small with FLASHATTENTION, with 4\u00d7 larger context length compared to Megatron-LM, is still 30% faster while achieving 0.7 better perplexity. Training time on 8\u00d7A100 GPUs is reported."
+    },
+    {
+      "index": 79,
+      "text": "|||g time on 8\u00d7A100 GPUs is reported.|g time on 8\u00d7A100 GPUs is reported.|\n|---|---|---|---|\n|||OpenWebText(ppl)\nTrainingtime(speedup)||\n|Model implementations|Context length|OpenWebText(ppl)\nTrainingtime(speedup)||\n|GPT-2 small - Megatron-LM\nGPT-2 small - FLASHATTENTION\nGPT-2 small - FLASHATTENTION\nGPT-2 small - FLASHATTENTION|1k\n1k\n2k\n4k|18.2\n4.7 days (1.0\u00d7)\n18.2\n**2.7 days (1.7**\u00d7**)**\n17.7\n3.0 days (1.6\u00d7)||\n|||\n**17.2**\n3.6 days (1.3\u00d7)||"
+    },
+    {
+      "index": 80,
+      "text": "**Long Document Classification.** Training Transformers with longer sequences with FLASHATTENTION improves performance on the MIMIC-III [49] and ECtHR [6, 7] datasets. MIMIC-III contains intensive care unit patient discharge summaries, each annotated with multiple labels. ECtHR contains legal cases from the European Court of Human Rights, each of which is mapped to articles of the Convention of Human Rights that were allegedly violaged. Both of these datasets contain very long text documents; the average number of tokens in MIMIC is 2,395 tokens, and the longest document contains 14,562 tokens, while the average and longest numbers in ECtHR are 2,197 and 49,392, respectively. We evaluate lift from increasing the sequence length of a pretrained RoBERTa model [58] (we repeat the positional embeddings, as in Beltagy et al. [3])."
+    },
+    {
+      "index": 81,
+      "text": "Table 5 shows that sequence length 16K outperforms length 512 by 4.3 points on MIMIC, and that length 8K outperforms length 512 by 8.5 points on ECtHR. The discrepancies may be due to subtle distribution shifts: MIMIC-III contains specialized medical text and thus may be more susceptible to a distribution shift in the document length, whereas ECtHR contains general language."
+    },
+    {
+      "index": 82,
+      "text": "Table 6: We report the first Transformer model that can achieve non-random performance on Path-X and Path-256."
+    },
+    {
+      "index": 83,
+      "text": "|Table 5: Long Document performance (micro_\ud835\udc39_1)\nat different sequence lengths using FLASHATTEN-\nTION.\n512\n1024\n2048\n4096\n8192\n16384|Table 5: Long Document performance (micro_\ud835\udc39_1)\nat different sequence lengths using FLASHATTEN-\nTION.\n512\n1024\n2048\n4096\n8192\n16384|\n|---|---|\n|MIMIC-III [49]\nECtHR [6]|52.8\n50.7\n51.7\n54.6\n56.4\n**57.1**\n72.2\n74.3\n77.1\n78.6\n**80.7**\n79.2|"
+    },
+    {
+      "index": 84,
+      "text": "|nd Path-256.|||\n|---|---|---|\n|**Model**|Path-X|Path-256|\n|Transformer|\u0017|\u0017|\n|Linformer [88]|\u0017|\u0017|\n|Linear Attention [52]|\u0017|\u0017|\n|Performer [13]|\u0017|\u0017|\n|Local Attention [83]|\u0017|\u0017|\n|Reformer [53]|\u0017|\u0017|\n|SMYRF[20]|\u0017|\u0017|\n|FLASHATTENTION|**61.4**|\u0017|\n|Block-sparse FLASHATTENTION|56.0|**63.1**|"
+    },
+    {
+      "index": 85,
+      "text": "**Path-X and Path-256.** The Path-X and Path-256 benchmarks are challenging tasks from the long-range arena benchmark designed to test long context. The task is to classify whether two points in a black and white 128\u00d7128 (or 256\u00d7256) image have a path connecting them, and the images are fed to the transformer one pixel at a time. In prior work, all transformer models have either run out of memory, or only achieved random performance [83]. There has been a search for alternative architectures that can model such long context [39]. We present here the first result of Transformer models being able to solve Path-X and Path-256 (Table 6). We pretrain a transformer on Path-64, and then transfer to Path-X by spatially interpolating the positional embeddings. FLASHATTENTION achieves 61.4 accuracy on Path-X. Additionally, block-sparse FLASHATTENTION enables the Transformers to scale to sequence length 64K, achieving 63.1 accuracy[4] on Path-256."
+    },
+    {
+      "index": 86,
+      "text": "8\n\n**----- Start of picture text -----**\n\nAttention Runtime (Fwd Pass + Bwd Pass) Attention Memory Usage\n10 [2]\nCrossover Points 20 2x\n10 [1]\n10\n20x\n10 [0]\n128 256 512 1024 2048 4096 8192 256 8K 16K 32K 64K\nSequence Length Sequence Length\nFlashAttention PyTorch Attention Linformer Attention\nBlock-Sparse FlashAttention Megatron Attention OpenAI Sparse Attention\nRuntime (ms)\nMemory Footprint (GB)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 87,
+      "text": "Figure 3: **Left:** runtime of forward pass + backward pass. **Right:** attention memory usage.\n\n## **4.3 Benchmarking Attention**"
+    },
+    {
+      "index": 88,
+      "text": "We vary sequence length and measure runtime and memory usage of FLASHATTENTION and block-sparse FLASHATTENTION against various attention baselines on one A100 GPU with 40 GB HBM, with dropout and a padding mask. We compare against reference implementations for exact attention, approximate attention, and sparse attention. We report a subset of baselines in the main body; Appendix E contains more baselines and full details."
+    },
+    {
+      "index": 89,
+      "text": "**Runtime.** Figure 3 (left) reports the runtime in milliseconds of the forward + backward pass of FLASHATTENTION and block-sparse FLASHATTENTION compared to the baselines in exact, approximate, and sparse attention (exact numbers in Appendix E). Runtime grows quadratically with sequence length, but FLASHATTENTION runs significantly faster than **exact attention** baselines, up to 3\u00d7 faster than the PyTorch implementation. The runtimes of many approximate/sparse attention mechanisms grow linearly with sequence length, but FLASHATTENTION still runs faster than approximate and sparse attention for short sequences due to fewer memory accesses. The **approximate attention** runtimes begin to cross over with FLASHATTENTION at sequences between 512 and 1024. On the other hand, block-sparse FLASHATTENTION is faster than all implementations of exact, sparse, and approximate attention that we know of, across all sequence lengths."
+    },
+    {
+      "index": 90,
+      "text": "**Memory Footprint.** Figure 3 (right) shows the memory footprint of FLASHATTENTION and block-sparse FLASHATTENTION compared to various exact, approximate, and sparse attention baselines. FLASHATTENTION and block-sparse FLASHATTENTION have the same memory footprint, which grows linearly with sequence length. FLASHATTENTION is up to 20\u00d7 more memory efficient than **exact attention** baselines, and is more memory-efficient than the **approximate attention** baselines. All other algorithms except for Linformer run out of memory on an A100 GPU before 64K, and FLASHATTENTION is still 2\u00d7 more efficient than Linformer."
+    },
+    {
+      "index": 91,
+      "text": "## **5 Limitations and Future Directions**\n\nWe discuss limitations of our approach and future directions. Related work is given in Appendix A."
+    },
+    {
+      "index": 92,
+      "text": "**Compiling to CUDA.** Our current approach to building IO-aware implementations of attention requires writing a new CUDA kernel for each new attention implementation. This requires writing the attention algorithm in a considerably lower-level language than PyTorch, and requires significant engineering effort. Implementations may also not be transferrable across GPU architectures. These limitations suggest the need for a method that supports writing attention algorithms in a high-level language (e.g., PyTorch), and compiling to IO-aware implementations in CUDA\u2014similar to efforts such as Halide in image processing [73]."
+    },
+    {
+      "index": 93,
+      "text": "**IO-Aware Deep Learning.** We believe that the IO-aware approach can extend beyond attention. Attention is the most memory-intensive computation in Transformers, but every layer in a deep network touches GPU HBM. We hope our work inspires IO-aware implementations of additional modules. We discuss these potential extensions in Appendix D."
+    },
+    {
+      "index": 94,
+      "text": "**Multi-GPU IO-Aware Methods.** Our IO-aware implementation of attention is optimal within constants for computing attention on a single GPU. However, the attention computation may be par-"
+    },
+    {
+      "index": 95,
+      "text": "> 4Path-256 requires longer sequences but has relatively shorter paths than Path-X, so it is easier to obtain a higher accuracy."
+    },
+    {
+      "index": 96,
+      "text": "9\n\nallelizable across multiple GPUs [75]. Using multiple GPUs adds an additional layer to IO analysis\u2014 accounting for data transfer between GPUs. We hope our work inspires future work in this direction."
+    },
+    {
+      "index": 97,
+      "text": "**Societal Impacts.** As Transformer-based foundation models grow in size and data, our work seeks to understand how to train these large models more efficiently. This may allow a general community with limited access to computational resources to train and understand those foundation models. Our method is applicable to all Transformer-based models, which have a variety of applications, both positive and negative. For example, language modeling may make it easier to spread misinformation, while image classification models may make automatic surveillance easier. Alleviating these risks requires addressing application-specific issues such as privacy, bias, and discrimination."
+    },
+    {
+      "index": 98,
+      "text": "## **Acknowledgments**\n\nOur implementation uses Apex\u2019s FMHA code ( `https://github.com/NVIDIA/apex/tree/ master/apex/contrib/csrc/fmha` ) as a starting point. We thank Young-Jun Ko for the in-depth explanation of his FMHA implementation and for his thoughtful answers to our questions about CUDA. We thank Sabri Eyuboglu, Megan Leszczynski, Laurel Orr, Yuhuai Wu, Beidi Chen, and Xun Huang for their constructive feedback and suggestions on early drafts of the paper. We thank Markus Rabe and Charles Staats for helpful discussion of their attention algorithm."
+    },
+    {
+      "index": 99,
+      "text": "We gratefully acknowledge the support of NIH under No. U54EB020405 (Mobilize), NSF under Nos. CCF1763315 (Beyond Sparsity), CCF1563078 (Volume to Velocity), and 1937301 (RTML); ARL under No. W911NF-21-2-0251 (Interactive Human-AI Teaming); ONR under No. N000141712266 (Unifying Weak Supervision); ONR N00014-20-1-2480: Understanding and Applying Non-Euclidean Geometry in Machine Learning; N000142012275 (NEPTUNE); NXP, Xilinx, LETI-CEA, Intel, IBM, Microsoft, NEC, Toshiba, TSMC, ARM, Hitachi, BASF, Accenture, Ericsson, Qualcomm, Analog Devices, Google Cloud, Salesforce, Total, the HAI-GCP & HAI-Azure Cloud Credits for Research program, the Stanford Data Science Initiative (SDSI), Department of Defense (DoD) through the National Defense Science and Engineering Graduate Fellowship (NDSEG) Program, and members of the Stanford DAWN project: Facebook, Google, and VMWare. The U.S. Government is authorized to reproduce and distribute reprints for Governmental purposes notwithstanding any copyright notation thereon. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views, policies, or endorsements, either expressed or implied, of NIH, ONR, or the U.S. Government. Atri Rudra\u2019s research is supported by NSF grant CCF-1763481."
+    },
+    {
+      "index": 100,
+      "text": "## **References**\n\n- [1] Alok Aggarwal and S Vitter, Jeffrey. The input/output complexity of sorting and related problems. _Communications of the ACM_ , 31(9):1116\u20131127, 1988."
+    },
+    {
+      "index": 101,
+      "text": "- [2] Irwan Bello. LambdaNetworks: Modeling long-range interactions without attention. _arXiv preprint arXiv:2102.08602_ , 2021."
+    },
+    {
+      "index": 102,
+      "text": "- [3] Iz Beltagy, Matthew E Peters, and Arman Cohan. Longformer: The long-document transformer. _arXiv preprint arXiv:2004.05150_ , 2020."
+    },
+    {
+      "index": 103,
+      "text": "- [4] L Susan Blackford, Antoine Petitet, Roldan Pozo, Karin Remington, R Clint Whaley, James Demmel, Jack Dongarra, Iain Duff, Sven Hammarling, Greg Henry, et al. An updated set of basic linear algebra subprograms (blas). _ACM Transactions on Mathematical Software_ , 28(2): 135\u2013151, 2002."
+    },
+    {
+      "index": 104,
+      "text": "- [5] Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. _Advances in neural information processing systems_ , 33:1877\u20131901, 2020."
+    },
+    {
+      "index": 105,
+      "text": "- [6] Ilias Chalkidis, Ion Androutsopoulos, and Nikolaos Aletras. Neural legal judgment prediction in English. In _Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics_ , pages 4317\u20134323, Florence, Italy, 2019. Association for Computational Linguistics. doi: 10.18653/v1/P19-1424. URL `https://www.aclweb.org/anthology/P19-1424` ."
+    },
+    {
+      "index": 106,
+      "text": "- [7] Ilias Chalkidis, Manos Fergadiotis, Dimitrios Tsarapatsanis, Nikolaos Aletras, Ion Androutsopoulos, and Prodromos Malakasiotis. Paragraph-level rationale extraction through regularization: A case study on european court of human rights cases. In _Proceedings of_\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents FlashAttention, an IO-aware exact attention algorithm that uses tiling and recomputation to reduce HBM accesses, achieving significant speedups and memory savings. The work is technically sound and has had substantial impact, but several issues warrant attention: incomplete validation of numerical exactness, insufficiently detailed IO complexity analysis, limited benchmarking controls, and overclaimed generalization of block-sparse attention.\n\nFlashAttention is a well-executed systems contribution that convincingly demonstrates the importance of IO-awareness for attention computation. The paper's core ideas\u2014tiling with online softmax and recomputation in the backward pass\u2014are clearly explained and empirically validated. The main strength is the substantial wall-clock speedups and memory reductions across multiple architectures and tasks. However, the paper would benefit from more rigorous validation of numerical exactness, a more detailed IO complexity analysis accounting for realistic hardware hierarchies, and clearer acknowledgment of limitations regarding block-sparse attention's generality.\n\nOverview issues:\n\n- Numerical exactness is asserted but not rigorously validated: The paper claims FlashAttention computes 'exact attention,' but does not provide a systematic numerical comparison to standard attention (e.g., maximum relative error, error distribution across random inputs and various sequence lengths/dimensions). Given that the tiling-based softmax involves rescaling by exponential factors, there could be non-trivial floating-point error accumulation, especially for long sequences or large head dimensions. The paper should include a dedicated numerical analysis section showing that outputs match standard attention within machine epsilon (or a small multiple thereof) across a range of configurations. This is especially important because the method is used for training, where gradient accuracy matters.\n\n- IO complexity analysis oversimplifies the memory hierarchy: The IO complexity model assumes a two-level memory hierarchy (HBM and SRAM) with uniform access costs, but modern GPUs have multiple cache levels (L1, L2) and NUMA-like effects across memory channels. The analysis also assumes that SRAM size M is the same for all streaming multiprocessors, ignoring contention. The paper should discuss how its results might change with more realistic memory models, or at least acknowledge that the O(N^2 d^2 / M) bound is an approximation. A sensitivity analysis varying M and measuring actual HBM traffic would strengthen the claims.\n\n- Benchmarking does not adequately control for confounding factors: The runtime benchmarks compare FlashAttention against PyTorch, HuggingFace, and Megatron implementations, but these baselines are not necessarily optimized for IO. The paper does not report GPU microarchitecture details (e.g., clock frequency, memory clock), CUDA version, or compiler flags used, which can significantly affect runtime. Additionally, kernel launch overhead and memory bandwidth contention are not isolated. The paper should include a more controlled comparison, such as measuring only the attention kernel (excluding Python overhead) and reporting hardware configuration details. An ablation study showing the contribution of tiling vs. recomputation vs. kernel fusion would also be valuable.\n\n- Generalization of block-sparse attention to arbitrary sparsity patterns is overclaimed: The paper extends FlashAttention to block-sparse attention using a fixed butterfly sparsity pattern, but claims this can 'approximate arbitrary sparsity' (citing Dao et al., 2019). However, the theoretical justification for this claim is not provided, and the empirical validation is limited to the LRA benchmark. The paper should either provide a rigorous proof or empirical evidence that the butterfly pattern can approximate the sparsity patterns needed for the tasks considered (e.g., Path-256). Additionally, the block-sparse algorithm assumes the sparsity mask is known a priori, which may not hold for dynamic attention mechanisms. The limitations section should discuss these constraints.\n\n- Reproducibility is hindered by insufficient implementation details: While the paper open-sources code, the main text lacks key details needed to reproduce the results: exact GPU model (e.g., A100-40GB vs A100-80GB), CUDA version, cuBLAS version, PyTorch version, and compiler optimization flags. The paper also does not specify the block sizes used in practice (B_c and B_r are given as formulas but actual values depend on M and d). The authors should provide a table of hardware/software configurations and the exact block sizes used for each experiment. This is standard practice for systems papers.\n\n- The lower bound proof (Proposition 3) is insufficiently justified: Proposition 3 claims no exact attention algorithm can achieve o(N^2 d^2 / M) HBM accesses for all M in [d, Nd]. The proof sketch relies on the M = \u0398(Nd) case, but this is a single point, not a range. The paper cites streaming algorithms literature for this type of lower bound, but does not provide a rigorous argument. A proper lower bound would need to show that for any algorithm, there exists some M in the range where the bound holds. The current argument is too vague and should either be fleshed out with a formal proof or softened to a conjecture.\n\n- Missing numerical exactness validation: The paper claims FlashAttention computes exact attention, but provides no systematic numerical comparison to standard attention. Given the tiling-based softmax involves rescaling by exponential factors, floating-point error could accumulate, especially for long sequences or large head dimensions. The paper should include a dedicated analysis showing maximum relative error and error distribution across random inputs and various configurations, demonstrating outputs match standard attention within machine epsilon.\n\n- Benchmarking lacks controlled comparison details: The runtime benchmarks compare FlashAttention against PyTorch, HuggingFace, and Megatron implementations, but these baselines may not be optimized for IO. The paper does not report GPU microarchitecture details (e.g., clock frequency, memory clock), CUDA version, or compiler flags, which can significantly affect runtime. Kernel launch overhead and memory bandwidth contention are not isolated. The paper should include a controlled comparison measuring only the attention kernel (excluding Python overhead) and report hardware/software configuration details. An ablation study showing the contribution of tiling vs. recomputation vs. kernel fusion would also be valuable.\n\n- Block-sparse attention generalization overclaimed: The paper extends FlashAttention to block-sparse attention using a fixed butterfly sparsity pattern, claiming it can 'approximate arbitrary sparsity' (citing Dao et al., 2019). However, no theoretical or empirical justification is provided for this claim in the context of the tasks considered (e.g., Path-256). The block-sparse algorithm assumes the sparsity mask is known a priori, which may not hold for dynamic attention mechanisms. The paper should either provide a rigorous proof or empirical evidence that the butterfly pattern can approximate the needed sparsity patterns, and discuss constraints in the limitations section.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add a systematic numerical validation section showing that FlashAttention outputs match standard attention within machine epsilon across a range of sequence lengths, head dimensions, and random inputs.\n\n- Provide a more detailed IO complexity analysis that discusses limitations of the two-level memory model and includes empirical measurements of HBM traffic vs. theoretical predictions.\n\n- Report full hardware/software configuration details (GPU model, CUDA version, compiler flags) and specify the exact block sizes used in all experiments. Add an ablation study isolating the contributions of tiling, recomputation, and kernel fusion.\n\n- Clarify the theoretical and empirical justification for block-sparse attention's ability to approximate arbitrary sparsity patterns, and discuss limitations regarding dynamic sparsity.\n\n- Strengthen the lower bound proof (Proposition 3) with a more rigorous argument or reclassify it as a conjecture with supporting intuition.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Lower bound proof is insufficient",
+          "quote": "Proposition 3. Let  $N$  be the sequence length,  $d$  be the head dimension, and  $M$  be size of SRAM with  $d \\leq M \\leq Nd$ . There does not exist an algorithm to compute exact attention with  $o(N^2 d^2 M^{-1})$  HBM accesses for all  $M$  in the range  $[d, Nd]$ .",
+          "explanation": "The proof only considers the single point $M = \\Theta(Nd)$ at the upper end of the range. To rule out an algorithm achieving $o(N^2 d^2 / M)$ for all $M$ in $[d, Nd]$, one must show that for any candidate algorithm, there exists some $M$ in the range where its HBM accesses are $\\Omega(N^2 d^2 / M)$. The current argument only shows that at $M = \\Theta(Nd)$ the bound is $\\Omega(Nd)$, which equals $\\Theta(N^2 d^2 / M)$ at that point. This does not preclude an algorithm that achieves, say, $O(N^2 d^2 / (M \\log N))$ for all $M$, because at $M = \\Theta(Nd)$ that would be $O(Nd / \\log N) = o(Nd)$, which is not ruled out by the $\\Omega(Nd)$ lower bound. The proof needs to cover the entire range or at least show that for any $M$ the bound holds. Rewrite the proof to either (a) provide a lower bound that holds for every $M$ in the range, or (b) clarify that the proposition only claims impossibility of asymptotic improvement over all $M$ simultaneously, and show that the single-point argument suffices under a standard streaming model where the algorithm must work for all $M$ without knowing $M$ in advance.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Inconsistent mask notation in block-sparse definition",
+          "quote": "where  $(\\mathbf{S} \\odot \\mathbf{1}_{\\bar{\\mathbf{M}}})_{kl} = \\mathbf{S}_{kl}$  if  $\\bar{\\mathbf{M}}_{kl} = 1$  and  $-\\infty$  if  $\\mathbf{M}_{kl} = 0$ .",
+          "explanation": "The condition for setting an entry to $-\\infty$ uses $\\mathbf{M}_{kl} = 0$, but $\\mathbf{M}$ is the coarse block mask of size $N/B_r \\times N/B_c$, while $\\bar{\\mathbf{M}}$ is the expanded $N \\times N$ mask. The condition should refer to $\\bar{\\mathbf{M}}_{kl} = 0$ for consistency. Rewrite the condition as 'if $\\bar{\\mathbf{M}}_{kl} = 0$' to match the notation.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "IO complexity formula dimensionally inconsistent",
+          "quote": "Proposition 4. Let  $N$  be the sequence length,  $d$  be the head dimension, and  $M$  be size of SRAM with  $d \\leq M \\leq Nd$ . Block-sparse FLASHATTENTION (Algorithm 5) requires  $\\Theta(Nd + N^2 d^2 M^{-1}s)$  HBM accesses where  $s$  is the fraction of nonzero blocks in the block-sparsity mask.",
+          "explanation": "The term $N^2 d^2 M^{-1}s$ has units of (length)^2 * (dim)^2 / (memory) * (dimensionless). Since $M$ has units of memory (e.g., bytes or number of elements), $d^2/M$ is not dimensionless, making the expression dimensionally inconsistent. The original FlashAttention IO complexity (Theorem 2) is $\\Theta(N^2 d^2 M^{-1})$, which is also dimensionally inconsistent if $M$ is in bytes. The correct expression should be $\\Theta(Nd + N^2 d M^{-1} \\cdot d \\cdot s)$ or, more precisely, $\\Theta(Nd + N^2 d^2 / (M/d) \\cdot s)$ if $M$ is measured in number of elements. The authors should clarify the units of $M$ and ensure dimensional consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Sparsity factor s not clearly defined for block-sparse case",
+          "quote": "Block-sparse FLASHATTENTION (Algorithm 5) requires  $\\Theta(Nd + N^2 d^2 M^{-1}s)$  HBM accesses where  $s$  is the fraction of nonzero blocks in the block-sparsity mask.",
+          "explanation": "The definition of $s$ as 'the fraction of nonzero blocks' is ambiguous: is it the fraction of blocks in the $N/B_r \\times N/B_c$ mask that are nonzero, or the fraction of individual entries in the $N \\times N$ mask? Since the mask has block structure, these fractions differ by a factor of $B_r B_c / (N^2)$. The IO complexity should depend on the number of nonzero blocks, not the fraction of nonzero entries. The authors should clarify that $s$ is the fraction of nonzero blocks in the coarse mask $\\mathbf{M}$, and note that this equals the fraction of nonzero entries in the fine mask $\\bar{\\mathbf{M}}$ only if $B_r = B_c = 1$.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Claim about approximating arbitrary sparsity lacks justification",
+          "quote": "For downstream experiments, we use the fixed butterfly sparsity pattern [18], which has been shown to be able to approximate arbitrary sparsity [17].",
+          "explanation": "The paper claims that the butterfly sparsity pattern can approximate arbitrary sparsity, citing [17]. However, [17] (Dao et al., 2019) shows that butterfly matrices can approximate any matrix, but this is a theoretical result about matrix factorization, not about sparsity patterns. The butterfly pattern is a specific structured sparsity pattern (O(N log N) nonzero entries), and it cannot approximate arbitrary sparsity patterns (e.g., a random pattern with O(N^2) nonzero entries) without incurring approximation error. The paper does not provide any analysis of the approximation error for attention matrices or empirical validation that the butterfly pattern preserves attention quality. The claim is overstated and should be qualified with a discussion of the limitations of the butterfly approximation for attention.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Algorithm 0 block loading is misleading",
+          "quote": "Algorithm 0 Standard Attention Implementation\n0: Matrices $\\mathbf{Q},\\mathbf{K},\\mathbf{V}\\in\\mathbb{R}^{N\\times d}$ in HBM.\n1: Load $\\mathbf{Q},\\mathbf{K}$ by blocks from HBM, compute $\\mathbf{S}=\\mathbf{Q}\\mathbf{K}^{\\top}$, write $\\mathbf{S}$ to HBM.\n2: Read $\\mathbf{S}$ from HBM, compute $\\mathbf{P}=\\text{softmax}(\\mathbf{S})$, write $\\mathbf{P}$ to HBM.\n3: Load $\\mathbf{P}$ and $\\mathbf{V}$ by blocks from HBM, compute $\\mathbf{O}=\\mathbf{P}\\mathbf{V}$, write $\\mathbf{O}$ to HBM.\n4: Return $\\mathbf{O}$.",
+          "explanation": "Standard attention implementations (e.g., PyTorch) compute S = QK^T in one shot, materializing the full N\u00d7N matrix. The phrase 'by blocks' in step 1 suggests a tiled computation that would avoid materializing the full S, which contradicts the paper's own claim that standard attention uses O(N^2) memory. This inconsistency could confuse readers about the memory access pattern. Rewrite step 1 as 'Load Q and K entirely from HBM, compute S = QK^T, write S to HBM' to accurately reflect the standard implementation.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Missing verification that SRAM holds all required tensors",
+          "quote": "On chip, compute  $\\mathbf{S}_{ij} = \\mathbf{Q}_i\\mathbf{K}_j^T\\in \\mathbb{R}^{B_r\\times B_r}$",
+          "explanation": "The algorithm loads Q_i (B_r \u00d7 d), K_j (B_c \u00d7 d), V_j (B_c \u00d7 d), O_i (B_r \u00d7 d), \u2113_i (B_r), and m_i (B_r) into SRAM. It then computes S_{ij} (B_r \u00d7 B_c) and P\u0302_{ij} (B_r \u00d7 B_c). The total SRAM usage is approximately B_r d + 2 B_c d + 2 B_r B_c + 2 B_r (for \u2113_i, m_i) + B_r d (for O_i). With B_c = \u2308M/(4d)\u2309 and B_r = min(\u2308M/(4d)\u2309, d), the paper should verify that this fits within the SRAM size M. The analysis in Section 3.2 (Theorem 2) claims this, but the proof is not provided in the quoted text. The paper would benefit from a brief SRAM budget calculation to confirm that the block sizes are chosen correctly.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Typo in line 11: i_i^{new} should be \u2113_i^{new}",
+          "quote": "On chip, compute  $m_i^{\\mathrm{new}} = \\max (m_i,\\tilde{m}_{ij})\\in \\mathbb{R}^{B_r},i_i^{\\mathrm{new}} = e^{m_i - m_i^{\\mathrm{new}}}\\ell_i + e^{\\tilde{m}_{ij} - m_i^{\\mathrm{new}}}\\tilde{\\ell}_{ij}\\in \\mathbb{R}^{B_r}$",
+          "explanation": "The variable 'i_i^{new}' is a typo; it should be '\u2113_i^{new}' (ell_i^{new}) to match the notation in lines 12 and 13. The variable \u2113_i is used in the update, and the letter 'i' is likely a LaTeX or OCR artifact. This is a minor typographical error that could cause confusion in implementation. The fix is to replace 'i_i^{new}' with '\u2113_i^{new}' in the quoted line.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "SRAM bandwidth estimate is misleading",
+          "quote": "The on-chip SRAM is an order of magnitude faster than HBM but many orders of magnitude smaller in size.",
+          "explanation": "The claim that SRAM is 'an order of magnitude faster' is consistent with the bandwidth numbers given: HBM bandwidth is 1.5\u20132.0 TB/s, while SRAM bandwidth is estimated at 19 TB/s. 19/2.0 = 9.5, which is indeed about one order of magnitude. However, the phrase 'many orders of magnitude smaller in size' is hyperbolic: 192 KB vs 40\u201380 GB is a factor of roughly 200,000\u2013400,000, which is about 5\u20136 orders of magnitude. The phrase 'many orders of magnitude' is vague and could be misinterpreted as 2\u20133 orders. Rewrite as 'several orders of magnitude smaller' or give the exact factor to avoid ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Arithmetic intensity definition is incomplete",
+          "quote": ". This is commonly measured by the arithmetic intensity *[89]*, which is the number of arithmetic operations per byte of memory access.",
+          "explanation": "The definition of arithmetic intensity as 'number of arithmetic operations per byte of memory access' is standard, but the section does not specify whether 'memory access' refers to HBM accesses only or includes SRAM/register accesses. In the context of the paper's IO-aware analysis, the distinction matters: the tiling algorithm reduces HBM accesses but may increase SRAM accesses. Without clarifying which memory level is used in the denominator, the classification of operations as compute-bound or memory-bound later in the section is ambiguous. Add a sentence specifying that 'memory access' here refers to HBM accesses, consistent with the paper's focus on HBM bandwidth.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Kernel fusion effectiveness claim is too broad",
+          "quote": "However, in the context of model training, the intermediate values still need to be written to HBM to save for the backward pass, reducing the effectiveness of naive kernel fusion.",
+          "explanation": "This claim is not universally true. Many fused kernels (e.g., fused softmax, fused layer norm) do not need to write all intermediate values to HBM; they recompute some values in the backward pass or use online normalization. The paper's own FlashAttention algorithm is an example where intermediate attention scores are recomputed rather than stored. The statement as written implies that naive kernel fusion always requires writing intermediates to HBM, which contradicts the paper's core contribution. Rewrite to acknowledge that some intermediates can be recomputed or that the backward pass may require storing some values, but that this is not a universal limitation.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Missing reference to backward pass details",
+          "quote": "We focus here on the forward pass for ease of exposition; Appendix B contains details for the backward.",
+          "explanation": "The section states that the backward pass is deferred to Appendix B, but the forward pass description in this section does not mention the recomputation strategy that is critical for memory efficiency. The backward pass recomputes attention scores rather than storing them, which is a key IO-saving technique. Without at least a brief mention of this recomputation in the forward pass description, readers may not understand how the algorithm achieves its memory reduction. Add one sentence after the quoted text: 'The backward pass recomputes the attention matrix from the stored softmax statistics (\u2113, m) to avoid storing the full N\u00d7N matrix, further reducing HBM accesses.'",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Unquantified claim about sparsity speedup",
+          "quote": "Right: The runtime (for seq. length 4K) of block-sparse FLASHATTENTION is faster than FLASHATTENTION by a factor proportional to the sparsity.",
+          "explanation": "The claim that block-sparse FlashAttention is faster 'by a factor proportional to the sparsity' is imprecise. It should specify the proportionality constant or at least state that it is linear in sparsity. For example, if sparsity is 50%, is the speedup exactly 2x, or approximately 2x? The phrase 'proportional to the sparsity' could mean the speedup factor equals $1/(1-\\text{sparsity})$ or some other function. The paper would benefit from a precise statement such as 'the runtime is reduced by a factor of approximately $1/(1-s)$ where $s$ is the sparsity fraction' or a reference to the specific analysis. Add a precise quantification or a reference to the relevant analysis in the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        }
+      ],
+      "cost_usd": 0.0645,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces FlashAttention, an IO-aware exact attention algorithm that reduces HBM accesses through tiling and recomputation. The work presents compelling empirical speedups and enables longer context modeling, but the theoretical analysis, baseline comparisons, and numerical stability claims require stronger justification.\n\nFlashAttention makes a practical contribution by reframing attention as an IO-bound problem and delivering a highly optimized CUDA kernel that outperforms standard implementations on modern GPUs. The empirical results on training speed and long-context tasks are strong, and the tiling strategy is clearly explained. However, the theoretical lower bound lacks rigor for the softmax operation, the numerical stability of incremental updates is unverified, and the baseline comparisons conflate kernel optimization with system-level parallelism.\n\nOverview issues:\n\n- Theoretical justification for the IO lower bound is incomplete: Proposition 3 claims that no exact attention algorithm can asymptotically improve on HBM accesses over all SRAM sizes, but the proof sketch only cites matrix multiplication lower bounds. Attention involves a row-wise softmax that couples tokens in ways standard matrix multiplication does not. The proof does not address whether the softmax normalization step could theoretically allow different I/O trade-offs or bypass the $\\Omega(N^2 d^2 M^{-1})$ bound. Without accounting for the algebraic structure of softmax, the lower bound remains unproven. This matters because the paper's core theoretical claim rests on this optimality result. The authors should provide a formal proof that explicitly handles the softmax coupling or clarify that the bound applies only to the linear algebraic portion of the computation.\n\n- Numerical stability of incremental softmax is unanalyzed: Algorithm 1 computes softmax incrementally across blocks, maintaining running statistics $m$ and $\\ell$. In mixed-precision training (FP16/BF16), repeated exponentiation and addition operations can accumulate rounding errors differently than a single-pass softmax. The paper claims exact attention but provides no error bounds for the incremental updates, nor does it analyze how gradient perturbations might affect convergence. Table 2 shows identical perplexity curves, but that only indicates macro-level stability, not precision-level correctness. This omission is critical because low-precision training is standard in modern large-scale fine-tuning. The authors should add a numerical stability analysis or empirical tests showing gradient norm consistency and convergence behavior under FP16/BF16 compared to standard attention.\n\n- Baseline comparisons conflate kernel optimization with system parallelism: The speedup claims for GPT-2 and BERT-large compare single-GPU FlashAttention against HuggingFace and Megatron-LM. Megatron-LM is designed for multi-GPU tensor and pipeline parallelism, which introduces communication overhead that dominates wall-clock time. Comparing a single-GPU kernel to a multi-GPU framework on a single-node setup conflates attention optimization with distributed training efficiency. The 15% improvement over the MLPerf 1.1 record is also marginal and lacks an ablation isolating the attention kernel's contribution from data loading, optimizer, or pipeline changes. This matters because readers cannot tell how much of the speedup comes purely from reduced HBM accesses versus system-level factors. The authors should report kernel-only benchmarks or provide an ablation showing speedup when data loading and parallelism overhead are held constant.\n\n- Approximation error in block-sparse attention is not quantified: The block-sparse extension (Section 3.3) is presented as an approximate attention algorithm that scales faster, but the fixed sparsity mask (e.g., butterfly pattern) imposes structural constraints on token interactions. Table 3 shows that block-sparse FlashAttention sometimes underperforms vanilla FlashAttention on LRA tasks like Text (63.0 vs 63.9), yet the paper does not quantify the approximation error or discuss when the sparsity pattern becomes a bottleneck for model capacity. Proposition 4 analyzes I/O complexity but ignores the representational trade-offs of skipping attention blocks. This matters because practitioners need to understand the accuracy-speed trade-off before adopting the sparse variant. The authors should add an analysis of approximation error bounds or empirical studies showing how different sparsity patterns affect downstream performance across varying sequence lengths.\n\n- Performance model does not account for compute-bound plateau: Figure 2 (middle) demonstrates that runtime plateaus beyond a block size of 256, even though theoretical HBM accesses continue to decrease. This indicates a shift from IO-bound to compute-bound behavior, which contradicts the paper's framing that memory access is the dominant bottleneck across all configurations. The IO complexity analysis in Theorem 2 assumes IO dominates but does not model the transition point where arithmetic intensity becomes the limiting factor. This matters because the claimed speedups may not hold for larger block sizes or different hardware where compute intensity varies. The authors should extend the performance model to include a compute-bound regime and explicitly state the sequence length and block size ranges where IO remains the primary bottleneck.\n\n- Missing guidance for practical block size selection and SRAM sharing: Algorithm 1 sets block sizes $B_r$ and $B_c$ strictly based on the total SRAM size $M$, assuming SRAM is exclusively available for the attention kernel. In practice, SRAM must also store input/output weights, activation gradients, and optimizer states, leaving far less space for attention tiling. The paper provides no methodology or empirical analysis for practitioners to determine feasible block sizes on real hardware, nor does it discuss the trade-offs between register pressure, shared memory occupancy, and HBM accesses. This omission leaves a gap between the theoretical algorithm and its deployable implementation. The authors should add a section or appendix detailing how to partition SRAM across kernel stages, provide empirical tuning curves for $B_r$ and $B_c$ across different batch sizes and sequence lengths, and explain how to balance occupancy against the theoretical IO bound.\n\n- Lack of empirical validation for the theoretical IO complexity bound: The paper establishes a theoretical lower bound and upper bound on HBM accesses ($\\Theta(N^2 d^2 M^{-1})$) but does not quantitatively verify how tightly these bounds match actual memory traffic. Table 1 provides a single runtime and HBM access measurement for a fixed configuration, and Figure 2 shows runtime versus block size, but neither explicitly computes the theoretical HBM access counts for those configurations to demonstrate the bound's tightness. Without this comparison, readers cannot assess whether the asymptotic analysis accurately predicts practical memory traffic or if constant factors and cache effects dominate. The authors should compute the theoretical HBM access counts for the exact experimental setups (varying $N$, $d$, and $M$) and plot them against the measured HBM traffic to validate the $\\Theta$ notation and identify where real-world deviations occur.\n\n- Underdeveloped demonstration of FlashAttention as an approximate attention primitive: The abstract and introduction prominently claim that FlashAttention serves as a primitive to overcome memory overheads in approximate attention methods, yet the paper only validates this claim through block-sparse attention. It does not explore or demonstrate how the tiling and recomputation framework integrates with other popular approximate methods like linear attention, low-rank projections, or kernel-based approximations. This leaves a significant gap between the stated contribution and the empirical evidence. To fully deliver on this claim, the authors should either provide a concrete example of combining FlashAttention with another approximate method (e.g., tiling for linear attention to reduce its HBM footprint) or explicitly narrow the claim to sparse attention patterns and remove the broader assertion about approximate methods.\n\nRecommendation: Major revision. The paper presents a valuable engineering contribution with strong empirical results, but the theoretical claims require formal justification, the numerical stability of incremental updates needs verification, and the baseline comparisons must isolate kernel-level speedups from system-level parallelism. Addressing these gaps is necessary to establish the method's rigor and generalizability.\n\nRevision targets:\n\n- Provide a formal proof for Proposition 3 that explicitly accounts for the row-wise softmax coupling, or restrict the lower bound claim to the linear algebraic portion of attention.\n\n- Add a numerical stability analysis or empirical tests demonstrating gradient consistency and convergence under FP16/BF16 for the incremental softmax approach.\n\n- Isolate the attention kernel's contribution to speedup by reporting kernel-only benchmarks or ablation studies that control for data loading and multi-GPU parallelism overhead.\n\n- Quantify the approximation error of block-sparse attention and analyze how fixed sparsity patterns affect model capacity across different sequence lengths and tasks.\n\n- Extend the performance analysis to include a compute-bound regime, explicitly defining the sequence length and block size thresholds where IO is no longer the dominant bottleneck.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Hardware specification error: L2 bandwidth misattributed to SRAM",
+          "quote": "192KB of on-chip SRAM per each of 108 streaming multiprocessors with bandwidth estimated around 19TB/s",
+          "explanation": "The 19TB/s figure corresponds to the A100's L2 cache (40MB), not the per-SM L1/Shared SRAM. Conflating these two memory levels misrepresents the hardware hierarchy and the actual speedup factor achieved by tiling into SRAM. Please correct the specification to accurately reflect L2 bandwidth and clarify the actual bandwidth of the 192KB SRAM, or adjust the comparison to avoid overstating the SRAM speedup.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Table 2 speedup multipliers contradict reported training times",
+          "quote": "ations. Table 2 shows up to  $3 \\times$  end-to-end speedup compared to Huggingface and  $1.7 \\times$  speedup compared to Megatron-L",
+          "explanation": "The text claims speedups of up to 3x versus Huggingface and 1.7x versus Megatron-LM, but Table 2 reports 3.5x and 3.0x speedups against Huggingface, and 2.0x and 1.8x against Megatron-LM. Furthermore, the speedup multipliers in Table 2 for Megatron-LM do not match the raw training times provided: 4.7 days divided by 2.7 days equals approximately 1.74x, not 2.0x, and 11.5 days divided by 6.9 days equals approximately 1.67x, not 1.8x. The authors should correct the Megatron-LM speedup values in Table 2 to match the division of the reported training times, and update the text to accurately reflect the maximum observed speedups.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Perplexity improvement claim contradicts Table 4 values",
+          "quote": "39.6 | 70.5 | 57.9 | 1.7\u00d7  |\n\nFLASHATTENTION and context length 4K is still  $30\\%$  faster than GPT-2 from Megatron with context length 1K, while achieving 0.7 better perplexity.",
+          "explanation": "The text claims a 0.7 perplexity improvement, but Table 4 explicitly lists the perplexity for the Megatron-LM baseline at 1k context as 18.2 and for the FlashAttention model at 4k context as 17.2. The arithmetic difference between these two values is 1.0, not 0.7. This numerical mismatch directly contradicts the data presented in the table. Please correct the stated perplexity improvement to 1.0 or clarify which specific model configurations or training runs are being referenced to yield a 0.7 difference.",
+          "comment_type": "technical",
+          "paragraph_index": 77,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Conflation of memory footprint and speed metrics",
+          "quote": "ength. We confirm that the memory footprint of FLASHATTENTION scales linearly with seq. length and is up to  $3 \\times$  faster than standard attention for common seq. lengths (up to 2K).",
+          "explanation": "The sentence incorrectly attributes a speed metric to a memory metric. Memory footprint is measured in bytes, not time, so it cannot be described as 'faster.' The authors likely intended to report a reduction in memory usage or an increase in computational speed. Please rewrite to separate these distinct physical quantities, for example: 'We confirm that the memory footprint of FLASHATTENTION scales linearly with sequence length, while its runtime is up to 3x faster than standard attention for common sequence lengths (up to 2K).'",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Numerical discrepancy in BERT speedup claim",
+          "quote": "le 1 compares our training time to the implementation from Nvidia that set the training speed record for MLPerf 1.1 [60, 63]. Our implementation is  $15\\%$  faster.",
+          "explanation": "The text states that the FlashAttention implementation is 15% faster than the Nvidia MLPerf 1.1 baseline, but Table 1 reports training times of 20.0 minutes for Nvidia and 17.4 minutes for FlashAttention. Calculating the improvement yields (20.0 - 17.4) / 20.0 = 0.13, or a 13% speedup. The 2-percentage-point discrepancy likely stems from rounding or using a different baseline average, but it creates a mismatch between the narrative claim and the reported data. Please either update the text to state a 13% improvement to match Table 1 or provide the exact baseline time used to derive the 15% figure.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.2578,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper introduces FlashAttention, an IO-aware exact attention algorithm that uses tiling and recomputation to minimize HBM accesses, achieving significant speedups and memory reductions. The approach is theoretically grounded in IO complexity analysis and empirically validated across various sequence lengths and architectures.\n\nFlashAttention is a highly significant contribution that successfully bridges the gap between theoretical IO complexity and practical GPU kernel performance. The paper provides a clear, well-supported argument for why memory access, rather than raw FLOPs, is the primary bottleneck for attention, and the implementation delivers impressive real-world performance gains.\n\nOverview issues:\n\n- Numerical Stability of Recomputation: Section 3.1 describes the recomputation strategy for the backward pass to avoid materializing the large attention matrix. While this is efficient, the paper lacks a formal analysis or empirical verification of the numerical stability differences between standard attention and the recomputed version, especially when using FP16 or BF16. Since recomputation involves re-calculating softmax normalization factors, subtle floating-point discrepancies could accumulate. The authors should include a comparison of the output gradients between the standard implementation and FlashAttention to demonstrate that the recomputation does not introduce significant numerical drift or instability in training.\n\n- Generalization of Tiling Parameters: Algorithm 1 defines block sizes based on the SRAM size M. However, the performance of these kernels is highly sensitive to the chosen block sizes (Br, Bc), which are often tuned for specific GPU architectures like the A100. The paper does not discuss how these parameters should be adapted for other GPU architectures or if the current implementation requires manual retuning for different hardware. Adding a sensitivity analysis or a discussion on the portability of these tiling parameters would strengthen the claim that this is a general-purpose IO-aware primitive.\n\n- Overhead Analysis of Kernel Launch and Synchronization: The analysis in Section 3.2 focuses heavily on HBM accesses, which is appropriate for memory-bound regimes. However, for shorter sequence lengths, the overhead of kernel launches and the synchronization primitives within the fused kernel might become non-negligible. The paper should provide a more granular breakdown of the runtime for very short sequences (e.g., N < 128) to clarify the crossover point where the overhead of the complex fused kernel outweighs the benefits of reduced HBM traffic.\n\n- Assumptions in IO Complexity Lower Bound: Proposition 3 states that no exact attention algorithm can asymptotically improve on the number of HBM accesses for all M, but the proof relies on a specific range of M. The paper would benefit from a clearer discussion on whether this lower bound holds when considering modern GPU features like asynchronous copy or tensor cores that might alter the effective memory access patterns. Specifically, clarifying if the lower bound assumes a standard von Neumann architecture or accounts for the specific memory hierarchy of modern accelerators would clarify the theoretical limits of the approach.\n\n- Empirical verification of numerical equivalence in backward pass gradients: The paper relies on recomputing the attention matrix during the backward pass to save memory, which deviates from the standard approach of storing intermediate values. While the authors claim this is exact, they do not provide a quantitative comparison of the gradient values produced by FlashAttention versus a standard PyTorch implementation. To demonstrate that this recomputation does not introduce significant numerical drift, the authors should report the maximum absolute difference and the relative error (e.g., L2 norm ratio) between the gradients computed via standard attention and FlashAttention for a standard transformer layer (e.g., GPT-2 small configuration) using both FP16 and BF16 precision.\n\n- Performance characterization for varying head dimensions: The IO complexity analysis and the tiling strategy presented in Algorithm 1 are parameterized by the head dimension d. However, the paper primarily benchmarks performance on standard head dimensions (d=64) and does not explore how the tiling efficiency degrades or scales as d varies (e.g., d=32 or d=128). A natural addition would be a performance plot showing wall-clock speedup versus head dimension d, which would clarify whether the current kernel fusion strategy is robust to the wide range of head sizes used in modern transformer variants.\n\n- Clarification of the crossover point for kernel fusion overhead: The paper argues that kernel fusion is beneficial for reducing HBM traffic, but it acknowledges that this introduces complexity in the CUDA kernel. While Figure 3 shows speedups at larger sequence lengths, the performance for very short sequences (e.g., N < 128) is not explicitly broken down to isolate the impact of kernel launch overhead versus memory bandwidth savings. Providing a micro-benchmark for these small sequence lengths would help practitioners understand the specific regime where the overhead of the complex fused kernel begins to yield a net performance gain over standard, simpler implementations.\n\nRecommendation: accept\n\nRevision targets:\n\n- Include a brief empirical comparison of gradient values between standard attention and FlashAttention to address potential numerical stability concerns.\n\n- Add a discussion or sensitivity analysis regarding the portability of the block size parameters across different GPU architectures.\n\n- Provide a more detailed breakdown of runtime overheads for short sequence lengths to better define the operational regime of the kernel.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency in Table 6 results for Path-X",
+          "quote": "s. FLASHATTENTION achieves 61.4 accuracy on Path-X. Additionally, block-sparse FLASHATTENTION enables the Transformers to scale to sequence length 64K, achieving 63.1 accuracy $^{4}$  on Path-256.\n\n<!-- PA",
+          "explanation": "Table 6 reports 61.4 accuracy for 'FLASHATTENTION' on 'Path-X' but 56.0 for 'Block-sparse FLASHATTENTION' on the same task. The text does not clarify which variant produced the 61.4 result, and the table shows 'X' for 'FLASHATTENTION' on 'Path-256', which contradicts the implication that the base version is used for that task. Please reconcile these table entries with the text to ensure the performance claims are clearly attributed to the correct method.",
+          "comment_type": "technical",
+          "paragraph_index": 85,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistent speedup calculation for GPT-2 small",
+          "quote": " 2: GPT-2 small and medium using FLASHATTENTION achieve up to  $3 \\times$  speed up compared to Huggingface implementation and up to  $1.7 \\times$  compared to Megatron-LM. T",
+          "explanation": "The summary text claims an 'up to 3x' speedup compared to Huggingface, but the data in Table 2 for GPT-2 small shows a 3.5x speedup (9.5 days / 2.7 days). Similarly, the 1.7x claim for Megatron-LM is slightly understated compared to the 1.74x calculated from the table. Please update the summary text to align with the actual values presented in the table.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Clarification of asymptotic assumptions in IO complexity",
+          "quote": "For large sequence lengths  $N$ ,  $s$  is often set to  $N^{-1/2}$  [12] or  $N^{-1}\\log N$  [3, 18, 96], resulting in  $\\Theta(N\\sqrt{N})$  or  $\\Theta(N\\log N)$  IO complexity.",
+          "explanation": "The derivation of these asymptotic bounds from the expression \u0398(Nd + N^2 d^2 M^{-1}s) relies on the assumption that the head dimension d and SRAM size M are constant relative to N. Please explicitly state this assumption in the text to avoid ambiguity regarding how these bounds scale.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.0787,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper introduces FlashAttention, an IO-aware exact attention algorithm that claims significant speedups and enables longer context lengths in Transformers. While the core idea of tiling and recomputation is sound, the paper contains critical gaps in theoretical justification and experimental validation that undermine its main claims.\n\nFlashAttention is a significant contribution to efficient deep learning, offering a practical and theoretically grounded method to reduce memory bandwidth bottlenecks. The empirical results are compelling, demonstrating real-world speedups and the ability to train models with unprecedented sequence lengths. However, the paper's theoretical claims regarding optimality and backward pass efficiency are not fully substantiated, and several experimental results lack the necessary context to establish their novelty.\n\nOverview issues:\n\n- Unsupported Claim of 'First Transformer' Performance on Path-X/256: The paper claims to present the 'first Transformer' to achieve better-than-chance performance on Path-X (61.4%) and Path-256 (63.1%). This claim is contingent on the premise that all previous methods (Linformer, Performer, Reformer, etc.) failed on these tasks. However, the paper does not demonstrate that these methods were trained to the sequence lengths of 16K and 64K, nor does it explain why they failed\u2014whether due to the memory constraints addressed by FlashAttention or the inherent limitations of the algorithms themselves. This omission significantly weakens the significance of the reported results, as it is possible these methods could have succeeded with sufficient engineering effort or that the authors simply did not attempt to scale them to these lengths.\n\n- Backward Pass Speedup Requires Rigorous Justification: The paper argues that the backward pass is faster than standard attention because recomputation reduces HBM accesses (Section 1). However, recomputation increases FLOPs, and the paper does not explicitly prove that the reduction in HBM access outweighs this increase for the backward pass. Theorem 2 states the backward pass requires $\\Theta(N^2 d^2 M^{-1})$ HBM accesses, but the proof is only referenced in Appendix B. Without a clear theoretical breakdown or an empirical demonstration that the backward pass benefits from the IO reduction strategy, the claim that the backward pass is faster remains speculative and contradicts the general intuition that recomputation trades speed for memory.\n\n- Numerical Stability of Recomputation Strategy Not Explicitly Verified: The paper claims to compute 'exact attention' but relies on a complex tiling and recomputation strategy that accumulates floating-point statistics ($m$ and $\\ell$) incrementally. While the algorithm is theoretically correct, the paper does not provide a numerical comparison between FlashAttention and standard attention on small inputs to demonstrate that the recomputation does not introduce numerical drift or errors that compound during training. The abstract mentions 'numerical stability' but the main text relies on Appendix E for validation. A direct comparison of intermediate matrices or output values for a small batch would strengthen the claim of exactness, as floating-point arithmetic is inherently approximate.\n\n- Scope of Theoretical Optimality Claim in Proposition 3: Proposition 3 claims that no algorithm can asymptotically improve on the number of HBM accesses over all SRAM sizes. The proof relies on a specific tiling structure and a brief analogy to parameterized complexity. It is unclear if this lower bound applies to algorithms that dynamically adjust their tiling strategy based on SRAM size or use different memory access patterns. The paper should clarify whether the optimality claim is restricted to block-wise tiling strategies or holds for a broader class of exact attention algorithms, as dynamic tiling could potentially bypass the block-wise constraints assumed in the proof.\n\nRecommendation: Major Revision. The paper presents a significant optimization for Transformers, but the theoretical claims and experimental justifications have gaps. The 'first' results claim is weak without context on previous methods, and the numerical stability of the recomputation strategy needs explicit demonstration. The backward pass speedup requires more rigorous justification.\n\nRevision targets:\n\n- Provide a small-scale numerical comparison between FlashAttention and standard attention to verify the exactness of the output and the stability of the recomputation strategy.\n\n- Clarify the backward pass complexity and demonstrate empirically that the backward pass speedup holds for the specific hardware configurations used.\n\n- Verify that previous methods (Linformer, Performer, etc.) were indeed tested at 64K or explain why they failed, thereby substantiating the 'first Transformer' claim.\n\n- Rigorously justify the theoretical lower bound in Proposition 3 to clarify the scope of the optimality claim.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Backward Pass Speedup Requires Rigorous Justification",
+          "quote": "even with more FLOPs, our recomputation speeds up the backward pass due to reduced HBM accesses (Fig. 2).",
+          "explanation": "The authors argue that the backward pass is faster than standard attention because recomputation reduces HBM accesses (Section 1). However, recomputation increases FLOPs, and the paper does not explicitly prove that the reduction in HBM access outweighs this increase for the backward pass. Theorem 2 states the backward pass requires $\text{\textbackTheta}(N^2 d^2 M^{-1})$ HBM accesses, but the proof is only referenced in Appendix B. Without a clear theoretical breakdown or an empirical demonstration that the backward pass benefits from the IO reduction strategy, the claim that the backward pass is faster remains speculative and contradicts the general intuition that recomputation trades speed for memory.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Unsupported Claim of 'First Transformer' Performance on Path-X/256",
+          "quote": "In prior work, all transformer models have either run out of memory, or only achieved random performance [83].",
+          "explanation": "The paper claims to present the 'first Transformer' to achieve better-than-chance performance on Path-X (61.4%) and Path-256 (63.1%). This claim is contingent on the premise that all previous methods (Linformer, Performer, Reformer, etc.) failed on these tasks. However, the paper does not demonstrate that these methods were trained to the sequence lengths of 16K and 64K, nor does it explain why they failed\u2014whether due to the memory constraints addressed by FlashAttention or the inherent limitations of the algorithms themselves. This omission significantly weakens the significance of the reported results, as it is possible these methods could have succeeded with sufficient engineering effort or that the authors simply did not attempt to scale them to these lengths.",
+          "comment_type": "technical",
+          "paragraph_index": 85,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Numerical Stability of Recomputation Strategy Not Explicitly Verified",
+          "quote": "Appendix E includes plots of the validation perplexity throughout training, confirming that FLASHATTENTION is as numerically stable as the baselines and produces the same training / validation curves.",
+          "explanation": "The paper claims to compute 'exact attention' but relies on a complex tiling and recomputation strategy that accumulates floating-point statistics ($m$ and $\text{\textbackell}$) incrementally. While the algorithm is theoretically correct, the paper does not provide a numerical comparison between FlashAttention and standard attention on small inputs to demonstrate that the recomputation does not introduce numerical drift or errors that compound during training. The abstract mentions 'numerical stability' but the main text relies on Appendix E for validation. A direct comparison of intermediate matrices or output values for a small batch would strengthen the claim of exactness, as floating-point arithmetic is inherently approximate.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.0916,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

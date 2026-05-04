@@ -1,0 +1,1148 @@
+{
+  "slug": "iclr2022-jgAl403z-halp-hardware-aware-latency-pruning",
+  "title": "HALP: Hardware-Aware Latency Pruning",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## HALP: HARDWARE-AWARE LATENCY PRUNING\n\n## **Anonymous authors**"
+    },
+    {
+      "index": 1,
+      "text": "Paper under double-blind review\n\n## ABSTRACT\n\nStructural pruning can simplify network architecture and improve inference speed. We propose Hardware-Aware Latency Pruning (HALP) that formulates structural pruning as a global resource allocation optimization problem, aiming at maximizing the accuracy while constraining latency under a predefined budget. For filter importance ranking, HALP leverages latency lookup table to track latency reduction potential and global saliency score to gauge accuracy drop. Both metrics can be evaluated very efficiently during pruning, allowing us to reformulate global structural pruning under a reward maximization problem given target constraint. This makes the problem solvable via our augmented knapsack solver, enabling HALP to surpass prior work in pruning efficacy and accuracy-efficiency trade-off. We examine HALP on both classification and detection tasks, over varying networks, on ImageNet and VOC datasets. In particular, for ResNet-50/-101 pruning on ImageNet, HALP improves network throughput by 1 _._ 60 _\u00d7_ /1 _._ 90 _\u00d7_ with +0 _._ 3%/ _\u2212_ 0 _._ 2% top-1 accuracy changes, respectively. For SSD pruning on VOC, HALP improves throughput by 1 _._ 94 _\u00d7_ with only a 0 _._ 56 mAP drop. HALP consistently outperforms prior art, sometimes by large margins."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nConvolutional Neural Networks (CNNs) act as the central tenet behind the rapid development in computer vision tasks such as classification, detection, segmentation, image synthesis, among others. As performance boosts, so do model size, computation, and latency. With millions, sometimes billions of parameters ( _e_ . _g_ ., GPT-3 Brown et al. (2020)), modern neural networks face increasing challenges upon ubiquitous deployment, that mostly faces stringent constraints such as energy and latency Dai et al. (2019); Molchanov et al. (2016; 2019). In certain cases like autonomous driving, a breach of real-time constraint not only undermines user experience, but also imposes critical safety concerns. Even for cloud service, speeding up the inference of neural networks directly translates into higher throughput, allowing more clients and users to benefit from the service."
+    },
+    {
+      "index": 3,
+      "text": "One effective and efficient method to reduce model complexity is through network pruning. The primary goal of pruning is to remove the parameters, along with their computation, that are deemed least important for inference Alvarez & Salzmann (2016); Han et al. (2015); Liu et al. (2019b); Molchanov et al. (2019). Compatible with other compression streams of work such as quantization Cai et al. (2020); Wang et al. (2020b); Zhu et al. (2016) and distillation Hinton et al. (2015); Mullapudi et al. (2019); Yin et al. (2020), network pruning enables a flexible tuning of model complexity towards varying constraints, while requiring much less design efforts by neural architecture search Tan et al. (2019); Vahdat et al. (2020); Wu et al. (2019) and architecture re-designs Howard et al. (2017); Ma et al. (2018); Tan & Le (2019). Thus, in this work, we study pruning, in particular structured pruning that removes filters (or neurons) to benefit off-the-shelf platforms, _e_ . _g_ ., GPUs."
+    },
+    {
+      "index": 4,
+      "text": "As the pruning literature develops, the pruning criteria also evolves to better reflect final efficiency. The early phase of the field focuses on maximum parameter removal in seek for minimum representations of the pretrained model. This leads to a flourish of approaches that rank neurons effectively to measure their importance Molchanov et al. (2016); Wang et al. (2020a). As each neuron/filter possesses intrinsically different computation, following works explore proxy to enhance redundancy removal, FLOPs being one of the most widely adopted metrics Li et al. (2020); Wu et al. (2020); Yu & Huang (2019) to reflect how many multiplication and addition computes needed for the model. Hovewer, for models with very similar FLOPs, their latency can vary significantly Tan et al. (2019). Recently, more and more works start directly working on reducing latency Chen et al. (2018); Yang"
+    },
+    {
+      "index": 5,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\nFigure 1: The proposed hardware-aware latency pruning (HALP) paradigm. Considering both performance and latency contributions, HALP formulates global structural pruning as a global resource allocation problem (Section 3.1), solvable using our augmented Knapsack algorithm (Section 3.2). Pruned architectures surpass prior work across varying latency constraints given changing network architectures for both classification and detection tasks (Section 4)."
+    },
+    {
+      "index": 6,
+      "text": "et al. (2018). However, not much was done in the field of GPU friendly pruning methods due to nontrivial latency-architecture trade-off. For example, as recently observed in Radu et al. (2019), GPU usually imposes staircase-shaped latency patterns for convolutional operators with varying channels, which inevitably occur per varying pruning rate, see the latency surface in Fig. 1. This imposes a constraint that pruning needs to be done in groups to achieve latency improvement. Moreover, getting the exact look-up table of layers under different pruning configuration will benefit maximizing performance while minimizing latency."
+    },
+    {
+      "index": 7,
+      "text": "Pruning different layers in the deep neural network will result in different accuracy-latency trade-off. Typically, removing channels from the latter layers has smaller impact on accuracy and smaller impact on latency versus removing channels from the early layers. We ask the question, if it is better to remove _more_ neurons from latter layer or _less_ from early layer to achieve the same accuracy-latency trade-off. By nature, the problem is combinatorial and requires the appropriate solution."
+    },
+    {
+      "index": 8,
+      "text": "In this paper, we propose hardware-aware latency pruning (HALP) that formulates pruning as a resource allocation optimization problem to maximize the accuracy while maintaining a latency budget. The overall workflow is shown in Fig. 1. For latency estimate per pruned ar-"
+    },
+    {
+      "index": 9,
+      "text": "**----- Start of picture text -----**\n\n79\n78\n77\n76\n75\n74\n73\n72\n0.4 0.5 0.6 0.7 0.8 0.9 1 1 1.5 2 2.5 3 3.5 4\n inference time (ms/image)  FLOPs (G)\nOriginal model EagleEye Li et al. ECCV (2020) AutoSlim Yu et al. NeurIPS (2019)\nr x RN50 He et al. (2015) MetaPruning Liu et al. ICCV (2019a) GReg Wang et al. ICLR (2021)\nHALP (Ours) HALP+distillation (Ours)\n Top1 Acc(%)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 10,
+      "text": "Figure 2: Pruning ResNet50 on the ImageNet dataset. The proposed HALP surpasses state-of-the-art structured pruning methods over accuracy, latency, and FLOPs metrics. Target hardware is NVIDIA Titan V GPU. **Top-left** is better."
+    },
+    {
+      "index": 11,
+      "text": "chitecture, we pre-analyze the operator-level latency values by creating a look-up table for every layer of the model on the target hardware. Then we introduce an additional score for each neuron group to reflect and encourage latency reduction. To this end, we first rank the neurons according to their importance estimates, and then dynamically adjust their latency contributions. With neurons re-calibrated towards the hardware-aware latency curve, we now select remaining neurons to maximize the gradient-based importance estimates for accuracy, within the total latency constraint. This makes the entire neuron ranking solvable under the knapsack paradigm. To enforce the neuron selection order in a layer to be from the most important to the least, we have enhanced the knapsack solver so that the calculated latency contributions of the remaining neurons would hold. HALP surpasses prior art in pruning efficacy, see Fig. 2 and the more detailed analysis in Section 4."
+    },
+    {
+      "index": 12,
+      "text": "Our main contributions are summarized as follows:\n\n- We propose a latency-driven structured pruning algorithm that exploits hardware latency traits to yield direct inference speedups."
+    },
+    {
+      "index": 13,
+      "text": "- We orient the pruning process around a quick yet highly effective knapsack scheme that seeks for a combination of remaining neuron groups to maximize importance while constraining to the target latency."
+    },
+    {
+      "index": 14,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\n- We introduce a group size adjustment scheme for knapsack solver amid varying latency contributions across layers, hence allowing full exploitation of the latency landscape of the underlying hardware."
+    },
+    {
+      "index": 15,
+      "text": "- We compare to prior art when pruning ResNet, MobileNet, VGG architectures on ImageNet, PASCAL VOC and demonstrate that our method yields consistent latency and accuracy improvements over state-of-the-art methods. Our ImageNet pruning results present a viable 1 _._ 6 _\u00d7_ to 1 _._ 9 _\u00d7_ speedup while preserving very similar original accuracy of the ResNets."
+    },
+    {
+      "index": 16,
+      "text": "## 2 RELATED WORK\n\n**Pruning methods** . Depending on when to perform pruning, current methods can generally be divided into three groups Frankle & Carbin (2019b): i) prune pretrained models Han et al. (2015); Luo et al. (2017); Li et al. (2017); He et al. (2018); Molchanov et al. (2016; 2019); Gale et al. (2019), ii) prune at initialization Frankle & Carbin (2019a); Lee et al. (2019); de Jorge et al. (2020), and iii) prune during training Alvarez & Salzmann (2016); Gao et al. (2019); Lym et al. (2019). Despite notable progresses in the later two streams, pruning pretrained models remains as the most popular paradigm, with structural sparsity favored by off-the-shelf inference platforms such as GPU."
+    },
+    {
+      "index": 17,
+      "text": "To improve on inference efficiency, many previous pruning methods trim down the neural network aiming to achieve a high compression rate while maintaining an acceptable accuracy. The estimation of neuron importance has been widely studied in literature Hu et al. (2016); Luo et al. (2017); Molchanov et al. (2016). For example, Molchanov et al. (2019) proposes to use Taylor expansion to measure the importance of neurons and prunes the least-ranked ones until a desired number of neurons are pruned. However, a compression ratio does not directly translate into computation reduction ratio, amid the fact that each neuron/filter possesses different computation."
+    },
+    {
+      "index": 18,
+      "text": "There are recent methods that focus primarily on reducing FLOPs. Some of them take FLOPs into consideration when calculating the neuron importance to encourage penalizing neurons that induce high computations Wu et al. (2020). An alternative line of work propose to select the best pruned network from a set of candidates Li et al. (2020); Yang et al. (2018). However, it would take a long time for candidate selection due to the large amount of candidates. In addition, these methods use FLOPs as a proxy of latency, which is usually inaccurate as networks with similar FLOPs might have significantly different latencies Tan et al. (2019)."
+    },
+    {
+      "index": 19,
+      "text": "**Latency-aware compression.** Emerging compression techniques shift attention to directly prune to cut down on latency. One popular stream is Neural Architecture Search (NAS) methods Dai et al. (2019); Dong et al. (2018); Tan et al. (2019); Wu et al. (2019) that adaptively adjusts the architecture of the network for a given latency requirement. They incorporate the platform constraints into the optimization process in both the architecture and parameter space to jointly optimize the model size and accuracy. Despite remarkable insights, NAS methods remain computationally expensive in general compared to their pruning counterparts."
+    },
+    {
+      "index": 20,
+      "text": "Latency-oriented pruning has also gained a growing amount of attention. Chen et al. (2018) presents a framework for network compression under operational constraints, using Bayesian optimization to iteratively obtain compression hyperparameters that satisfies the constraints. Along the same line, NetAdapt Yang et al. (2018) iteratively prunes neurons across layers under the guidance of the empirical latency measurements on the targeting platform. While these methods push the frontier of latency constrained pruning, the hardware-incurred latency surface in fact offers much more potential under our enhanced pruning policy - as we show later, large rooms for improvements remain un-exploited and realizable."
+    },
+    {
+      "index": 21,
+      "text": "## 3 METHOD\n\nIn this section, we first formulate the pruning process as an optimization process, before diving deep into the importance estimation for accuracy and latency. Then, we elaborate on how to solve the optimization via knapsack regime, augmented by dynamic grouping of neurons. We finalize the method by combining these key steps under one realm of HALP."
+    },
+    {
+      "index": 22,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2022\n\n## 3.1 OBJECTIVE FUNCTION\n\nConsider a neural network that consists of _L_ layers performing linear operations on their inputs, together with non-linear activation layers and potentially pooling layers. Suppose there are _Nl_ neurons (output channels) in the _l_ th layer and each neuron is encoded by parameters **W** _[n] l[\u2208]_[R] _[C] l[in] \u00d7Kl\u00d7Kl_ , where _C[in]_ is the number of input channels and _K_ is the kernel size. By putting all the neurons across the network together, we get the neuron parameter set **W** = _{{_ **W** _[n] l[}][N] n_ =1 _[l][}][L] l_ =1[, where] _[ N]_[=][ \ufffd] _[L] l_ =1 _[N][l]_ is the total number of neurons in the network."
+    },
+    {
+      "index": 23,
+      "text": "Given a training set _D_ = _{_ ( _xi, yi_ ) _}[M] i_ =1[, the problem of network pruning with a given constraint] _[ C]_ can be generally formulated as the following optimization problem:"
+    },
+    {
+      "index": 24,
+      "text": "where **W**[\u02c6] _\u2282_ **W** is the set of remaining neurons after pruning and _L_ is the loss of the task. _f_ ( _\u00b7_ ) encodes the network function, and \u03a6( _\u00b7_ ) maps the network to the constraint _C_ , such as latency, FLOPs, or memory. We primarily focus on latency for \u03a6( _\u00b7_ ) in this work while the method easily scales to other constraints."
+    },
+    {
+      "index": 25,
+      "text": "The key to solving the aforementioned problem relies on identifying the portion of the network that satisfies the constraint while incurring minimum performance disruption:"
+    },
+    {
+      "index": 26,
+      "text": "where _pl_ denotes the number of kept neurons at layer _l_ , _Il_ ( _pl_ ) signals the maximum importance to the final accuracy with _pl_ neurons, and _Tl_ ( _pl\u2212_ 1 _, pl_ ) checks on the associated latency contribution of layer _l_ with _pl\u2212_ 1 input channels and _pl_ output channels. _p_ 0 denotes a fixed input channel number for the first convolutional block, _e_ . _g_ ., 3 for RGB images. We next elaborate on _I_ ( _\u00b7_ ) and _T_ ( _\u00b7_ ) in detail."
+    },
+    {
+      "index": 27,
+      "text": "**Importance score.** To get the importance score of a layer to final accuracy, namely _Il_ ( _pl_ ) in Eq. 2, we take it as the accumulated score from individual neurons[\ufffd] _[p] j_ =1 _[l][I] l[j]_[.][We first approximate the im-] portance of neurons using the Taylor expansion of the loss change Molchanov et al. (2019). Specifically, we prune on batch normalization layers and the importance of the _n_ -th neuron in the _l_ -th layer is calculated as"
+    },
+    {
+      "index": 28,
+      "text": "_Il[n]_[=] \ufffd\ufffd _g\u03b3ln[\u03b3] l[n]_[+] _[ g][\u03b2] l[n][\u03b2] l[n]_ \ufffd\ufffd _,_ (3)\n\nwhere _g_ denotes the gradient of the weight, _\u03b3l[n]_[and] _[ \u03b2] l[n]_[are the corresponding weight and bias from] the batch normalization layer, respectively. Unlike a squared loss in Molchanov et al. (2019), we use absolute difference as we observe slight improvements."
+    },
+    {
+      "index": 29,
+      "text": "In order to maximize the total importance, we keep the most important neurons at a higher priority. To this end, we rank the neurons in the _lth_ layer according to their importance score in a descending order and denote the importance score of the _jth_ -ranked neuron as _Il[j]_[, thus we have]"
+    },
+    {
+      "index": 30,
+      "text": "**Latency contribution.** We empirically obtain the layer latency _Tl_ ( _pl\u2212_ 1 _, pl_ ) in Eq. 2 by pre-building a layer-wise look-up table with pre-measured latencies. This layer latency corresponds to the aggregation of the neuron latency contribution of each neuron in the layer, _c[j] l_[:]"
+    },
+    {
+      "index": 31,
+      "text": "The latency contribution of the _j_ -th neuron in the _l_ -th layer can also be computed using the entries in the look up table as:"
+    },
+    {
+      "index": 32,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\n## **Algorithm 1** Augmented Knapsack Solver\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 33,
+      "text": "Input: Importance score  {Il \u2208 R [Nl] } [L] l =1 [where] [ I][l] [is sorted descendingly; Neuron latency contribution] [ {][c][l] [\u2208] [R] [Nl][ }][L] l =1 [; Latency constraint] [ C] [.]\n1: maxV \u2208 R [(] [C] [+1)] , keep \u2208 R [L][\u00d7] [(] [C] [+1)] \u25b7 maxV[ c ]: max importance under constraint  c ; keep[ l ,  c ]: # neurons to keep in layer  l  to achieve maxI[ c ]\n2: for  l = 1 , . . . , L  do\n3: for  j = 1 , . . . , Nl do\n4: for  c = 1 , . . . , C do\n5: vkeep = Il [j] [+][ maxV][[] [c][ \u2212] [c][j] l []][,] [v][prune] [=] [maxV][[] [c] []] \u25b7 total importance can achieve under constraint  c  with object  n  being kept or not\n6: if  vkeep > vprune and  keep[ l, c \u2212 c [j] l []] [==] [j] [\u2212] [1] [ then] \u25b7 check if it leads to higher score and if more important neurons in layer are kept\n7: keep[ l, c ] = j , update m axV[ c ] = vkeep\n8: else\n9: keep[ l, c ] = keep[ l, c \u2212 1], update maxV[ c ] = vprune\n10: end if\n11: end for\n12: maxV \u2190 update m axV\n13: end for\n14: end for\n15:\n16: keep n = \u00d8 to save the kept neurons in model\n17: for  l = L, . . . ,  1  do \u25b7 retrieve the set of kept neurons\n18: pl = keep[ l, C ]\n19: keep n \u2190 keep n  \u222a{pl top ranked neurons in layer  l}\n20: C \u2190 C \u2212 [\ufffd] [pl] j =1 [c][j] l\n21: end for\nOutput: Kept important neurons (keep n ).\n**----- End of picture text -----**"
+    },
+    {
+      "index": 34,
+      "text": "In practice, we first rank globally neurons by importance and then consider their latency contribution. Thus, we can draw the following properties. If we remove the least important neuron in layer _l_ , then the number of neurons will change from _pl_ to _pl\u2212_ 1, leading to a latency reduction _c[p] l[l]_[as this neuron\u2019s] latency contribution score. We assign the potential latency reduction to neurons in the layer by the importance order. The most important neuron in that layer would always have a latency contribution _c_[1] _l_[. At this stage, finding the right combination of neurons to keep imposes a combinatorial problem,] and in the next section we tackle it via reward maximization considering latency and accuracy traits."
+    },
+    {
+      "index": 35,
+      "text": "## 3.2 AUGMENTED KNAPSACK SOLVER\n\nGiven both importance and latency estimates, we now aim at solving Eq. 2. By plugging back in the layer importance Eq. 4 and layer latency Eq. 5, we come to"
+    },
+    {
+      "index": 36,
+      "text": "This simplifies the overall pruning process into a knapsack problem only with additional preceding constraints. The preceding enforcement originates from the fact that for a neuron with rank _j_ in the _lth_ layer, the neuron latency contribution only holds when all the neurons with rank _r_ = 1 _, . . . , j \u2212_ 1 are kept in the _lth_ layer and the rest of the neurons with rank _r_ = _j_ + 1 _, j_ + 2 _, \u00b7 \u00b7 \u00b7 , pl_ are removed. Yet the problem is solvable by specifying each item with a list of preceding items that need to be selected before its inclusion."
+    },
+    {
+      "index": 37,
+      "text": "We augment the knapsack solver to consider the reordered neurons with descending importance score so that all the preceding neurons will removed before it. A detailed description of the pseudo code of the augmented knapsack solver is provided in Algo. 1. The augmented solver is required to make sure that the latency cost is correct."
+    },
+    {
+      "index": 38,
+      "text": "## 3.3 NEURON GROUPING\n\nConsidering each neuron individually results in burdensome computation during pruning. We next explore grouping neurons so that a number of them can be jointly considered and removed enabling faster pruning Yin et al. (2020). This helps exploit hardware-incurred channel granularity guided by the latency, and speed up knapsack solving of Eq. 7."
+    },
+    {
+      "index": 39,
+      "text": "We refer to the difference of neurons counts between two latency cliffs of the staircase-patterned latency as the latency step size. In our method, we group _s_ channels in a layer as an entirety, where the value of _s_ is equal to the latency step size. The neurons are grouped by the order of importance. Then we aggregate the importance score and latency contribution for the grouped entity. When dealing with skip connections in ResNet and group convolutions in MobielNet, we not only group"
+    },
+    {
+      "index": 40,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\nneurons within a layer, we also group the neurons sharing the same channel index from the connected layers Ding et al. (2019); Luo & Wu (2020). Note that the latency step size for different layers might be different. For cross-layer grouping, we use the largest group size among the layers. Latencyaware grouping enables additional performance benefits when compared to a heuristic universal grouping, as we will later show in the experiments."
+    },
+    {
+      "index": 41,
+      "text": "One noticeable benefit of neuron grouping is the simplification of knapsack problem that scales linearly with the number of candidates under consideration (see Line 2 of Alg. 1). As an example, by grouping neurons together for a ResNet50, the total number of (grouped) neurons can be greatly reduced from 26 _,_ 560 to only 215, this drastically speedups the solver. Such saving can be especially beneficial as network size scales up, a very likely trend that literature foresees."
+    },
+    {
+      "index": 42,
+      "text": "## 3.4 FINAL HALP REGIME\n\nWith all aforementioned steps, we formulate the final HALP as follows. The pruning process takes a trained network as input and prunes it iteratively to satisfy the requirement of a given latency budget _C_ . We perform one pruning every _r_ minibatches and repeat it _k_ pruning steps in total. In particular, we set _k_ milestones gradually decreasing the total latency to reach the goal via exponential scheduler de Jorge et al. (2020), with _C_[1] _> C_[2] _> \u00b7 \u00b7 \u00b7 > C[k]_ , _C[k]_ = _C_ . The algorithm gradually trims down neurons using steps below:"
+    },
+    {
+      "index": 43,
+      "text": "- **Step 1** . For each minibatch, we get the gradients of the weights and update the weights as during the normal training. We also calculate each neuron\u2019s importance score as Eq. 3."
+    },
+    {
+      "index": 44,
+      "text": "- **Step 2** . Over multiple minibatches we calculate the average importance score for each neuron and rank them accordingly. Then we count the number of neurons remaining in each layer and dynamically adjust the latency contribution as in Eq. 6."
+    },
+    {
+      "index": 45,
+      "text": "- **Step 3** . We group neurons as described in Sec. 3.3 and calculate group\u2019s importance and latency reduction. Then we get the nearest preceding group for each layer."
+    },
+    {
+      "index": 46,
+      "text": "- **Step 4** . We execute the Algo. 1 to select the neurons being remained with current latency milestone. Repeat starting from the Step 1 until _k_ milestones are reached."
+    },
+    {
+      "index": 47,
+      "text": "Once pruning finishes we fine-tune the network to recover accuracy.\n\n## 4 EXPERIMENTS\n\nWe demonstrate the efficacy and feasibility of the proposed HALP method in this section. We use ImageNet ILSVRC2021 Russakovsky et al. (2015) for classification. We first study the impact of grouping size _s_ on the pruned top-1 accuracy and the inference time to show the effectiveness of our grouping scheme. We then study four architectures (ResNet50, ResNet101, VGG16 and MobileNetV1/V2) on different GPUs and compare our pruning results with the state-of-the-art methods on classification task. Finally, we further show the generalization ability of our algorithm by testing with object detection task. We introduce the details of experimental setting in appendix Sec. A. Unless otherwise stated, we target a NVIDIA TITAN V GPU for main experiments and measure latency at batch size 256 for ResNets and VGG, and 512 for MobileNets. We include experimental results for smaller batch size in the appendix, which also show the efficacy of our algorithm."
+    },
+    {
+      "index": 48,
+      "text": "## 4.1 RESULTS ON IMAGENET\n\nTo demonstrate the effectiveness of the proposed HALP method, we compare HALP with several state-of-the-art methods on the large scale dataset ImageNet."
+    },
+    {
+      "index": 49,
+      "text": "**ResNets.** We start by pruning ResNet50 and ResNet101 and compare our results with state-of-theart methods in Tab. 1 on TITAN V. In order to have a fair comparison of the latency, for all the other methods, we recreate pruned networks according to the pruned structures they published and measure the latency. Those methods showing \u2018-\u2019 in the table do not have pruned structures published so we are unable to measure the latency. For our method, by setting the percentage of latency to remain after pruning to be _X_ , we get the final pruned model and refer to it as HALP- _X_ %. We report FPS (frames per second) in the table and calculate the speedup of a pruned network as the ratio of FPS between pruned and unpruned models."
+    },
+    {
+      "index": 50,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\n|Method\nFLOPs\nTop1\nTop5\nFPS\nSpeedup\n(G)\n(%)\n(%)\n(im/s)\n**ResNet50**\nNo pruning\n4_._1\n76_._2\n92_._87\n1019\n1_\u00d7_\nThiNet-70Luo et al. (2017)\n2_._9\n75_._8\n90_._67\n-\n-\nAutoSlim Yu & Huang (2019)\n3_._0\n76_._0\n-\n1215\n1_._14_\u00d7_\nMetaPruning Liu et al. (2019a)\n3_._0\n76_._2\n-\n-\n-\nGReg-1 Wang et al. (2021)\n2_._7\n76_._3\n-\n1171\n1_._15_\u00d7_\n**HALP-**80%**(Ours)**\n3_._1\n**77**_._**2**\n**93**_._**47**\n**1256**\n**1**_._**23**_\u00d7_\n0_._75_\u00d7_ResNet50 He et al. (2015)\n2_._3\n74_._8\n-\n1467\n1_._44_\u00d7_\nThiNet-50 Luo et al. (2017)\n2_._1\n74_._7\n90_._02\n-\n-\nAutoSlim Yu & Huang (2019)\n2_._0\n75_._6\n-\n1592\n1_._56_\u00d7_\nMetaPruning Liu et al. (2019a)\n2_._0\n75_._4\n-\n1604\n1_._58_\u00d7_\nGBN You et al. (2019)\n2_._4\n76_._2\n92_._83\n-\n-\nCAIE Wu et al. (2020)\n2_._2\n75_._6\n-\n-\n-\nLEGR Chin et al. (2020)\n2_._4\n75_._6\n92_._70\n-\n-\nGReg-2 Wang et al. (2021)\n1_._8\n75_._4\n-\n1414\n1_._39_\u00d7_\n**HALP-**55%**(Ours)**\n2_._0\n**76**_._**5**\n**93**_._**05**\n**1630**\n**1**_._**60**_\u00d7_\n0_._50_\u00d7_ResNet50 He et al. (2015)\n1_._1\n72_._0\n-\n2498\n2_._45_\u00d7_\nThiNet-30Luo et al. (2017)\n1_._2\n72_._1\n88_._30\n-\n-\nAutoSlim Yu & Huang (2019)\n1_._0\n74_._0\n-\n2390\n2_._45_\u00d7_\nMetaPruning Liu et al. (2019a)\n1_._0\n73_._4\n-\n2381\n2_._34_\u00d7_\nCAIE Wu et al. (2020)\n1_._3\n73_._9\n-\n-\n-\nGReg-2 Wang et al. (2021)\n1_._3\n73_._9\n-\n1514\n1_._49_\u00d7_\n**HALP-**30%**(Ours)**\n1_._0\n**74**_._**3**\n**91**_._**81**\n**2755**\n**2**_._**70**_\u00d7_\n**ResNet50 - EagleEye Li et al. (2020) baseline**\nNo pruning\n4_._1\n77_._2\n93_._70\n1019\n1_\u00d7_\nEagleEye-3G Li et al. (2020)\n3_._0\n77_._1\n93_._37\n1165\n1_._14_\u00d7_\n**HALP-**80%**(Ours)**\n3_._0\n**77**_._**5**\n**93**_._**60**\n**1203**\n**1**_._**18**_\u00d7_\nEagleEye-2G Li et al. (2020)\n2_._1\n76_._4\n92_._89\n1471\n1_._44_\u00d7_\n**HALP-**55%**(Ours)**\n2_._1\n**76**_._**6**\n**93**_._**16**\n**1672**\n**1**_._**64**_\u00d7_\nEagleEye-1G Li et al. (2020)\n1_._0\n74_._2\n91_._77\n2429\n2_._38_\u00d7_\n**HALP-**30%**(Ours)**\n1_._2\n**74**_._**5**\n**91**_._**87**\n**2597**\n**2**_._**55**_\u00d7_|Method\nFLOPs\nTop1\nFPS\nSpeedup\n(G)\n(%)\n(im/s)|\n|---|---|\n||**ResNet101**\nNo pruning\n7_._8\n77_._4\n620\n1_\u00d7_|\n||Taylor-75%Molchanov et al. (2019)\n4_._7\n77_._4\n750\n1_._21_\u00d7_\n**HALP-**60%**(Ours)**\n4_._3\n**78**_._**3**\n847\n1_._37_\u00d7_\n**HALP-**50%**(Ours)**\n**3**_._**6**\n77_._8\n**994**\n**1**_._**60**_\u00d7_|\n||Taylor-55%Molchanov et al. (2019)\n2_._9\n76_._0\n908\n1_._47_\u00d7_\n**HALP-**40%**(Ours)**\n2_._7\n**77**_._**2**\n1180\n1_._90_\u00d7_\n**HALP-**30%**(Ours)**\n**2**_._**0**\n76_._5\n**1521**\n**2**_._**45**_\u00d7_|\n||**VGG-16**\nNo pruning\n15_._5\n71_._6\n766\n1_\u00d7_|\n||FBS-3_\u00d7_Gao et al. (2018)\n5_._1\n71_._2\n-\n-\n**HALP-**30%**(Ours)**\n**4**_._**6**\n**72**_._**3**\n1498\n2_._42_\u00d7_|\n||FBS-5_\u00d7_Gao et al. (2018)\n3_._0\n70_._5\n-\n-\n**HALP-**20%**(Ours)**\n**2**_._**8**\n**70**_._**8**\n1958\n5_._49_\u00d7_|\n||Method\nFLOPs\nTop1\nFPS\nSpeedup\n(M)\n(%)\n(im/s)|\n||**MobileNet-V1**\nNo pruning\n569\n72_._6\n3415\n1_\u00d7_|\n||MetaPruning Liu et al. (2019a)\n142\n66_._1\n7050\n2_._06_\u00d7_\nAutoSlim Yu & Huang (2019)\n150\n67_._9\n7743\n2_._27_\u00d7_\n**HALP-**42%**(Ours)**\n171\n**68**_._**3**\n**7940**\n**2**_._**32**_\u00d7_|\n||0_._75_\u00d7_MobileNetV1\n325\n68_._4\n4678\n1_._37_\u00d7_\nAMC He et al. (2018)\n285\n70_._5\n4857\n1_._42_\u00d7_\nNetAdapt Yang et al. (2018)\n284\n69_._1\n-\n-\nMetaPruning Liu et al. (2019a)\n316\n70_._9\n4838\n1_._42_\u00d7_\nEagleEye Li et al. (2020)\n284\n70_._9\n5020\n1_._47_\u00d7_\n**HALP-**60%**(Ours)**\n297\n**71**_._**3**\n**5754**\n**1**_._**68**_\u00d7_|\n||**MobileNet-V2**\nNo pruning\n301\n72_._1\n3080\n1_\u00d7_|\n||**HALP-**60%**(Ours)**\n183\n70_._4\n5668\n1_._84_\u00d7_|\n||**HALP-**75%**(Ours)**\n249\n72_._2\n4110\n1_._33_\u00d7_|"
+    },
+    {
+      "index": 51,
+      "text": "Table 1: ImageNet structural pruning results. We compare HALP for ResNet50 with two different dense baselines (left), ResNet101 and VGG16 (right up), MobileNet-V1 and MobileNet-V2 (right bottom) pruning experiments, with detailed comparison to state-of-the-art pruning methods over varying performance metrics."
+    },
+    {
+      "index": 52,
+      "text": "From the results comparison we can find that for pruned networks with similar FLOPs using different methods, our method achieves the highest accuracy and also the fastest inference speed. This also shows that FLOPs do not correspond 1:1 to the latency. Among these methods for ResNet50 comparison, EagleEye Li et al. (2020) yields the closest accuracy to ours, but the speedup is lower than ours. In Table. 1, for the pruned ResNet50 network with 3G FLOPs remaining, our method achieves a _._ 4% higher top1 accuracy and slightly ( _._ 04 _\u00d7_ ) faster inference. It is expected that the advantage of our method for accelerating the inference is more obvious when it comes to a more compact pruned network, which is 14% (or _._ 20 _\u00d7_ ) additionally faster for a 2G-FLOPs network while increasing accuracy by _._ 2%. When we further prune the network to 1G, we get a pruned network that has more FLOPs but still faster inference speed ( _._ 17 _\u00d7_ ) compared to EagleEye-1G, while we also get _._ 3% higher accuracy. We analyze the pruned network structure in detail in the supplementary material. We plot the results comparison in Fig. 2, where we also add the results of training our pruned network with a teacher model RegNetY-16GF (top1 82 _._ 9%) Radosavovic et al. (2020). With knowledge distillation, our model is 2 _._ 70 _\u00d7_ faster than the original model at 1% accuracy drop."
+    },
+    {
+      "index": 53,
+      "text": "**Scalability to other networks.** We next experiment with other models including both VGG Simonyan & Zisserman (2015), MobileNetV1 Howard et al. (2017) and MobileNetV2 Sandler et al. (2018). Same as pruning on ResNets, we perform pruning with many different latency constraints and compare with prior art in Tab. 1. As shown, among these methods, the proposed HALP performs significantly better with higher top-1 accuracy and larger inference speedup."
+    },
+    {
+      "index": 54,
+      "text": "**----- Start of picture text -----**\n\n78\n77\n76\n75\n74\n73\n72\n10 15 20 25 1 2 3 4\n inference time (ms/image)  FLOPs (G)\nOriginal model EagleEye Li et al. ECCV (2020) AutoSlim Yu et al. NeurIPS (2019)\nr x RN50 He et al. (2015) MetaPruning Liu et al. ICCV (2019a) GReg Wang et al. ICLR (2021)\nHALP (Ours)\n Top1 Acc(%)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 55,
+      "text": "Figure 3: Pruning ResNet50 on the ImageNet dataset with Jetson TX2. Top-left is better.\n\n**Scalability to other hardware.** Our approach is not limited to a single platform. We can compute the latency look-up table to apply HALP to a different platform. We repeat the ResNet50 experiments as described earlier on a Jetson TX2 and compare our results with other methods. The latency is measured with a batch size 32. As shown in Fig.3, in a Jetson TX2, our approach presents faster inference time while maintaining similar FLOPs and better accuracy."
+    },
+    {
+      "index": 56,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\n## 4.2 HALP ACCELERATION ON GPUS WITH TENSORRT\n\nTo make it closer to the real application in pro-duction, we also export the models into onnx model acc drop TITAN V GPUFP32 FP16 FP32 FP16RTX3080 GPUINT8 (acc drop) format and test the inference speed with Ten- **HALP-** EagleEye-3G80% **(Ours)** _\u2212\u2212_ 01 _.._ 90%25% **1** 1 _.._ **24** 14 _\u00d7\u00d7_ **4** 4 _.._ **70** 26 _\u00d7\u00d7_ **1** 1 _.._ **18** 06 _\u00d7\u00d7_ **3** 3 _.._ **32** 09 _\u00d7\u00d7_ **6** 6 _.._ **40** 31 _\u00d7\u00d7_ ( ( _\u2212\u2212_ 01 _.._ 84%02%)) sorRT. We run the inference of the model with **HALP-** EagleEye-2G55% **(Ours)** _\u2212\u2212_ 00 _.._ 18%35% **1** 1 _.._ **80** 54 _\u00d7\u00d7_ **6** 5 _.._ **36** 10 _\u00d7\u00d7_ **1** 1 _.._ **68** 35 _\u00d7\u00d7_ **4** 3 _.._ **45** 68 _\u00d7\u00d7_ **9** 7 _.._ **14** 46 _\u00d7\u00d7_ ( (00 _.._ 27%13%)) FP32, FP16 and also INT8. For INT8, we quan- **HALP-** EagleEye-1G30% **(Ours)** 21 _.._ 02%76% **2** 2 _.._ **91** 73 _\u00d7\u00d7_ **9** 7 _.._ **61** 81 _\u00d7\u00d7_ **2** 2 _.._ **56** 29 _\u00d7\u00d7_ **6** 5 _.._ **44** 61 _\u00d7\u00d7_ **14** 12 _.._ 29 **12** _\u00d7\u00d7_ ( (22 _.._ 55%38%)) tize the model using entropy calibration with 2560 randomly selected ImageNet training imTable 2: HALP acceleration of ResNet50 on GPUs with TensorRT (ver-sion 7.2.1.6). ages. Since the INT8 TensorCore speedup is not supported in TITAN V GPU, we only report the quantized results on RTX3080 GPU. The accelerations and the corresponding top1 accuracy drop (compared to PyTorch baseline model) are listed in Tab. 2. We can further build a TensorRT INT8 lookup table to achieve potentially larger speedup, which remains as our future work."
+    },
+    {
+      "index": 57,
+      "text": "## 4.3 DESIGN EFFORT FOR PRUNING\n\nIn addition to noticeable performance boosts, HALP in fact requires less design effort compared to prior art, as summarized in Tab. 3 (details in Appendix O). NetAdapt Yang et al. (2018) and AutoSlim Yu & Huang (2019) generate many proposals during iterative pruning. Then evaluations of the proposals are needed to select the best candidate that will proceed to the next pruning iteration. EagleEye Li et al. (2020) pre-obtains 1000 candidates before pruning and evaluates all of them in order to get the best one. Such pruning candidate selection is intuitive but causes a lot of additional time costs. The computation cost for MetaPruning Liu et al. (2019a) and AMC He et al. (2018) can be even higher because they need to train auxiliary network to generate the pruned structure."
+    },
+    {
+      "index": 58,
+      "text": "Compared to these methods, our method does not require auxiliary network training nor subnetwork evaluation. The latency contribution in our method can be quickly obtained during pruning by the pre-generated latency lookup table. Although creating the table for the target platform might cost time, we only do it once for all pruning ratios. Solving the augmented knapsack problem brings extra computation, however, after neuron grouping, it only takes around additional 30 minutes of CPU time in total for ResNet50 pruning and less than 1 minute for"
+    },
+    {
+      "index": 59,
+      "text": "||Method|Evaluate\nproposals?|Auxiliary net\ntraining?|Sub-network\nselection (RseNet50)|\n|---|---|---|---|---|\n||NetAdapt\nThiNet\nEagleEye|Y\nY\nY|N\nN\nN|_\u223c_195h (GPU)\n_\u223c_210h (GPU)\n30h (GPU)|\n||AutoSlim\nMetaPruning\nAMC|Y\nY\nN|Y\nY\nY||\n||HALP**(Ours)**|**N**|**N**|6_._5**h (GPU) +**0_._5**h (CPU)**|"
+    },
+    {
+      "index": 60,
+      "text": "Table 3: Comparison of extra computation required by pruning methods on ImageNet. Our approach is around _4.3\u00d7 faster_ than the next best method. Sub-network selection timing is approximated as running on same device (a NVIDIA V100)."
+    },
+    {
+      "index": 61,
+      "text": "MobileNetV1, which is negligible compared to the fine-tuning process or training additional models. Moreover, this is significantly lower than other methods, for example the fastest of them EagleEye Li et al. (2020) requires 30 GPU hours."
+    },
+    {
+      "index": 62,
+      "text": "## 4.4 EFFICACY OF NEURON GROUPING\n\nWe first show the benefits of latency-aware neuron grouping and compare the performance under different group size settings."
+    },
+    {
+      "index": 63,
+      "text": "**Performance comparison.** As described in Sec. 3.3, we group _s_ neurons in a layer as an entirety so that they are removed or kept together. Choosing different group sizes can lead to different performances, and also different computation cost on the augmented knapsack problem solving. In our method, we set an individual group size for each layer according to each layer\u2019s latency step size in the look-up table. We name the grouping in our method as latency-aware grouping (LG). For instance, for a ResNet50, using this approach we set the individual group size of 23 layers to 32, of 20 layers to 64, and 10 layers to 128. Layers closer to the input tend to use a smaller group size. Another option for neuron grouping is to heuristically set a fixed group size for all layers as literature does Yin et al. (2020)."
+    },
+    {
+      "index": 64,
+      "text": "Fig. 4 shows the performance of our grouping approach compared to various fixed group sizes for a ResNet50 pruned with different constraints. As shown, using small group sizes yields the worst performance independently of the latency constraint. At the same time, a very large group such as"
+    },
+    {
+      "index": 65,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\n256 do also harms the final performance. Intuitively, a large group size averages the contribution of many neurons and therefore is not discriminative enough to select the most important ones. Besides, large groups might promote pruning the entire layer in a single pruning iteration, leading to performance degradation. On the other hand, small group sizes such as 2 promote removing unimportant groups of neurons. These groups do not significantly improve the latency, but they can contribute to the final performance. In contrast, our latency-aware grouping performs the best, showing the efficacy of our neuron grouping scheme."
+    },
+    {
+      "index": 66,
+      "text": "**Algorithm efficiency improvement.** Setting the group size according to the latency step size not only improves the performance, but also reduces computation cost on"
+    },
+    {
+      "index": 67,
+      "text": "**----- Start of picture text -----**\n\n78\n76\n74\ngs=2\ngs=8\n72 gs=16 Yin et al. 2020\ngs=256\ngs=LG (ours)\n70\n0.4 0.45 0.5 0.55 0.6 0.65 0.7 0.75 0.8\n inference time (ms/image)\n Top1 Acc(%)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 68,
+      "text": "Figure 4: Performance comparison of our latency-aware grouping to different fixed sizes for ResNet50 pruning on ImageNet. We compare to heuristic-based group selection studied by Yin et al. (2020). LG denotes our proposed latency-aware grouping in HALP that yields consistent latency benefits per accuracy."
+    },
+    {
+      "index": 69,
+      "text": "knapsack problem solving for neuron selection since it reduces the total number of object _N_ to a smaller value. In our ResNet50 experiment, except for the first convolution layer, the group size of other layers varies from 32 to 128. By neuron grouping, the value of _N_ can be reduced to 215, which takes around one minute on average at each pruning step to solve the knapsack problem on CPU. We have 30 pruning steps in total in our experiments, thus the time spent on neuron selection is around 30 minutes in total, which can be negligible compared to training time."
+    },
+    {
+      "index": 70,
+      "text": "## 4.5 GENERALIZATION TO OBJECT DETECTION.\n\nTo show the generalization ability of our proposed HALP algorithm, we also apply the algorithm to the object detection task. In this experiment we take the popular architecture Single Shot Detector (SSD) Liu et al. (2016) on the PASCAL VOC dataset Everingham et al. (2010). Following the \u201c07+12\u201d setting in Liu et al. (2016), we use the union of VOC2007 and VOC2012 trainval as our training set and use the VOC2007 test as test set.We pretrain a SSD512 detector with ResNet50 as the backbone. The details of the SSD structure are elaborated in the appendix. Same to classification task, we prune the trained detector and finetune afterwards. We only prune the backbone network in the detector."
+    },
+    {
+      "index": 71,
+      "text": "**----- Start of picture text -----**\n\n80\nSSD512-RN50-HALP (Ours)\n78 RetinaNet-RN50\nSSD512-RN50\nSSD300-VGG16\n76 SSD512-RN50-slim\nSSD300-RN50\n74 mAP FLOPs FPS\nSSD512-RN50, base model 77.98 65.56 68.24\nSSD512-RN50-slim 75.83 46.09 76.49\n72 SSD300-RN50 75.69 16.23 128.85\nSSD300-VGG16 76.72 31.44 122.28 FasterRCNN-VGG16\n70 FasterRCNN-VGG16 70.10 91.23 29.21\nRetinaNet-RN50 77.27 106.50 36.92\nSSD512-RN50-HALP 77.42 15.38 132.57\n68\n5 10 15 20 25 30 35\ninference time (ms/image)\nmAP (%)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 72,
+      "text": "Figure 5: HALP for object detection on the PASCAL VOC dataset. Detailed numbers can be found in the Appendix D."
+    },
+    {
+      "index": 73,
+      "text": "The results in Fig. 5 show that the pruned detectors maintain the similar final mAP but reduce the FLOPs and improve the inference speed greatly, with 77% FLOPs reduction and around 1 _._ 94 _\u00d7_ speedup at the cost of only 0 _._ 56% mAP drop. We compare the pruned detector to some other commonly-used detectors in the table. The results show that pruning a detector using HALP improves performance in almost all aspects."
+    },
+    {
+      "index": 74,
+      "text": "## 5 CONCLUSION\n\nWe proposed hardware-aware latency pruning (HALP) that focuses on structured pruning for underlying hardware towards latency budgets. We formulated pruning as a resource allocation optimization problem to achieve maximum accuracy within a given latency budget. We further proposed a latency-aware neuron grouping scheme to further improve latency reduction. Over multiple neural network architectures, classification and detection tasks, and changing datasets, we have shown the efficiency and efficacy of HALP by showing consistent improvements over state-of-the-art methods."
+    },
+    {
+      "index": 75,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n## REPRODUCIBILITY STATEMENT\n\nFor reproducibility purpose, we have included all the experimental setup, details, and all hypermarameters in the paper and the Appendix. The code will be released upon acceptance."
+    },
+    {
+      "index": 76,
+      "text": "## REFERENCES\n\nJose M Alvarez and Mathieu Salzmann. Learning the number of neurons in deep networks. In _Advances in Neural Information Processing Systems_ , pp. 2270\u20132278, 2016."
+    },
+    {
+      "index": 77,
+      "text": "- Tom B Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. _arXiv preprint arXiv:2005.14165_ , 2020."
+    },
+    {
+      "index": 78,
+      "text": "- Yaohui Cai, Zhewei Yao, Zhen Dong, Amir Gholami, Michael W Mahoney, and Kurt Keutzer. Zeroq: A novel zero shot quantization framework. In _Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition_ , pp. 13169\u201313178, 2020."
+    },
+    {
+      "index": 79,
+      "text": "- Changan Chen, Frederick Tung, Naveen Vedula, and Greg Mori. Constraint-aware deep neural network compression. In _Proceedings of the European Conference on Computer Vision (ECCV)_ , pp. 400\u2013415, 2018."
+    },
+    {
+      "index": 80,
+      "text": "- Sharan Chetlur, Cliff Woolley, Philippe Vandermersch, Jonathan Cohen, John Tran, Bryan Catanzaro, and Evan Shelhamer. cudnn: Efficient primitives for deep learning. _arXiv preprint arXiv:1410.0759_ , 2014."
+    },
+    {
+      "index": 81,
+      "text": "- Ting-Wu Chin, Ruizhou Ding, Cha Zhang, and Diana Marculescu. Towards efficient model compression via learned global ranking. In _Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition_ , pp. 1518\u20131528, 2020."
+    },
+    {
+      "index": 82,
+      "text": "- Xiaoliang Dai, Peizhao Zhang, Bichen Wu, Hongxu Yin, Fei Sun, Yanghan Wang, Marat Dukhan, Yunqing Hu, Yiming Wu, Yangqing Jia, P Vajda, M Uyttendaele, and Niraj K Jha. ChamNet: Towards efficient network design through platform-aware model adaptation. In _CVPR_ , 2019."
+    },
+    {
+      "index": 83,
+      "text": "- Pau de Jorge, Amartya Sanyal, Harkirat S Behl, Philip HS Torr, Gregory Rogez, and Puneet K Dokania. Progressive skeletonization: Trimming more fat from a network at initialization. _arXiv preprint arXiv:2006.09081_ , 2020."
+    },
+    {
+      "index": 84,
+      "text": "- Xiaohan Ding, Guiguang Ding, Yuchen Guo, and Jungong Han. Centripetal sgd for pruning very deep convolutional networks with complicated structure. In _Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition_ , pp. 4943\u20134953, 2019."
+    },
+    {
+      "index": 85,
+      "text": "- Jin-Dong Dong, An-Chieh Cheng, Da-Cheng Juan, Wei Wei, and Min Sun. Dpp-net: Deviceaware progressive search for pareto-optimal neural architectures. In _Proceedings of the European Conference on Computer Vision (ECCV)_ , pp. 517\u2013531, 2018."
+    },
+    {
+      "index": 86,
+      "text": "- Mark Everingham, Luc Van Gool, Christopher KI Williams, John Winn, and Andrew Zisserman. The pascal visual object classes (voc) challenge. _International journal of computer vision_ , 88(2): 303\u2013338, 2010."
+    },
+    {
+      "index": 87,
+      "text": "Jonathan Frankle and Michael Carbin. The lottery ticket hypothesis: Finding sparse, trainable neural networks. _International Conference on Learning Representations (ICLR)_ , 2019a."
+    },
+    {
+      "index": 88,
+      "text": "Jonathan Frankle and Michael Carbin. The lottery ticket hypothesis: Finding sparse, trainable neural networks. In _International Conference on Learning Representations_ , 2019b. URL https: //openreview.net/forum?id=rJl-b3RcF7."
+    },
+    {
+      "index": 89,
+      "text": "- Trevor Gale, Erich Elsen, and Sara Hooker. The state of sparsity in deep neural networks. _arXiv preprint arXiv:1902.09574_ , 2019."
+    },
+    {
+      "index": 90,
+      "text": "- Susan Gao, Xin Liu, Lung-Sheng Chien, William Zhang, and Jose M Alvarez. Vacl: Variance-aware cross-layer regularization for pruning deep residual networks. In _Proceedings of the IEEE/CVF International Conference on Computer Vision Workshops_ , pp. 0\u20130, 2019.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper proposes a structured pruning method, HALP, that uses an augmented knapsack solver to optimize neural network architectures under latency constraints. By pre-profiling layer-wise latency and grouping neurons based on hardware-specific latency steps, the authors achieve significant speedups on GPUs compared to existing pruning baselines.\n\nThe paper presents a practical and effective approach to hardware-aware pruning that addresses the non-linear latency patterns of modern GPUs. The integration of a knapsack solver with a latency lookup table is a clever way to handle combinatorial constraints, and the empirical results on ImageNet and VOC demonstrate clear improvements over state-of-the-art methods.\n\nOverview issues:\n\n- Incomplete Latency Modeling for Dynamic Hardware: The methodology in Section 3.1 and 3.2 relies on a static latency lookup table, which assumes that the latency of a layer depends only on its own input/output channel counts. This fails to account for memory bus contention, cache state, or the influence of preceding/succeeding layers on the execution pipeline of modern GPUs. If the latency of layer L depends on the pruning decisions in layer L-1 or L+1, the additive property in Equation 5 breaks down. To address this, the authors should provide an ablation study or a sensitivity analysis demonstrating how much the predicted latency deviates from the actual measured latency when the entire network is pruned, rather than just the individual layer.\n\n- Generalization Across Hardware Architectures: The paper emphasizes hardware-awareness but only provides detailed results for NVIDIA Titan V and Jetson TX2. The 'staircase-shaped' latency pattern discussed in Section 2 is highly specific to the CUDA kernel implementations and hardware architecture of these specific GPUs. It is unclear if the grouping strategy (Section 3.3) or the knapsack formulation provides any benefit on architectures with different memory hierarchies or compute units, such as mobile NPUs or FPGAs. The authors should include at least one experiment on a non-NVIDIA platform to demonstrate that the method is truly hardware-aware rather than just 'NVIDIA-aware'.\n\n- Lack of Analysis on Pruning-Induced Sparsity Overhead: While the paper claims to target structured pruning, it does not explicitly discuss the impact of the resulting irregular channel counts on kernel efficiency. Many hardware libraries (like cuDNN) are optimized for power-of-two channel counts; pruning to arbitrary counts might result in suboptimal memory alignment or kernel execution, which the latency lookup table might capture but the methodology does not explain. The authors should clarify if their lookup table accounts for these alignment overheads and whether the 'staircase' pattern is an inherent hardware feature or an artifact of the specific library implementation used.\n\n- Unclear Impact of Fine-Tuning Costs: Section 4.3 compares the design effort of HALP against other methods, but it focuses primarily on the pruning/selection phase. The total computational budget for a fair comparison must include the fine-tuning phase required to recover accuracy after pruning. If HALP produces a more 'aggressive' pruning pattern that requires significantly longer fine-tuning to reach target accuracy, the total time-to-solution might be higher than methods that produce more conservative structures. The authors should provide a total wall-clock time comparison including the fine-tuning process to substantiate the claim that HALP is more efficient.\n\n- Validation of the additive latency assumption for non-linear pipelines: The methodology assumes that total model latency is the sum of individual layer latencies, as shown in Equation 5. However, modern GPU execution pipelines often exhibit non-additive latency due to kernel launch overheads, overlapping memory transfers, and cache hierarchy effects that depend on the sequence of operations. The paper needs to empirically validate this additive assumption by comparing the predicted latency from the lookup table against the actual measured latency of the fully pruned model. A scatter plot showing 'Predicted vs. Actual' latency for several hundred randomly generated pruned architectures would provide the necessary evidence that the lookup table is a reliable proxy for end-to-end performance.\n\n- Sensitivity analysis of the knapsack solver to importance score variance: The augmented knapsack solver relies on gradient-based importance scores (Equation 3) to rank neurons. These scores are known to be noisy and sensitive to the specific mini-batch used for estimation. The paper lacks a sensitivity analysis showing how the final pruned architecture\u2014and its resulting latency\u2014changes if the importance scores are computed over different data subsets or training epochs. A simple simulation showing the stability of the selected architecture (e.g., using Jaccard similarity between sets of kept neurons across different runs) would demonstrate that the proposed optimization is robust rather than sensitive to stochastic training noise.\n\n- Comparison against a baseline without hardware-aware grouping: The paper claims that the 'latency-aware grouping' (Section 3.3) is a core contribution, yet it does not isolate the performance gain of this grouping from the gain of the knapsack solver itself. To demonstrate the value of this specific contribution, the authors should report an ablation study comparing the HALP performance against a version of the algorithm that uses the same knapsack solver but employs a uniform or heuristic grouping strategy (e.g., grouping all layers by a fixed size of 16). This would clarify whether the latency-aware grouping is truly driving the observed speedups or if the knapsack formulation is sufficient on its own.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Provide a detailed analysis of the discrepancy between predicted latency from the lookup table and actual measured latency on the target hardware.\n\n- Include an additional experimental result on a different hardware architecture (e.g., a mobile NPU or a different GPU family) to validate the claim of hardware-awareness.\n\n- Include the total time-to-solution (pruning + fine-tuning) in the comparison table in Section 4.3 to provide a more holistic view of the design effort.\n\n- Clarify whether the latency lookup table accounts for memory alignment constraints (e.g., channel counts being multiples of 8 or 16) and how these constraints interact with the knapsack solver.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Logical error in knapsack solver condition",
+          "quote": " $v_{keep} > v_{prune}$  and keep[l, c-c] == j-1 then check if it leads to higher score and if more important neurons in layer are kept\n7",
+          "explanation": "The condition 'keep[l, c-c] == j-1' contains a typographical error where 'c-c' evaluates to zero, rendering the check meaningless. The intended logic is to ensure the j-th neuron is only selected if the (j-1)-th neuron was included in the optimal solution for the remaining latency budget. Please rewrite this as 'keep[l, c - c_l^j] == j - 1' to correctly enforce the required ordering constraint.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistent reporting of sub-network selection time",
+          "quote": "Solving the augmented knapsack problem brings extra computation, however, after neuron grouping, it only takes around additional 30 minutes of CPU time in total for ResNet50 pruning and less than 1 minute for",
+          "explanation": "There is a significant discrepancy between the text, which claims 30 minutes of CPU time, and Table 3, which lists '6.5h (GPU) + 0.5h (CPU)' for HALP. If the 6.5h GPU time is part of the sub-network selection process, the text's claim is misleading. Please reconcile these figures to clarify whether the 6.5h is a fixed overhead or part of the selection effort.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Incorrect speedup calculation for VGG-16",
+          "quote": "HALP-20% (Ours) | 2.8 | 70.8 | 1958 | 5.49\u00d7",
+          "explanation": "The reported speedup of 5.49x for VGG-16 is inconsistent with the provided FPS data. Given the baseline FPS of 766 and the pruned FPS of 1958, the actual speedup is approximately 2.56x. Please correct this calculation to avoid overstating the performance gain.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Contradiction in dependency logic for augmented knapsack",
+          "quote": "We augment the knapsack solver to consider the reordered neurons with descending importance score so that all the preceding neurons will removed before it.",
+          "explanation": "The text contains a logical contradiction. To keep a neuron of rank j, one must keep all neurons of rank 1 to j-1. However, the text states the goal is to ensure 'all the preceding neurons will removed before it.' This phrasing contradicts the requirement that they must be kept for the latency contribution to hold. Please rewrite this to clarify that the solver ensures all preceding neurons are kept before the inclusion of a neuron of rank j.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Ambiguity in cross-layer grouping alignment",
+          "quote": "For cross-layer grouping, we use the largest group size among the layers.",
+          "explanation": "Selecting the largest group size across layers in a skip connection does not guarantee alignment with the hardware-specific latency cliffs of every layer involved. If the largest group size is not a multiple of the smaller step sizes, the pruning process will remove channels in blocks that do not align with the hardware-specific latency cliffs, potentially leading to sub-optimal performance. Please provide a formal argument or constraint proof showing that this strategy maintains the hardware-aware property for all layers in the group.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistent comparison to EagleEye in ResNet50 results",
+          "quote": "Among these methods for ResNet50 comparison, EagleEye Li et al. (2020) yields the closest accuracy to ours, but the speedup is lower than ours.",
+          "explanation": "The text references EagleEye for ResNet50, but this method is absent from the ResNet50 portion of Table 1. It is impossible to verify the claimed accuracy and speedup advantages against EagleEye using the provided data. Please either include EagleEye in the table or remove the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_6",
+          "title": "Inaccurate characterization of GPT-3 model size",
+          "quote": " With millions, sometimes billions of parameters (e.g., GPT-3 *Brown et al. (2020)*),",
+          "explanation": "Characterizing GPT-3 as having 'millions' of parameters is a significant understatement, as it is a 175-billion parameter model. Please update the text to reflect the correct order of magnitude to accurately represent the scale of the deployment challenges discussed.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_7",
+          "title": "Inconsistent dataset citation",
+          "quote": "use ImageNet ILSVRC2021 *Russakovsky et al. (2015)* for classification. We ",
+          "explanation": "The text cites ILSVRC2021, but the reference provided is the 2015 paper for the original ImageNet challenge. ILSVRC2021 is not a standard benchmark version associated with that publication. Please correct the citation or the dataset name to ensure reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        }
+      ],
+      "cost_usd": 0.0866,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes HALP, a structured pruning method that formulates neuron selection as a latency-constrained knapsack problem. The approach leverages hardware-specific lookup tables and a precedence-aware DP solver to balance accuracy and inference speed. While the core idea of mapping pruning decisions directly to hardware latency is promising, the manuscript contains several methodological gaps and experimental design flaws that weaken its claims.\n\nThe paper tackles a relevant problem by explicitly modeling hardware latency rather than relying on FLOPs as a proxy. The formulation of pruning as a resource allocation problem is mathematically sound in principle, and the experiments cover multiple architectures and tasks. However, the reproducibility of the hardware measurements, the fairness of baseline comparisons, and the handling of dynamic training interactions require substantial clarification before the results can be trusted.\n\nOverview issues:\n\n- Hardware latency lookup tables lack measurement details and reproducibility specifications: The core of HALP relies on pre-measured latency lookup tables to guide pruning decisions. Section 3.1 states these tables are built by pre-analyzing operator-level latency values, but the paper omits the exact measurement protocol. It does not specify the deep learning framework, batch sizes, warmup iterations, number of runs per configuration, or how measurement variance is handled. Without these details, the lookup tables cannot be reproduced, and the hardware-aware claims become unverifiable. Furthermore, Table 2 reports TensorRT results measured under different conditions than the main Table 1 experiments, yet the paper does not clarify whether the lookup tables were regenerated for TensorRT or reused. A revision must include a dedicated subsection detailing the measurement pipeline, hardware settings, and statistical handling of latency measurements.\n\n- Unfair baseline comparison due to ad-hoc architecture recreation: Section 4.1 claims HALP surpasses state-of-the-art methods, but the comparison methodology is fundamentally flawed. The authors state they recreate pruned networks according to the pruned structures they published and measure the latency. Reimplementing pruned architectures from scratch without the original training schedules, optimization hyperparameters, or exact layer configurations introduces uncontrolled variables. Many baselines in Table 1 lack published structures, forcing the authors to either omit them or make assumptions. This approach invalidates the accuracy and latency margins reported. To establish a credible comparison, the revision should either retrain all baselines using a unified training pipeline or explicitly acknowledge the limitations of structural-only comparison and restrict claims to latency efficiency rather than overall accuracy-latency trade-offs.\n\n- Latency discretization strategy for the knapsack solver is undefined: Algorithm 1 formulates the pruning problem as a dynamic programming knapsack solver where the constraint dimension c ranges from 1 to C. Latency, however, is a continuous physical quantity. The paper never explains how continuous latency values are discretized to fit the DP table. If the discretization step is too large, the solver may violate the latency budget or produce suboptimal accuracy. If it is too fine, the state space explodes, contradicting the claimed computational efficiency. The pseudo-code assumes integer latency indices without justification. The authors must specify the quantization scheme for the latency constraint, analyze its impact on solution optimality, and provide complexity bounds relative to the chosen discretization granularity.\n\n- Interaction between dynamic pruning, gradient updates, and importance estimation is under-specified: Section 3.4 describes an iterative pruning regime where importance scores are recalculated every r minibatches while the network architecture changes dynamically. The formulation in Eq. 2 treats importance I_l(p_l) as a static function of the number of kept neurons, but in practice, importance scores depend on the current weight distribution, which is actively being updated. The paper does not clarify how the knapsack solver accounts for the fact that pruning a layer alters the input dimensions for subsequent layers, thereby changing their latency contributions T_l(p_{l-1}, p_l) mid-training. This feedback loop between weight updates, architecture changes, and solver decisions needs a clearer mathematical treatment or a description of how the lookup table is updated dynamically during the training loop.\n\n- Fine-tuning costs and accuracy recovery mechanisms are omitted: The abstract and results heavily emphasize accuracy preservation, yet the computational and temporal cost of fine-tuning is entirely absent. Structured pruning typically requires hundreds of epochs of fine-tuning to recover accuracy, which can dominate the total pipeline runtime. Table 3 compares sub-network selection timing but explicitly excludes fine-tuning duration. Without reporting fine-tuning epochs, learning rate schedules, or total wall-clock time, the claimed efficiency gains are misleading. The revision must include fine-tuning overhead in the efficiency analysis and clarify whether the reported speedups apply only after fine-tuning or include the recovery phase.\n\n- Latency coupling across skip connections is not addressed in the grouping scheme: Section 3.3 introduces latency-aware neuron grouping and mentions grouping neurons sharing channel indices across skip connections in ResNet. However, the latency model in Eq. 5 assumes layer latencies sum independently. Skip connections fundamentally couple layers, meaning the latency of a residual block depends on the combined channel configuration of both branches. The paper does not explain how the lookup table or the knapsack solver accounts for this coupling. If grouped neurons span multiple layers, their combined latency contribution is not simply the sum of individual layer contributions. This oversight could lead to inaccurate latency predictions and constraint violations in residual architectures. The authors should either modify the latency aggregation to handle skip connections explicitly or restrict the method to architectures without complex skip patterns.\n\n- Toy example demonstrating knapsack solver advantages: The paper formulates pruning as a knapsack problem to navigate non-linear GPU latency curves, but it never demonstrates this mechanism on a concrete, fully-specified model. Readers will wonder how the augmented solver actually exploits the staircase latency pattern compared to a greedy baseline. A natural starting point is a two-layer toy convolutional network with a manually defined latency function that exhibits a clear staircase effect. Computing the optimal channel configuration for this toy model using both the augmented knapsack solver and a standard greedy importance-based method would show exactly where the solver succeeds. This worked example would prove the result has bite and clarify how the solver avoids suboptimal configurations that greedy methods typically fall into.\n\n- Scaling analysis of latency lookup table construction: The core of HALP relies on pre-measuring operator-level latencies to build a lookup table for every layer. The paper does not discuss how this table scales with network width or depth, nor does it address the computational cost of populating it. For a layer with $C_{in}$ input and $C_{out}$ output channels, the table requires $C_{in} \times C_{out}$ measurements. On modern architectures with thousands of channels, this measurement phase could easily dominate the pruning pipeline, contradicting the claimed efficiency. The authors should include a complexity analysis of the table construction process, discuss memory requirements for large models, and explain how they handle architectures where exhaustive measurement is impractical. Interpolation or extrapolation strategies for unmeasured channel counts would also strengthen the practical guidance.\n\n- Ablation isolating hardware-aware modeling contribution: The abstract and introduction claim that HALP yields speedups by exploiting hardware latency traits, yet the experiments do not isolate this component from the global optimization framework. The reported improvements could stem entirely from the knapsack solver's ability to balance accuracy and latency globally, rather than the empirical lookup table. A direct comparison would involve running the exact same pruning pipeline but replacing the empirical latency table with a theoretical FLOPs-based proxy. Without this ablation, the paper leaves a gap between its stated claims and the delivered evidence. Adding this controlled experiment would clarify whether the hardware-aware modeling provides independent value beyond the solver formulation.\n\n- Verification of standard pruning as a limiting case: The paper positions the augmented knapsack solver as a generalization of local, layer-wise pruning strategies, but it never verifies that the method recovers known baselines as a special case. If the latency contribution $c_l^j$ were constant across all neurons in a layer, the augmented knapsack solver should reduce to a simple thresholding rule based on importance scores. Demonstrating this limiting case would ground the method in existing theory and clarify when the added complexity of the solver is necessary. The authors should include a brief derivation or numerical verification showing that HALP collapses to standard importance-based pruning when hardware latency effects vanish.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a complete measurement protocol for the latency lookup tables, including framework, batch sizes, warmup steps, and statistical handling, and clarify whether tables are regenerated for different hardware setups.\n\n- Retrain or rigorously align all baseline methods under a unified training pipeline to ensure fair accuracy and latency comparisons, or explicitly limit claims to structural efficiency.\n\n- Specify the discretization scheme for the latency constraint in the DP solver, analyze its effect on optimality, and report the resulting state space complexity.\n\n- Include fine-tuning duration, hyperparameters, and total wall-clock time in the efficiency analysis to accurately reflect the full pruning pipeline cost.\n\n- Clarify how the latency model and grouping scheme handle skip connections, either by modifying the latency aggregation formula or by restricting experiments to architectures without residual coupling.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Misuse of trade-off contradicts reported Pareto improvements",
+          "quote": "enabling HALP to surpass prior work in pruning efficacy and accuracy-efficiency trade-off.",
+          "explanation": "The claim of improving an 'accuracy-efficiency trade-off' conflicts with the reported simultaneous gains in both throughput and accuracy. A trade-off inherently implies a negative correlation where optimizing one metric degrades the other. Since HALP Pareto-dominates the baseline, the terminology is logically inconsistent with the data. Rewrite the phrase as 'accuracy-efficiency performance' or 'Pareto frontier' to accurately reflect the non-degrading results.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Ambiguous phrasing of throughput improvement factors",
+          "quote": "HALP improves network throughput by $1.60\\times$/$1.90\\times$ with",
+          "explanation": "The expression 'improves network throughput by 1.60x/1.90x' introduces mathematical ambiguity, as it could be read as a multiplicative factor or an additive increase. Pruning speedups typically fall in the 1.5x-2.0x range, suggesting the former, but the wording invites misinterpretation. Rewrite to 'increases network throughput to 1.60x/1.90x of the baseline' or 'yields a 1.60x/1.90x speedup' to remove ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Incorrect claim about latency impact of later-layer pruning",
+          "quote": "Typically, removing channels from the latter layers has smaller impact on accuracy and smaller impact on latency versus removing channels from the early layers.",
+          "explanation": "This statement mischaracterizes the latency impact of pruning in standard CNNs. Later layers contain significantly more channels and FLOPs, meaning they dominate total inference latency. Consequently, pruning channels in later layers yields a larger reduction in latency, not a smaller one. Rewrite this sentence to accurately reflect that later layers contribute more to latency, making their pruning more effective for speedup, while noting their smaller impact on accuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "NetAdapt mischaracterized as candidate selection method",
+          "quote": " (2020)*. An alternative line of work propose to select the best pruned network from a set of candidates *Li et al. (2020); Yang et al. (2018)*. However, it would take a long time for candidate selection due to the large amount of candidates. In additio",
+          "explanation": "Grouping NetAdapt with candidate selection methods misrepresents its iterative, layer-wise greedy design. NetAdapt does not evaluate a pre-defined set of candidate networks; instead, it uses empirical latency measurements to determine which filters to remove at each step. Separate iterative pruning methods like NetAdapt from candidate-based or evolutionary search strategies to accurately reflect the literature landscape.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Taylor expansion importance criterion cited with wrong year",
+          "quote": "l. (2016)*. For example, *Molchanov et al. (2019)* proposes to use Taylor expansion to measure the importance of neurons and prunes the least-ranked ones until a desired number of neurons are pruned. How",
+          "explanation": "Attributing the Taylor expansion importance criterion to Molchanov et al. (2019) is factually inaccurate. The foundational work for this metric was published in Molchanov et al. (2017), Pruning Convolutional Neural Networks for Resource Efficient Inference (ICLR 2017). Correcting the citation year to 2017 will align the claim with established literature and prevent confusion regarding the method's origin.",
+          "comment_type": "technical",
+          "paragraph_index": 17,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "FLOPs-latency discrepancy claim misattributed to Tan et al. (2019)",
+          "quote": "n addition, these methods use FLOPs as a proxy of latency, which is usually inaccurate as networks with similar FLOPs might have significantly different latencies *Tan et al. (2019)*.",
+          "explanation": "Citing Tan et al. (2019) for the FLOPs-latency discrepancy is misleading, as that work focuses on compound scaling or architecture design rather than hardware latency decoupling. This point is more accurately supported by hardware-aware NAS literature such as ProxylessNAS (Cai et al., 2019) or MobileNetV2 (Sandler et al., 2018). Updating the citation will strengthen the paper's grounding in the relevant literature.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Latency contributions depend on previous layer size, conflicting with fixed-weight solver",
+          "quote": "$c_{l}^{j}=T_{l}(p_{l-1},j)-T_{l}(p_{l-1},j-1),\\quad 1\\leq j\\leq p_{l}.$ (6)",
+          "explanation": "Equation 6 defines marginal latency $c_l^j$ as explicitly dependent on $p_{l-1}$, yet Algorithm 1 treats $\backslash{c_l\backslash}$ as a fixed input array. In practice, hardware latency for a layer scales with both input and output channels, meaning $c_l^j$ will change as $p_{l-1}$ varies during the knapsack search. Explicitly state whether the lookup table is constructed at a fixed $p_{l-1}$ or if the authors assume $c_l^j$ is approximately constant across different widths.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Misplaced quantifier in optimization constraint notation",
+          "quote": "\\sum_{l=1}^{L}T_{l}(p_{l-1},p_{l})\\leq C,\\ \\forall l\\ \\ 0\\leq p_{l}\\leq N_{l},$ (2)",
+          "explanation": "Placing $\forall l$ after the latency inequality in Eq. 2 creates syntactic ambiguity regarding the constraint scope. Standard optimization notation places the quantifier with the variable bounds. Rewrite the constraint line as `\backslash{sum\backslash}_{l=1}^{L}T_{l}(p_{l-1},p_{l})\tleq C,\t\text{where } 0\bleq p_{l}\bleq N_{l} \text{ for all } l` to clarify that the latency budget applies globally across all layers.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Missing specification for lookup table construction",
+          "quote": "We empirically obtain the layer latency $T_{l}(p_{l-1},p_{l})$ in Eq. 2 by pre-building a layer-wise look-up table with pre-measured latencies.",
+          "explanation": "The text mentions pre-building a lookup table for $T_l(p_{l-1}, p_l)$ but omits how the two-dimensional dependency maps to the solver's 1D input. Since Algorithm 1 only accepts a 1D array per layer, the authors implicitly assume either that $p_{l-1}$ is fixed during table construction or that $c_l^j$ is invariant to $p_{l-1}$. Add a clarification after 'pre-measured latencies.' stating the fixed $p_{l-1}$ value used, as this assumption significantly impacts hardware accuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Contradiction in neuron removal indices",
+          "quote": "The preceding enforcement originates from the fact that for a neuron with rank  $j$  in the  $l_{th}$  layer, the neuron latency contribution only holds when all the neurons with rank  $r = 1, \\dots, j - 1$  are kept in the  $l_{th}$  layer and the rest of the neurons with rank  $r = j + 1, j + 2, \\dots, p_l$  are removed.",
+          "explanation": "The description claiming neurons up to rank $p_l$ are removed directly contradicts the definition of $p_l$ as the count of retained neurons. The retained set is $\backslash{backslash{{}}1, \backslash{dots}, p_l\backslash{backslash{}}}$ and the pruned set is $\backslash{backslash{}}p_l+1, \backslash{dots}, N_l\backslash{backslash{}}$. Rewrite the passage to state that '...the rest of the neurons with rank $r = p_l + 1, \backslash{dots}, N_l$ are removed' to align with Eq. (7) and the variable definition.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Redundant precedence constraints due to sorted importance",
+          "quote": "This simplifies the overall pruning process into a knapsack problem only with additional preceding constraints.",
+          "explanation": "Treating the sorted importance condition as an 'additional preceding constraint' overlooks that prefix selection is inherently guaranteed by the descending sort. The problem reduces to a standard resource allocation or single-constraint knapsack over layer configurations $(p_l, \backslash{sum\backslash}_{j=1}^{p_l} c_l^j, \backslash{sum\backslash}_{j=1}^{p_l} I_l^j)$. Add a clarifying remark explaining that the sorted importance assumption inherently satisfies the precedence constraints, which addresses the gap in justifying why an augmented solver is necessary.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Ambiguous latency cost model description",
+          "quote": "We augment the knapsack solver to consider the reordered neurons with descending importance score so that all the preceding neurons will removed before it.",
+          "explanation": "Phrasing the solver as considering 'preceding neurons will removed before it' implies a dynamic iterative process that conflicts with the static optimization formulation in Eq. (7). The mathematical model treats $p_l$ as a decision variable defining a fixed prefix of retained neurons. Rewrite the sentence to state that 'the augmented solver processes neurons in descending importance order to enforce prefix selection' to accurately describe the algorithmic step.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Conflation of neurons and channels",
+          "quote": "In our method, we group  $s$  channels in a layer as an entirety, where the value of  $s$  is equal to the latency step size. The neurons are grouped by the order of importance.",
+          "explanation": "Switching between 'neurons' and 'channels' without clarification obscures the actual pruning granularity. In convolutional networks, a channel comprises multiple spatial neurons, and pruning typically removes entire channels to maintain hardware efficiency. Rewrite 'neurons' to 'channels' throughout this section to match standard structured pruning terminology and clarify that the method operates at the channel level.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Unjustified cross-layer grouping strategy",
+          "quote": "Note that the latency step size for different layers might be different. For cross-layer grouping, we use the largest group size among the layers.",
+          "explanation": "Enforcing the largest group size across layers with different latency step sizes risks skipping valid hardware configurations or violating the latency budget more coarsely than intended. The authors should explain how this grouping strategy preserves hardware-aware granularity for layers with smaller step sizes. Alternatively, clarify whether the step size is re-evaluated after grouping or if the lookup table is interpolated.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Oversimplified knapsack complexity claim",
+          "quote": "s.\n\nOne noticeable benefit of neuron grouping is the simplification of knapsack problem that scales linearly with the number of candidates under consideration (see Line $2$ of Alg. 1). As an exam",
+          "explanation": "Claiming the solver scales linearly with candidates oversimplifies the pseudo-polynomial $O(N \backslash{cdot} C)$ complexity of dynamic programming. While grouping reduces $N$, the complexity does not scale purely linearly unless $C$ remains constant. Clarify that the reduction in $N$ lowers the number of DP table updates, but note that the overall complexity remains dependent on the discretized latency capacity.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Inconsistent pruning frequency description",
+          "quote": "quirement of a given latency budget $C$. We perform one pruning every $r$ minibatches and repeat it $k$ pruning steps in total. In particular, we set $k$ milestones gradually decreasing the total latency to reach the goal via exponential scheduler *de Jorge et al. (2020)*, with $C^{1}>C^{2}>\\cdots>C^{k}$, $C^{k}=C$. The algorithm gradually trims down neurons using steps below:\n\n- Step 1. For each minibatch, we get the gradients of the weights and update the weights as during",
+          "explanation": "Describing gradient updates as occurring 'For each minibatch' while pruning happens every $r$ steps creates ambiguity about when importance scores are computed. The reader cannot tell if scores are accumulated over $r$ steps or computed fresh each time. Rewrite Step 1 as 'Every $r$ minibatches, we compute the average importance scores and execute Steps 2 through 4' to clearly separate the continuous training loop from the discrete pruning routine.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Undefined 'nearest preceding group' in solver step",
+          "quote": "Then we get the nearest preceding group for each layer.",
+          "explanation": "The phrase 'nearest preceding group' lacks a mathematical definition within the knapsack context. It is unclear whether this refers to the largest group size that fits the remaining budget, a group from a previous pruning iteration, or a specific indexing convention. Clarify the selection criterion by defining how candidate groups are generated and how the solver chooses among them.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_17",
+          "title": "Ambiguous mapping between neuron count and latency",
+          "quote": "Over multiple minibatches we calculate the average importance score for each neuron and rank them accordingly. Then we count the number of neurons remaining in each layer and dynamically adjust the latency contribution as in Eq. 6.",
+          "explanation": "Counting 'neurons' to dynamically adjust latency contributions omits the explicit conversion step required to map channel counts to the lookup table values. In convolutional networks, latency is determined by channel dimensions, not individual neurons. Specify whether the count refers to channels or groups, and explicitly state the formula or lookup step that translates this count into the latency values used in Eq. 6.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_18",
+          "title": "Dataset year and citation mismatch",
+          "quote": "We use ImageNet ILSVRC2021 *Russakovsky et al. (2015)* for classification.",
+          "explanation": "Citing Russakovsky et al. (2015) for the ILSVRC2021 dataset is factually incorrect, as the competition ended in 2016. Subsequent years are simply referred to as the ImageNet classification dataset. Rewrite the phrase as 'the ImageNet dataset (Russakovsky et al., 2015)' or explicitly state which year/version of the dataset was downloaded and used to avoid obscuring the exact data version.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_19",
+          "title": "Counting inconsistency in architecture list",
+          "quote": "We then study four architectures (ResNet50, ResNet101, VGG16 and MobileNet-V1/V2) on different GPUs and compare our pruning results with the state-of-the-art methods on classification task.",
+          "explanation": "Stating 'four architectures' while listing ResNet50, ResNet101, VGG16, MobileNet-V1, and MobileNet-V2 creates a counting mismatch. Either adjust the count to five or clarify that MobileNet-V1 and V2 are grouped as a single architectural family for the purpose of this count. This inconsistency confuses readers about the scope of the evaluation.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_20",
+          "title": "Misattribution of EagleEye to ResNet50 results",
+          "quote": "Among these methods for ResNet50 comparison, EagleEye Li et al. (2020) yields the closest accuracy to ours, but the speedup is lower than ours.",
+          "explanation": "Referencing EagleEye in the ResNet50 comparison paragraph is incorrect, as the method only appears in the MobileNet-V1 section of Table 1. The authors should remove the reference to EagleEye in this paragraph or replace it with a method actually present in the ResNet50 table, such as AutoSlim or MetaPruning, and update the numerical claims accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_21",
+          "title": "Numerical discrepancies in ResNet50 performance claims",
+          "quote": "n ours. In Table. 1, for the pruned ResNet50 network with 3G FLOPs remaining, our method achieves a .4% higher top1 accuracy and slightly (.04\u00d7) faster inference. It is expe",
+          "explanation": "The claimed 0.4% accuracy and 0.04x speedup margins for the 3G FLOPs configuration do not match the values reported in Table 1. For the ~3G FLOPs configuration, HALP-86% reports 77.2% Top1 accuracy and 1.23x speedup, while the closest baseline AutoSlim shows a 1.2% accuracy gap and a 0.09x speedup gap. Recalculate these differences based on the actual table values or correct the table entries to reflect the claimed margins.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_22",
+          "title": "Inconsistent numerical claims for 2G and 1G pruning levels",
+          "quote": "ly (.04\u00d7) faster inference. It is expected that the advantage of our method for accelerating the inference is more obvious when it comes to a more compact pruned network, which is 14% (or .20\u00d7) additionally faster for a 2G-FLOPs network while increasing accuracy by .2%. When we further prune the network to 1G, we get a pruned network that has more FLOPs but still faster inference speed (.17\u00d7) compared to EagleEye-1G, while we also get .",
+          "explanation": "The reported speedup and accuracy differences for the 2G and 1G pruning levels contradict the data presented in Table 1. For the 2G-FLOPs network, the speedup difference is 0.04x and accuracy difference is 0.9%, not 0.20x and 0.2%. For the 1G-FLOPs network, EagleEye is not listed in the ResNet50 table, and the speedup difference between HALP-30% and AutoSlim is 0.25x, not 0.17x. Revise the text to accurately report the differences shown in the table.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 23
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_23",
+          "title": "Caption lists VGG16 but table header shows VGG-18",
+          "quote": "Table 1: ImageNet structural pruning results. We compare HALP for ResNet50 with two different dense baselines (left), ResNet101 and VGG16 (right up), MobileNet-V1 and MobileNet-V2 (right bottom) pruning experiments, with detailed comparison to state-of-the-art pruning methods over varying performance metrics.",
+          "explanation": "The table caption references VGG16, but the corresponding section header explicitly lists VGG-18. This mismatch creates confusion about which architecture was actually evaluated. Align the caption with the table header or correct the header if VGG16 was intended to ensure consistency across the experimental setup.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 24
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_24",
+          "title": "Missing INT8 results in Table 2 despite textual claims",
+          "quote": "We run the inference of the model with FP32, FP16 and also INT8. For INT8, we quantize the model using entropy calibration with 2560 randomly selected ImageNet training images. Since the INT8 TensorCore speedup is not supported in TITAN V GPU, we only re",
+          "explanation": "The paragraph explicitly states that INT8 inference results are reported, yet Table 2 only contains columns for FP32 and FP16. The promised INT8 data is entirely absent, leaving readers unable to verify the performance claims. Insert the missing INT8 columns into Table 2 with the corresponding speedup and accuracy drop values, or rewrite the paragraph to explicitly state that INT8 results are omitted from this table.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 25
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_25",
+          "title": "Missing timing data for three baseline methods",
+          "quote": "|  AutoSlim | Y | Y |   |\n|  MetaPruning | Y | Y |   |\n|  AMC | N | Y |   |",
+          "explanation": "Leaving the final column blank for AutoSlim, MetaPruning, and AMC while claiming their costs are 'even higher' prevents readers from assessing the comparison. Readers cannot verify the validity of this claim without numerical estimates or a clear notation indicating that the data is unavailable. Insert approximate timing values for these methods or mark the cells as 'N/A' and adjust the text to acknowledge the lack of direct numerical comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 26
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_26",
+          "title": "Hardware specification mismatch in table caption",
+          "quote": "Sub-network selection timing is approximated as running on same device (a NVIDIA V100).",
+          "explanation": "Asserting timings run on a single NVIDIA V100 contradicts the reported breakdown of '6.5h (GPU) + 0.5h (CPU)'. This makes it unclear whether the CPU portion was measured on the V100 or on a separate host machine. Rewrite the caption to specify that GPU timings were measured on an NVIDIA V100 while CPU timings were measured on a separate host processor, or remove the device constraint from the caption entirely.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 27
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_27",
+          "title": "Missing mapping rule for group size selection",
+          "quote": "In our method, we set an individual group size for each layer according to each layer's latency step size in the look-up table.",
+          "explanation": "Stating that group sizes are derived from latency step sizes without providing a formula or heuristic leaves the configuration unreproducible. Readers cannot determine how a continuous step size is converted into a discrete group size (e.g., 32, 64, or 128). Add a brief equation or explicit rule after 'look-up table.' that defines this mapping to ensure experimental reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 28
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_28",
+          "title": "Knapsack solver runtime inconsistent with problem size",
+          "quote": "By neuron grouping, the value of  $N$  can be reduced to 215, which takes around one minute on average at each pruning step to solve the knapsack problem on CPU.",
+          "explanation": "Reporting a one-minute runtime for a DP knapsack solver with $N=215$ items contradicts standard complexity bounds, which would typically execute in milliseconds. Clarify whether $C$ is exceptionally large, if a different solver variant is used, or if the one-minute figure includes table construction or multiple constraint evaluations. Specify the exact computational breakdown responsible for the delay.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 29
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_29",
+          "title": "Inconsistent layer count for ResNet50",
+          "quote": "For instance, for a ResNet50, using this approach we set the individual group size of 23 layers to 32, of 20 layers to 64, and 10 layers to 128.",
+          "explanation": "The breakdown of 23, 20, and 10 layers sums to 53, which conflicts with the subsequent mention of 52 layers or the standard 17 convolutional layers in ResNet50. Reconcile the total count by specifying exactly which layers are included in the 23/20/10 split and whether the first convolution layer is excluded from that count. This ensures the architectural description matches standard implementations.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 30
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_30",
+          "title": "Cross-reference mismatch between figure and table",
+          "quote": "We compare the pruned detector to some other commonly-used detectors in the table.",
+          "explanation": "Citing Figure 5 immediately before stating that comparisons are 'in the table' creates confusion about where the results are actually located. Figure 5 is a plot, not a table. Rewrite 'in the table' as 'in Figure 5' or explicitly state that a separate table containing these comparisons exists in the appendix to guide the reader correctly.",
+          "comment_type": "technical",
+          "paragraph_index": 73,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 31
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_31",
+          "title": "FLOPs reported instead of measured latency",
+          "quote": "The results in Fig. 5 show that the pruned detectors maintain the similar final mAP but reduce the FLOPs and improve the inference speed greatly, with  $77\\%$  FLOPs reduction and around  $1.94 \\times$  speedup at the cost of only  $0.56\\%$  mAP drop.",
+          "explanation": "Reporting FLOPs reduction instead of measured latency in the detector section breaks the hardware-aware narrative established by the lookup tables. FLOPs do not scale linearly with inference time on modern accelerators, which is precisely why the lookup tables were introduced. Add the measured inference latency alongside the speedup factor to align this section with the rest of the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 73,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 32
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_32",
+          "title": "Unaddressed channel mismatch after backbone pruning",
+          "quote": "We only prune the backbone network in the detector.",
+          "explanation": "Pruning the ResNet50 backbone alters the channel dimensions fed into the SSD detection heads, yet the text does not explain how this mismatch is resolved. Without this detail, the experimental setup remains ambiguous. Clarify how the channel mismatch is handled, or state that the original heads are discarded and replaced with new ones trained from scratch.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 33
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_33",
+          "title": "Optimization objective targets importance, not accuracy",
+          "quote": "We formulated pruning as a resource allocation optimization problem to achieve maximum accuracy within a given latency budget. We further proposed a latency-aware neuron grouping scheme to further improve latency reduction.",
+          "explanation": "Claiming the optimization achieves 'maximum accuracy' overstates the formal objective, which explicitly maximizes summed importance scores $\backslash{sum\backslash} I_l(p_l)$. Importance scores are proxies that may not perfectly correlate with actual accuracy preservation, especially under aggressive pruning. Rewrite the claim to state that the method 'maximizes an importance-based surrogate for accuracy' to accurately reflect the mathematical formulation.",
+          "comment_type": "technical",
+          "paragraph_index": 74,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 34
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_34",
+          "title": "Grouping scheme lacks formalization in results section",
+          "quote": "We further proposed a latency-aware neuron grouping scheme to further improve latency reduction. Over multiple neural network architectures, classification and detection tasks, and changing datasets, we have shown the efficiency and efficacy of HALP by showing consistent improvements over state-of-the-art methods.",
+          "explanation": "The conclusion highlights a 'latency-aware neuron grouping scheme,' but the formal results and Algorithm 1 never define or integrate this mechanism. The opening paragraph of Section 3 mentions solving the optimization 'augmented by dynamic grouping,' yet subsequent equations only detail individual importance scoring and a standard knapsack solver. Remove the claim about the grouping scheme from the conclusion or provide the missing mathematical formalization.",
+          "comment_type": "technical",
+          "paragraph_index": 74,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 35
+        }
+      ],
+      "cost_usd": 0.3278,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper proposes HALP, a hardware-aware structured pruning method that formulates the problem as a resource allocation optimization solvable via a knapsack algorithm. It demonstrates significant speedups on ImageNet and VOC datasets. However, the work contains a fundamental inconsistency in the optimization formulation that is not resolved by the proposed solver, along with critical omissions in the experimental evaluation regarding hardware capabilities.\n\nThe contribution of formulating pruning as a knapsack problem with hardware-specific latency constraints is theoretically interesting and the empirical results are strong. The method clearly outperforms baselines in terms of speedup and accuracy retention. However, the paper fails to address a mathematical inconsistency in how the solver handles the dependency of layer latency on previous layer outputs, and it neglects to evaluate the method on a key hardware feature (INT8) that would significantly impact real-world deployment.\n\nOverview issues:\n\n- Algorithmic Inconsistency: Latency Costs Depend on Previous Layer Outputs: The objective function in Eq. (2) defines the latency contribution of layer $l$ as $T_l(p_{l-1}, p_l)$, which explicitly depends on the number of input channels $p_{l-1}$ from the previous layer. However, the proposed solver in Algorithm 1 treats the latency cost $c_l^j$ as a static value independent of $p_{l-1}$. The algorithm iterates through layers sequentially but never revisits previous layers to update their costs based on the newly selected $p_l$. This creates a discrepancy between the theoretical optimization problem and the practical solution, potentially leading to suboptimal or infeasible pruning structures that violate the hardware latency constraints.\n\n- Omission of INT8 Tensor Core Acceleration on Titan V: The experimental section focuses on the NVIDIA Titan V GPU but only reports results for FP32 and FP16 inference. The Titan V architecture includes Tensor Cores that support INT8 acceleration, which is the standard for maximizing throughput on modern GPUs. By ignoring INT8, the paper fails to demonstrate the method's potential on the hardware's most efficient execution path. This omission limits the practical relevance of the speedup results, as production deployments on Titan V would almost certainly utilize INT8 quantization.\n\n- Restrictive Neuron Grouping Limits Solution Space: Section 3.3 proposes grouping neurons based on the 'latency step size' of the hardware. This approach forces the number of remaining channels in a layer to be a multiple of the step size. If the true Pareto-optimal point for a layer requires a non-multiple number of channels (e.g., keeping 10 channels when the step size is 32), the algorithm cannot find it. While the paper claims this grouping improves performance in Fig. 4, it does not acknowledge that this restriction might be preventing the discovery of even better accuracy-latency trade-offs.\n\n- Misleading Comparison of Design Effort: Table 3 compares the computational effort of different pruning methods by focusing on sub-network selection and auxiliary network training. It completely omits the time required to build the latency lookup table, which is a prerequisite for HALP. Creating a high-resolution lookup table for a complex network on a specific hardware platform (e.g., running the model thousands of times with different channel counts) likely consumes a significant amount of time. Comparing only the selection time makes HALP appear much more efficient than it actually is.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Fix the optimization formulation in Algorithm 1 to correctly account for the dependency of layer latency on the number of input channels from the previous layer, or explicitly justify why the static cost approximation is valid.\n\n- Re-run experiments on the Titan V GPU including INT8 inference to demonstrate the method's capability on the hardware's native execution path.\n\n- Add a discussion or quantitative analysis of the time required to generate the latency lookup table and include it in the 'Design Effort' comparison to ensure the paper's claims about efficiency are accurate.\n\n- Clarify the justification for pruning Batch Normalization parameters (Eq. 3) and demonstrate that this specific pruning strategy does not harm the fine-tuning process more than standard weight pruning.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Incorrect numerical comparison for 3G FLOPs case",
+          "quote": "In Table. 1, for the pruned ResNet50 network with 3G FLOPs remaining, our method achieves a .4% higher top1 accuracy and slightly (.04\u00d7) faster inference.",
+          "explanation": "The comparison in the text does not match the data in Table 1. For the 3.1 G FLOPs network (HALP-86%), the Top-1 accuracy is 0.9% higher than GReg-1 (2.7 G FLOPs) and 1.2% higher than AutoSlim (3.0 G FLOPs), not 0.4%. The inference speedup is 1.07x or 1.03x, not 0.04x. Please correct these figures to accurately reflect the table data.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Incorrect numerical comparison for 2G FLOPs case",
+          "quote": "which is 14% (or .20\u00d7) additionally faster for a 2G-FLOPs network while increasing accuracy by .2%.",
+          "explanation": "The text claims a 0.2% accuracy gain and 0.20x speedup for the 2.0 G FLOPs network. However, Table 1 shows a 0.9% accuracy difference and a 1.02x speedup compared to AutoSlim. Additionally, 0.20x implies slowing down, whereas the text claims a speedup. Please update the text to reflect the actual numbers.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Incorrect numerical comparison and reference for 1G FLOPs case",
+          "quote": "When we further prune the network to 1G, we get a pruned network that has more FLOPs but still faster inference speed (.17\u00d7) compared to EagleEye-1G, while we also get .3% higher accuracy.",
+          "explanation": "The text references 'EagleEye-1G' for the 1.0 G FLOPs case, but EagleEye is listed at 2.2 G FLOPs in Table 1. The comparison should be to AutoSlim (1.0 G FLOPs). The speedup is 1.15x, not 0.17x. Please correct the reference and the speedup metric.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.15,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes HALP, a hardware-aware latency pruning method that uses a knapsack-based solver to allocate pruning across layers under a latency constraint. The approach is evaluated on ImageNet classification and VOC detection across multiple architectures. While the empirical results are strong, several methodological and framing issues need attention.\n\nHALP presents a practical and effective approach to latency-constrained pruning, with convincing speedups on real hardware. The main contributions\u2014the knapsack formulation, latency-aware grouping, and cross-layer grouping for skip connections\u2014are well-motivated. However, the paper would benefit from clarifying the knapsack solver's optimality guarantees, addressing potential biases from neuron grouping, and providing more rigorous comparisons on detection tasks.\n\nOverview issues:\n\n- Knapsack solver optimality and computational overhead are not fully justified: The augmented knapsack solver (Algorithm 1) is presented as a key contribution, but the paper does not discuss whether it guarantees optimal solutions to the constrained optimization problem in Eq. (7). The algorithm includes a precedence constraint (line 6: 'keep[l, c-c] == j-1') that ensures neurons are kept in importance order within each layer, but it is unclear whether this constraint might exclude better solutions that violate the ordering. Additionally, the computational complexity is only mentioned in passing (30 minutes CPU time for ResNet50), but a formal analysis of the solver's time complexity (e.g., O(L * N_l * C) for each layer) would help readers assess scalability to larger networks. The authors should either prove optimality or characterize the approximation gap, and provide a complexity analysis.\n\n- Neuron grouping may introduce structural biases that are not fully explored: The paper groups neurons based on 'latency step size' (Section 3.3) and uses the largest group size for cross-layer groupings. While Figure 4 shows that latency-aware grouping outperforms fixed group sizes, the mechanism by which grouping affects accuracy is not analyzed. For example, grouping 64 neurons together in a layer means that all 64 are either kept or pruned as a block, which could prune important features that are co-located with unimportant ones. The paper should discuss the risk of such structural biases and ideally provide an ablation study where groups are formed randomly versus by importance order to isolate the effect of grouping strategy from the importance ranking.\n\n- Latency measurement methodology is insufficiently documented for reproducibility: The paper states that latency is measured on an NVIDIA TITAN V GPU with batch size 256 for ResNets, but critical details are missing: the precision (FP32/FP16/INT8) for the main results in Table 1, the number of warm-up iterations and measurement repetitions, whether CUDA graphs or TensorRT were used (TensorRT results are in a separate table), and the software versions (CUDA, cuDNN, PyTorch). Without these details, other researchers cannot reproduce the latency numbers. The authors should provide a complete description of the measurement setup, including all software versions and measurement protocols, either in the main text or a dedicated reproducibility appendix.\n\n- Generalization claims to object detection are weak: Section 4.5 reports results on SSD with ResNet50 backbone on PASCAL VOC, but only prunes the backbone, not the detection head. This limits the generality of the claim that HALP 'generalizes to object detection.' The paper should clarify that only the backbone is pruned and discuss whether pruning the detection head would yield additional speedups. Moreover, the comparison in Figure 5 is against other detectors (e.g., Faster R-CNN, YOLO) that are not pruned versions of the same architecture, making the comparison misleading. A fairer evaluation would compare HALP-pruned SSD against other pruning methods applied to the same SSD architecture, reporting mAP and latency on identical hardware.\n\n- Assumption that latency is monotonic in neuron count is not validated: The paper assumes that removing neurons monotonically reduces latency (Eq. 5 and Eq. 6). However, as noted in the domain-specific review calibration, memory bandwidth, kernel launch overhead, and operator fusion can cause non-linear scaling. The paper acknowledges staircase-shaped latency patterns (Figure 1) but does not discuss whether the monotonicity assumption holds in practice for the layers being pruned. The authors should provide empirical evidence that the latency contribution of individual neurons (c_l^j) is always non-negative for the networks and hardware tested, or discuss cases where this assumption might break and how it affects the knapsack solution.\n\n- No formal comparison to latency-aware pruning baselines: The paper compares HALP against methods that primarily optimize FLOPs (e.g., EagleEye, AutoSlim, MetaPruning) but does not include a direct comparison to the most relevant latency-aware pruning baselines: NetAdapt and AMC. NetAdapt and AMC are explicitly designed for latency-constrained pruning and are cited in the related work, yet Table 1 omits their latency numbers for ResNet50 and ResNet101 (shown only for MobileNet-V1). The paper claims HALP 'surpasses prior art' in latency-efficiency trade-offs, but without a side-by-side comparison on the same architectures and hardware, this claim is unsubstantiated. The authors should reproduce NetAdapt and AMC pruned structures on ResNet50/101, measure their latency on the same Titan V GPU, and include them in Table 1.\n\n- Missing validation of knapsack solver optimality or approximation gap: Algorithm 1 imposes a precedence constraint (line 6) that forces neurons to be kept in importance order within each layer. The paper does not prove that this constraint preserves optimality of the knapsack solution, nor does it characterize the approximation gap if optimality is lost. Without this analysis, readers cannot assess whether the solver might discard better solutions that violate the ordering. The authors should either prove that the optimal solution to Eq. (7) always respects the importance ordering (i.e., that the precedence constraint is without loss of generality), or provide a bound on the suboptimality and an empirical comparison to a brute-force search on a small network.\n\n- No empirical validation of latency monotonicity assumption: The paper assumes that latency contribution c_l^j is always non-negative (Eq. 6), which is required for the knapsack formulation to be valid. However, the domain-specific review calibration notes that memory bandwidth, kernel launch overhead, and operator fusion can cause non-linear scaling where removing a neuron might not reduce latency or could even increase it. The paper acknowledges staircase-shaped latency patterns but never empirically verifies that c_l^j >= 0 for the layers and hardware tested. The authors should measure and report the per-neuron latency contribution for a representative set of layers (e.g., early, middle, late) in ResNet50 on Titan V, and discuss any cases where the assumption fails and how it affects the pruning decisions.\n\n- Object detection evaluation lacks proper pruning baselines: Section 4.5 compares HALP-pruned SSD against other detectors (Faster R-CNN, YOLO) that are not pruned versions of the same architecture, making the comparison misleading. The paper claims HALP 'generalizes to object detection,' but the only evidence is a single experiment on SSD with backbone-only pruning. To substantiate the generalization claim, the authors should compare HALP-pruned SSD against other pruning methods applied to the same SSD architecture (e.g., NetAdapt-pruned SSD, Taylor-pruned SSD) on the same hardware, reporting mAP and latency. Additionally, the paper should clarify whether pruning the detection head (not just the backbone) would yield further speedups, and discuss any architectural constraints that prevent head pruning.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a formal analysis of the knapsack solver's optimality guarantees and computational complexity.\n\n- Document the latency measurement methodology in full detail, including software versions, precision, warm-up, and repetitions.\n\n- Clarify the scope of the object detection experiments (backbone-only pruning) and add comparisons to other pruning methods on the same SSD architecture.\n\n- Validate the monotonicity assumption for latency contributions empirically across multiple layers and hardware targets.\n\n- Discuss potential biases from neuron grouping and provide an ablation study isolating the effect of grouping strategy.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Knapsack precedence constraint may exclude optimal solutions",
+          "quote": "if  $v_{keep} > v_{prune}$  and keep[l, c-c] == j-1 then check if it leads to higher score and if more important neurons in layer are kept",
+          "explanation": "The condition `keep[l, c-c] == j-1` forces the solver to keep neurons in strict importance order within each layer. The paper does not prove that the optimal solution to Eq. (2) respects this ordering. In a knapsack with non-uniform item weights (latency contributions), a less important neuron with a smaller latency contribution could be kept while a more important neuron with a larger latency contribution is skipped, yielding a better total importance under the same budget. The precedence constraint may therefore exclude better solutions. The authors should either prove that the optimal solution always respects the importance ordering (e.g., by showing that importance and latency contribution are monotone in the same order) or characterize the approximation gap introduced by this constraint.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Latency contribution formula assumes monotonicity not validated",
+          "quote": "$c_{l}^{j}=T_{l}(p_{l-1},j)-T_{l}(p_{l-1},j-1),\\quad 1\\leq j\\leq p_{l}.$ (6)",
+          "explanation": "Equation (6) defines the latency contribution of the j-th neuron as the difference in layer latency when going from j-1 to j output channels. This definition implicitly assumes that T_l(p_{l-1}, j) is monotonic non-decreasing in j, so that c_l^j >= 0. However, the paper does not empirically verify this monotonicity for the layers and hardware tested. Memory bandwidth, kernel launch overhead, and operator fusion can cause non-linear scaling where adding a neuron might not increase latency or could even decrease it (e.g., due to better utilization). If c_l^j can be negative, the knapsack formulation breaks down because the solver assumes non-negative weights. The authors should measure and report per-neuron latency contributions for representative layers to confirm non-negativity, or discuss how negative contributions are handled.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Knapsack solver does not handle variable input channels p_{l-1}",
+          "quote": "T_{l}(p_{l-1},p_{l})=\\sum_{j=1}^{p_{l}}c_{l}^{j},\\quad 0\\leq p_{l}\\leq N_{l}.",
+          "explanation": "Equation (5) defines layer latency T_l(p_{l-1}, p_l) as a sum of per-neuron contributions c_l^j, but the definition of c_l^j in Eq. (6) depends on p_{l-1} (the number of input channels). The knapsack solver in Algorithm 1 treats c_l^j as a fixed scalar independent of p_{l-1}, which is only valid if p_{l-1} is held constant. However, in the optimization, p_{l-1} varies across layers as the pruning decisions change. The solver does not account for this dependency, potentially leading to incorrect latency estimates. The authors should clarify how the look-up table handles varying input channel counts, or modify the solver to incorporate p_{l-1} as a state variable.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Inconsistent speedup comparison for EagleEye at 1G FLOPs",
+          "quote": "When we further prune the network to 1G, we get a pruned network that has more FLOPs but still faster inference speed (.17\u00d7) compared to EagleEye-1G, while we also get .3% higher accuracy.",
+          "explanation": "The table entry at 1.3 GFLOPs is labeled 'GReg-2 Wang et al. (2021)', not EagleEye. The text mentions EagleEye as the closest accuracy competitor but then compares against GReg-2. This is a clear inconsistency. The authors should either correct the text to refer to GReg-2, or add the missing EagleEye results at 1G FLOPs to the table. The current presentation is misleading.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Missing latency-aware baselines for ResNet101",
+          "quote": "We start by pruning ResNet50 and ResNet101 and compare our results with state-of-the-art methods in Tab. 1 on TITAN V.",
+          "explanation": "The ResNet101 section of Table 1 compares HALP only against Taylor pruning (Molchanov et al., 2019). No other latency-aware or FLOPs-aware baselines (e.g., AMC, NetAdapt, EagleEye) are included for ResNet101. This is a significant omission because the paper claims scalability to other networks but provides only a single baseline for ResNet101. The authors should either add more baselines or explicitly discuss why they are unavailable (e.g., no public pruned structures).",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Table 3 timing comparison is misleading",
+          "quote": "In addition to noticeable performance boosts, HALP in fact requires less design effort compared to prior art, as summarized in Tab. 3 (details in Appendix O).",
+          "explanation": "The table header says 'Sub-network selection (ResNet50)' which should cover only the cost of selecting the pruned structure, not fine-tuning. However, the HALP entry (6.5h GPU + 0.5h CPU) appears to include fine-tuning time (6.5h GPU) plus the knapsack solve (0.5h CPU), while the EagleEye entry (30h GPU) is described in the text as the time to evaluate 1000 candidates \u2014 which is sub-network selection only. If EagleEye also requires fine-tuning after selection, then comparing 6.5h+0.5h (HALP) to 30h (EagleEye) is not a fair comparison of the same stage. The paper should clarify what each entry includes. Rewrite the table caption or add a footnote specifying whether fine-tuning time is included in each entry. For example, add a footnote: 'HALP's 6.5h GPU includes fine-tuning; other methods' times are for sub-network selection only, with fine-tuning additional.'",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Missing timing data for several methods in Table 3",
+          "quote": "|  AutoSlim | Y | Y |   |\n|  MetaPruning | Y | Y |   |\n|  AMC | N | Y |   |",
+          "explanation": "The table leaves the 'Sub-network selection (ResNet50)' column blank for AutoSlim, MetaPruning, and AMC. Without these numbers, the claim that HALP is 'around 4.3\u00d7 faster than the next best method' is incomplete \u2014 the reader cannot verify that EagleEye is indeed the fastest competitor. The paper should either provide estimated timing for these methods (even approximate) or explain why they are omitted (e.g., because they require different hardware or are not directly comparable). Add estimated timing values for AutoSlim, MetaPruning, and AMC, or add a note explaining the omission.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Latency table creation time not included in HALP timing",
+          "quote": "Although creating the table for the target platform might cost time, we only do it once for all pruning ratios.",
+          "explanation": "The paper acknowledges that creating the latency lookup table costs time but does not include this cost in the HALP timing (6.5h GPU + 0.5h CPU). Since the table creation is a one-time cost per platform, it is reasonable to amortize it across many pruning runs. However, for a fair comparison with methods that do not require such upfront measurement (e.g., NetAdapt, EagleEye), the paper should either report the table creation time separately or argue that it is negligible. The current text dismisses it as 'might cost time' without quantification. Add an estimate of the time required to generate the latency lookup table for the target platform (e.g., in GPU hours) and clarify whether it is included in the reported 6.5h+0.5h.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Group size rationale lacks empirical support",
+          "quote": "Intuitively, a large group size averages the contribution of many neurons and therefore is not discriminative enough to select the most important ones. Besides, large groups might promote pruning the entire layer in a single pruning iteration, leading to performance degradation. On the other hand, small group sizes such as 2 promote removing unimportant groups of neurons. These groups do not significantly improve the latency, but they can contribute to the final performance. In contrast, our latency-aware grouping performs the best, showing the efficacy of our neuron grouping scheme.",
+          "explanation": "The explanation for why large and small group sizes underperform is purely intuitive. The paper provides no quantitative evidence (e.g., per-layer pruning ratios, latency contributions, or ablation statistics) to support claims like 'small groups do not significantly improve the latency' or 'large groups promote pruning the entire layer.' Figure 4 shows accuracy vs. latency curves but lacks error bars or statistical significance tests. The authors should add a table or figure showing per-layer group sizes, pruning ratios, and latency contributions for the fixed-size baselines vs. LG, and include error bars or confidence intervals in Figure 4. Add a supplementary table with these metrics after the paragraph discussing Figure 4.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Computational cost claim lacks formal complexity analysis",
+          "quote": "uron grouping, the value of  $N$  can be reduced to 215, which takes around one minute on average at each pruning step to solve the knapsack problem on CPU. We have 30 pruning steps in total in our experiments, thus the time spent on neuron selection is around 30 minutes in total, which can be negligible compared to training time.",
+          "explanation": "The paper reports empirical runtime but does not provide a time complexity bound (e.g., O(L * N_l * C)) or discuss scalability to larger networks. Without this, readers cannot assess whether the method remains practical for architectures like ResNet152 or EfficientNet-B7. The authors should add a brief complexity analysis after the empirical runtime claim, e.g., 'The augmented knapsack solver (Algorithm 1) has time complexity O(L * N_l * C) where L is the number of layers, N_l is the number of groups per layer, and C is the capacity. For ResNet50, this yields ~30 minutes total, and for larger networks, the cost scales linearly with L and N_l.'",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Group size selection heuristic not fully specified",
+          "quote": "In our method, we set an individual group size for each layer according to each layer's latency step size in the look-up table. We name the grouping in our method as latency-aware grouping (LG). For instance, for a ResNet50, using this approach we set the individual group size of 23 layers to 32, of 20 layers to 64, and 10 layers to 128.",
+          "explanation": "The paper states that group sizes are set 'according to each layer's latency step size in the look-up table,' but does not specify the exact mapping rule (e.g., is the group size equal to the step size? Or is it a function of the step size?). The example for ResNet50 gives specific numbers (32, 64, 128) but does not explain how these are derived from the look-up table. Without this rule, the method is not reproducible. The authors should explicitly state the mapping, e.g., 'For each layer, the group size is set to the smallest power of two that is at least the latency step size (in number of neurons) from the look-up table.' Add this specification after the example.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Missing latency measurement methodology details",
+          "quote": "We report FPS (frames per second) in the table and calculate the speedup of a pruned network as the ratio of FPS between pruned and unpruned models.",
+          "explanation": "The paper omits critical details (precision, warm-up, repetitions, software versions). This is a genuine reproducibility concern. The authors should add a paragraph or appendix specifying: precision (FP32/FP16/INT8), number of warm-up iterations, number of measurement repetitions, CUDA/cuDNN/PyTorch versions, and whether TensorRT was used. Without these, the latency numbers cannot be independently verified.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Unclear batch size for latency measurement on Titan V",
+          "quote": "We report FPS (frames per second) in the table and calculate the speedup of a pruned network as the ratio of FPS between pruned and unpruned models.",
+          "explanation": "The paper specifies batch size 32 for Jetson TX2 measurements but does not specify the batch size used for Titan V measurements. Since FPS depends heavily on batch size (larger batches increase throughput), the missing specification makes the Titan V results non-reproducible. The authors should state the batch size used for all latency measurements, ideally keeping it consistent across platforms or explaining any differences.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Objective function notation mismatch between Eq. (1) and Eq. (2)",
+          "quote": "\\operatorname*{arg\\,min}_{\\hat{\\mathbf{W}}}\\mathcal{L}(\\hat{\\mathbf{W}},\\mathcal{D})\\quad\\text{s.t.}\\quad\\Phi\\left(f(\\hat{\\mathbf{W}},x_{i})\\right)\\leq C",
+          "explanation": "Equation (1) defines the constraint as \u03a6(f(\u0174, x_i)) \u2264 C, where \u03a6 maps the network output to the constraint. However, in Eq. (2) the constraint is \u03a3_l T_l(p_{l-1}, p_l) \u2264 C, which is a sum of per-layer latencies that does not depend on the network output f(\u0174, x_i). The two formulations are inconsistent: the first suggests the constraint is a function of the network's output on a single input x_i, while the second is a purely architectural constraint. The authors should clarify whether \u03a6 is intended to be the total latency (which is independent of the input) or whether Eq. (1) is a generic placeholder that is specialized in Eq. (2). If the latter, the text should state this explicitly to avoid confusion.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Importance score derivation uses absolute difference without justification",
+          "quote": "Unlike a squared loss in *Molchanov et al. (2019)*, we use absolute difference as we observe slight improvements.",
+          "explanation": "The paper states that the importance score uses absolute difference instead of squared loss from Molchanov et al. (2019), claiming 'slight improvements' without providing any quantitative evidence or theoretical justification. This change affects the gradient-based importance estimation, and readers need to see the empirical comparison (e.g., on a validation set) to assess whether the modification is beneficial. The authors should include a brief ablation study or reference to justify this design choice.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        }
+      ],
+      "cost_usd": 0.0518,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

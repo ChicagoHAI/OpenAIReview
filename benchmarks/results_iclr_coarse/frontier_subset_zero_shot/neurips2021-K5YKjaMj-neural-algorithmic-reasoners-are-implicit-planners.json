@@ -1,0 +1,484 @@
+{
+  "slug": "neurips2021-K5YKjaMj-neural-algorithmic-reasoners-are-implicit-planners",
+  "title": "Neural Algorithmic Reasoners are Implicit Planners [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Neural Algorithmic Reasoners are Implicit Planners**\n\n## **Andreea Deac** _[\u21e4]_\n\nMila \u2013 Qu\u00e9bec AI Institute Universit\u00e9 de Montr\u00e9al"
+    },
+    {
+      "index": 1,
+      "text": "## **Petar Veli\u02c7ckovi\u00b4c**\n\nDeepMind\n\n**Ognjen Milinkovi\u00b4c** Faculty of Mathematics University of Belgrade"
+    },
+    {
+      "index": 2,
+      "text": "## **Pierre-Luc Bacon**\n\nMila \u2013 Qu\u00e9bec AI Institute Universit\u00e9 de Montr\u00e9al\n\n## **Jian Tang**\n\nMila \u2013 Qu\u00e9bec AI Institute HEC Montr\u00e9al"
+    },
+    {
+      "index": 3,
+      "text": "## **Mladen Nikoli\u00b4c**\n\nFaculty of Mathematics University of Belgrade\n\n## **Abstract**\n\nImplicit planning has emerged as an elegant technique for combining learned models of the world with end-to-end model-free reinforcement learning. We study the class of implicit planners inspired by _value iteration_ , an algorithm that is guaranteed to yield perfect policies in fully-specified tabular environments. We find that prior approaches either assume that the environment is provided in such a tabular form\u2014which is highly restrictive\u2014or infer \u201clocal neighbourhoods\u201d of states to run value iteration over\u2014for which we discover an algorithmic bottleneck effect. This effect is caused by explicitly running the planning algorithm based on scalar predictions in every state, which can be harmful to data efficiency if such scalars are improperly predicted. We propose eXecuted Latent Value Iteration Networks (XLVINs), which alleviate the above limitations. Our method performs all planning computations in a high-dimensional _latent space_ , breaking the algorithmic bottleneck. It maintains alignment with value iteration by carefully leveraging neural graph-algorithmic reasoning and contrastive self-supervised learning. Across eight low-data settings\u2014including classical control, navigation and Atari\u2014XLVINs provide significant improvements to data efficiency against value iteration-based implicit planners, as well as relevant model-free baselines. Lastly, we empirically verify that XLVINs can closely align with value iteration."
+    },
+    {
+      "index": 4,
+      "text": "## **1 Introduction**\n\nPlanning is an important aspect of reinforcement learning (RL) algorithms, and planning algorithms are usually characterised by explicit modelling of the environment. Recently, several approaches explore _implicit planning_ [40, 30, 33, 37, 29, 17, 16]. Such approaches propose inductive biases in the policy function to enable planning to emerge, while training the policy in a model-free manner. Accordingly, implicit planners combine the effectiveness of large-scale neural network training with the data efficiency promises of planning, making them a very attractive research direction."
+    },
+    {
+      "index": 5,
+      "text": "Many popular implicit planners attempt to align with the computations of the value iteration (VI) algorithm within a policy network [40, 30, 29, 13, 26]. As VI is a differentiable algorithm, guaranteed to find the _optimal_ policy, it can combine with gradient-based optimisation and provides useful theoretical guarantees. We also recognise the potential of VI-inspired deep RL, hence it is our primary topic of study here. However, applying VI assumes that the underlying RL environment (a) is _tabular_ , and that its (b) _transition_ and (c) _reward_ distributions are both **fully known** and provided upfront. Such assumptions are unfortunately unrealistic for most environments of importance to RL research. Very often the dynamics of the environment will not be even partially known, and the state space may"
+    },
+    {
+      "index": 6,
+      "text": "- _\u21e4_ Work performed while the author was at DeepMind.\n\n35th Conference on Neural Information Processing Systems (NeurIPS 2021)."
+    },
+    {
+      "index": 7,
+      "text": "either be continuous (e.g. for control tasks) or very high-dimensional (e.g. for pixel-space observation in Atari), making a tabular representation hard to realise from a storage complexity perspective."
+    },
+    {
+      "index": 8,
+      "text": "Accordingly, VI-based implicit planners often offer representation learning based solutions for alleviating some of the above limitations. Impactful early work [40, 29, 26] showed that, in tabular settings with known transition dynamics, the reward distribution and VI computations can be approximated by a (graph) convolutional network. While highly insightful, this line of work still does not allow for RL in generic non-tabular environments with unobserved dynamics. Conversely, approaches such as ATreeC [13] and VPN [30] lift the remaining two requirements, by using a latent transition model to construct a \u201clocal environment\u201d around the current state. They then use learned models to predict scalar rewards and values in every node of this environment, applying VI-style algorithms directly."
+    },
+    {
+      "index": 9,
+      "text": "While such approaches apparently allow for seamless VI-based implicit planning, we discover that the prediction of scalar signals represents an _algorithmic bottleneck_ : if the neural network has observed insufficient data to properly estimate these scalars, the predictions of the VI algorithm will be equally suboptimal. This is limiting in low-data regimes, and can be seen as unfavourable, particularly given that one of the main premises of implicit planning is improved data efficiency."
+    },
+    {
+      "index": 10,
+      "text": "In this paper, we propose the **eXecuted Latent Value Iteration Network** (XLVIN), an implicit planning policy network which embodies the computation of VI while addressing _all_ of the limitations mentioned previously. We retain the favourable properties of prior methods while simultaneously performing VI in a high-dimensional latent space, removing the requirement of predicting scalars and hence _breaking_ the algorithmic bottleneck. We enable this high-dimensional VI execution by leveraging the latest advances in neural algorithmic reasoning [43]. This emerging area of research seeks to emulate iterations of classical algorithms (such as VI) directly within neural networks. As a result, we are able to seamlessly run XLVINs with minimal configuration changes on a wide variety of discrete-action environments, including pixel-based ones (such as Atari), fully continuous-state control and navigation. Empirically, the XLVIN agent proves favourable in low-data environments against relevant model-free baselines as well as the ATreeC family of models."
+    },
+    {
+      "index": 11,
+      "text": "Our contributions are thus three-fold: (a) we provide a detailed overview of the prior art in value iteration-based implicit planning, and discover an _algorithmic bottleneck_ in impactful prior work; (b) we propose the XLVIN implicit planner, which breaks the algorithmic bottleneck while retaining the favourable properties of prior work; (c) we demonstrate a successful application of neural algorithmic reasoning within reinforcement learning, both in terms of quantitative analysis of XLVIN\u2019s data efficiency in low-data environments, and qualitative alignment to VI."
+    },
+    {
+      "index": 12,
+      "text": "## **2 Background and related work**\n\nWe will now present the context of our work, by gradually surveying the key developments which bring VI into the implicit planning domain and introducing the building blocks of our XLVIN agent."
+    },
+    {
+      "index": 13,
+      "text": "**Planning** has been studied under the umbrella of model-based RL [36, 34, 20]. However, having a good model of the environment\u2019s dynamics is essential before being able to construct a good plan. We are instead interested in leveraging the progress of model-free RL [35, 27] by enabling planning through inductive biases in the policy network\u2014a direction known as implicit planning. The planner could also be trained to optimise a supervised imitation learning objective [38, 2]. This is performed by UPNs [38] in a goal-conditioned setting. Our differentiable executors are instead applicable across a wide variety of domains where goals are not known upfront. Diff-MPC [2] leverages an algorithm in an explicit manner. However, explicit use of the algorithm often has issues of requiring a bespoke backpropagation rule, and the associated low-dimensional bottlenecks."
+    },
+    {
+      "index": 14,
+      "text": "Throughout this section we pay special attention to implicit planners based on VI, and distinguish two categories of previously proposed planners: models which assume fixed and known environment dynamics [40, 29, 26] and models which derive scalars to be used for VI-style updates [13, 30]."
+    },
+    {
+      "index": 15,
+      "text": "**Value iteration (VI)** is a successive approximation method for finding the optimal value function of a discounted _Markov decision process_ (MDPs) as the fixed-point of the so-called Bellman optimality operator [32]. A discounted MDP is a tuple ( _S, A, R, P, \u03b3_ ) where _s 2 S_ are _states_ , _a 2 A_ are _actions_ , _R_ : _S \u21e5A !_ R is a reward function, _P_ : _S \u21e5A !_ Dist( _S_ ) is a _transition function_ such that _P_ ( _s[0] |s, a_ ) is the conditional probability of transitioning to state _s[0]_ when the agent executes action _a_ in state _s_ , and _\u03b3 2_ [0 _,_ 1] is a discount factor which trades off between the relevance of immediate and"
+    },
+    {
+      "index": 16,
+      "text": "2\n\nfuture rewards. In the infinite horizon discounted setting, an agent sequentially chooses actions according to a stationary Markov _policy \u21e1_ : _S \u21e5A !_ [0 _,_ 1] such that _\u21e1_ ( _a|s_ ) is a conditional probability distribution over actions given a state. The _return_ is defined as _Gt_ =[P] _[1] k_ =0 _[\u03b3][k][R]_[(] _[a][t]_[+] _[k][, s][t]_[+] _[k]_[)][.][Value] functions _V[\u21e1]_ ( _s, a_ ) = E _\u21e1_ [ _Gt|st_ = _s_ ] and _Q[\u21e1]_ ( _s, a_ ) = E _\u21e1_ [ _Gt|st_ = _s, at_ = _a_ ] represent the expected return induced by a policy in an MDP when conditioned on a state or state-action pair respectively. In the infinite horizon discounted setting, we know that there exists an optimal stationary Markov policy _\u21e1[\u21e4]_ such that for any policy _\u21e1_ it holds that _V[\u21e1][\u21e4]_ ( _s_ ) _\u2265 V[\u21e1]_ ( _s_ ) for all _s 2 S_ . Furthermore, such optimal policy can be deterministic \u2013 _greedy_ \u2013 with respect to the optimal values. Therefore, to find a _\u21e1[\u21e4]_ it suffices to find the unique optimal value function _V[?]_ as the fixed-point of the Bellman optimality operator. The optimal value function _V[?]_ is such a fixed-point and satisfies the _Bellman optimality equations_ [7]: _V[?]_ ( _s_ ) = max _a2A_ \ufffd _R_ ( _s, a_ ) + _\u03b3_[P] _s[0] 2S[P]_[(] _[s][0][|][s, a]_[)] _[V][?]_[(] _[s][0]_[)] \ufffd. Accordingly, VI randomly initialises a value function _V_ 0( _s_ ), and then iteratively updates it as follows:"
+    },
+    {
+      "index": 17,
+      "text": "VI is thus a powerful technique for optimal control in RL tasks, but its applicability hinges on knowing the MDP parameters (especially _P_ and _R_ ) upfront\u2014which is unfortunately not the case in most environments of interest. To make VI more broadly applicable, we need to leverage function approximators (such as neural networks) and representation learning to estimate such parameters."
+    },
+    {
+      "index": 18,
+      "text": "**Value iteration is message passing** Progress towards broader applicability started by lifting the requirement of knowing _R_ . Several implicit planners, including (G)VIN [40, 29] and GPPN [26], were proposed for discrete environments where _P_ is fixed and known. Observing the VI update rule (Equation 1), we may conclude that it derives values by considering features of _neighbouring_ states; i.e. the value _V_ ( _s_ ) is updated based on states _s[0]_ for which _P_ ( _s[0] |s, a_ ) _>_ 0 for some _a_ . Accordingly, it tightly aligns with _message passing_ over the graph corresponding to the MDP, and hence a graph neural network (GNN) [15] over the MDP graph may be used to estimate the value function. **Graph neural networks** (GNNs) have been intensively studied as a tool to process graph-structured inputs, and were successfully applied to various RL tasks [45, 24, 1]. For each state _s_ in the graph, a set of messages is computed\u2014one message for each neighbouring node _s[0]_ , derived by applying a _message function M_ to the relevant node ( _[~] hs,[~] hs0_ ) and edge ( _~es0!s_ ) features. Incoming messages in a neighbourhood _N_ ( _s_ ) are then aggregated through a permutation-invariant operator[L] (such as sum or max), obtaining a summarised message _~ms_ :"
+    },
+    {
+      "index": 19,
+      "text": "The features of state _s_ are then updated through a function _U_ applied to these summarised messages:"
+    },
+    {
+      "index": 20,
+      "text": "GNNs can then emulate VI computations by setting the neighbourhoods according to the transitions in _P_ ; that is, _N_ ( _s_ ) = _{s[0] | 9a 2 A. P_ ( _s[0] |s, a_ ) _>_ 0 _}_ . For the special case of grid worlds, the neighbours of a grid cell correspond to exactly its neighbouring cells, and hence the rules in Equations 2\u20133 amount to a convolutional neural network over the grid [40]."
+    },
+    {
+      "index": 21,
+      "text": "While the above blueprint yielded many popular implicit planners, the requirement of knowing upfront the transition neighbourhoods is still limiting. Ideally, we would like to be able to, on-the-fly, generate states _s[0]_ that are reachable from _s_ as a result of applying some action. Generating neighbouring state representations corresponds to a learned _transition model_ , and we present one such method, which we employed within XLVIN, next."
+    },
+    {
+      "index": 22,
+      "text": "**TransE** The TransE [8] loss for embedding objects and relations can be adapted to RL [23, 42]. State embeddings are obtained by an _encoder z_ : _S !_ R _[k]_ and the effect of an action in a given state is modelled by a translation model _T_ : R _[k] \u21e5A !_ R _[k]_ . Specifically, _T_ ( _z_ ( _s_ ) _, a_ ) is a _translation vector_ to be added to _z_ ( _s_ ) in order to obtain an embedding of the resulting state when taking action _a_ in state _s_ . This embedding should be as close as possible to _z_ ( _s[0]_ ), for the observed transition ( _s, a, s[0]_ ), and also far away from negatively sampled state embeddings _z_ (\u02dc _s_ ). Therefore, the embedding function is optimised using the following variant of the triplet loss (with hinge hyperparameter _\u21e0_ ):"
+    },
+    {
+      "index": 23,
+      "text": "3\n\n**----- Start of picture text -----**\n\nEncoder V\nTransition \u21e1\nExecutor\nTail\n~hs,a 1 . . . ~hs,a 1\nz ( s ) T ( [~] hs, a 2)\n~hs ~hs,a 2 ~\u03c7s ~hs,a 2\ns ~hs,a 3 ... ~hs,a 3\nConstruct latent graph using  T Execute (latent) Value Iteration using  X\nT ( ~hs, a 1)\nT ( ~hs, a 3)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 24,
+      "text": "Figure 1: XLVIN model summary. Its modules are explained (and colour-coded) in Section 3.1.\n\nHaving a trained _T_ function, it is now possible to dynamically construct _N_ ( _s_ ). For every action _a_ , applying _T_ ( _[~] hs, a_ ) yields embeddings _[~] hs,a_ which correspond to one neighbour state embedding in _N_ ( _s_ ). We can, of course, roll out _T_ further from _[~] hs,a_ to simulate longer trajectory outcomes\u2014the amount of steps we do this for is denoted as the \u201cthinking time\u201d, _K_ , of the planner. With neighbourhoods constructed, one final question remains: how to apply VI over them, especially given that the embeddings _[~] hs_ are high-dimensional, and VI is defined over scalar reward/value inputs?"
+    },
+    {
+      "index": 25,
+      "text": "If we also train a reward model, _R_ ( _[~] hs, a_ ), and a state-value function, _V_ ( _[~] hs_ ) from state embeddings, we can attach scalar values and rewards to our synthesised graph. Then, VI can be directly applied over the constructed tree to yield the final policy. As the VI update (Equation 1) is differentiable, it composes nicely with neural estimators and standard RL loss functions. Further, _R_ and _V_ can be directly trained from observed rewards and returns when interacting with the environment. This approach inspired a family of powerful implicit planners, including VPN [30], TreeQN and ATreeC [13]. However, it remains vulnerable to a specific bottleneck effect, which we discuss next."
+    },
+    {
+      "index": 26,
+      "text": "**Algorithmic bottleneck** Through our efforts of learning transition and reward models, we reduced our (potentially highly complex) input state _s_ into an abstractified graph with scalar values in its nodes and edges, so that VI can be directly applied. However, VI\u2019s performance guarantees rely on having the _exactly correct_ parameters of the underlying MDP. If there are any errors in the predictions of these scalars, they may propagate to the VI operations and yield suboptimal policies. We will study this effect in detail on synthetic environments in Section 4.3."
+    },
+    {
+      "index": 27,
+      "text": "As the ATreeC-style approaches commit to using the scalar produced by their reward models, there is no way to recover from a poorly predicted value. This leaves the model vulnerable to an _algorithmic bottleneck_ , especially early on during training when insufficient experience has been gathered to properly estimate _R_ . Accordingly, the agent may struggle with data efficiency."
+    },
+    {
+      "index": 28,
+      "text": "With our XLVIN agent, we set out to break this bottleneck, and do not project our state embeddings _~hs_ further to a low-dimensional space. This amounts to running a graph neural network directly over them. Given that these same embeddings are optimised to produce plausible graphs (via the TransE loss), how can we ensure that our GNN will stay aligned with VI computations?"
+    },
+    {
+      "index": 29,
+      "text": "**Algorithmic reasoning** An important research direction explores the use of neural networks for learning to execute algorithms [10, 43]\u2014which was recently extended to algorithms on graphstructured data [44]. In particular, [47] establishes _algorithmic alignment_ between GNNs and dynamic programming algorithms. Furthermore, [44] show that supervising the GNN on the algorithm\u2019s intermediate results is highly beneficial for out-of-distribution generalization. As VI is, in fact, a dynamic programming algorithm, a GNN executor is a suitable choice for learning it, and good results on executing VI emerged on synthetic graphs [11]\u2014an observation we strongly leverage here."
+    },
+    {
+      "index": 30,
+      "text": "## **3 XLVIN Architecture**\n\nNext, we specify the computations of the eXecuted Latent Value Iteration Network (XLVIN). We recommend referring to Figure 1 for a visualisation of the model dataflow (more compact overview in Appendix A) and to Algorithm 1 for a step-by-step description of the forward pass."
+    },
+    {
+      "index": 31,
+      "text": "4\n\nWe propose a _policy network_ \u2014a function, _\u21e1\u2713_ ( _a|s_ ), which for a given state _s 2 S_ specifies a probability distribution of performing each action _a 2 A_ in that state. Here, _\u2713_ are the policy parameters, to be optimised with gradient ascent."
+    },
+    {
+      "index": 32,
+      "text": "## **3.1 XLVIN modules**\n\n**Encoder** The encoder function, _z_ : _S !_ R _[k]_ , consumes state representations _s 2 S_ and produces flat embeddings, _[~] hs_ = _z_ ( _s_ ) _2_ R _[k]_ . The design of this component is flexible and may be dependent on the structure present in states. For example, pixel-based environments will necessitate CNN encoders, while environments with flat observations are likely to be amenable to MLP encoders."
+    },
+    {
+      "index": 33,
+      "text": "**Transition** The transition function, _T_ : R _[k] \u21e5A !_ R _[k]_ , models the effects of taking actions, in the _latent_ space. Accordingly, it consumes a state embedding _z_ ( _s_ ) and an action _a_ and produces the appropriate _translation_ of the state embedding, to match the embedding of the successor state (in expectation). That is, it is desirable that _T_ satisfies Equation 5 and it is commonly realised as an MLP."
+    },
+    {
+      "index": 34,
+      "text": "**Executor** The executor function, _X_ : R _[k] \u21e5_ R _[|A|\u21e5][k] !_ R _[k]_ , processes an embedding _[~] hs_ of a given state _s_ , alongside a neighbourhood set _N_ ( _[~] hs_ ), which contains (expected) embeddings of states that immediately neighbour _s_ \u2014for example, through taking actions. Hence,"
+    },
+    {
+      "index": 35,
+      "text": "The executor combines the neighbourhood set features to produce an updated embedding of state _s_ , _~\u03c7s_ = _X_ ( _[~] hs, N_ ( _[~] hs_ )), which is mindful of the properties and structure of the neighbourhood. Ideally, _X_ would perform operations in the latent space which mimic the one-step behaviour of VI, allowing for the model to meaningfully plan from state _s_ by stacking several layers of _X_ (with _K_ layers allowing for exploring length- _K_ trajectories). Given the relational structure of a state and its neighbours, the executor is commonly realised as a graph neural network (GNN)."
+    },
+    {
+      "index": 36,
+      "text": "**Actor & Tail components** The actor function, _A_ : R _[k] \u21e5_ R _[k] !_ [0 _,_ 1] _[|A|]_ consumes the state embedding _[~] hs_ and the updated state embedding _~\u03c7s_ , producing action probabilities _\u21e1\u2713_ ( _a|s_ ) = _A ~hs, ~\u03c7s_[Lastly, note that we may] \u21e3 \u2318 _a_[, specifying the policy to be followed by our XLVIN agent.] also have additional _tail_ networks which have the same input as _A_ . For example, we train XLVINs using proximal policy optimisation (PPO) [35], which necessitates a state-value function: _V_ ( _[~] hs, ~\u03c7s_ )."
+    },
+    {
+      "index": 37,
+      "text": "**Algorithm 1:** XLVIN forward pass\n\n**Input :** Input state _s_ , executor depth _K_ **Output :** Policy function _\u21e1\u2713_ ( _a|s_ ), state-value function _V_ ( _s_ )"
+    },
+    {
+      "index": 38,
+      "text": "_~hs_ = _z_ ( _s_ ) ; // Embed the input state with the encoder S[0] = _{[~] hs}_ , E = _;_ **for** _k 2_ [0 _, K_ ) **do** S _[k]_[+1] = _;_ ; // Initialise depth-( _k_ + 1) embeddings **for** _[~] h 2_ S _[k] , a 2 A_ **do** _~h[0]_ = _~h_ + _T_ ( _~h, a_ ) ; // Get (expected) neighbour embedding S _[k]_[+1] = S _[k]_[+1] _[ {[~] h[0] }_ , E = E _[ {_ ( _[~] h,[~] h[0] , a_ ) _}_ ; // Attach _[~] h[0]_ to the graph **end end**"
+    },
+    {
+      "index": 39,
+      "text": "/* Run the execution model over the graph specified by the nodes S =[S] _[K] k_ =0[S] _[k]_[and edges][ E][, by repeatedly] applying _[~] h_ = _X_ ( _[~] h, N_ ( _[~] h_ )), for every embedding _[~] h 2_ S, for _K_ steps. */ _~\u03c7s_ = EXECUTE( _[~] hs,_[S] _[K] k_ =0[S] _[k][,]_[ E] _[, X, K]_[)][ ;] // See Appendix B for details on the EXECUTE function /* Use the actor and tail to predict the policy and value functions from the (updated) state embedding of _s_ */ _\u21e1\u2713_ ( _s, \u00b7_ ) = _A_ ( _[~] hs, ~\u03c7s_ ), _V_ ( _s_ ) = _V_ ( _[~] hs, ~\u03c7s_ )"
+    },
+    {
+      "index": 40,
+      "text": "5\n\n**Discussion** The entire procedure is end-to-end differentiable, does not impose any assumptions on the structure of the underlying MDP, and has the capacity to perform computations directly aligned with value iteration, while avoiding the algorithmic bottleneck. This achieves all of our initial aims."
+    },
+    {
+      "index": 41,
+      "text": "The transition function produces state embeddings that correspond to the expectation of the successor state embedding over all possible outcomes (Equation 5). While taking expectations is an operation that aligns well with VI computations, it can pose limitations in the case of non-deterministic MDPs. This is because the obtained expected latent states may not be trivially further expandable, should we wish to plan further from them. One possible remedy we suggest is employing a probabilistic (e.g. variational) transition model from which we could repeatedly sample concrete next-state latents."
+    },
+    {
+      "index": 42,
+      "text": "Our tree expansion strategy is , which expands every action from every node, yielding _O_ ( _|A|[K]_ ) time and space complexity. While this is prohibitive for scaling up _K_ , we empirically found that performance plateaus by _K \uf8ff_ 4 for all studied environments, mirroring prior findings [13]. Even if these are shallow trees of states, we anticipate a compounding effect from optimising TransE together with PPO\u2019s value/policy heads. We defer allowing for deeper expansions and large action spaces to future work, but note that it will likely require a _rollout policy_ , selecting actions to expand from a given state. For example, I2A [33] obtains a rollout policy by distilling the agent\u2019s policy network. Extensions to continuous actions could also be achieved by rollout policies, or discretising the action space by binning [41]."
+    },
+    {
+      "index": 43,
+      "text": "## **3.2 XLVIN Training**\n\nAs discussed, the success of XLVIN relies on our transition function, _T_ , constructing plausible graphs, and our executor function, _X_ , reliably imitating VI steps in a high dimensional latent space. Accordingly, we train both of them using established methods: TransE for _T_ and [11] for _X_ ."
+    },
+    {
+      "index": 44,
+      "text": "To optimise the neural network parameters _\u2713_ , we use proximal policy optimisation (PPO)[2] [35]. Note that the PPO gradients also flow into _T_ and _X_ , which could _displace_ them from the properties required by the above, leading to either poorly constructed graphs or lack of VI-aligned computation."
+    },
+    {
+      "index": 45,
+      "text": "Without knowledge of the underlying MDP, we have no easy way of training the executor, _X_ , online. We instead opt to _pre-train_ the parameters of _X_ and _freeze_ them, treating them as constants rather than parameters to be optimised. In brief, the executor pre-training proceeds by first **generating** a dataset of synthetic MDPs, according to some underlying graph distribution. Then, we **execute** the VI algorithm on these MDPs by iterating Equation 1, keeping track of intermediate values _Vt_ ( _s_ ) at each step _t_ , until convergence. Finally, we **supervise** a GNN (operating over the MDP transitions as edges) to receive _Vt_ ( _s_ )\u2014and all other parameters of the MDP\u2014as inputs, and predict _Vt_ +1( _s_ ) (optimised using mean-squared error). Such a graph neural network has three parts: an _encoder_ , mapping _Vt_ ( _s_ ) to a latent representation, a _processor_ , which performs a step of VI in the latent space, and a _decoder_ , which decodes back _Vt_ +1( _s_ ) from the latent space. We only **retain** the _processor_ as our executor function _X_ , in order to avoid the algorithmic bottleneck in our architecture."
+    },
+    {
+      "index": 46,
+      "text": "trajectories. However, we do anticipate that some environments will require a careful tradeoff between exploration and exploitation for the data collection strategy for training the transition model."
+    },
+    {
+      "index": 47,
+      "text": "Thus, after pre-training the GNN to predict one-step value iteration updates and freezing the processor, a step of the training algorithm corresponds to:"
+    },
+    {
+      "index": 48,
+      "text": "1.\n\n2. Based on the transitions in these rollouts, evaluate the PPO [35] and TransE (Equation 4) losses. Negative sample states for TransE, \u02dc _s_ , are randomly sampled from the rollouts."
+    },
+    {
+      "index": 49,
+      "text": "3. Update the policy network\u2019s parameters, _\u2713_ , using the combined loss. It is defined, for a single rollout, _T_ = _{_ ( _st, at, rt, st_ +1) _}t_ , as follows:"
+    },
+    {
+      "index": 50,
+      "text": "where we set _\u03bb_ = 0 _._ 001, and P( _s|T_ ) is the empirical distribution over the states in _T_ .\n\n> 2We use the PPO implementation and hyperparameters from Kostrikov [25]."
+    },
+    {
+      "index": 51,
+      "text": "6\n\nIt should be highlighted that our approach can easily be modified to support value-based methods such as DQN [27]\u2014merely by modifying the tail component of the network and the RL loss function."
+    },
+    {
+      "index": 52,
+      "text": "## **4 Experiments**\n\nWe now deploy XLVINs in _generic_ discrete-action environments with unknown MDP dynamics (further details in Appendix C), and verify their potential as an implicit planner. Namely, we investigate whether XLVINs provide gains in data efficiency, by comparing them in low-data regimes against a relevant model-free PPO baseline, and ablating against the ATreeC implicit planner [13], which executes an explicit TD( _\u03bb_ ) backup instead of a latent-space executor, and is hence prone to algorithmic bottlenecks. All chosen environments were previously explicitly studied in the context of planning within deep reinforcement learning, and were identified as environments that benefit from planning computations in order to generalise [21, 13, 30, 22]."
+    },
+    {
+      "index": 53,
+      "text": "## **4.1 Experimental setup**\n\n**Common elements** On all environments, the transition function, _T_ , is a three-layer MLP with layer normalisation [4] after the second layer. The executor, _X_ , is, for all environments, identical to the message passing executor of [11]. We train the executor from completely random deterministic graphs\u2014making no assumptions on the underlying environment\u2019s topology."
+    },
+    {
+      "index": 54,
+      "text": "**Continuous-space** We focus on four OpenAI Gym environments [9]: classical continuous-state control tasks\u2014CartPole, Acrobot and MountainCar, and a continuous-state spaceship navigation task, LunarLander. In all cases, we study data efficiency by presenting extremely limited data scenarios."
+    },
+    {
+      "index": 55,
+      "text": "The encoder function is a three-layer MLP with ReLU activations, computing 50 output features and _F_ hidden features, where _F_ = 64 for CartPole, _F_ = 32 for Acrobot, _F_ = 16 for MountainCar and _F_ = 64 for LunarLander. The same hidden dimension is also used in the transition function MLP."
+    },
+    {
+      "index": 56,
+      "text": "As before, we train our executor from random deterministic graphs. In this setting only, we also attempt to illustrate the potential benefits when the graph distribution is biased by our beliefs of the environment\u2019s topology. Namely, we attempt training the executor from synthetic graphs that imitate the dynamics of CartPole very crudely\u2014the MDP graphs being binary trees where only certain leaves carry zero reward and are terminal. More details on the graph construction, for both of these approaches, is given in Appendix E. The same trained executor is then deployed across all environments, to demonstrate robustness to synthetic graph construction. For LunarLander, the XLVIN uses _K_ = 3 executor layers; in all other cases, _K_ = 2."
+    },
+    {
+      "index": 57,
+      "text": "It is worthy to note that CartPole offers dense and frequent rewards\u2014making it easy for policy gradient methods. We make the task challenging by sampling _only 10 trajectories_ at the beginning, and not allowing any further interaction\u2014beyond 100 epochs of training on this dataset. Conversely, the remaining environments are all sparse-reward, and known to be challenging for policy gradient methods. For these environments, we sample 5 trajectories at a time, twenty times during training (for a total of 100 trajectories) for Acrobot and MountainCar, and fifty times during training (for a total of 250 trajectories) for LunarLander."
+    },
+    {
+      "index": 58,
+      "text": "**Pixel-space** Lastly, we investigate how XLVINs perform on high-dimensional pixel-based observations, using the Atari-2600 [6]. We focus on four games: Freeway, Alien, Enduro and H.E.R.O.. These environments encompass various aspects of complexity: sparse rewards (in Freeway), larger action spaces (18 actions for Alien and H.E.R.O.) and visually rich observations (changing time-ofday on Enduro) and long-range credit assignment (on H.E.R.O.). Further, we successfully _re-use_ the executor trained on random deterministic graphs, showing its transfer capability across vastly different settings. We evaluate the agents\u2019 low-data performance by allowing only 1,000,000 observed transitions. We re-use exactly the environment and encoder from Kostrikov [25], and run the executor for _K_ = 2 layers for Freeway and Enduro and _K_ = 1 for Alien and H.E.R.O.."
+    },
+    {
+      "index": 59,
+      "text": "## **4.2 Results**\n\nIn our results, we use **\u201cXLVIN-CP\u201d** to denote XLVIN executors pre-trained using CartPole-style synthetic graphs (where applicable), and **\u201cXLVIN-R\u201d** for pre-training them on random deterministic graphs. **\u201cPPO\u201d** denotes our baseline model-free agent; it has no transition/executor model, but"
+    },
+    {
+      "index": 60,
+      "text": "7\n\nTable 1: Mean scores for low-data CartPole-v0, Acrobot-v1, MountainCar-v0 and LunarLander-v2, averaged over 100 episodes and five seeds."
+    },
+    {
+      "index": 61,
+      "text": "||**CartPole-v0**|**Acrobot-v1**|**MountainCar-v0**|**LunarLander-v2**|\n|---|---|---|---|---|\n|**Agent**|10 trajectories|100 trajectories|100 trajectories|250 trajectories|\n|PPO|104_._6 _\u00b1_48.5|_\u2212_500_._0 _\u00b1_0.0|_\u2212_200_._0 _\u00b1_0.0|90_._52 _\u00b1_9.54|\n|ATreeC|117_._1 _\u00b1_56.2|_\u2212_500_._0 _\u00b1_0.0|_\u2212_200_._0 _\u00b1_0.0|84_._04 _\u00b1_5.35|\n|XLVIN-R|**199**_._**2** _\u00b1_1.6|_\u2212_353_._1 _\u00b1_120.3|_\u2212_185_._6 _\u00b1_8.1|**99**_._**34** _\u00b1_6.77|\n|XLVIN-CP|**195**_._**2** _\u00b1_5.0|_\u2212_**245**_._**4** _\u00b1_48.4|_\u2212_**168**_._**9** _\u00b1_24.7|N/A|"
+    },
+    {
+      "index": 62,
+      "text": "Figure 2: Average clipped reward on Freeway, Alien, Enduro and H.E.R.O. over 1,000,000 transitions and ten seeds."
+    },
+    {
+      "index": 63,
+      "text": "otherwise matches the XLVIN hyperparameters. As planning-like computation was shown to emerge in entirely model-free agents [16], this serves as a check for the importance of the VI computation."
+    },
+    {
+      "index": 64,
+      "text": "To analyse the impact of the algorithmic bottleneck, we use **\u201cATreeC\u201d** [13] as one of our baselines, capturing the behavior of a larger class of VI-based implicit planners (including TreeQN and VPN [30]). For maximal comparability, we make ATreeC fully match XLVIN\u2019s hyperparameters, except for the executor model. Since ATreeC\u2019s policy is directly tied to the result of applying TD( _\u03bb_ ), its ultimate performance is closely tied to the quality of its scalar value predictions. Comparing against ATreeC can thus give insight into negative effects of the algorithmic bottleneck at low-data regimes."
+    },
+    {
+      "index": 65,
+      "text": "**CartPole, Acrobot, MountainCar and LunarLander** Results for the continuous-space control environments are provided in Table 1. We find that the XLVIN model solves CartPole from only 10 trajectories, outperforming all the results given in [42] (incl. REINFORCE [46], Autoencoders, World Models [18], DeepMDP [14] and PRAE [42]), while using 10 _\u21e5_ fewer samples. For more details, see Appendix D."
+    },
+    {
+      "index": 66,
+      "text": "Further, our model is capable of solving the Acrobot and MountainCar environments from only 100 trajectories, in spite of sparse rewards. Conversely, the baseline model, as well as ATreeC, are unable to get off the ground at all, remaining stuck at the lowest possible score in the environment until timing out. This still holds when XLVIN is trained on the random deterministic graphs, demonstrating that the executor training need not be dependent on knowing the underlying MDP specifics."
+    },
+    {
+      "index": 67,
+      "text": "Mirroring the above XLVIN also demonstrates clear low-data gains on LunarLander, compared to the PPO baseline and ATreeC. In this setting, ATreeC even underperformed compared to the PPO baseline, highlighting once again the issues with algorithmic bottlenecks."
+    },
+    {
+      "index": 68,
+      "text": "8\n\nFigure 3: **Top:** A test maze ( _left_ ) and the PCA projection of its TransE state embeddings ( _right_ ), colour-coded by distance to goal (in green). **Bottom:** PCA projection of the XLVIN state embeddings after passing the first ( _left_ ), second ( _middle_ ), and ninth ( _right_ ) level of the continual maze."
+    },
+    {
+      "index": 69,
+      "text": "**Freeway, Alien, Enduro and H.E.R.O.** Lastly, the average clipped reward of the Atari agents across the first million transitions can be visualised in Figure 2. From the inception of the training, the XLVIN model explores and exploits better, consistently remaining ahead of the baseline PPO model in the low-data regime (matching it in the latter stages of Enduro). In H.E.R.O., XLVIN is also the first agent to break away from the performance plateau, towards the end of the 1,000,000 transitions. The fact that the executor was transferred from randomly generated graphs (Appendix E) is a further statement to XLVIN\u2019s robustness."
+    },
+    {
+      "index": 70,
+      "text": "on Enduro, it underperformed even compared to the PPO baseline, indicating that overreliance on scalar predictions may damage low-data performance. It empirically validates our observation of the potential negative effects of algorithmic bottlenecks at low-data regimes."
+    },
+    {
+      "index": 71,
+      "text": "## **4.3 Qualitative results**\n\nThe success of XLVIN hinges on the appropriate operation of its two modules; the transition model _T_ and the executor GNN _X_ . In this section, we qualitatively study these two components, hoping to elucidate the mechanism in which XLVIN organises and executes its plan."
+    },
+    {
+      "index": 72,
+      "text": "To faithfully ground the predictions of _T_ and _X_ on an underlying MDP, we analyse a pre-trained XLVIN agent with a CNN encoder and _K_ = 4 executor steps on randomly-generated 8 _\u21e5_ 8 grid-world environments. We chose grid-worlds because _V[?]_ can be computed exactly. We train on mazes of progressively increasing difficulty (expressed in terms of their _level_ : the shortest-path length from the start state to the goal). We move on to the next level once the agent solves at least 95% of the mazes from the current level. On these environments, we generally found that XLVIN is competitive with implicit planners that are aware of the grid-world structure. See Appendix F for details, including the hyperparameters of the XLVIN architecture."
+    },
+    {
+      "index": 73,
+      "text": "**Projecting the embeddings** We begin by qualitatively studying the embeddings learnt by the encoder and transition model. At the top row of Figure 3, we ( _left_ ) colour-coded a specific held-out 8 _\u21e5_ 8 maze by proximity to the goal state, and ( _right_ ) visualised the 3D PCA projections of the \u201cpure-TransE\u201d embeddings of these states (prior to any PPO training), with the edges induced by the transition model. Such a model merely seeks to organise the data, rather than optimise for returns: hence, a grid-like structure emerges."
+    },
+    {
+      "index": 74,
+      "text": "9\n\nAt the bottom row, we visualise how these embeddings and transitions evolve as the agent keeps solving levels; at levels one ( _left_ ) and two ( _middle_ ), the embedder learnt to distinguish all 1-step and 2-step neighbours of the goal, respectively, by putting them on opposite parts of the projection space. This process does not keep going, because the agent would quickly lose capacity. Instead, by the time it passes level nine ( _right_ ), grid structure emerges again, but now the states become partitioned by proximity: nearer neighbours of the goal are closer to the goal embedding. In a way, the XLVIN agent is learning to reorganise the grid; this time in a way that respects shortest-path proximity."
+    },
+    {
+      "index": 75,
+      "text": "_V[?]_ **predictibility** We hypothesise that the encoder function _z_ is tasked with learning to map raw states to a latent space where the executor GNN can operate properly, and then the GNN performs VI-aligning computations in this latent space. We provide a qualitative study to validate this: for all positions in held-out 8 _\u21e5_ 8 test mazes, we computed the ground-truth values _V[?]_ ( _s_ ) (using VI), and performed linear regression to test how accurately they are decodable from the XLVIN state embeddings before ( _[~] hs_ ) and after ( _~\u03c7s_ ) applying the GNN. We computed the _R_[2] goodnessof-fit measure, after passing each of the ten training levels. Our results (Figure 4) are strongly in support of the hypothesis: while the embedding function ( _z_ ( _s_ ) = _[~] hs_ ; in green) is already reasonably predictive of _V[?]_ ( _s_ ) ( _R_[2] _\u21e1_ 0 _._ 85 on average), after the GNN computations are performed, the recovered state embeddings ( _~\u03c7s_ ; in red) are consistently almost-perfectly linearly decodable to VI outputs _V[?]_ ( _s_ ) ( _R_[2] _\u21e1_ 1). Hence, the encoder maps _s_ to a latent space from which the executor can perform VI."
+    },
+    {
+      "index": 76,
+      "text": "**Algorithmic bottleneck** In formulating the algorithmic bottleneck, we assume that inaccuracies in the scalar values used for VI will have a larger impact on degrading the performance than perturbations in high-dimensional state embeddings inputted to the executor. To faithfully evaluate policy accuracy, we study this sensitivity on the randomly generated MDPs used to train the executor. Here, groundtruth values _V[\u21e4]_ can be explicitly computed, and we can compare the recovered policy directly to the greedy policy over these values. Hence, we study the effect of introducing Gaussian noise in the scalar inputs fed to VI compared to introducing Gaussian noise in the high-dimensional latents fed into the XLVIN executor. In Figure 5, we plot the policy accuracy as a function of noise standard deviation, showing that, while XLVIN is unable to predict policies perfectly at zero noise, it quickly dominates the VI\u2019s policy predictions once the noise magnitude increases. Besides indicating that imperfections in TransE outputs"
+    },
+    {
+      "index": 77,
+      "text": "Figure 4: of determination from linearly regressing on the state embeddings obtained from the encoder (green) and from the executor (red)."
+    },
+    {
+      "index": 78,
+      "text": "Figure 5: Policy accuracy from introducing Gaussian noise in the scalar input fed into VI (red) and in the embeddings fed into the XLVIN executor (green)."
+    },
+    {
+      "index": 79,
+      "text": "can be handled with reasonable grace, this experiment provides direct evidence of the algorithmic bottleneck: errors in scalar inputs to an algorithm can impact its predictions substantially, while a high-dimensional latent space executor is able to more gracefully handle such perturbations."
+    },
+    {
+      "index": 80,
+      "text": "## **5 Conclusions**\n\nWe presented eXecuted Latent Value Iteration Networks (XLVINs), combining recent progress in self-supervised contrastive learning, graph representation learning and neural algorithm execution for implicit planning on irregular, continuous or unknown MDPs. Our results showed that XLVINs match or outperform appropriate baselines, often at low-data or out-of-distribution regimes. The learnt executors are robust and transferable across environments, despite being trained on purely random graphs. XLVINs represent, to the best of our knowledge, one of the first times neural algorithmic executors are used for implicit planning, and they successfully break the algorithmic bottleneck.\n\n10"
+    },
+    {
+      "index": 81,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__claude-opus-4.7": {
+      "label": "Zero Shot (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This paper presents XLVIN, a novel implicit planner that performs value iteration in latent space using a pre-trained graph neural network executor, addressing the algorithmic bottleneck issue in scalar-based VI implicit planners. The core idea is well-motivated, the experiments cover diverse environments, and the qualitative analysis provides useful insights. However, there are several notation inconsistencies and mathematical/definitional issues that should be addressed, and some claims are more suggestive than conclusive given the experimental scope.",
+      "comments": [
+        {
+          "id": "zero_shot__claude-opus-4.7_0",
+          "title": "Inconsistent definition of value functions",
+          "quote": "Value functions V^\u21e1 ( s, a ) = E_\u21e1 [ G_t|s_t = s ] and Q^\u21e1 ( s, a ) = E_\u21e1 [ G_t|s_t = s, a_t = a ]",
+          "explanation": "The state-value function is written as V^\u03c0(s,a) with two arguments, but its definition (conditioning only on s_t=s) matches the usual V^\u03c0(s) with a single argument. This is a notation error\u2014V should take only s as argument. While any reader familiar with RL would immediately recognize the intent, the inconsistency between the function signature and the conditioning is a real notational slip that could confuse newcomers.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_1",
+          "title": "Inconsistency in optimal value function notation",
+          "quote": "Therefore, to find a \u21e1^[\u21e4] it suffices to find the unique optimal value function V^[?] as the fixed-point of the Bellman optimality operator. The optimal value function V^[?] is such a fixed-point and satisfies the Bellman optimality equations",
+          "explanation": "The paper uses V* (with asterisk) and V^? (with question mark/star) interchangeably for the optimal value function, and later in Section 4.3 uses V^* again. While these likely all refer to the same object (OCR may have rendered the same symbol differently), the inconsistency is worth noting. This is primarily a minor notation issue that doesn't affect understanding.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_2",
+          "title": "Executor signature doesn't match neighbourhood input",
+          "quote": "The executor function, X : R^k \u21e5 R^{|A|\u21e5k} ! R^k, processes an embedding ~h_s of a given state s, alongside a neighbourhood set N ( ~h_s )",
+          "explanation": "The function signature specifies that X takes inputs in R^k \u00d7 R^{|A|\u00d7k}, implying exactly |A| neighbours (one per action) as a fixed-size matrix. However, in Algorithm 1, the executor is applied over a full tree with up to |A|^K nodes, where the neighbourhood of intermediate nodes in the expanded tree may include multiple 'levels' of children. The text describes N(~h_s) as containing 'embeddings of states that immediately neighbour s', consistent with |A| children, but when applying X repeatedly in the EXECUTE procedure (line mentioning 'for every embedding ~h \u2208 S'), inner nodes have both parent and children as neighbours. This ambiguity around whether the neighborhood includes parents or only children, and whether the signature truly applies to all nodes, makes the algorithm underspecified. The EXECUTE function is deferred to Appendix B.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_3",
+          "title": "Transition function definition (Equation 5) not shown but referenced",
+          "quote": "That is, it is desirable that T satisfies Equation 5",
+          "explanation": "The text refers to Equation 5 as the property the transition T should satisfy (expectation over successor states), but Equation 5 is not displayed in the excerpt in Section 3.1. Earlier Equation 4 was the TransE loss; Equation 5 is referenced but not shown. Likely the authors intend T(~h_s, a) \u2248 E[z(s')|s,a] \u2212 z(s), but a reader trying to reproduce this has to infer the precise expectation formulation. This could affect reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_4",
+          "title": "Tree expansion strategy text appears truncated",
+          "quote": "Our tree expansion strategy is , which expands every action from every node",
+          "explanation": "There is a missing word/phrase after 'is' \u2014 the strategy has no name given. This is likely an OCR/extraction artifact, but it leaves the strategy name unclear (presumably 'breadth-first' or 'exhaustive'). While the behavior is clear from 'expands every action from every node', the sentence is grammatically incomplete and slightly reduces clarity about the intended technical term.",
+          "comment_type": "logical",
+          "paragraph_index": 42,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_5",
+          "title": "Combined loss definition incomplete",
+          "quote": "3. Update the policy network's parameters, \u2713, using the combined loss. It is defined, for a single rollout, T = { ( s_t, a_t, r_t, s_t+1) }_t, as follows:",
+          "explanation": "The text announces that the combined loss definition follows, but the actual formula is not visible in the excerpt\u2014only the statement 'we set \u03bb = 0.001, and P(s|T) is the empirical distribution over the states in T' follows. Without seeing the explicit combined loss (presumably L_PPO + \u03bb \u00b7 L_TransE), it's hard to verify which components contribute and with which weight. This appears to be an OCR or formatting issue but leaves an important methodological detail implicit.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_6",
+          "title": "Claim that XLVIN 'closely aligns with VI' is only partially supported",
+          "quote": "Lastly, we empirically verify that XLVINs can closely align with value iteration.",
+          "explanation": "The qualitative alignment experiment (Section 4.3) shows high R\u00b2 when linearly regressing V* from \u03c7_s on grid-worlds after the executor is applied. This is compelling but the R\u00b2 goodness-of-fit on linear regression does not directly establish that the executor performs VI-like computations (it could merely indicate that V* is linearly decodable from states, which is also true in simple grid-worlds by position). The stronger claim of 'alignment with VI' would require showing that the executor's update rule matches (or is functionally equivalent to) the VI operator in the latent space, not just that V* is linearly recoverable. The claim is plausible but the evidence is indirect.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_7",
+          "title": "Algorithmic bottleneck experiment comparison may be unfair",
+          "quote": "we plot the policy accuracy as a function of noise standard deviation, showing that, while XLVIN is unable to predict policies perfectly at zero noise, it quickly dominates the VI's policy predictions once the noise magnitude increases.",
+          "explanation": "The comparison introduces Gaussian noise of the same standard deviation to scalars (fed to VI) and to high-dimensional embeddings (fed to XLVIN executor). However, noise of fixed std has very different 'severity' in scalar space versus a k-dimensional latent space (where scale and distribution of embedding norms differ from raw rewards/values). The conclusion that 'high-dimensional latent space executor is able to more gracefully handle perturbations' is plausible but the comparison is not scale-normalized, which weakens the quantitative claim. A more rigorous test would normalize noise to equal signal-to-noise ratios or compare relative perturbations.",
+          "comment_type": "logical",
+          "paragraph_index": 76,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_8",
+          "title": "Return formula index notation inconsistency",
+          "quote": "The return is defined as G_t =[P]^{1}_{k=0} [\u03b3][k][R]([a][t]+[k][, s][t]+[k])",
+          "explanation": "Standard convention for return is G_t = \u03a3_{k=0}^\u221e \u03b3^k R(s_{t+k}, a_{t+k}) (state first, then action) or \u03b3^k r_{t+k+1}. Here R(a_{t+k}, s_{t+k}) has action-first ordering, which is unusual but earlier in the paragraph R is defined as R: S \u00d7 A \u2192 R (state first, action second). This is a small inconsistency between the reward function signature and its usage in the return formula. Likely an OCR or typesetting artifact rather than a substantive error, but worth noting for notation consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.153,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 16111,
+      "completion_tokens": 2897
+    },
+    "zero_shot__gpt-5.5": {
+      "label": "Zero Shot (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper presents an interesting and ambitious attempt to combine latent transition models with pretrained neural algorithmic executors for implicit planning, and many of the empirical comparisons are well motivated for low-data reinforcement learning. The main technical concerns I found are not about the high-level idea, but about whether the claimed alignment to value iteration is sufficiently justified once only the pretrained processor is retained and fed environment embeddings that are not explicitly tied to the pretraining latent space. There are also a few localized formula/notation errors in the RL background, some overstatements in interpreting experimental results, and a qualitative bottleneck experiment whose conclusion seems stronger than what the perturbation setup can establish.",
+      "comments": [
+        {
+          "id": "zero_shot__gpt-5.5_0",
+          "title": "State-value notation and reward argument order are inconsistent with the MDP definition",
+          "quote": "The _return_ is defined as _Gt_ =[P] _[1] k_ =0 _[\u03b3][k][R]_[(] _[a][t]_[+] _[k][, s][t]_[+] _[k]_[)][.][Value] functions _V[\u21e1]_ ( _s, a_ ) = E _\u21e1_ [ _Gt|st_ = _s_ ] and _Q[\u21e1]_ ( _s, a_ ) = E _\u21e1_ [ _Gt|st_ = _s, at_ = _a_ ] represent the expected return induced by a policy in an MDP when conditioned on a state or state-action pair respectively.",
+          "explanation": "The surrounding MDP definition correctly defines the reward as _R_ : _S \u21e5A !_ R, and the prose correctly distinguishes state-value and action-value functions. However, in this sentence the return appears to use the reward as _R(a_{t+k}, s_{t+k})_, reversing the earlier argument order, and the state-value function is written as _V^\\pi(s,a)_ even though it is conditioned only on _s_. Standard notation would be _G_t=\\sum_k \\gamma^k R(s_{t+k},a_{t+k})_, _V^\\pi(s)=\\mathbb{E}_\\pi[G_t\\mid s_t=s]_, and _Q^\\pi(s,a)=\\mathbb{E}_\\pi[G_t\\mid s_t=s,a_t=a]_. I considered whether this might be solely OCR corruption, but the prose immediately after says the two functions are conditioned on a state or a state-action pair respectively, so the extra action argument in _V_ is a real inconsistency in the displayed notation as given.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_1",
+          "title": "Retaining only the pretrained processor leaves the latent-space alignment mechanism under-justified",
+          "quote": "Such a graph neural network has three parts: an _encoder_ , mapping _Vt_ ( _s_ ) to a latent representation, a _processor_ , which performs a step of VI in the latent space, and a _decoder_ , which decodes back _Vt_ +1( _s_ ) from the latent space. We only **retain** the _processor_ as our executor function _X_ , in order to avoid the algorithmic bottleneck in our architecture.",
+          "explanation": "I understand the authors' intent: by discarding the scalar encoder/decoder and keeping only the message-passing processor, XLVIN avoids forcing every intermediate planning quantity through scalar rewards or values. That is a plausible architectural idea. What remains unclear is why the environment encoder _z(s)_ should produce embeddings in the same latent coordinate system on which the frozen pretrained processor learned to implement value-iteration-like updates. During pretraining, the processor receives hidden states produced by a particular synthetic-MDP encoder trained jointly with the processor and decoder. In XLVIN, the processor instead receives embeddings produced by a different RL encoder, trained through PPO and TransE losses. The paper notes that PPO gradients flow through the frozen processor, so _z_ may adapt to it, but there is no explicit distribution-matching, distillation, auxiliary decoding loss, normalization constraint, or other mechanism described that would ensure compatibility with the processor's pretraining latent space. This matters because the central claim is not just that a GNN is useful, but that the frozen GNN remains aligned with value iteration in the learned RL latent space. The empirical results are suggestive, but the methodological bridge between pretrained processor latents and environment encoder latents is a non-trivial step that needs more justification.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_2",
+          "title": "The architecture still assumes a finite discrete action expansion despite the broad no-assumptions claim",
+          "quote": "The entire procedure is end-to-end differentiable, does not impose any assumptions on the structure of the underlying MDP, and has the capacity to perform computations directly aligned with value iteration, while avoiding the algorithmic bottleneck.",
+          "explanation": "The statement is partly understandable if 'structure' is meant narrowly as the graph topology or tabular layout of the state space: unlike VIN-style grid methods, XLVIN does not require a known grid or transition graph. However, read literally, the procedure does impose important assumptions. Algorithm 1 expands every _a 2 A_, the executor input type is based on _|A|_ neighbours, and the experiments are all discrete-action environments. The authors later acknowledge that continuous actions would require rollout policies or discretisation by binning, so the method is not assumption-free with respect to the MDP. This is mostly a framing issue, but a careful reader could overread the sentence as claiming applicability to arbitrary MDP action spaces without additional design choices.",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_3",
+          "title": "Claim that Acrobot and MountainCar are solved is not supported by the reported scores",
+          "quote": "Further, our model is capable of solving the Acrobot and MountainCar environments from only 100 trajectories, in spite of sparse rewards.",
+          "explanation": "The reported table does show a meaningful improvement for XLVIN, especially XLVIN-CP, over PPO and ATreeC in these sparse-reward tasks. However, the actual mean scores are _\u2212245.4 \u00b1 48.4_ on Acrobot-v1 and _\u2212168.9 \u00b1 24.7_ on MountainCar-v0. Under the usual Gym conventions, these are substantial improvements over timeout-level performance but are not generally considered solved performance: Acrobot's common solved threshold is around an average return of _\u2212100_, and MountainCar-v0's is around _\u2212110_. Thus the data support 'makes progress' or 'substantially improves over baselines', but not 'solving' these environments from 100 trajectories.",
+          "comment_type": "logical",
+          "paragraph_index": 66,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_4",
+          "title": "Gaussian-noise bottleneck experiment does not make scalar and latent perturbations directly comparable",
+          "quote": "Hence, we study the effect of introducing Gaussian noise in the scalar inputs fed to VI compared to introducing Gaussian noise in the high-dimensional latents fed into the XLVIN executor. In Figure 5, we plot the policy accuracy as a function of noise standard deviation, showing that, while XLVIN is unable to predict policies perfectly at zero noise, it quickly dominates the VI\u2019s policy predictions once the noise magnitude increases. Besides indicating that imperfections in TransE outputs can be handled with reasonable grace, this experiment provides direct evidence of the algorithmic bottleneck: errors in scalar inputs to an algorithm can impact its predictions substantially, while a high-dimensional latent space executor is able to more gracefully handle such perturbations.",
+          "explanation": "The experiment is a useful qualitative stress test, and the authors are right to probe whether scalar VI inputs are brittle to prediction errors. The concern is with the strength of the conclusion. Adding Gaussian noise with the same standard deviation to scalar value/reward inputs and to high-dimensional learned latents is not automatically a calibrated comparison: the latent coordinates have arbitrary learned scale, the total perturbation norm grows with dimension, and the executor may implicitly denoise or ignore many directions. Conversely, exact VI is being evaluated on explicitly corrupted scalar quantities, so degradation is expected once the corruption changes action orderings. Without a normalization criterion that equates policy-relevant perturbation size, signal-to-noise ratio, or prediction-error distributions actually observed during RL training, the figure supports a robustness observation for this setup but not 'direct evidence' that the algorithmic bottleneck is generally broken by high-dimensional latent execution.",
+          "comment_type": "logical",
+          "paragraph_index": 76,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.1846,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10365,
+      "completion_tokens": 5311
+    }
+  }
+}

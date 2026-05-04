@@ -1,0 +1,844 @@
+{
+  "slug": "iclr2021-j0p8ASp9-real-time-uncertainty-decomposition-for-online-learning-cont",
+  "title": "Real-time Uncertainty Decomposition for Online Learning Control",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## - REAL TIME UNCERTAINTY DECOMPOSITION FOR ONLINE LEARNING CONTROL"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nSafety-critical decisions based on machine learning models require a clear understanding of the involved uncertainties to avoid hazardous or risky situations. While aleatoric uncertainty can be explicitly modeled given a parametric description, epistemic uncertainty rather describes the presence or absence of training data. This paper proposes a novel generic method for modeling epistemic uncertainty and shows its advantages over existing approaches for neural networks on various data sets. It can be directly combined with aleatoric uncertainty estimates and allows for prediction in real-time as the inference is sample-free. We exploit this property in a model-based quadcopter control setting and demonstrate how the controller benefits from a differentiation between aleatoric and epistemic uncertainty in online learning of thermal disturbances."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nWith improved sensor quality and more powerful computational resources, data-driven models are increasingly applied in safety-critical domains such as autonomous driving or human-robot interaction (Grigorescu et al., 2020). However, measurements usually suffer from noise and the available data is often scarce compared to all possible states of a complex environment. This requires controllers, which rely on supervised learning techniques, to properly react to ignorance and imprecision in the model to avoid dangerous situations. In order to allow an implementation of risk-averse (for exploitation and safety improvements) or risk-seeking (for exploration) behavior, the model must clearly disaggregate the information in the data into more than just the \u201cbest estimate\u201d and differentiate between different sources of uncertainty. Besides the point estimate of a model, one can distinguish aleatoric (uncertainty in the data) and epistemic (uncertainty in the model) uncertainty. The former is irreducible as it is inherent to the stochastic process the data is recorded from, while the latter origins from a limited expressive power of the model or scarce training samples (Der Kiureghian & Ditlevsen, 2009)."
+    },
+    {
+      "index": 3,
+      "text": "Gaussian processes (GPs) inherently provide a measure for its with the posterior standard deviation prediction (Rasmussen & Williams, 2006). It also allows to differentiate aleatoric uncertainty (typically considered as observation noise) and epistemic uncertainty (modeled by the kernel). However, the former allows only homoscedastic (constant) estimates, while real-world applications typically require heteroscedastic uncertainty models. An extension to heteroscedastic GP regression is presented in (Lazaro-Gredilla & Titsias, 2011), however, it is a variational approximation and further increases the computational complexity and GPs generally suffer from poor scaling to large datasets (Quinonero-Candela & Rasmussen, 2005)."
+    },
+    {
+      "index": 4,
+      "text": "In deep learning, the modeling of uncertainties also gained increasing interest over the past years (Kendall & Gal, 2017). Heteroscedastic aleatoric uncertainty can be captured well, if the output of the stochastic process can directly be observed and its parametric distribution is known. However, for more general cases, approximation techniques such as variational inference or sampling is required (Bishop, 2006). For epistemic uncertainty estimation with neural networks (NN), the key idea for most approaches can be summarized as follows. Randomness is introduced to the neural network through sampling during training and inference. While the training robustifies the network against the injected noise at the training locations, it allows the noise to pass to the output at input locations where no training data is available. For inference, multiple predictions of the network are sampled for the same inputs, allowing to compute a statistical measure for the uncertainty"
+    },
+    {
+      "index": 5,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2021\n\nat the output (Depeweg et al., 2018; Depeweg, 2019). However, sampling the network during inference is a high computational burden, and is therefore not suitable in real-time critical control tasks. An ensemble based approach by (Lakshminarayanan et al., 2017) works with far less instances of a network, but does not differentiate between aleatoric and epistemic uncertainty explicitly."
+    },
+    {
+      "index": 6,
+      "text": "Despite those drawbacks in the uncertainty representation of data-driven models, the control community started to incorporate them increasingly in the decision making for various applications. For example Fanger et al. (2016) uses an epistemic uncertainty measure to dynamically assign leader order follower roles for cooperative robotic manipulation. The work by Berkenkamp et al. (2016) ensures a safe exploration of an unknown task space based on GP error bounds and a gain scheduling approach for computed torque control is presented in Beckers et al. (2019). The work by Liu et al. (2020) considers the epistemic uncertainty as an estimate of the distance between source and target domains (known as domain shift) to design a robust controller. In Umlauft & Hirche (2020) and Chowdhary et al. (2015) an online learning control approach for GPs models is considered, which approach the dual control problem (Wittenmark, 1995) as a model-based adaptive control problem. The work by Yesildirak & Lewis (1995) uses neural network for adaptive control in a continuous time fashion, which relies on a time-triggered (periodic) update of the model rather than a eventbased adaptation as we propose in this work. More general, risk averse control strategies have been presented by Umlauft et al. (2018); Medina et al. (2013); Todorov & Li (2005). However, all of these approaches only consider the model fidelity in general and do not differentiate between aleatoric and epistemic uncertainty."
+    },
+    {
+      "index": 7,
+      "text": "Therefore, the main contributions of this paper are the following. We propose a deep learning framework with a real-time capable epistemic uncertainty prediction. The resulting online learning model is employed by a controller, which shows a distinct reaction to epistemic and aleatoric uncertainty. We evaluate the proposed methods on synthetic and real-world benchmark data sets, and simulate a quadcopter controller, which learns online the disturbances injected by thermals."
+    },
+    {
+      "index": 8,
+      "text": "## 2 PROBLEM FORMULATION\n\nConsider the discrete-time dynamical system[1] with control _**u** \u2208_ U _\u2286_ R _[d][u]_ and state _**x** \u2208_ X _\u2286_ R _[d][x]_"
+    },
+    {
+      "index": 9,
+      "text": "where _**g**_ : X _\u00d7_ U _\u2192_ X is known, while _**y**_ is a i.i.d. random vector sampled in every time step from"
+    },
+    {
+      "index": 10,
+      "text": "where _D_ ( _\u00b7_ ) denotes a known distribution over real vectors _**y** \u2208_ Y _\u2286_ R _[d][x]_ and depends on the parameters _**p** \u2208_ P _\u2286_ R _[d][p]_ . These state-dependent parameters arise from an unknown mapping _**f**_ : X _\u2192_ P. We denote the unknown component _**y** k_ of the dynamical system generally as disturbance but it could also be the unmodeled part of the dynamics, such as friction or serve as black-box model for the dynamics if no analytic description is available ( _**g**_ ( _\u00b7_ , _\u00b7_ ) = 0). We assume measurements can be taken to obtain the data set Dtr = _{_ ( _**x** i_ , _**y** i_ ) _}[N] i_ =1[tr][with][inputs][X][tr][=] _[{]_ _**[x]**[i][}][N] i_ =1[tr][and][outputs][Y][tr][=] _[{]_ _**[y]**[i][}][N] i_ =1[tr][,] such that a model _**f**_[\u02c6] ( _\u00b7_ ) of _**f**_ ( _\u00b7_ ) can be learned. _N_ tr _\u2208_ N denotes the current number of training data points and is initially zero, i.e., the training set is empty."
+    },
+    {
+      "index": 11,
+      "text": "The task is to choose a control input _**u** k_ , such that the system (1) follows a given reference _**x**_[des] . Furthermore, the controller can take new measurements of _**y**_ to improve its model over time. We consider each measurement of _**y**_ to be costly and therefore new training points should only be collected when necessary. Applications, where data collection is costly can be found in distributed systems, where multiple sensors share the same scarce communication channel, or in autonomous systems with limited data storage capacity."
+    },
+    {
+      "index": 12,
+      "text": "to identify valuable measurements. As existing approaches for modeling epistemic uncertainty in deep learning suffer from a high computational complexity we first focus on developing a novel method for epistemic uncertainty predictions before proposing an online learning control strategy which makes use of a neural network model decomposing its uncertainties."
+    },
+    {
+      "index": 13,
+      "text": "> 1Bold/capital symbols generally denote vectors/matrices, _D_ ( _\u00b7_ )/ _U_ ( _\u00b7_ )/ _N_ ( _\u00b7_ )/ _B_ ( _\u00b7_ ) a general parametric/the uniform/Gaussian/Bernoulli distribution, respectively."
+    },
+    {
+      "index": 14,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\n## 3 EPISTEMIC UNCERTAINTY ESTIMATION\n\n## 3.1 RELATED WORK"
+    },
+    {
+      "index": 15,
+      "text": "Learning an epistemic uncertainty estimator is not straight forward as it measures the absence of training data. Most prominently Gaussian processes with stationary kernels offer such a measure implicitly with their posterior variance prediction. However, GPs are known to scale poorly for large data sets: While regression and uncertainty predictions can be performed with _O_ ( _N_ tr) and _O_ ( _N_ tr2), respectively, considering a new data point takes _O_ ( _N_ tr3) computations (also without hyperparameter optimization, _O_ ( _N_ tr2) for rank-1 update methods). While various methods have been proposed to make GP computationally more efficient, including sparse GPs (Quinonero-Candela & Rasmussen, 2005), distributed GPs (Deisenroth & Ng, 2015) and local GPs (Nguyen-Tuong et al., 2009a;b), these approximations typically focus only on the precision of the point estimate and distort the uncertainty prediction. For estimating the \u201ddistance\u201d to the training set, kernel density estimation (KDE) can also be used (Rosenblatt, 1956), however, the non-parametric nature implies that the inference time grows linearly with the number of considered data points, which we aim to avoid."
+    },
+    {
+      "index": 16,
+      "text": "More recently, several different approaches for epistemic uncertainty estimates using deep learning frameworks have been proposed. Popular approaches rely on Bayesian approximations(Depeweg et al., 2016) or permanent dropouts (not only during training to avoid overfitting) (Gal, 2016; Gal & Ghahramani, 2016). Furthermore, latent inputs can also be used to achieve a decomposition into aleatoric and epistemic uncertainty as presented in (Depeweg et al., 2017). However, in particular for Bayesian NNs, these approaches become computationally challenging. Firstly, they have a larger number of parameters to tune than their deterministic counterparts and rely on variational inference methods (Kwon et al., 2020). Secondly, the prediction requires to sample the entire network before the statistics of the output can be computed. For the application in real-time critical control problems (e.g., robotics with a sampling rate of 1 kHz), these computational burdens prohibit an employment of these techniques. A sampling-free estimation methods is proposed by Postels et al. (2019), but suffers from a quadratic space complexity in the number of weights in the network and relies on firstorder Taylor approximations in the propagation of the uncertainties, which might become inaccurate depending on the non-linearity of the activation functions"
+    },
+    {
+      "index": 17,
+      "text": "## 3.2 _EpiOut_ - EXPLICITLY LEARNING EPISTEMIC UNCERTAINTY\n\nIn order to allow the estimation of epistemic uncertainty in real-time, we introduce the idea of explicitly modeling it with a separate output of a neural network, calling it _EpiOut_ . Since the epistemic uncertainty expresses the absence of data, the original data set Dtr does not contain data for training \u02dc _EpiOut_ . Therefore, we generate an epistemic uncertainty data set, with inputs Xepi = _{_ _**x** j}[N] j_ =1[epi][and] outputs Yepi = _{y_ \u02dc _j}[N] j_ =1[epi][concatenated in][ D][epi][=] _[ {]_[(\u02dc] _**[x]**[j]_[, \u02dc] _[y][j]_[)] _[}][N] j_ =1[epi][,] _[ N]_[epi] _[\u2208]_[N][.]"
+    },
+    {
+      "index": 18,
+      "text": "Different variations for sampling the set Xepi can be chosen depending on the desired scalability properties. A naive approach is to sample the entire input space uniformly, which suffers from the curse of dimensionality. Alternatively, we propose to sample around existing training points from a normal distribution"
+    },
+    {
+      "index": 19,
+      "text": "where we implicitly assume that _N_ epi is chosen such that _\u03b4_ = _N_ epi _/N_ tr is a positive integer. Supposing that a standardization of the input space to unity is performed based on Xtr, \u0393 = _**I**_ can be chosen if no further knowledge on _**f**_ ( _\u00b7_ ) is available. Otherwise, scaling \u0393 can be interpreted similarly to the lengthscale of a GP as a measure for how far away from a training point the prediction is reliable: Larger \u0393 will lead to further spread of Xepi and therefore low epistemic uncertainty in the neighborhood of the training data, which would be meaningful if the true function is known to have a low Lipschitz constant, and vice versa."
+    },
+    {
+      "index": 20,
+      "text": "We propose to setpoint in both directions of each dimension with a _\u03b4_ to a multiple of 2 _dx_ + 1 which corresponds to the intuition to pad each training _epi point_ _**x**_ \u02dc. The reasoning behind the additional +1 point will become clear in the following. To define the set Yepi, we first compute the minimal"
+    },
+    {
+      "index": 21,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2021\n\ndistance (according to any distance metric _d_ : X _\u00d7_ X _\u2192_ R0,+) to the training data for each epi point"
+    },
+    {
+      "index": 22,
+      "text": "keeping in mind that the closest training data point is not necessarily the one used to generate the sample. Let _dN_ tr be the _N_ tr-th smallest element of all _dj_ , we generate Yepi and update Xepi as follows"
+    },
+    {
+      "index": 23,
+      "text": "Thus, the _N_ tr points in Xepi with the least distance to a training point are replaced by the corresponding point in Xtr. Now the choice of 2 _dx_ + 1 epi points becomes clear as one of them will be turned into _y_ \u02dc = 0 corresponding to \u201clow epistemic uncertainty\u201d, while 2 _dx_ points further away from the training point _y_ \u02dc = 0 indicate the opposite."
+    },
+    {
+      "index": 24,
+      "text": "Given the data set Depi, the neural network is now equipped with one additional output, i.e., the parameter layer is _dp_ + 1 dimensional with output [ _**f**_[\u02c6] ( _\u00b7_ ) _\u03b7_ ( _\u00b7_ )] _[T]_ . The new output _\u03b7_ ( _\u00b7_ ) is terminated with a neuron using a sigmoidal activation function, such that _\u03b7_ : X _\u2192_ [0, 1]. This is beneficial because it allows immediately to judge, whether the predicted uncertainty is _high_ ( _\u2248_ 1) or _low_ ( _\u2248_ 0) without any reference evaluation (see comparison to alteranative methods below)."
+    },
+    {
+      "index": 25,
+      "text": "Independently of the loss function for the original network, the augmented output, also considered as _epistemic output_ is trained using a binary cross-entropy loss, which is the natural choice for binary outputs. It quantifies the uncertainty in the prediction of the other outputs based on the distance to the training data measured by _d_ ( _\u00b7_ , _\u00b7_ ). For the sake of focus, we will be using the Euclidean distance, however the method can be easily extended to other metrics and we leave it to future work to investigate alternatives."
+    },
+    {
+      "index": 26,
+      "text": "## 3.3 COMPUTATIONAL COMPLEXITY\n\n\ufffd The analysis of the computational complexity shows that (3) is a _O_ ( _N_ epi)= _O_ ( _N_ tr _dx_ ) op\ufffd 2 eration, whereas (4) is for a trivial implementation a _O_ ( _N_ tr _N_ epi)= _O_ ( _dxN_ tr ) operation. However, an implementation based on kd-tree (Cormen et al., 2009) allows an execution \ufffd in _O_ ( _N_ epi log( _N_ epi))= _O_ ( _dxN_ tr log( _N_ tr _dx_ ))) time. Finding the\ufffd _N_ tr smallest distances from all _N_ epi points in (5) can obtained in _O_ ( _N_ tr + ( _N_ epi _\u2212 N_ tr) log( _N_ tr))= _O_ ( _N_ tr + _N_ tr( _dx \u2212_ \ufffd1) log( _Ntr_ )) time. The training of neural network with a fixed number of weights requires _O_ ( _N_ epi)= _O_ ( _N_ tr _dx_ ). Hence, the overall complexity results in _O_ ( _dxN_ tr log( _dxN_ tr)), and it is straight forward to derive an overall \ufffd 2 space complexity of _O_ ( _N_ epi _dx_ )= _O_ ( _N_ tr _dx_ ) for storing the set Xepi. The following should be considered when comparing to classical deep learning frameworks which generally can be trained in linear time."
+    },
+    {
+      "index": 27,
+      "text": "- When used on streaming data (as for online learning control), the set Depi can be constructed iteratively, reducing the complexity to _O_ (log( _N_ tr))"
+    },
+    {
+      "index": 28,
+      "text": "-\n\n- The method is designed for applications where measuring data is considered costly and therefore sparse data can be expected."
+    },
+    {
+      "index": 29,
+      "text": "## 3.4 EVALUATION\n\nFor evaluation we compare the following models. The implementation is available in the supplementary material."
+    },
+    {
+      "index": 30,
+      "text": "- vanilla _GP model_ with a squared exponential automatic relevance determination kernel based on the GPy implementation[2]"
+    },
+    {
+      "index": 31,
+      "text": "- _BNN_ : Bayesian Neural Network with 2 fully connected hidden layers each with 50 hidden units and normal distributions over their weights based on this implementation.[3]"
+    },
+    {
+      "index": 32,
+      "text": "> 2https://sheffieldml.github.io/GPy/\n\n> 3https://matthewmcateer.me/blog/a-quick-intro-to-bayesian-neural-networks/"
+    },
+    {
+      "index": 33,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2021\n\n- _Dropout_ : A neural network with 2 fully connected permanent layers each with 50 hidden units with dropout probability _\u03c1_ = 0.05.[4] ."
+    },
+    {
+      "index": 34,
+      "text": "- _EpiOut_ : The proposed model with 2 fully connected layers (50 neurons) and \u0393 = _**I**_ , _\u03b4_ = 2."
+    },
+    {
+      "index": 35,
+      "text": "i.e., if the model decides that it is uncertain about the prediction at a test point, the squared error for this prediction is discounted (weighted less). However, the model can only achieve a low _\u03c1_ if it is also certain at some test points, because the denominator, goes to zero for many uncertain predictions. In consequence, _\u03c1_ is only defined if _\u03b7_ ( _\u00b7_ ) _<_ 1 holds for at least one test point. Furthermore, the total discount, defined as[\ufffd] _[N] i_ =1 _[\u03b7]_[(] _**[x]**[i]_[)][ can additionally be utilized for a plausibility check of the epistemic] uncertainty predictions since it should generally be larger on the test than on the training data set."
+    },
+    {
+      "index": 36,
+      "text": "The measure in (6) relies on epistemic uncertainty prediction in the interval [0, 1]. This is only ensured for the proposed _EpiOut_ approach and therefore the uncertainty measures, more specifically the predicted standard deviation, provided by the GP, _Dropout_ and _BNN_ are scaled to the unit interval based on the evaluation on all test and training points."
+    },
+    {
+      "index": 37,
+      "text": "The following data sets are utilized for evaluation.\n\n- _1D Center_ : The nominal function is _f_ ( _x_ ) = sin( _x\u03c0_ ), with training points Xtr = _{xi \u223c U_ ( _\u2212_ 1, 1) _}_[100] _i_ =1[and] _[ N]_[te][= 961][ test points are placed on a grid][ [] _[\u2212]_[4, 4]][.]"
+    },
+    {
+      "index": 38,
+      "text": "- _1D Split_ : Same as _1D Center_ , but Xtr = _{xi \u223cU_ ( _\u2212_ 2, _\u2212_ 1) _}_[100] _i_ =1 _[\u222a{][x][i][\u223cU]_[(1, 2)] _[}]_[200] _i_ =101[.]"
+    },
+    {
+      "index": 39,
+      "text": "- _\u2022 2D Gaussian_ : The nominal function ( _dx_ = 2, _dp_ = 1) is _f_ ( _**x**_ ) = 500\n\n- sin5( _x_ 51 _x_ 1) + _x_[2] 2[with][training][points][X][tr] = _**x** i \u223cN \u2212_ 01 , 0.020 0.10 _\u222a_ \ufffd \ufffd\ufffd \ufffd \ufffd \ufffd\ufffd\ufffd _i_ =1"
+    },
+    {
+      "index": 40,
+      "text": "- 1000\n\n- 1 0.02 0\n\n- _**x** i \u223cN_ , and _N_ te = 961 test points are uniformly placed 0 0 0.1\n\n- \ufffd \ufffd\ufffd \ufffd \ufffd \ufffd\ufffd\ufffd _i_ =501 on a grid [ _\u2212_ 2, 2][2] ."
+    },
+    {
+      "index": 41,
+      "text": "- _2D Square_ : Same as _2D Gaussian_ , but with with _N_ tr = 80 training points placed uniformly along the boundary of the square [ _\u2212_ 1, 1][2] ."
+    },
+    {
+      "index": 42,
+      "text": "- _PMSM temperature_ is a 2Hz recording ( _dx_ = 8, _dy_ = 1) of the temperature from a permanent magnet synchronous motor.[5] . To allow a comparison with the GP within reasonable computational limits, _N_ tr = 5000 and _N_ te = 1000 points were randomly extracted from a total of _\u2248_ 10[6] samples."
+    },
+    {
+      "index": 43,
+      "text": "- _Sarcos_ is a data set for learning the inverse dynamics of a seven degrees-of-freedom SARCOS anthropomorphic robot arm _dx_ = 21, _dp_ = 1.[6] . _N_ tr = 10000 and _N_ te = 2000 points were randomly extracted from a total of _\u2248_ 5 _\u00d7_ 10[4] samples."
+    },
+    {
+      "index": 44,
+      "text": "- 3.5 RESULTS & DISCUSSION\n\nThe numerical results are presented in Table 1 and an illustration for the data set _1D Split_ for all models is shown in Fig. 1. Besides showing empirically an advantage over existing approaches we want to point out the following benefits."
+    },
+    {
+      "index": 45,
+      "text": "- The _EpiOut_ model predicts the uncertainty measure in a sample free manner. This is crucial in data-efficient online learning scenarios, where the epistemic uncertainty is used to evaluate the usefulness of an incoming data point to decide upon its rejection. Hence, it is called more frequently than the online training function and must be computationally efficient. The prediction time for _EpiOut_ is typically an order of magnitude faster than _Dropout_ and _BNN_ ."
+    },
+    {
+      "index": 46,
+      "text": "> 4https://github.com/yaringal/DropoutUncertaintyDemos\n\n> 5https://www.kaggle.com/wkirgsn/electric-motor-temperature"
+    },
+    {
+      "index": 47,
+      "text": "> 6http://www.gaussianprocess.org/gpml/data/\n\n5\n\nUnder review as a conference paper at ICLR 2021\n\nTable 1: Weighted mean squared error _\u03c1_ as defined in (6) for the considered models on different data sets. The GP model is grayed out since it does not scale towards larger data sets. To prevent the scaling of the epistemic uncertainty to the unit interval from deteriorating the performance of _GP model_ , _BNN_ and _Dropout_ we minimize _\u03c1_ for the evaluation over a factor _\u03b1 \u2208_ [0, 1], _\u03b7_ \u02dc = _\u03b1\u03b7_ to"
+    },
+    {
+      "index": 48,
+      "text": "|_model_,_BNN_ and_Dropout_we minimize|_model_,_BNN_ and_Dropout_we minimize|_model_,_BNN_ and_Dropout_we minimize|_\u03c1_for the evaluation over a factor_\u03b1 \u2208_[0, 1], \u02dc_\u03b7_ =_\u03b1\u03b7_to|_\u03c1_for the evaluation over a factor_\u03b1 \u2208_[0, 1], \u02dc_\u03b7_ =_\u03b1\u03b7_to|_\u03c1_for the evaluation over a factor_\u03b1 \u2208_[0, 1], \u02dc_\u03b7_ =_\u03b1\u03b7_to|_\u03c1_for the evaluation over a factor_\u03b1 \u2208_[0, 1], \u02dc_\u03b7_ =_\u03b1\u03b7_to|\n|---|---|---|---|---|---|---|\n||||||||\n||||||||\n|1D Center\n1D Split\n|||2D Square\n2D Gaussian\nPMSM temperature\nSarcos||||\n|GPmodel\nBNN\nDropout\nEpiOut|0.1660\n0.1207\n1.4177\n0.5889\n0.7904\n0.6181\n**0.0480**\n**0.1125**||0.0655\n0\n1.1953\n0\n1.0681\n0\n**0.1893**\n**0**|.0342\n0.0007\n4.8150\n.8830\n0.0101\n21.9015\n.4468\n0.1490\n21.3842\n**.0056**\n**0.0024**\n**14.2537**|||\n|_\u2212_4\n_\u2212_1\n0\n1\n_y_\n|Dtr\n_f_(_x_)|||_ropout_\n_EpiOut_\n_\u2212_2\n0\n2\n4\n_x_\n|||\n||||GP\n_BNN_\n_D_|_ropout_\n_EpiOut_|||\n||||4\n_\u2212_4\n0\n0.5\n1\nepistemic unc.\n||||\n||||||||\n||||||||\n||||||||\n||||||||\n||_\u2212_2\n0\n2\n_x_\n||||||\n|Figure 1: The point estimate (mean pre\n_1D split_ and the true underlying funct|||diction) for the different models along with the training data\nion _f_(_x_) = sin(_\u03c0x_) are shown on the left. The right plot||||"
+    },
+    {
+      "index": 49,
+      "text": "Figure 1: The point estimate (mean prediction) for the different models along with the training data _1D split_ and the true underlying function _f_ ( _x_ ) = sin( _\u03c0x_ ) are shown on the left. The right plot shows the epistemic uncertainty estimate, where _BNN_ and _Dropout_ clearly miss to predict a higher uncertainty between the data clusters."
+    },
+    {
+      "index": 50,
+      "text": "- A single evaluation of _\u03b7_ ( _\u00b7_ ) is sufficient for a conclusion whether the uncertainty is high or low, since it is bounded to the interval [0, 1], whereas alternative approaches based _BNN_ and _Dropout_ provide a return value [0, _\u221e_ ], which can be difficult to interpret without a maximum value as reference."
+    },
+    {
+      "index": 51,
+      "text": "For more extensive results and exact computation times, we refer to the supplementary material.\n\n- 4 ONLINE LEARNING CONTROL USING UNCERTAINTY DECOMPOSITION"
+    },
+    {
+      "index": 52,
+      "text": "## 4.1 EVALUATION IN A QUADCOPTER CONTROL TASK\n\nAs an application of our proposed approach, we consider the task to control a quadcopter which explores a given terrain with unknown thermals[7] . We assume that the quadcopter dynamics i.e. _**g**_ ( _\u00b7_ , _\u00b7_ ) in 1 is known (compare (Shi et al., 2019)). The thermals act on the quadcopter as a disturbance on the acceleration in _z[q]_ -direction[8] We model the disturbance as normal distribution _N_ ( _\u00b5_ ( _**x**_ ), _\u03c3_[2] ( _**x**_ )), leading to _**p**_ = [ _\u00b5_ , _\u03c3_ ] _[T]_ and the NN models the state dependency of these parameters _**f**_[\u02c6] : X _\u2192_ P. Initially, there is no training data available and the desired trajectory _**x**_[des] are three rounds at constant height _z[q]_ = 0 on a square in the _x[q]_ - _y[q]_ -plane with edge length 0.1 followed by three rounds with edge length 0.05."
+    },
+    {
+      "index": 53,
+      "text": "The online learning control approach for achieving this task with a high tracking precision and dataefficiency is presented in the following."
+    },
+    {
+      "index": 54,
+      "text": "## 4.2 LEARNING CONTROL DESIGN\n\nThe _EpiOut_ therefore serves as trigger when new data points must be measured. By sampling from a Bernoulli"
+    },
+    {
+      "index": 55,
+      "text": "> 7 The data of the thermals is taken from publicly available paragliding data https://thermal.kk7.ch."
+    },
+    {
+      "index": 56,
+      "text": "> 8Superscripts _q_ distinguish the quadcopter position _xq_ , _yq_ , _zq_ from the general inputs _**x**_ and outputs _**y**_ ."
+    },
+    {
+      "index": 57,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2021\n\ndistribution, whose parameter corresponds to _\u03b7_ ( _\u00b7_ ), new measurements ( _**x** i_ , _**y** i_ ) are added to the training according to"
+    },
+    {
+      "index": 58,
+      "text": "This ensures a high accuracy of the disturbance model _**f**_[\u02c6] ( _\u00b7_ ) as training data is added when necessary. It implements a stochastic event-triggered adaptive control approach, which is highly data-efficient and reduces the number of costly measurements. In particular for mobile platforms this cost comes in terms of reduced battery life (processing data requires power for computations), shorter operation time (local data storage quickly fills up if operating near 1 kHz sampling rates) or increased communication efforts (in case data is not process or stored onboard)."
+    },
+    {
+      "index": 59,
+      "text": "The system (1) is inherently random due to the stochastic nature of the disturbance _**f**_ ( _\u00b7_ ). Therefore, we combine feedback and feedforward control law"
+    },
+    {
+      "index": 60,
+      "text": "where _**x**_ , _**x**_[des] is the (desired) state of the quadcopter and _**u**_ ff is a feedforward control term determined based on the known model _**g**_ ( _\u00b7_ , _\u00b7_ ) (the gravitational force on the quadcopter) and the learned disturbance model _**f**_[\u02c6] ( _\u00b7_ ), more specifically the mean of the predicted disturbance _\u00b5_ ( _\u00b7_ ). The choice of the feedback gain _**K**_ , which compensates for imprecision in the model and the stochasticity of the disturbance, is a difficult trade-off because high control gains lead to high tracking performance, but also consume more energy and reinforce measurement noise, which can lead to instability. Therefore, it is generally advisable to let the feedforward term _**u**_ ff take over most of the control effort and keep the feedback term small when the model is reliable. Therefore, we increase the gains only if the aleatoric uncertainty inferred by our model as _\u03c3_ ( _\u00b7_ ) is high. Since the disturbance acts only in _z[q]_ direction, only the _z_ component of the gain is affected i.e.,"
+    },
+    {
+      "index": 61,
+      "text": "where _\u03b2 \u2208_ R0,+ is the sensitivity and _k_[\u00af] _\u2208_ R+ defines the minimum control gain. This gain scheduling allows to robustify the closed-loop against process noise and can even guarantee stability Beckers et al. (2019), while at the same time we can keep the energy consumption low. While previous works by Fanger et al. (2016); Beckers et al. (2019) take a general uncertainty measure, we tune the feedback gains only based on the irreducible (aleatoric) uncertainty, while we combat the epistemic uncertainty with an increased data collection rate (7)."
+    },
+    {
+      "index": 62,
+      "text": "A summary of the control strategy is given in Algorithm 1 and a visualization of the neural network in Fig. 2. The outputs (red nodes) are iteratively trained with the indicated loss functions and respective data sets D, Depi for two epochs with a a learning rate of 0.01 with each incoming data point. The current implementation pauses during the training of the disturbance model before the control loop continuous."
+    },
+    {
+      "index": 63,
+      "text": "|**Algorithm 1**Online learningcontroller|**Algorithm 1**Online learningcontroller|input\nlayer|hidden\nrelu layer(s)|output\nlayer||observation\nlayer|\n|---|---|---|---|---|---|---|\n|1:|initialize disturbance model|||||mean disturbance|\n|2: \n3:|**while**control task is not completed**do**\nget state**_x_**i|||_\u00b5_|||\n|4:\n5:|evaluate disturbance model\nupdate control gains (9)|_xq_|||_y_|ft\n_N_ likelihood|\n|6:\n7:|**if**measurement is required (7)**then**\nmeasure disturbance**_y_**i|||_\u03c3_2|||\n|8:|update data setDtr _\u2190_Dtr_\u222a_(**_x_**i,**_y_**i)|||||aleatoric uncertainty|\n|9:\n10:\n11:|resampleDepi(3)\nretrain disturbance model\n**end if**|_yq_||\u02dc_y_|ft|cross entropy|\n|12:|apply control**_u_**_k_ (8)|||||epistemic uncertainty|\n|13:|i_\u2190_i+ 1||||||\n|14:|**end while**|Figure 2: Schematic drawing of|||the|NN to decom-|"
+    },
+    {
+      "index": 64,
+      "text": "Figure 2: Schematic drawing of the NN to decompos the uncertainties for the quadcopter controller.\n\n7"
+    },
+    {
+      "index": 65,
+      "text": "Under review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\ndisturbance model without  EpiOut\n0.1 x [q] x [q] des y [q] y [q] des z [q] z [q] des\n0.05\n0\n0 2 4 6 8 10 12 14 16 18\ndisturbance model including  EpiOut\n0.1\n0.05\n0\n0 2 4 6 8 10 12 14 16 18\ntime\nepistemic uncertainty\nXtr \u03b7 ( \u00b7 )\n400\n0.1\n200\nwithout  EpiOut with  EpiOut 0\n0\n0 2 4 6 8 10 12 14 16 18 0 0.1\ntime x [q]\n(desired) position\n(desired) position\ntr q\nN y\n**----- End of picture text -----**"
+    },
+    {
+      "index": 66,
+      "text": "Figure 3: The _EpiOut_ prediction of the disturbance model allows smart selection of the measurements taken. While a random selection constantly takes data points, out proposed approach takes more measurements when entering new areas (0 _s_ to 3 _s_ and 9 _s_ to 12 _s_ ) and less when repeating the pattern (bottom). This results in overall improved tracking performance of a root mean squared error in z-direction of 0.00733 (middle) vs 0.00773 (top) while taking less data. The epistemic uncertainty estimate is low near training data and high in unobserved regions."
+    },
+    {
+      "index": 67,
+      "text": "The tracking performance of the proposed quadcopter controller, the data collections rate and the epistemic uncertainty model is illustrated in Fig. 3. The implementation and further results are provided in the supplementary material."
+    },
+    {
+      "index": 68,
+      "text": "## 5 CONCLUSION\n\nThis paper presents a novel deep learning structure for decomposing epistemic and aleatoric uncertainty and proposes an advanced control framework making distinct use of these uncertainty measures. As the prediction by the model are obtained sample-free, it allows for real-time critical online learning and outperforms existing methods on the proposed uncertainty-weighted precision measure. The proposed online learning control algorithm is inherently data-efficient by adding only required points to the data set."
+    },
+    {
+      "index": 69,
+      "text": "For future work will consider alternative functions for sorting the epi points to encode prior knowledge, such as as periodicity (similar to a kernel of GP) and investigate the effect of a continuous \u02dc valued _y_ ."
+    },
+    {
+      "index": 70,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Thomas Beckers, Dana Kuli\u00b4c, and Sandra Hirche. Stable Gaussian process based tracking control of Euler-Lagrange systems. _Automatica_ , 23(103):390\u2013397, 2019. doi: 10.1016/j.automatica.2019. 01.023."
+    },
+    {
+      "index": 71,
+      "text": "- Felix Berkenkamp, Riccardo Moriconi, Angela Schoellig, and Andreas Krause. Safe learning of regions of attraction for uncertain, nonlinear systems with Gaussian processes. _arXiv preprint arXiv:1603.04915_ , 2016."
+    },
+    {
+      "index": 72,
+      "text": "- Christopher M Bishop. _Pattern recognition and machine learning_ . springer, 2006.\n\n- Girish Chowdhary, Hassan A. Kingravi, Jonathan. P. How, and Patricio A. Vela. Bayesian nonparametric adaptive control using Gaussian processes. _IEEE Transactions on Neural Networks and Learning Systems_ , 26(3):537\u2013550, March 2015. ISSN 2162-237X. doi: 10.1109/TNNLS.2014. 2319052."
+    },
+    {
+      "index": 73,
+      "text": "- Thomas H Cormen, Charles E Leiserson, Ronald L Rivest, and Clifford Stein. _Introduction to algorithms_ . MIT press, 2009."
+    },
+    {
+      "index": 74,
+      "text": "- Marc Deisenroth and Jun Wei Ng. Distributed Gaussian processes. In _International Conference on Machine Learning (ICML)_ , pp. 1481\u20131490, 2015."
+    },
+    {
+      "index": 75,
+      "text": "- Stefan Depeweg. _Modeling Epistemic and Aleatoric Uncertainty with Bayesian Neural Networks and Latent Variables_ . PhD thesis, Technische Universit\u00a8at M\u00a8unchen, 2019."
+    },
+    {
+      "index": 76,
+      "text": "- Stefan Depeweg, Jos\u00b4e Miguel Hern\u00b4andez-Lobato, Finale Doshi-Velez, and Steffen Udluft. Learning and policy search in stochastic dynamical systems with Bayesian neural networks. _arXiv preprint arXiv:1605.07127_ , 2016."
+    },
+    {
+      "index": 77,
+      "text": "- Stefan Depeweg, Jos\u00b4e Miguel Hern\u00b4andez-Lobato, Finale Doshi-Velez, and Steffen Udluft. Uncertainty decomposition in Bayesian neural networks with latent variables. _arXiv preprint arXiv:1706.08495_ , 2017."
+    },
+    {
+      "index": 78,
+      "text": "- Stefan Depeweg, Jose-Miguel Hernandez-Lobato, Finale Doshi-Velez, and Steffen Udluft. Decomposition of uncertainty in bayesian deep learning for efficient and risk-sensitive learning. In _International Conference on Machine Learning_ , pp. 1184\u20131193. PMLR, 2018."
+    },
+    {
+      "index": 79,
+      "text": "- Armen Der Kiureghian and Ove Ditlevsen. Aleatory or epistemic? does it matter? _Structural safety_ , 31(2):105\u2013112, 2009."
+    },
+    {
+      "index": 80,
+      "text": "- Yunis Fanger, Jonas Umlauft, and Sandra Hirche. Gaussian processes for dynamic movement primitives with application in knowledge-based cooperation. In _International Conference on Intelligent Robots and Systems (IROS)_ , pp. 3913\u20133919. IEEE, October 2016. doi: 10.1109/IROS.2016. 7759576."
+    },
+    {
+      "index": 81,
+      "text": "- Yarin Gal. _Uncertainty in Deep Learning_ . PhD thesis, University of Cambridge, September 2016.\n\n- Yarin Gal and Zoubin Ghahramani. Dropout as a bayesian approximation: Representing model uncertainty in deep learning. In _Conference on Machine Learning_ , volume 48 of _Proceedings of Machine Learning Research_ , pp. 1050\u20131059, New York, New York, USA, June 2016. PMLR. URL http://proceedings.mlr.press/v48/gal16.html."
+    },
+    {
+      "index": 82,
+      "text": "- Sorin Grigorescu, Bogdan Trasnea, Tiberiu Cocias, and Gigel Macesanu. A survey of deep learning techniques for autonomous driving. _Journal of Field Robotics_ , 37(3):362\u2013386, 2020. doi: 10.1002/rob.21918. URL https://onlinelibrary.wiley.com/doi/abs/10. 1002/rob.21918."
+    },
+    {
+      "index": 83,
+      "text": "- Alex Kendall and Yarin Gal. What uncertainties do we need in Bayesian deep learning for computer vision? In I. Guyon, U. V. Luxburg, S. Bengio, H. Wallach, R. Fergus, S. Vishwanathan, and R. Garnett (eds.), _Advances in Neural Information Processing Systems (NeurIPS)_ , pp. 5574\u20135584. Curran Associates, Inc., 2017."
+    },
+    {
+      "index": 84,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\nYongchan Kwon, Joong-Ho Won, Beom Joon Kim, and Myunghee Cho Paik. Uncertainty quantification using bayesian neural networks in classification: Application to biomedical image segmentation. _Computational Statistics and Data Analysis_ , 142:106816, 2020. ISSN 0167-9473. doi: 10.1016/j.csda.2019.106816. URL http://www.sciencedirect.com/science/ article/pii/S016794731930163X."
+    },
+    {
+      "index": 85,
+      "text": "- Balaji Lakshminarayanan, Alexander Pritzel, and Charles Blundell. Simple and scalable predictive uncertainty estimation using deep ensembles. In _Advances in Neural Information Processing Systems (NeurIPS)_ , pp. 6402\u20136413, 2017."
+    },
+    {
+      "index": 86,
+      "text": "- Miguel Lazaro-Gredilla and Michalis Titsias. Variational heteroscedastic gaussian process regression. In _International Conference on Machine Learning (ICML)_ , pp. 841\u2013848, New York, NY, USA, June 2011. ACM. ISBN 978-1-4503-0619-5. URL https://icml.cc/2011/ papers/456_icmlpaper.pdf."
+    },
+    {
+      "index": 87,
+      "text": "- Anqi Liu, Guanya Shi, Soon-Jo Chung, Anima Anandkumar, and Yisong Yue. Robust regression for safe exploration in control. In Alexandre M. Bayen, Ali Jadbabaie, George Pappas, Pablo A. Parrilo, Benjamin Recht, Claire Tomlin, and Melanie Zeilinger (eds.), _Conference on Learning for Dynamics and Control (L4DC)_ , volume 120 of _Proceedings of Machine Learning Research_ , pp. 608\u2013619, The Cloud, June 2020. PMLR. URL http://proceedings.mlr.press/ v120/liu20a.html."
+    },
+    {
+      "index": 88,
+      "text": "- Jose R. Medina, Dominik Sieber, and Sandra Hirche. Risk-sensitive interaction control in uncertain manipulation tasks. In _International Conference on Robotics and Automation (ICRA)_ , pp. 502\u2013 507. IEEE, May 2013. doi: 10.1109/ICRA.2013.6630621."
+    },
+    {
+      "index": 89,
+      "text": "- Duy Nguyen-Tuong, Jan R. Peters, and Matthias Seeger. Local Gaussian process regression for real time online model learning. In _Advances in Neural Information Processing Systems (NeurIPS)_ , pp. 1193\u20131200. Curran Associates, Inc., 2009a."
+    },
+    {
+      "index": 90,
+      "text": "- Duy Nguyen-Tuong, Matthias Seeger, and Jan Peters. Model learning with local Gaussian process regression. _Advanced Robotics_ , 23(15):2015\u20132034, 2009b."
+    },
+    {
+      "index": 91,
+      "text": "- Janis Postels, Francesco Ferroni, Huseyin Coskun, Nassir Navab, and Federico Tombari. Samplingfree epistemic uncertainty estimation using approximated variance propagation. In _Proceedings of the IEEE International Conference on Computer Vision_ , pp. 2931\u20132940, 2019."
+    },
+    {
+      "index": 92,
+      "text": "- Joaquin Quinonero-Candela and Carl E. Rasmussen. A unifying view of sparse approximate Gaussian process regression. _The Journal of Machine Learning Research_ , 6:1939\u20131959, 2005."
+    },
+    {
+      "index": 93,
+      "text": "- Carl E. Rasmussen and Christopher K. I. Williams. _Gaussian Processes for Machine Learning_ . MIT Press, Cambridge, MA, USA, January 2006."
+    },
+    {
+      "index": 94,
+      "text": "- Murray Rosenblatt. Remarks on some nonparametric estimates of a density function. _Ann. Math. Statist._ , 27(3):832\u2013837, 09 1956. doi: 10.1214/aoms/1177728190. URL https://doi.org/ 10.1214/aoms/1177728190."
+    },
+    {
+      "index": 95,
+      "text": "- G. Shi, X. Shi, M. O\u2019Connell, R. Yu, K. Azizzadenesheli, A. Anandkumar, Y. Yue, and S. Chung. Neural lander: Stable drone landing control using learned dynamics. In _International Conference on Robotics and Automation (ICRA)_ , pp. 9784\u20139790, 2019. doi: 10.1109/ICRA.2019.8794351."
+    },
+    {
+      "index": 96,
+      "text": "- Emanuel Todorov and Weiwei Li. A generalized iterative LQG method for locally-optimal feedback control of constrained nonlinear stochastic systems. In _American Control Conference (ACC)_ , pp. 300\u2013306. IEEE, 2005."
+    },
+    {
+      "index": 97,
+      "text": "- Jonas Umlauft and Sandra Hirche. Feedback linearization based on Gaussian processes with eventtriggered online learning. _IEEE Transactions on Automatic Control (TAC)_ , pp. 1\u201316, 2020. ISSN 1558-2523. doi: 10.1109/TAC.2019.2958840. URL https://ieeexplore.ieee.org/ document/8930275."
+    },
+    {
+      "index": 98,
+      "text": "- Jonas Umlauft, Lukas P\u00a8ohler, and Sandra Hirche. An uncertainty-based control Lyapunov approach for control-affine systems modeled by Gaussian process. _IEEE Control Systems Letters_ , 2(3): 483\u2013488, July 2018. ISSN 2475-1456. doi: 10.1109/LCSYS.2018.2841961. URL https: //ieeexplore.ieee.org/document/8368325.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper introduces 'EpiOut', a method for estimating epistemic uncertainty in neural networks by training a secondary output on a synthetic dataset of points surrounding training data. The authors apply this to a quadcopter control task, using the uncertainty estimates to trigger data collection and adjust control gains.\n\nThe paper addresses the important problem of real-time uncertainty quantification in control. While the proposed method is computationally efficient, the lack of theoretical guarantees regarding stability and the heuristic nature of the uncertainty data generation raise questions about its reliability in safety-critical applications.\n\nOverview issues:\n\n- Lack of Stability Guarantees: The control law in Section 4.2 adjusts feedback gains based on an aleatoric uncertainty estimate $\\sigma(\\bm{x})$. However, the paper provides no formal stability analysis for this adaptive scheme. In high-frequency control loops, sudden changes in gain based on noisy or inaccurate uncertainty estimates can lead to chattering or instability. The authors should provide at least a Lyapunov-based argument or a bounded-error analysis to show that the system remains stable under the proposed gain-scheduling law.\n\n- Heuristic Nature of Epistemic Uncertainty: The definition of epistemic uncertainty in Section 3.2 relies on a synthetic dataset $\\mathbb{D}_{\\text{epi}}$ constructed via Euclidean distances. This approach essentially approximates the distance to the training set rather than the model's epistemic uncertainty in a Bayesian sense. The authors should clarify how this heuristic relates to formal definitions of epistemic uncertainty and provide a sensitivity analysis showing how the choice of $\\Gamma$ and the distance metric $d(\\cdot, \\cdot)$ affect the control performance.\n\n- Incomplete Comparison in Table 1: The comparison in Table 1 uses a weighted mean square error $\\rho$ that favors the proposed method by design, as it relies on the specific uncertainty output $\\eta(\\cdot)$. Comparing BNNs and Dropout models using this metric requires scaling their uncertainty estimates to the unit interval, which is inherently arbitrary. A more robust comparison would include standard metrics like negative log-likelihood (NLL) or expected calibration error (ECE) to demonstrate that the uncertainty estimates are actually well-calibrated, rather than just useful for the authors' specific weighting scheme.\n\n- Latency and Computational Overhead: While the paper claims real-time performance, Algorithm 1 includes a step (10) where the model is retrained whenever a new measurement is taken. In a 1kHz control loop, even a brief pause for backpropagation and weight updates can cause significant jitter or missed deadlines. The paper lacks a detailed timing analysis or a demonstration of how the system handles the latency introduced by these intermittent training steps.\n\n- Lack of sensitivity analysis for the hyperparameter Gamma: The construction of the epistemic dataset in Equation (3) relies on the hyperparameter Gamma, which the authors interpret as a measure of the model's reliability radius. However, the paper provides no guidance on how to select this parameter for different dynamical systems, nor does it demonstrate how sensitive the resulting control performance is to this choice. A brief simulation study showing the tracking error and data collection frequency for varying values of Gamma in the quadcopter task would clarify whether the method is robust or requires fine-tuning for every new environment.\n\n- Absence of a formal comparison to non-learning-based adaptive control: The paper positions itself against existing adaptive control methods but only compares its performance against other machine learning models in Table 1. To demonstrate the practical utility of the proposed uncertainty decomposition, the authors should include a baseline comparison against a standard non-learning-based adaptive controller, such as a PID controller with gain scheduling or a standard MRAC (Model Reference Adaptive Control) scheme. This would quantify the specific performance gains achieved by the learning-based uncertainty decomposition compared to traditional methods that do not explicitly model epistemic uncertainty.\n\n- Missing discussion on the impact of the 'pause' during retraining: Algorithm 1 explicitly pauses the control loop to retrain the neural network whenever a new measurement is taken. In real-time control, such a pause is often catastrophic if the duration is non-trivial compared to the sampling period. The paper should provide a concrete analysis of the computational time required for this retraining step relative to the 1kHz control loop mentioned in the introduction. A plot showing the distribution of computation times for the retraining step versus the control loop period would be necessary to substantiate the claim that the method is suitable for real-time critical applications.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a stability analysis for the gain-scheduling control law in Section 4.2 to ensure the system does not become unstable during online learning.\n\n- Include standard calibration metrics (e.g., NLL, ECE) in the evaluation to compare uncertainty quality against baselines without relying on the custom $\\rho$ metric.\n\n- Perform a timing analysis of the control loop to quantify the impact of the retraining step on real-time performance and control latency.\n\n- Conduct a sensitivity analysis for the hyperparameters $\\Gamma$ and $\\delta$ used in the construction of the synthetic epistemic dataset.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Unsubstantiated stability claims for gain scheduling",
+          "quote": "l gain. This gain scheduling allows to robustify the closed-loop against process noise and can even guarantee stability *Beckers et al. (2019)*, while at the same time we can keep the energy consumption low. While pr",
+          "explanation": "The claim that the gain-scheduling law (9) guarantees stability by citing Beckers et al. (2019) is problematic. Stability in such schemes typically requires the gain variation to be slow or to satisfy specific passivity conditions. Because the gain k_z depends on the aleatoric uncertainty sigma(x), which is an output of a neural network being updated online, the gain can change abruptly. The paper does not demonstrate that these rapid, state-dependent fluctuations satisfy the stability criteria of the referenced work. Please clarify the conditions on sigma(x) or the learning rate that ensure stability, or qualify the statement to reflect that stability is not guaranteed in the general case.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Contradiction regarding event-based adaptation",
+          "quote": "blem. The work by *Yesildirak & Lewis (1995)* uses neural network for adaptive control in a continuous time fashion, which relies on a time-triggered (periodic) update of the model rather than a event-based adaptation as we propose in this",
+          "explanation": "The claim that the proposed work uses event-based adaptation is contradicted by Algorithm 1, which performs model updates whenever a new measurement is taken. In a control loop with a fixed sampling frequency, this is functionally equivalent to a periodic update. Event-based control typically implies that updates occur only when a specific error threshold or state condition is met, rather than at every sampling step. Please clarify how the proposed update mechanism differs from periodic updates or remove the claim that this is an event-based adaptation.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Inconsistent performance claims for the Sarcos dataset",
+          "quote": "The GP model is grayed out since it does not scale towards larger data sets.",
+          "explanation": "The text claims the GP model does not scale towards larger data sets, yet Table 1 shows the GP model achieving a weighted mean squared error of 4.8150 on the Sarcos dataset, which is significantly lower than the 14.2537 reported for EpiOut. If the GP model is truly unable to scale to this dataset, the inclusion of this numerical value is misleading. If the GP model was successfully evaluated on Sarcos, the claim regarding its inability to scale is factually incorrect. Please clarify if the GP model was trained on the full Sarcos dataset or a subset, and reconcile the performance superiority with the claim of non-scalability.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Data leakage in baseline comparison",
+          "quote": "This is only ensured for the proposed EpiOut approach and therefore the uncertainty measures, more specifically the predicted standard deviation, provided by the GP, Dropout and BNN are scaled to the unit interval based on the evaluation on all test and training points.",
+          "explanation": "Scaling the uncertainty estimates of baseline models using the global maximum and minimum values observed over the entire test and training set is a form of data leakage. This procedure uses information from the test set to normalize the baseline models, which is not available in a real-time online learning scenario. This makes the comparison in Table 1 biased in favor of the proposed method. You should instead use a fixed scaling factor derived only from the training data or a validation set to ensure a fair comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistent Big-O notation for kd-tree search",
+          "quote": "\\mathcal{O}(N_{\\text{epi}}\\log(N_{\\text{epi}}))\\widehat{=}\\mathcal{O}(d_{x}N_{\\text{tr}}\\log(N_{\\text{tr}}d_{x})))",
+          "explanation": "The expression contains a syntax error with an extra closing parenthesis and inconsistent notation. Given N_epi = N_tr d_x, the substitution O(N_epi log(N_epi)) should yield O(N_tr d_x log(N_tr d_x)). The current expression is redundant and malformed. Rewrite the expression as O(d_x N_tr log(d_x N_tr)) to ensure consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0831,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a neural network architecture, EpiOut, that explicitly predicts epistemic uncertainty by training a secondary output on a synthetic dataset derived from distances to training points. The method is evaluated on standard regression benchmarks and applied to a quadcopter control task with online learning. While the idea of decoupling uncertainty sources for control is valuable, the implementation raises significant concerns regarding training stability, real-time feasibility, and the theoretical grounding of the uncertainty proxy.\n\nThe paper addresses a relevant problem in safety-critical control by attempting to separate aleatoric and epistemic uncertainty for online adaptation. The application to a quadcopter thermal disturbance task provides a concrete use case, and the proposed architecture is computationally lightweight compared to sampling-based Bayesian methods. However, the methodological claims lack rigorous validation, and the control implementation contradicts the stated real-time objectives.\n\nOverview issues:\n\n- Conflation of data sparsity with true epistemic uncertainty: The proposed EpiOut method uses the distance to the nearest training point to generate a binary label for a secondary network output. While the authors frame this as estimating epistemic uncertainty, it actually measures local data density. Epistemic uncertainty in a Bayesian sense arises from a lack of knowledge about the underlying function parameters, not merely the absence of nearby training samples. A model trained on a sparse but perfectly informative dataset could still exhibit high epistemic uncertainty if the function is highly non-linear, yet EpiOut would predict low uncertainty near those points. The paper does not distinguish between model misspecification bias and data scarcity. To strengthen the claim, the authors should clarify that EpiOut proxies data sparsity rather than true Bayesian epistemic uncertainty, or provide a theoretical justification linking distance-to-training-set to posterior variance under specific assumptions.\n\n- Unstable joint training dynamics and gradient interference: Algorithm 1 describes updating the entire network with a learning rate of 0.01 for two epochs upon every new data point, minimizing a combined loss for both the regression output and the binary epistemic output. In practice, optimizing a regression loss and a binary cross-entropy loss simultaneously on streaming data leads to severe gradient interference. The network may sacrifice predictive accuracy to satisfy the epistemic classifier, or vice versa. The paper provides no ablation or analysis of how the two objectives interact. Without addressing this, the reliability of the uncertainty estimates during online adaptation is questionable. The authors should either decouple the training of the uncertainty head or provide empirical evidence that the joint optimization converges stably in their control loop.\n\n- Questionable evaluation metrics and real-time feasibility claims: The paper claims real-time capability for 1 kHz control loops, yet Section 4.2 explicitly states that the implementation pauses during the training of the disturbance model before the control loop continues. This synchronous blocking behavior makes the approach unsuitable for hard real-time control applications. Additionally, the evaluation metric $\rho$ in Eq. (6) penalizes models that predict high uncertainty but rewards them for being certain somewhere, creating a perverse incentive. Scaling the uncertainty outputs of GPs, BNNs, and Dropout to $[0,1]$ to compute $\rho$ artificially aligns their scales with EpiOut, masking potential calibration differences. The authors should report wall-clock latency on target hardware, decouple the training from the control loop, and include standard calibration metrics like ECE to validate the uncertainty estimates objectively.\n\n- Lack of stability guarantees for uncertainty-driven gain scheduling: Section 4.2 employs aleatoric uncertainty to schedule feedback gains, citing Beckers et al. (2019) for stability. However, that reference relies on strict posterior variance bounds from Gaussian Processes. EpiOut outputs a heuristic probability bounded by a sigmoid, not a statistically rigorous bound on model error. Using a heuristic confidence score to increase control gains can easily violate stability margins if the network underestimates uncertainty in critical regions. The paper provides no Lyapunov analysis or robustness bounds for the closed-loop system when using EpiOut. To claim safety-critical applicability, the authors must either derive stability conditions for sigmoid-based uncertainty proxies or demonstrate empirically that the gain scheduling does not induce oscillations or divergence under high uncertainty.\n\n- Hyperparameter sensitivity and curse of dimensionality in synthetic data generation: The generation of the epistemic training set relies on sampling from $\bm{x}_i \times \bm{\nu}(\bm{x}_i, \bm{\nu})$ with $\bm{\nu}=\bm{I}$ and labeling points based on a distance threshold. In dimensions $d_x > 2$, isotropic sampling around training points fails to cover the relevant uncertainty regions effectively, and the distance threshold $d_{N_{tr}}$ becomes arbitrary. The paper applies this to 8D and 21D datasets without scaling $\bm{\nu}$ to the data distribution or discussing how the hyperparameters $\bm{\nu}$ and $\bm{\nu}$ affect the learned uncertainty surface. This makes the method brittle and difficult to transfer across tasks. The authors should either adapt $\bm{\nu}$ to the local data covariance or provide a sensitivity analysis showing how the control performance degrades with different choices of these hyperparameters.\n\n- Validation of aleatoric and epistemic separation is absent: The paper claims to decompose uncertainty but evaluates only a composite weighted error metric. This metric cannot distinguish whether the two network outputs capture distinct phenomena or merely redundant information. Readers will wonder if the aleatoric head actually isolates data noise or just mirrors the epistemic head's spatial patterns. To verify the decomposition, the authors should simulate a system with known heteroscedastic noise and fixed data density. They can then plot the predicted aleatoric variance against the true noise level and the predicted epistemic probability against training point sparsity. This controlled experiment would confirm that the model actually separates the two uncertainty sources as promised.\n\n- Controlled experiment for distinct controller reactions is missing: The abstract states the controller reacts distinctly to epistemic and aleatoric uncertainty, yet the quadcopter results only report aggregate tracking error and data collection rates. The paper never isolates scenarios where one uncertainty type is high while the other remains low. Without this isolation, the claim of distinct reactive behavior remains unproven. The authors should design test trajectories that deliberately trigger high aleatoric noise with low data sparsity, and vice versa. Reporting how the feedback gains and measurement triggers change in each scenario would directly substantiate the stated contribution.\n\n- Incremental training mechanics and computational overhead lack detail: Algorithm 1 specifies retraining the network and resampling the auxiliary dataset at every data collection step. The paper provides no details on how the neural network handles streaming updates or avoids catastrophic forgetting. Standard backpropagation requires full dataset passes, which contradicts the claimed real-time efficiency. The authors need to specify the online optimization strategy, such as stochastic gradient descent with a fixed learning rate or a dedicated incremental learning algorithm. They should also report the wall-clock time for a single update step to justify the real-time claim.\n\n- Baseline comparison for explicit uncertainty decomposition is absent: The evaluation compares EpiOut against Gaussian processes, Bayesian neural networks, and dropout, but these baselines do not output explicit aleatoric and epistemic components in a directly comparable format. The custom metric forces all uncertainty estimates into a unit interval, masking calibration differences between methods. Readers need to know how the proposed decomposition stacks up against established uncertainty quantification techniques. The authors should benchmark against a heteroscedastic Gaussian process or a Bayesian model with explicit noise modeling. Reporting standard calibration metrics like Expected Calibration Error for both uncertainty heads would provide a rigorous validation.\n\nRecommendation: Major revision. The core methodological claim that EpiOut measures epistemic uncertainty is theoretically weak, and the implementation details directly contradict the paper's real-time and stability assertions. The authors need to fundamentally reframe the method's theoretical basis, decouple the training dynamics, and provide rigorous latency and stability analyses before the work can be considered for publication.\n\nRevision targets:\n\n- Reframe EpiOut as a data-sparsity proxy rather than a Bayesian epistemic uncertainty estimator, and justify this choice theoretically or empirically.\n\n- Decouple the training of the regression and uncertainty heads, or provide a detailed analysis of gradient interference and convergence during online updates.\n\n- Demonstrate asynchronous execution to prove the method can operate within a 1 kHz control loop without blocking, including wall-clock latency measurements on embedded hardware.\n\n- Derive or empirically verify stability bounds for the gain-scheduling law when using sigmoid-bounded uncertainty estimates instead of GP variance bounds.\n\n- Conduct a sensitivity analysis on the hyperparameters $\bm{\nu}$ and $\bm{\nu}$, and address how the synthetic data generation scales to higher-dimensional control tasks.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Test-set leakage in metric normalization procedure",
+          "quote": "the uncertainty measures, more specifically the predicted standard deviation, provided by the GP, Dropout and BNN are scaled to the unit interval based on the evaluation on all test and training points.",
+          "explanation": "Scaling the standard deviation to [0,1] using statistics from the combined train and test sets introduces test-set leakage into the evaluation. The normalization factor depends on the very data being scored, which biases the metric and prevents fair comparison across different datasets or future deployments. Standard deviation also carries physical units, so collapsing it to a unit interval obscures the actual noise magnitude. Restructure the normalization procedure to scale the standard deviation using only the training set statistics.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Incorrect claim regarding Deep Ensembles uncertainty decomposition",
+          "quote": "nsemble based approach by *(Lakshminarayanan et al., 2017)* works with far less instances of a network, but does not differentiate between aleatoric and epistemic uncertainty explicitly.\n\nDespite",
+          "explanation": "This statement misrepresents the cited baseline. Lakshminarayanan et al. (2017) explicitly derive a closed-form decomposition of predictive variance into aleatoric and epistemic components (Section 3.2 of their paper). The variance across ensemble members captures epistemic uncertainty, while the average variance of individual networks captures aleatoric uncertainty. Stating that the method lacks this differentiation weakens the motivation for your proposed framework. Correct the text to acknowledge that Deep Ensembles do separate the two uncertainties, or clarify that the limitation lies elsewhere, such as computational overhead or lack of theoretical calibration guarantees.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Ill-posed parameter identification from single noisy observations",
+          "quote": "We assume measurements can be taken to obtain the data set $\\mathbb{D}_{u}=\\{(\\bm{x}_{i},\\bm{y}_{i})\\}_{i=1}^{N_{u}}$ with inputs $\\mathbb{X}_{u}=\\{\\bm{x}_{i}\\}_{i=1}^{N_{u}}$ and outputs $\\mathbb{Y}_{u}=\\{\\bm{y}_{i}\\}_{i=1}^{N_{u}}$, such that a model $\\hat{\\bm{f}}(\\cdot)$ of $\\bm{f}(\\cdot)$ can be learned.",
+          "explanation": "The problem formulation claims that $\\bm{f}$ can be learned from pairs $(\\bm{x}_i, \\bm{y}_i)$, but $\\bm{y}_i$ is explicitly defined as a stochastic sample from $\\mathcal{D}(\\bm{f}(\\bm{x}_i))$. Identifying the parameter vector $\\bm{p} = \\bm{f}(\\bm{x}_i)$ from a single noisy observation is generally ill-posed without additional assumptions. Clarify the learning setup: either assume $\\bm{y}_i$ represents the noise-free parameter vector, specify that multiple samples are collected per $\\bm{x}_i$ to estimate distribution parameters, or define a specific estimator that maps noisy observations to $\\bm{f}$. Without this, the transition from problem formulation to the online learning strategy is mathematically undefined.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Inaccurate computational complexity bounds for Gaussian Processes",
+          "quote": "While regression and uncertainty predictions can be performed with $\\mathcal{O}(N_{\\text{tr}})$ and $\\mathcal{O}({N_{\\text{tr}}}^{2})$, respectively, considering a new data point takes $\\mathcal{O}({N_{\\text{tr}}}^{3})$ computations",
+          "explanation": "The asymptotic complexity bounds provided for Gaussian Processes are incorrect. Standard GP prediction for both the posterior mean and variance requires $\\mathcal{O}(N_{\\text{tr}})$ operations after an initial $\\mathcal{O}(N_{\\text{tr}}^3)$ training step, assuming the Cholesky factorization of the kernel matrix is precomputed. The text incorrectly assigns $\\mathcal{O}(N_{\\text{tr}}^2)$ complexity to uncertainty prediction. Additionally, a rank-1 update to the inverse kernel matrix for a single new data point takes $\\mathcal{O}(N_{\\text{tr}}^2)$ time, not $\\mathcal{O}(N_{\\text{tr}}^3)$. Correct these bounds to align with standard GP literature and clearly distinguish between full retraining, incremental updates, and prediction costs.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Notation error in Equation (5) conflating label definition with input update",
+          "quote": "\n\\[ \\tilde{y}_{j}=\\left\\{\\begin{array}[]{ll}1,&\\text{if }d_{j}>d_{N_{\\text{tr}}}\\\\\n0,&\\tilde{\\bm{x}}_{j}\\leftarrow\\arg\\min_{\\bm{x}\\in\\mathbb{X}_{\\text{tr}}}d(\\tilde{\\bm{x}}_{j},\\bm{x})&\\text{if }d_{j}\\leq d_{N_{\\text{tr}}}\\end{array}.\\right.",
+          "explanation": "This equation attempts to define both the label $\\tilde{y}_j$ and the update rule for the input $\\tilde{\\bm{x}}_j$ within a single case statement. The assignment operator $\\leftarrow$ does not belong in a piecewise function defining $\\tilde{y}_j$. Split this into two distinct statements: one defining $\\tilde{y}_j$ based on the distance threshold, and a separate line stating that for $d_j \\le d_{N_{tr}}$, the point $\\tilde{\\bm{x}}_j$ is replaced by its nearest neighbor in $\\mathbb{X}_{\\text{tr}}$.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Index clash in sampling equation (3)",
+          "quote": "$\\mathbb{X}_{\\text{epi}}=\\bigcup_{i=1}^{N_{\\text{tr}}}\\{\\tilde{\\bm{x}}_{j}\\sim\\mathcal{N}(\\bm{x}_{i},\\Gamma),j=1,\\ldots,N_{\\text{epi}}/N_{\\text{tr}}\\}\\,,$",
+          "explanation": "The index $j$ is used both as the global sample index in the set definition and as a local loop index inside the union over $i$. This creates ambiguity in how samples are indexed and breaks standard set notation. Replace the local index with $k$ (e.g., $\\tilde{\\bm{x}}_{i,k}$) and adjust the global indexing accordingly to prevent confusion between the union iteration and the sample generation step.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.2526,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes EpiOut, a method for real-time epistemic uncertainty estimation in neural networks, and applies it to online learning control of a quadcopter. The work addresses an important problem but has several significant weaknesses in methodology, evaluation, and framing.\n\nThe paper tackles a relevant problem in real-time uncertainty-aware control and proposes a novel approach for sample-free epistemic uncertainty estimation. However, the evaluation is incomplete in several critical ways: the control experiment lacks comparison with strong baselines, the uncertainty decomposition is not rigorously validated, and the computational claims are not supported by concrete measurements. The paper would benefit from more thorough empirical validation and clearer articulation of its contributions relative to existing work.\n\nOverview issues:\n\n- Insufficient baseline comparison in the control experiment: The quadcopter control evaluation (Section 4) compares only two conditions: the proposed EpiOut-based data selection strategy versus random data collection. This is an inadequate comparison for a paper claiming to demonstrate the benefits of uncertainty decomposition for control. The paper should compare against at least two strong baselines from the online learning control literature, such as: (a) a model-based RL approach with ensembles (e.g., Lakshminarayanan et al. 2017), (b) a Bayesian deep learning method with MC dropout (Gal & Ghahramani 2016), or (c) a GP-based approach with event-triggered learning (Umlauft & Hirche 2020). Without such comparisons, it is impossible to assess whether the proposed method offers any advantage over existing approaches in terms of tracking error, sample efficiency, or safety. The authors should add these comparisons and report statistical significance across multiple random seeds.\n\n- No ablation study isolating the contribution of uncertainty decomposition: The paper claims that the controller benefits from a 'differentiation between aleatoric and epistemic uncertainty,' but provides no ablation study to support this claim. The control design uses epistemic uncertainty only for data collection triggering (Equation 7) and aleatoric uncertainty only for gain scheduling (Equation 9). An ablation study that swaps these roles (e.g., using epistemic uncertainty for gain scheduling or aleatoric uncertainty for data collection) would demonstrate whether the specific decomposition is actually beneficial. Additionally, a version that uses a single uncertainty measure for both purposes would test whether the decomposition itself adds value. Without such experiments, the paper's central claim that uncertainty decomposition improves control is unsubstantiated.\n\n- Lack of rigorous validation of the uncertainty decomposition: The paper does not validate whether the EpiOut method actually separates aleatoric and epistemic uncertainty correctly. The evaluation in Section 3.5 uses a weighted MSE metric (Equation 6) that depends on epistemic uncertainty, but this metric conflates the quality of the point estimate with the quality of the uncertainty estimate. There is no ground-truth comparison showing that the epistemic uncertainty correlates with prediction error or that the aleatoric uncertainty captures irreducible noise. The paper should include experiments on synthetic data where the true aleatoric and epistemic components are known, and report metrics such as calibration curves, correlation between epistemic uncertainty and prediction error, and the ability to distinguish in-distribution from out-of-distribution inputs. The current evaluation is insufficient to support the claim that the method 'decomposes' uncertainties.\n\n- Unsubstantiated claims about real-time feasibility: The paper repeatedly emphasizes that EpiOut is 'real-time capable' and 'sample-free,' but provides no concrete timing measurements or computational budget analysis. The quadcopter control experiment is described qualitatively, with no mention of the control loop frequency, the time required for inference, or the time required for retraining the model when new data is added. The paper should report: (a) inference time per sample for EpiOut compared to baselines, (b) retraining time when new data is added, (c) the control loop frequency achieved, and (d) whether these satisfy typical real-time constraints for quadcopter control (e.g., 1 kHz). Without these measurements, the claim of real-time feasibility is unsubstantiated.\n\n- Missing analysis of computational complexity in the online learning setting: Section 3.3 analyzes the computational complexity of constructing the EpiOut dataset, but this analysis is for a single offline construction. In the online learning control setting (Algorithm 1), the EpiOut dataset must be resampled and the model retrained every time new data is added. The paper does not analyze the cumulative computational cost over the entire control task, nor does it discuss how the frequency of retraining (which depends on the data collection rate) affects real-time feasibility. The claim that 'the set D_epi can be constructed iteratively, reducing the complexity to O(log(N_tr))' is not elaborated, and the space complexity O(N_tr d_x^2) could become prohibitive as the dataset grows. The authors should provide a cumulative complexity analysis and discuss memory constraints.\n\n- No comparison with strong online learning baselines: The quadcopter control experiment compares only the proposed EpiOut-based data selection against random data collection. This is insufficient to support the claim that the method outperforms existing approaches. The paper should compare against at least two strong baselines from the online learning control literature, such as a model-based RL approach with ensembles (Lakshminarayanan et al. 2017), a Bayesian neural network with MC dropout (Gal & Ghahramani 2016), or a GP-based event-triggered controller (Umlauft & Hirche 2020). Without these comparisons, the reader cannot assess whether the proposed method offers any advantage in tracking error, sample efficiency, or safety. The authors should add these baselines and report results across multiple random seeds with statistical significance tests.\n\n- No validation of uncertainty decomposition on synthetic data: The paper does not validate whether the EpiOut method correctly separates aleatoric and epistemic uncertainty. The evaluation in Section 3.5 uses a weighted MSE metric that conflates point estimate quality with uncertainty estimate quality. There is no ground-truth comparison showing that the epistemic uncertainty correlates with prediction error or that the aleatoric uncertainty captures irreducible noise. The authors should include experiments on synthetic data where the true aleatoric and epistemic components are known, and report metrics such as calibration curves, correlation between epistemic uncertainty and prediction error, and the ability to distinguish in-distribution from out-of-distribution inputs. The current evaluation is insufficient to support the claim that the method 'decomposes' uncertainties.\n\n- No concrete timing measurements for real-time claim: The paper repeatedly emphasizes that EpiOut is 'real-time capable' and 'sample-free,' but provides no concrete timing measurements or computational budget analysis. The quadcopter control experiment is described qualitatively, with no mention of the control loop frequency, the time required for inference, or the time required for retraining the model when new data is added. The paper should report: (a) inference time per sample for EpiOut compared to baselines, (b) retraining time when new data is added, (c) the control loop frequency achieved, and (d) whether these satisfy typical real-time constraints for quadcopter control (e.g., 1 kHz). Without these measurements, the claim of real-time feasibility is unsubstantiated.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add at least two strong baselines (e.g., ensemble method, MC dropout, or GP-based approach) to the quadcopter control experiment and report tracking error, sample efficiency, and safety metrics with statistical significance across multiple random seeds.\n\n- Include an ablation study that tests the contribution of each uncertainty component by swapping their roles in the control design and comparing against a version that uses a single uncertainty measure.\n\n- Validate the uncertainty decomposition on synthetic data where ground-truth aleatoric and epistemic components are known, reporting calibration curves and correlation metrics.\n\n- Report concrete timing measurements for inference and retraining, and demonstrate that the method meets real-time constraints for quadcopter control (e.g., 1 kHz loop rate).\n\n- Provide a cumulative computational complexity analysis for the online learning setting, including memory usage as the dataset grows.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "\u03b7(x) learns a distance threshold, not epistemic uncertainty",
+          "quote": "neural network is now equipped with one additional output, i.e., the parameter layer is $d_{p}+1$ dimensional with output $[\\bm{f}(\\cdot)\\;\\eta(\\cdot)]^{T}$. The new output $\\eta(\\cdot)$ is terminated with a neuron using a sigmoidal activation function, such that $\\eta\\colon\\mathbb{X}\\to[0,1]$. This is beneficial because it allows immediately to judge, whether the predicted uncertainty is *high* ($\\approx 1$) or *low* ($\\approx 0$) without any reference evaluation (see comparison t",
+          "explanation": "The claim that \u03b7(x) provides an immediate judgment of epistemic uncertainty 'without any reference evaluation' is misleading. The training data D_epi is constructed using a fixed distance metric (Euclidean distance) and a global threshold d_{N_tr}. The network is trained to approximate this distance-based binary label. Therefore, \u03b7(x) is essentially learning a decision boundary based on distance to the training set, not learning epistemic uncertainty from the data distribution or model predictions. The output \u03b7(x) will be close to 1 for points far from training data and close to 0 for points near training data, which is exactly what the distance metric already provides. The claim that this is 'epistemic uncertainty' conflates a heuristic distance measure with a principled uncertainty estimate. The authors should either provide evidence that this distance-based heuristic correlates with actual model uncertainty (e.g., prediction error) or revise the terminology to avoid overclaiming.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Equation (5) does not guarantee exactly N_tr points are reassigned",
+          "quote": "hus, the $N_{\\text{tr}}$ points in $\\mathbb{X}_{\\text{epi}}$ with the least distance to a training point are replaced by the corresponding point in $\\mat",
+          "explanation": "The text claims that exactly the N_tr points with smallest d_j are reassigned, but the condition in Equation (5) is d_j \u2264 d_{N_tr}. If there are ties at the threshold d_{N_tr}, more than N_tr points may satisfy d_j \u2264 d_{N_tr}, leading to more than N_tr reassignments. This violates the stated intention and could distort the training data. The authors should either define a strict inequality for the reassignment case (e.g., d_j < d_{N_tr}) or explicitly handle ties by selecting a subset of exactly N_tr points.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Mischaracterization of GP aleatoric uncertainty",
+          "quote": "*.\n\nGaussian processes (GPs) inherently provide a measure for its fidelity with the posterior standard deviation prediction *(Rasmussen and Williams, 2006)*. It also allows to differentiate aleatoric uncertainty (typically considered as observation noise) and epistemic uncertainty (modeled by the kernel). However, the former allows only homoscedastic (constant) estimates, while real-world applications typically require heteroscedastic uncertainty models.",
+          "explanation": "The claim that GP aleatoric uncertainty 'allows only homoscedastic (constant) estimates' is incorrect. Standard GP regression with a Gaussian likelihood assumes homoscedastic observation noise, but heteroscedastic GP variants exist that model input-dependent noise (e.g., using a separate GP for the log noise variance, as in Goldberg et al. 1998 or Lazaro-Gredilla and Titsias 2011, which the paper itself cites). The quoted passage conflates the standard GP model with the general GP framework. The correct statement is that the standard GP model assumes homoscedastic noise, not that GPs themselves are limited to homoscedastic aleatoric uncertainty. Rewrite the passage to clarify that standard GP regression assumes homoscedastic observation noise, and that heteroscedastic extensions exist but increase complexity.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Incorrect claim about ensemble methods and uncertainty decomposition",
+          "quote": "nsemble based approach by *(Lakshminarayanan et al., 2017)* works with far less instances of a network, but does not differentiate between aleatoric and epistemic uncertainty explicitly.\n\nDespite",
+          "explanation": "This claim is inaccurate. Lakshminarayanan et al. (2017) propose a method that explicitly models aleatoric uncertainty by learning a Gaussian distribution (mean and variance) at each input, and epistemic uncertainty via the variance across ensemble members. The total predictive variance is the sum of the mean of the aleatoric variances and the variance of the ensemble means, which is a standard decomposition. The paper's statement that the method 'does not differentiate between aleatoric and epistemic uncertainty explicitly' is contradicted by the original paper, which provides formulas for both components. Rewrite to acknowledge that ensemble methods can provide an implicit decomposition, or cite a different limitation (e.g., computational cost of multiple forward passes).",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Table 1 metric definition contradicts earlier equation",
+          "quote": "Weighted mean squared error  $\\rho$  as defined in (6) for the considered models on different data sets. The GP model is grayed out since it does not scale towards larger data sets. To prevent the scaling of the epistemic uncertainty to the unit interval from deteriorating the performance of  $GP$  model, BNN and Dropout we minimize  $\\rho$  for the evaluation over a factor",
+          "explanation": "The table caption states that \u03c1 is defined in Equation (6), but then introduces a rescaling factor \u03b1 that is applied to \u03b7 for the GP, BNN, and Dropout models. This means the \u03c1 values reported for those models are not computed from the same definition as for EpiOut. The caption says 'we minimize \u03c1 for the evaluation over a factor \u03b1 \u2208 [0,1]' but does not specify the optimization criterion or whether the same \u03b1 is used for all three models. This makes the comparison unfair and the numbers in the table not directly comparable. The authors should either report \u03c1 computed from the identical definition for all models, or clearly state the optimized \u03b1 values and justify why this rescaling is appropriate.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Per-step vs total complexity conflation",
+          "quote": "- When used on streaming data (as for online learning control), the set $\\mathbb{D}_{\\text{epi}}$ can be constructed iteratively, reducing the complexity to $\\mathcal{O}(\\log(N_{\\text",
+          "explanation": "The claim that iterative construction reduces complexity to O(log(N_tr)) is ambiguous. If this refers to per-iteration complexity for adding a single new point, then it is consistent with kd-tree insertion (O(log N)). However, the overall complexity over N_tr insertions would be O(N_tr log N_tr), not O(log N_tr). The paper should clarify whether this is per-step or total complexity. Rewrite as: 'When used on streaming data, the set D_epi can be constructed iteratively, reducing the per-iteration complexity to O(log(N_tr)).'",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Missing justification for kd-tree complexity",
+          "quote": "However, an implementation based on kd-tree *(Cormen et al., 2009)* allows an execution in $\\mathcal{O}(N_{\\text{epi}}\\log(N_{\\text{epi}}))\\widehat{=}\\mathcal{O}(d_{x}N_{\\text{tr}}\\log(N_{\\text{tr}}d_{x})))$",
+          "explanation": "The complexity O(N_epi log N_epi) for kd-tree operations is typical for nearest-neighbor queries in low dimensions, but kd-tree performance degrades in high dimensions (curse of dimensionality). The paper does not discuss the dimension d_x or whether d_x is small enough for kd-trees to achieve logarithmic complexity. Without this discussion, the complexity claim may be misleading for high-dimensional state spaces. Add a note: 'assuming d_x is small enough for kd-tree efficiency; for high dimensions, alternative data structures may be needed.'",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Scaling of uncertainty measures to unit interval is inconsistent",
+          "quote": "ning data set.\n\nThe measure in (6) relies on epistemic uncertainty prediction in the interval $[0,1]$. This is only ensured for the proposed EpiOut approach and therefore the uncertainty measures, more specifically the predicted standard deviation, provided by the GP, Dropout and BNN are scaled to the unit interval based on the evaluation on all test and training points.\n\nThe following d",
+          "explanation": "The text states that the epistemic uncertainty \u03b7(x) must be in [0,1] for Equation (6) to be meaningful. For GP, Dropout, and BNN, the predicted standard deviation is scaled to [0,1] using 'the evaluation on all test and training points.' This scaling procedure is not specified: is it min-max scaling, division by the maximum observed standard deviation, or something else? If min-max scaling is used, the resulting \u03b7 values depend on the range of standard deviations in the combined training+test set, which is not known a priori and may change if the test set is different. Moreover, scaling the standard deviation to [0,1] does not guarantee that \u03b7 represents a meaningful epistemic uncertainty; it merely rescales the raw uncertainty measure. The paper should specify the exact scaling method and justify why it produces a valid \u03b7 in [0,1] that can be compared across models. Without this, the comparison of \u03c1 across models is questionable.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Claim about prediction time lacks quantitative support",
+          "quote": "The prediction time for EpiOut is typically an order of magnitude faster than Dropout and BNN.",
+          "explanation": "This claim is stated without any quantitative evidence in this section. The paper does not report actual inference times, hardware specifications, or the number of samples used for the comparison. The reader cannot verify whether 'an order of magnitude faster' holds across different dataset sizes, batch sizes, or hardware configurations. The paper should either provide concrete timing measurements in this section or remove the claim and refer to the supplementary material with specific numbers.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Unsubstantiated claim of outperforming existing methods",
+          "quote": "As the prediction by the model are obtained sample-free, it allows for real-time critical online learning and outperforms existing methods on the proposed uncertainty-weighted precision measure.",
+          "explanation": "The conclusion claims that the proposed method 'outperforms existing methods on the proposed uncertainty-weighted precision measure.' However, the paper's evaluation (Section 3.5) only compares the proposed EpiOut-based data selection against random data collection, not against any existing methods from the literature. The uncertainty-weighted precision measure is also introduced by the authors, so claiming to outperform existing methods on this self-defined metric is circular. The paper does not compare against any baseline that also uses uncertainty decomposition (e.g., Bayesian neural networks, ensemble methods). Therefore, this claim is not supported by the evidence presented. Remove the phrase 'outperforms existing methods on the proposed uncertainty-weighted precision measure' because no such comparison was conducted.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Unsubstantiated claim of data efficiency",
+          "quote": "The proposed online learning control algorithm is inherently data-efficient by adding only required points to the data set.",
+          "explanation": "The conclusion claims the algorithm is 'inherently data-efficient,' but the paper provides no quantitative analysis of data efficiency. The quadcopter control experiment (Section 4) does not report the number of data points collected, the frequency of retraining, or the total data required to achieve a given tracking error. Without such metrics, the claim of data efficiency is unsubstantiated. The paper should either provide these numbers or remove the claim. Remove the phrase 'inherently data-efficient' because no data efficiency metrics are reported.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Overstatement of contribution regarding uncertainty differentiation in prior control work",
+          "quote": "However, all of these approaches only consider the model fidelity in general and do not differentiate between aleatoric and epistemic uncertainty.",
+          "explanation": "This sentence follows a list of control works (Fanger et al., Berkenkamp et al., Beckers et al., Liu et al., Umlauft & Hirche, Chowdhary et al.) and claims that none differentiate between aleatoric and epistemic uncertainty. This is an overstatement. For example, Berkenkamp et al. (2016) use GP-based confidence bounds that inherently separate aleatoric noise (observation noise) from epistemic uncertainty (kernel variance). Umlauft & Hirche (2020) explicitly discuss the trade-off between exploration (epistemic) and exploitation (aleatoric) in GP-based control. The claim that these works 'do not differentiate' is misleading. The paper should qualify this statement by noting that prior works do not use a deep learning framework for explicit decomposition, or that they do not leverage the decomposition for distinct control actions as proposed here.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Overstated computational burden of Bayesian NNs",
+          "quote": "nally challenging. Firstly, they have a larger number of parameters to tune than their deterministic counterparts and rely on variational inference methods *(Kwon et al., 2020)*. Secondly, the prediction requires to sample the entire network before the statistics of the output can be computed. For the application in real-time critical control problems (e.g., robotics with a sampling rate of $1\\text{\\,}\\mathrm{kHz}$), these computational burdens prohibit an employment of these tec",
+          "explanation": "The claim that Bayesian NNs are prohibitively expensive for 1 kHz control is too sweeping. While variational inference adds overhead, modern Bayesian NNs (e.g., with Flipout or local reparameterization) can achieve near-deterministic inference speeds, especially with small networks. MC dropout (Gal and Ghahramani, 2016) requires only a few forward passes (e.g., 10\u201350) and can run at kHz rates on embedded hardware for moderate network sizes. The paper does not provide quantitative evidence (e.g., FLOPs or timing) to support the blanket dismissal. A more nuanced discussion acknowledging recent efficient Bayesian methods would be appropriate.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Claim about bounded uncertainty interval is misleading",
+          "quote": "the data clusters.\n\n- A single evaluation of  $\\eta(\\cdot)$  is sufficient for a conclusion whether the uncertainty is high or low, since it is bounded to the interval [0, 1], whereas alternative approaches based BNN and Dropout provide a return value  $[0, \\infty]$ , which can be difficult to interpret without a maximum valu",
+          "explanation": "The claim that BNN and Dropout return values in [0, \u221e] is imprecise. MC dropout and BNNs produce variance estimates that are non-negative but not unbounded in practice \u2014 they are bounded by the data variance and model capacity. More importantly, the fact that \u03b7 is bounded to [0,1] does not automatically make it interpretable: a value of 0.5 could be 'high' or 'low' depending on the context and the distribution of \u03b7 across the input space. The paper does not provide a calibration or threshold analysis to support the claim that a single evaluation suffices. The authors should either provide empirical evidence (e.g., a histogram of \u03b7 values or a calibration curve) or soften the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Figure 1 description misstates BNN and Dropout behavior",
+          "quote": "The right plot shows the epistemic uncertainty estimate, where BNN and Dropout clearly miss to predict a higher uncertainty between the data clusters.",
+          "explanation": "The text claims that BNN and Dropout 'clearly miss' predicting higher uncertainty between data clusters. However, the figure is not reproduced in the text, so the reader cannot verify this claim. Moreover, for the 1D Split dataset, BNN and Dropout may indeed produce higher uncertainty in the gap region if properly trained \u2014 the claim that they 'miss' it is a strong qualitative statement without quantitative evidence (e.g., the actual uncertainty values at the gap midpoint). The authors should either show the numerical values or provide a more measured description, such as 'BNN and Dropout produce lower uncertainty in the gap region compared to EpiOut.'",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Grammatical error and unclear future work direction",
+          "quote": " set.\n\nFor future work will consider alternative functions for sorting the epi points to encode prior knowledge, such as as periodicity (similar to a kernel of GP) and investigate the effect of a continuous valued  $\\",
+          "explanation": "This sentence contains a grammatical error ('For future work will consider' should be 'For future work, we will consider') and a typo ('such as as periodicity'). More importantly, the proposed future direction is vague: 'investigate the effect of a continuous valued hat{y}' is unclear because hat{y} is already a continuous-valued prediction in the current framework. The authors likely mean a continuous-valued selection criterion for the EpiOut set, but this is not explained. The sentence should be rewritten for clarity. Rewrite as 'Future work will consider alternative functions for sorting the EpiOut points to encode prior knowledge, such as periodicity (similar to a kernel of a GP), and will investigate the effect of a continuous-valued selection criterion.'",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 16
+        }
+      ],
+      "cost_usd": 0.0651,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper proposes a sampling-free method for epistemic uncertainty estimation (EpiOut) and applies it to a quadcopter control task. The methodology relies on training a binary classifier to distinguish 'in-distribution' regions from 'out-of-distribution' regions based on geometric distance to training data. While the computational efficiency is promising, the theoretical definition of epistemic uncertainty is conflated with out-of-distribution detection, and the critical control simulation section is missing from the main text.\n\nThe paper addresses a real-time constraint in safety-critical control. The core idea of using geometric proximity for uncertainty is clever and computationally efficient. However, the theoretical grounding is weak (it is OOD detection, not Bayesian epistemic uncertainty), and the primary contribution\u2014the control strategy\u2014is not described in the main body, relying entirely on supplementary material.\n\nOverview issues:\n\n- Conflation of Epistemic Uncertainty with Out-of-Distribution Detection: The paper defines epistemic uncertainty as 'the absence of training data' and trains a classifier (EpiOut) to label inputs based on their distance to existing training points (Eq 5). This fundamentally measures Out-of-Distribution (OOD) detection rather than epistemic uncertainty in the Bayesian sense, which quantifies uncertainty about model parameters given data. A standard neural network with deterministic weights has no parameters to be uncertain about; its uncertainty is purely aleatoric (noise). EpiOut will incorrectly indicate 'low uncertainty' for inputs in regions where the function is highly non-linear but densely sampled, and 'high uncertainty' for inputs in smooth regions where the function is well-modeled but sparsely sampled. The paper needs to either explicitly frame this as an OOD detection method or provide a theoretical justification for why geometric proximity is a valid proxy for epistemic uncertainty in this specific non-Bayesian setting.\n\n- Circular Metric for Uncertainty Evaluation: The evaluation metric $\rho$ in Equation (6) is defined as a weighted mean squared error where predictions are discounted if the model is uncertain. This metric is circular because it rewards the model for being uncertain (which reduces the penalty) and penalizes the model for being certain (which increases the penalty). This incentivizes the model to be uncertain everywhere to minimize the score, rather than accurately quantifying uncertainty. While the authors argue this metric is relevant for the control application, comparing EpiOut to GP and BNN using this specific metric is unfair because GP and BNN provide continuous uncertainty measures that are scaled to $[0,1]$ for comparison. The scaling of these continuous measures might distort their calibration properties, making the comparison invalid. The paper should include standard uncertainty calibration metrics (such as Negative Log Likelihood or Expected Calibration Error) alongside $\rho$ to demonstrate that the uncertainty estimates are meaningful in isolation, not just for this specific discounting scheme.\n\n- Critical Omission: Control Simulation Section is Missing: Section 4 'Online Learning Control Using Uncertainty Decomposition' is entirely empty in the provided draft. The paper claims to propose an 'advanced control framework' and demonstrates it on a 'quadcopter controller,' yet the main text does not describe the simulation setup, the baseline controller, the stability analysis, or the results. Figure 3 is referenced, but without the accompanying text explaining the experimental conditions (e.g., specific quadcopter dynamics, noise levels, or control gains), the contribution is impossible to evaluate. A paper proposing a new control strategy cannot rely on a supplementary material for the core experimental validation in the main text. This section must be written to describe the simulation environment, the baseline for comparison (e.g., a controller that samples data uniformly), and a detailed analysis of the tracking performance and data efficiency gains.\n\n- Unsupported Complexity Claims for Real-Time Application: Section 3.3 claims the computational complexity is $\text{O}(d_x N_{tr} \text{log}(d_x N_{tr}))$ and that the method is suitable for real-time control (e.g., 1kHz). However, the analysis assumes an idealized kd-tree update. In Algorithm 1, the code 'resamples $\text{D}_{\text{epi}}$ (3)' and 'retrains disturbance model' at every step. Retraining a neural network from scratch or even updating weights incrementally is not guaranteed to be fast enough for a 1kHz loop if $N_{tr}$ is large. Furthermore, the kd-tree must be rebuilt as $N_{tr}$ grows; the complexity analysis does not account for the cost of rebuilding the tree when $N_{tr}$ changes significantly. The paper needs to provide actual timing breakdowns for the quadcopter loop (e.g., 'Training takes 2ms, Control takes 0.5ms') to substantiate the 'real-time' claim.\n\n- Decoupled Uncertainty Modeling in the Network Architecture: The paper proposes a single neural network to decompose uncertainties, but the training of the 'epistemic output' $\text{D}_{\text{epi}}$ relies on synthetic geometric distances (Eq 5), while the 'aleatoric outputs' $\text{D}_{\text{tr}}$ are trained on actual data. These two heads are trained independently on disjoint data distributions (synthetic geometry vs. real function values). There is no mechanism for the network to learn that high aleatoric noise (e.g., due to sensor noise) might correlate with high epistemic uncertainty (e.g., due to model mismatch) or vice versa. The control law in Equation (9) assumes the aleatoric uncertainty $\text{sigma}(\text{x})$ is the only driver for gain scheduling, ignoring the epistemic component $\text{eta}(\text{x})$. The paper should clarify if the epistemic uncertainty is meant to be used for gain scheduling as well, or if the decoupling is intentional and theoretically justified.\n\nRecommendation: Major Revision. The paper presents an interesting computational approach to uncertainty, but the theoretical framing of epistemic uncertainty is flawed (it is effectively OOD detection), and the core contribution\u2014the control simulation\u2014is missing from the main text. The paper requires significant revision to correct the theoretical definitions and write out the missing experimental section.\n\nRevision targets:\n\n- Rewrite Section 4 to describe the quadcopter simulation setup, baseline controller, and quantitative results.\n\n- Reframe the contribution to explicitly address Out-of-Distribution detection or clarify the theoretical definition of epistemic uncertainty in the context of non-Bayesian networks.\n\n- Add standard uncertainty calibration metrics (e.g., NLL, ECE) to the evaluation in Section 3.5 to validate the uncertainty estimates independently of the control objective.\n\n- Provide a timing analysis of the control loop to substantiate the real-time feasibility claims.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Missing core experimental section",
+          "quote": "We exploit this property in a model-based quadcopter control setting and demonstrate how the controller benefits from a differentiation between aleatoric and epistemic uncertainty in online learning of thermal disturbances.",
+          "explanation": "Section 4 contains only section headers and no descriptive text. The abstract claims to demonstrate a quadcopter controller, yet the main text provides no details on the simulation setup, baseline controller, or results. The reader cannot evaluate the contribution without this core experimental section.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Factual contradiction in literature review",
+          "quote": "However, all of these approaches only consider the model fidelity in general and do not differentiate between aleatoric and epistemic uncertainty.",
+          "explanation": "The authors cite Umlauft & Hirche (2020) as a work that does not differentiate uncertainty, yet their paper is explicitly titled 'Online Learning Control with Uncertainty Decomposition'. This contradiction weakens the literature review.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Confusing explanation of label assignment",
+          "quote": "}}$. Now the choice of $2d_{x}+1$ epi points becomes clear as one of them will be turned into $\\tilde{y}=0$ corresponding to \u201clow epistemic uncertainty\u201d, while $2d_{x}$ points further away from the training point $\\tilde{y}=0$ indicate the opposite.\n\nGiven the ",
+          "explanation": "The explanation of Equation (5) is confusing. It states that points further away get label 0, but the equation assigns label 1 to points with distance greater than $d_{N_{tr}}$. The text should clarify that the $2d_x$ points further away correspond to high uncertainty (label 1).",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Incorrect statistical terminology",
+          "quote": ", while $\\bm{y}$ is a i.i.d. random vector sampled in every time step from\n\n$\\bm{y}_{k}\\sim\\mathcal{D}(\\bm{f}(\\bm{x}_{k})),",
+          "explanation": "Equation (2) defines the disturbance distribution as dependent on the state $x_k$. Calling this 'i.i.d.' is technically incorrect; the samples are independent but not identically distributed.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.7-flash_4",
+          "title": "Overgeneralization regarding GP approximations",
+          "quote": "these approximations typically focus only on the precision of the point estimate and distort the uncertainty prediction.",
+          "explanation": "The text claims sparse and local GP approximations 'typically' distort uncertainty. This is too broad; local GPs are specifically designed to preserve local uncertainty structure.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.7-flash_5",
+          "title": "Mischaracterization of Bayesian NNs",
+          "quote": "Secondly, the prediction requires to sample the entire network before the statistics of the output can be computed.",
+          "explanation": "The text states that Bayesian NNs require sampling. This is not true for all approaches; deterministic methods like Deep Ensembles estimate uncertainty without sampling.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.1193,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

@@ -1,0 +1,627 @@
+{
+  "slug": "iclr2021-wWK7yXkU-mongoose-a-learnable-lsh-framework-for-efficient-neural-netw",
+  "title": "MONGOOSE: A LEARNABLE LSH FRAMEWORK FOR EFFICIENT NEURAL NETWORK TRAINING [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## MONGOOSE: A LEARNABLE LSH FRAMEWORK FOR EFFICIENT NEURAL NETWORK TRAINING"
+    },
+    {
+      "index": 1,
+      "text": "**Beidi Chen**[1] **, Zichang Liu**[2] **, Binghui Peng**[3] **, Zhaozhuo Xu**[2] **, Jonathan Lingjie Li**[1] **, Tri Dao**[1] **, Zhao Song**[4] **, Anshumali Shrivastava**[2] **, Christopher R\u00e9**[1]"
+    },
+    {
+      "index": 2,
+      "text": "1 Stanford University, 2 Rice University, 3 Columbia University, 4 Princeton University\n\n{beidic,jlli,trid,chrismre}@stanford.edu, bp2601@columbia.edu {zl71,zx22,anshumali}@rice.edu, zhaos@princeton.edu"
+    },
+    {
+      "index": 3,
+      "text": "## ABSTRACT\n\nRecent advances by practitioners in the deep learning community have breathed new life into Locality Sensitive Hashing (LSH), using it to reduce memory and time bottlenecks in neural network (NN) training. However, while LSH has sublinear guarantees for approximate near-neighbor search in theory, it is known to have inefficient query time in practice due to its use of random hash functions. Moreover, when model parameters are changing, LSH suffers from update overhead. This work is motivated by an observation that model parameters evolve slowly, such that the changes do not always require an LSH update to maintain performance. This phenomenon points to the potential for a reduction in update time and allows for a modified learnable version of data-dependent LSH to improve query time at a low cost. We use the above insights to build MONGOOSE, an end-to-end LSH framework for efficient NN training. In particular, MONGOOSE is equipped with a scheduling algorithm to adaptively perform LSH updates with provable guarantees and learnable hash functions to improve query efficiency. Empirically, we validate MONGOOSE on large-scale deep learning models for recommendation systems and language modeling. We find that it achieves up to 8% better accuracy compared to previous LSH approaches, with 6 _._ 5 _\u00d7_ speed-up and 6 _\u00d7_ reduction in memory usage."
+    },
+    {
+      "index": 4,
+      "text": "## 1 INTRODUCTION\n\nLocality Sensitive Hashing (LSH) has been adapted to address the computational and memory bottlenecks of large-scale neural network (NN) training in natural language processing (Chandar et al., 2016; Rae et al., 2016; Kitaev et al., 2020), computer vision (Chen et al., 2015) and recommendation systems (Spring & Shrivastava, 2017; Chen et al., 2020). Specifically, giant matrix multiplications in linear layers preceding a softmax can be approximated using nearest neighbor search (NNS) techniques, which often rely on LSH. However, LSH methods used in NNs are inefficient. Although LSH achieves sub-linear query time in theory, it is known to suffer from high query and pre-processing (update) overhead in practice (Erik et al., 2018). In the setting of NN training, where data points for LSH are model parameters, this overhead is exacerbated by a high number of updates due to constantly evolving model parameters."
+    },
+    {
+      "index": 5,
+      "text": "The most established solution for reducing LSH query overhead is data-dependent or learningbased hashing, which uses adaptive hash functions to optimize the LSH bucket distribution for each dataset (Andoni & Razenshteyn, 2015; Dong et al., 2019). These methods reduce query time by incurring a one-time offline cost to learn useful data input patterns in a preprocessing step. The learning techniques are often computationally complex, but can lead to a net reduction in overall query time. However, in NN training, the expensive preprocessing procedure has to be repeated each time the parameters are updated. Na\u00efvely applying these techniques would increase the LSH update overhead rather than reduce it. A more appropriate data-dependent LSH framework would ideally (i) have a deeper understanding of the training dynamics of model parameters, a setting in which LSH has not been well-studied, (ii) be able to perform low-cost updates to account for evolving parameters, and (iii) have better query time while accurately approximating matrix multiplication."
+    },
+    {
+      "index": 6,
+      "text": "We argue that it is unnecessary to view evolving model parameters as streaming data and not every parameter update requires an LSH update. In fact, LSH updates are necessary only when the NN gra-"
+    },
+    {
+      "index": 7,
+      "text": "1\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nTime t1 1 Bucket \u2206 W SCHEDULER 1 5\n2 Time W/O Update LSH Hash  2\n1 1 4 Functions  H\n3 Time for Update 4\n2 2 5 3\n4\nW 1 5 3 3 t LEARNING\n1 5\nNN Training W/O Update Update Updated Hash Functions  H' 2\nTime t2 1 Bucket Bucket 3 4\n2\n1 1 4 1 1 2\n3 OR 5 2\n2 2 5 2 5\n4 H ' 1 3\nW 1  \u2212 \u2206 W 1 5 3 3 3 3 4 4\n**----- End of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "Figure 1: MONGOOSE workflow - For each layer in the NN, besides the usual setup for LSH, we add two components: (i) a scheduler deciding if an LSH update should be performed in this iteration (ii) if updating, a learning (data-adaptive) mechanism will be triggered for tuning the LSH hash functions based on the current weights, and then LSH updates will be performed."
+    },
+    {
+      "index": 9,
+      "text": "dient steps are large enough to cause the model parameters\u2019 LSH hash codes to change. Therefore, we count the number of hash code changes that occur for important models such as Transformers and fully-connected NNs from previous work (Chen et al., 2020; Kitaev et al., 2020). We find that only 1% of the hash codes change after each epoch on average for Transformers, and 5% for a fullyconnected NNs, so most weights do not change on a scale that is enough to trigger an LSH update. Furthermore, the rate of hash code change initially decays exponentially and eventually plateaus, as shown later in Figure 3. We calculate that a **100** _\u00d7_ speed up is possible with an update oracle. In contrast, current approaches with LSH have not fully exploited this observation. We show in Section 4.2 that they either blindly skip updates for speed, resulting in a 10-point accuracy drop, or suffer from a 20 _\u00d7_ slow-down."
+    },
+    {
+      "index": 10,
+      "text": "We demonstrate that these slowly changing hash codes provide two opportunities to realize the ideal data-dependent LSH framework described above (shown as the intuition for the scheduler in Figure 1). First, given weight changes, an algorithm could adaptively schedule LSH updates to realize low update overhead. Second, given current weights, we could learn data-dependent hash functions for better LSH bucket distribution to achieve fast query time. However, this comes with three challenges: (i) how to characterize the slowly-changing phenomenon without computing hash codes, (ii) how to schedule the updates without the oracle, and (iii) how to learn data-dependent hash functions for shorter query time without compromising on the update time."
+    },
+    {
+      "index": 11,
+      "text": "In this paper, we first provide a general formulation of the problem as _dynamic NNS_ in Section 2. In Section 3, we propose MONGOOSE, a framework for fast and memory-efficient NN training to address the above challenges. We show one major observation, _slow change_ , and two key components based on it in MONGOOSE. Specifically,"
+    },
+    {
+      "index": 12,
+      "text": "- In Section 3.1, we measure the _\u2113_ 2 norm of the weight changes and their hash code changes during training on a fully-connected NN. (More models are studied in Appendix A). We find that (i) the hash codes are slowly changing (ii) both quantities share similar trajectories, but the former\u2019s slow change is the necessary condition of the latter\u2019s. Therefore, we formally define the slow change of _\u2113_ 2 norm of weight changes in Assumption 3.1, which is the key to build MONGOOSE."
+    },
+    {
+      "index": 13,
+      "text": "- In Section 3.2, we present an algorithm for scheduling efficient LSH updates. We closely analyze our scheduler\u2019s theoretical guarantees and provide an upper bound of its running time, which is proportional to the _\u2113_ 2 norm of the weight changes. Therefore, under the _slow change_ assumption, we show that our scheduler is provably faster than previous approaches."
+    },
+    {
+      "index": 14,
+      "text": "- In Section 3.3, we propose a method of learning parameterized LSH hash functions (e.g., SimHash (Charikar, 2002)) during NN training. Our method utilizes intermediate activations during the forward pass to generate training inputs for tuning LSH hash functions with little overhead. Combining this with our scheduler further decreases the overhead, while providing hash functions that better separate data."
+    },
+    {
+      "index": 15,
+      "text": "Finally, in Section 4, we demonstrate the efficacy of MONGOOSE on two LSH-NN systems, SLIDE and Reformer. For SLIDE applications, we show up to 6 _._ 5 _\u00d7_ speedup in time and 8% higher accuracy on three datasets. For Reformer applications, we show improvement in perplexity when training lan-"
+    },
+    {
+      "index": 16,
+      "text": "2\n\nPublished as a conference paper at ICLR 2021\n\nguage modeling benchmarks from scratch. Moreover, We provide two additional sets of experiments to show how MONGOOSE addresses the aforementioned three challenges separately."
+    },
+    {
+      "index": 17,
+      "text": "2 RELATED WORK AND PROBLEM SETTING In this section, we first discuss applications of LSH in the NN training setting and introduce datadependent LSH techniques. Then we formally define the problem we solve as _dynamic NNS_ ."
+    },
+    {
+      "index": 18,
+      "text": "## 2.1 LSH FOR EFFICIENT NN TRAINING\n\nRecent works take advantage of LSH as an efficient NNS algorithm 0 |x1 to speed up matrix multiplication in neural networks. SLIDE (Chen 1 |x2 \u2026 et al., 2020) is an algorithm that retrieves neurons with maximum inner product during the forward pass via an LSH-based data struc- _h(x1) = 0 h_ ture. In this way, in the backward pass gradients are only computed for neurons with estimated large gradients. Reformer (Kitaev et al., 2020), a variant of Transformer, similarly uses LSH to reduce _h(x1) = 1_ the memory bottleneck of self-attention layers over long sequences. One pain point of LSH in this setting is that model weights change Figure 2: Visualization of why throughout training. This necessitates constantly updating the LSH LSH updates are essential when data structure. Figure 2 illustrates what happens when we _don\u2019t_ perdata changes. _h_ is a hyperplane form such updates. In short, failing to update the LSH data structure separating two hash buckets. If as the search data changes degrades its NNS performance. This in _x_ 1 is updated in training, its turn worsens the quality of the matrix product approximation. In our hash value may change. experiments, we found that failing to update the LSH data structure in SLIDE causes a 28% decrease in top-1 accuracy for a fully-connected NN. (More related work is presented in Appendix E.1)"
+    },
+    {
+      "index": 19,
+      "text": "## 2.2 PROBLEM FORMULATION\n\nIn this section, we formulate LSH for effcient training as a _dynamic NNS_ problem. This formulation is closely built on the static NNS problem and the well-known lower bound on LSH complexity. In the static NNS problem, we are given a set of weights _w_ 1 _, \u00b7 \u00b7 \u00b7 , wn \u2208_ R _[d]_ and want to construct a data structure (NNS-ds) that supports the QUERY operation, defined as follows: given _x \u2208_ R _[d]_ , QUERY( _x_ ) returns a set _S_ of weights _wi_ that are all \u201cclose\u201d to _x_ in a distance measure."
+    },
+    {
+      "index": 20,
+      "text": "More precisely, we require the QUERY( _x_ ) operation to be ( _c_ 1 _, c_ 2)-accurate:\n\n**Definition 2.1** (( _c_ 1 _, c_ 2)-accurate) **.** _Denote S to be the (random) set returned by_ QUERY( _x_ ) _. We say_ QUERY( _x_ ) _is_ ( _c_ 1 _, c_ 2) _accurate if_"
+    },
+    {
+      "index": 21,
+      "text": "_(i) for any i \u2208_ [ _n_ ] _such that \u27e8wi, x\u27e9\u2265 c_ 1 _\u2225x\u2225_ 2 _\u2225wi\u2225_ 2 _,_ Pr[ _wi \u2208 S_ ] _\u2265_ 1 _\u2212_ 1 _/_ poly( _n_ ) _,_"
+    },
+    {
+      "index": 22,
+      "text": "_(ii) for any i \u2208_ [ _n_ ] _such that \u27e8wi, x\u27e9 < c_ 2 _\u2225x\u2225_ 2 _\u2225wi\u2225_ 2 _,_ Pr[ _wi \u2208 S_ ] _<_ 1 _/_ poly( _n_ ) _._"
+    },
+    {
+      "index": 23,
+      "text": "In our application, we assume 1 _> c_ 1 _> c_ 2 _>_ 0 to be some constants and denote _\u03c1_ = ( _c_ 2 _/c_ 1)[2] . In the dynamic NNS problem, the weights _w_ 1 _, \u00b7 \u00b7 \u00b7 , wn \u2208_ R _[d]_ can evolve over time, so we need to update the data structure."
+    },
+    {
+      "index": 24,
+      "text": "**Lemma 2.2** ((Andoni & Indyk, 2006)) **.** _Using LSH, one can achieve_ ( _c_ 1 _, c_ 2) _accuracy with query time O_ ( _dn[\u03c1]_ ) _, preprocessing time O_ ( _dn_[1+] _[\u03c1]_ ) _, updating time O_ ( _dn[\u03c1]_ ) _._"
+    },
+    {
+      "index": 25,
+      "text": "## 3 MONGOOSE: A FRAMEWORK FOR LEARNABLE LSH\n\nWe present the workflow of our main framework in Figure 1. In Section 3.1, we first show the key observation that encourages the design of MONGOOSE and formally define the _slow change_ assumption. In Section 3.2, we introduce our first component, an algorithm for scheduling LSH updates with provable guarantees based on the assumption. Finally, we present the second component, lowcost learnable LSH hash functions, in Section 3.3. More details about the efficient implementation of MONGOOSE are in Appendix F."
+    },
+    {
+      "index": 26,
+      "text": "## 3.1 CHARACTERIZATION OF \u201cSLOW CHANGE\u201d PHENOMENON\n\nWe first present an observation on model weights and how their LSH hash codes change during training. Based on this observation, we define the _slow change_ assumption. We denote \u2206 _W_ as the"
+    },
+    {
+      "index": 27,
+      "text": "3\n\nPublished as a conference paper at ICLR 2021\n\ndifference between weights across gradient steps, and \u2206 _H_ as the Hamming distance between hash codes during training."
+    },
+    {
+      "index": 28,
+      "text": "**Observation.** We plot the _\u2113_ 2 norm of \u2206 _W_ and \u2206 _H_ of the weights during training a one layered fully-connected NN in Figure 3. Our most surprising finding is that only 5% of hash codes change after each epoch on average, which implies that for most neurons, \u2206 _W_ is not large enough to trigger hash code changes. For both \u2206 _W_ and \u2206 _H_ , there is a sharp drop at the early stages of training before they plateau. (Similar observations on Transformers and further discussions are presented in Appendix A.)"
+    },
+    {
+      "index": 29,
+      "text": "**----- Start of picture text -----**\n\n14 Avg Weight Change 0 . 5 Avg Hash Code Change\n12 0 . 4\n10\n8 0 . 3\n6 0 . 2\n4\n2 0 . 1\n0 0 . 0\n0 2 4 6 8 0 2 4 6 8\nEpoch Epoch\nW H\n\u2206 \u2206\n**----- End of picture text -----**"
+    },
+    {
+      "index": 30,
+      "text": "Figure 3: \u2206 _W_ and \u2206 _H_ both start out relatively high at the beginning of training, but quickly drop off and"
+    },
+    {
+      "index": 31,
+      "text": "**Insights.** In the _dynamic_ NNS problem, input data (model weights) change over time. Without any assumptions about weight updates, na\u00efvely applying LSH will require updating the LSH hash functions at every time step. However, the above observation suggests that we can reasonably assume \u2206 _W_ is (roughly) upper-bounded by \u2206 _H_ . Denote _w_ as the weight matrix, _n_ as number of neurons and _wi_ as the weight vector for neuron _i_ . Formally:"
+    },
+    {
+      "index": 32,
+      "text": "**Assumption 3.1** (Slow change) **.** _Assume NN weights change slowly over time. In particular, we assume there is an upper bound on the expected movement of the weights of the neural networks (C_ 1 _) and an upper bound on the variance (C_ 2 _). Specifically, we denote the initial weight matrix as w_[(0)] _\u2208_ R _[n][\u00d7][d] . We assume the (random) update sequence w_[(1)] _, \u00b7 \u00b7 \u00b7 , w_[(] _[T]_[ )] _\u2208_ R _[n][\u00d7][d] satisfies_"
+    },
+    {
+      "index": 33,
+      "text": "_where the expectation and variance is conditioned on wi_[(] _[k]_[)] _for all k_ = 0 _,_ 1 _, \u00b7 \u00b7 \u00b7 , T \u2212_ 1 _._"
+    },
+    {
+      "index": 34,
+      "text": "## 3.2 A SMART SCHEDULER FOR LEARNABLE LSH UPDATES\n\nIn this section, we introduce a dynamic data structure to schedule updates for LSH. Our scheduler provides significant speedup under two realistic assumptions without compromising the theoretical guarantee of LSH: (1) _slow change_ defined in Assumption 3.1, (2) _batch speed up_ defined in Assumption 3.2. The scheduler can generalize to any near-neighbor search data structure (NNS-ds), but we show a design for LSH as an example since that is the NNS-ds in MONGOOSE."
+    },
+    {
+      "index": 35,
+      "text": "## 3.2.1 SMART SCHEDULER\n\nThe pseudo-code for our smart scheduler is shown in Algorithm 1. Our scheduler is inspired by a dynamic data structure proposed in a recent line of work (Cohen et al., 2019), which was originally designed for inverse maintainance in Linear Programming solvers. We provide a novel application here for the dynamic LSH problem."
+    },
+    {
+      "index": 36,
+      "text": "**Notation:** We denote [ _n_ ] = _{_ 1 _, \u00b7 \u00b7 \u00b7 , n}_ . The _O_[\ufffd] ( _\u00b7_ ) notation hides polylogarithmic"
+    },
+    {
+      "index": 37,
+      "text": "**Algorithm 1** General Maintenance Data Structure\n\n1: **Input:** _w \u2208_ R _[n][\u00d7][d]_ , _v \u2208_ R _[n][\u00d7][d]_ , _\u03f5_ mds _\u2208_ (0 _,_ 1 _/_ log[2] _n_ ), _a_ = min _{\u03c1, \u03b1}_ , _S \u2286_ [ _n_ ]"
+    },
+    {
+      "index": 38,
+      "text": "2: **procedure** INITIALIZE( _w, \u03f5_ mds) _\u25b7_ Lemma B.2 3: _w \u2190 w_ , _v \u2190 w_ , _\u03f5_ mds _\u2190 \u03f5_ mds, _S \u2190\u2205_ , 4: Build LSH with accuracy ( _c_ 1 _\u2212 \u03f5_ mds _, c_ 2 + _\u03f5_ mds) 5: **end procedure** 6: **procedure** UPDATE( _w_[new] ) _\u25b7_ Lemma B.3 7: _yi \u2190 wi_[new] _\u2212 vi_ , _\u2200i \u2208_ [ _n_ ] 8: _r \u2190_ the number of indices _i_ that _\u2225yi\u2225_ 2 _\u2265 \u03f5_ mds _/_ 2. 9: **if** _r < n[a]_ **then** 10: _v_[new] _\u2190 v_ 11: **else** 12: Let _\u03c0_ : [ _n_ ] _\u2192_ [ _n_ ], that _\u2225y\u03c0_ ( _i_ ) _\u2225_ 2 _\u2265\u2225y\u03c0_ ( _i_ +1) _\u2225_ 2 13: **while** 1 _._ 5 _\u00b7 r < n_ and _\u2225y\u03c0_ ( _\u2308_ 1 _._ 5 _\u00b7r\u2309_ ) _\u2225_ 2 _\u2265_ (1 _\u2212_ 1 _/_ log _n_ ) _\u2225y\u03c0_ ( _r_ ) _\u2225_ 2 **do** 14: _r \u2190_ min( _\u2308_ 1 _._ 5 _\u00b7 r\u2309, n_ ) 15: **end while** _\u25b7_ Finding a smooth cut 16: _v\u03c0_[new] ( _i_ ) _[\u2190]_ \ufffd _wv\u03c0\u03c0_[new] (( _ii_ )) _ii \u2208{ \u2208{_ 1 _r_ + 1 _,_ 2 _, \u00b7 \u00b7 \u00b7, \u00b7 \u00b7 \u00b7, r, n} }_ 17: LSH.UPDATE _\u03c0_ (1) _, \u00b7 \u00b7 \u00b7 , \u03c0_ ( _r_ )"
+    },
+    {
+      "index": 39,
+      "text": "18: **end if** 19: _w \u2190 w_[new] , _v \u2190 v_[new] , 20: _S_ = _{i \u2208_ [ _n_ ] : _\u2225wi \u2212 vi\u2225_ 2 _\u2265 \u03f5_ mds _/_ 2 _}_ 21: **end procedure**"
+    },
+    {
+      "index": 40,
+      "text": "22: **procedure** QUERY( _h_ ) _\u25b7_ Lemma B.4 23: LSH.QUERY and check _S_\n\n24: **end procedure**\n\n4\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 41,
+      "text": "dependence on _n, d, \u03f5_ mds. We use _w \u2208_ R _[n][\u00d7][d]_ to denote the weights of the neural network and each row _wi \u2208_ R _[d]_ ( _i \u2208_ [ _n_ ]) corresponds to the input weight of the _i_ -th neuron. We maintain a copy of the neural network weights, denoted as _v \u2208_ R _[n][\u00d7][d]_ , that approximately equals _w_ except for a few coordinates. We take _\u03f5_ mds to be a sufficiently small precision parameter, i.e. _\u03f5_ mds _\u226a c_ 1 _\u2212 c_ 2, which satisfies _\u03f5_ mds _\u2208_ \u2126(1 _/_ log[2] _n_ ). We use _S_ to denote the set of indices where _w_ and _v_ differ significantly (see Line 20). LSH.UPDATE (see line 17) takes indices of the neural weights and updates the LSH hashcode correspondingly."
+    },
+    {
+      "index": 42,
+      "text": "**Overview of algorithm:** During the training process, we maintain two copies of the NN weights _w, v_ , where _w_ are the actual weights that are updated via gradient descent and _v_ approximately equals _w_ except for a few coordinates. We set an empirical threshold of _\u03f5_ mds. Due to the robustness of the NNS problem, we can tolerate this small error _\u03f5_ mds such that only those coordinates with a difference greater than _\u03f5_ mds matter. To exploit the benefit of batch updating, we perform lazy updates on the LSH hash table. In particular, we update the LSH hash table if and only if the difference between _w, v_ exceeds some threshold number _n[\u03c1]_ (see line 9 to line 11). One key part of our update procedure is that we also update some low-error coordinates when there are _too many_ of them (see line 13 to line 16). This procedure can be seen as forecasting future updates. The intuition is that when there are too many coordinates close to the decision boundary, they are likely to change within a short amount of time. Updating these all together could further take advantage of the batch updates. To answer an LSH query, we keep track of a short list _S_ (see line 20), which records coordinates that differ significantly between _w, v_ . We can interpret _S_ as the indices of corrupted datapoints to keep track of when performing an LSH query, since they are no longer the same. In the query procedure (see line 22 to line 24), besides performing the normal LSH query, we also check _S_ and pick up weights that are close to _x_ . Hence, we balance the overhead of query time with update time, where update time is usually the bottleneck."
+    },
+    {
+      "index": 43,
+      "text": "## 3.2.2 THEORETICAL ANALYSIS\n\n**Assumption 3.2** (batch speedup) **.** _Denote Tr as the updating time for LSH when the weights of r neurons change and Tr_ = _r \u00b7 tr. That is, Tr is the updating time when we update r entries of the LSH hash table and tr is the average updating time. We assume {ti}i_ =1 _,...n is non increasing, i.e., t_ 1 _\u2265 t_ 2 _\u2265 . . . \u2265 tn. We further assume Tr_ = _n[\u03c1] when r \u2264 n[\u03b1] for some constant \u03b1._"
+    },
+    {
+      "index": 44,
+      "text": "The batch speedup assumption is realistic, especially due to advances in support for massive parallelism on modern computation architectures."
+    },
+    {
+      "index": 45,
+      "text": "**Theorem 3.3** (LSH maintenance) **.** _For any constant c_ 1 _, c_ 2 _(c_ 1 _> c_ 2 _), there is a dynamic data structure (Algorithm 1) for LSH maintenance that achieves_ ( _c_ 1 _, c_ 2) _-accuracy. The data structure takes O_[\ufffd] ( _dn_[1+] _[\u03c1]_ ) _time to initialize and each call of_ QUERY( _h_ ) _takes time O_[\ufffd] ( _n[\u03c1] d_ ) _. By taking a_ = min _{\u03c1, \u03b1} and_"
+    },
+    {
+      "index": 46,
+      "text": "_The amortized expected time per call of_ UPDATE( _w_ ) _is at most_\n\n**Remark 3.4.** _Depending on the exact form of batch updating time tr, the (amortized) running time and the benefit of our scheduler could be different. We provide concrete examples in Appendix B.7, showing advantages of our smart scheduler under different scenarios. In general, we remark that (1) Our scheduler is always better than the na\u00efve sequential updating strategy. (2) Our scheduler is_ oblivious _to the exact form of the update time tr and the weight change C_ 1 _, C_ 2 _. That is to say, we do not need to fine tune these parameters. In NN training, the only parameter that requires fine tuning is the precision parameter \u03f5_ mds _._"
+    },
+    {
+      "index": 47,
+      "text": "## 3.3 HASH FUNCTION LEARNING\n\nIn this section, we provide a simple streaming algorithm to learn parameterized hash functions. Here, the learning objective is to track the weight distribution as the weights change to better separate the"
+    },
+    {
+      "index": 48,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\ninput data to the NNS problem. Recall that in last section, we show an algorithm for scheduling the LSH updates, which makes it possible to involve learning for LSH and improve the query efficiency. Therefore, the overall update overhead can be reduced even with learning overhead if scheduled well, since the update time is closely related to query time."
+    },
+    {
+      "index": 49,
+      "text": "## 3.3.1 LEARNABLE LSH\n\nWe view the sequence of neural network weights throughout training as a matrix stream. In each training iteration, if our scheduler schedules an update, we compute a training signal with which we can train our LSH parameters. Specifically, we compute the classical triplet loss (Chechik et al., 2010) using positive and negative samples from the current model weights for each LSH query. Here, positive samples (denoted by _P_ +) are neurons that have higher inner product within the input retrieved by LSH, while negative samples (denoted by _P\u2212_ ) are neurons with lower inner product that are selected. Denote a set of neurons in a particular layer as _C_ = _{vr |_ 0 _\u2264 r < m}_ and the input embedding as _qi_ . Denote the set of"
+    },
+    {
+      "index": 50,
+      "text": "## **Algorithm 2** Learnable Hash Function\n\n|**Alg**|**orithm 2**Learnable Hash Function|\n|---|---|\n|1: \n2: \n3: \n4:|**Input: query set**_Q_=_{qi}i\u2208_[_N_]**, query size**_N_\n **hash table**_G_ =_{gl}l\u2208_[_L_]\n **hash function** _\u2200l \u2208_[_L_]**,** _Hl_ = _{hl,k}k\u2208_[_K_]**,** _H_ =\n_\u222al\u2208_[_L_]_Hl_\n **Retrieved Neurons Sets**_{Si}i\u2208_[_N_]**,**_Si_ =_{vr}r\u2208_[_M_]|\n|5: \n6: \n7: \n8:\n9:\n10: \n11: \n12: \n13: \n14: \n15:|**parameters**_t_+**,**_t\u2212_\n _P_+ _\u2190\u2205_,_P\u2212\u2190\u2205_\n_\u25b7P_+_, P\u2212\u2208_R2_d_+2\n **for**_i_= 1_\u2192N_ **do**\n_P_+ _\u2190P_+_\u222a{_(_qi, vr_)_| vr \u2208Si, \u27e8qi, vr\u27e9> t_+_}_\n_P\u2212\u2190P\u2212\u222a{_(_qi, vr_)_| vr \u2208Si, \u27e8qi, vr\u27e9< t\u2212}_\n **end for**\n sizenew _\u2190_min_{|P_+_|, |P\u2212|}_\n RESIZE(_P_+_, P\u2212,_sizenew)\n _H_new _\u2190_REHASH(_P_+_, P\u2212, L_)_\u25b7L_is a loss function\n _G_new _\u2190_REBUILD(_G, H_new)\n **return**_G_new,_H_new|"
+    },
+    {
+      "index": 51,
+      "text": "neurons retrieved from the LSH hash tables using _qi_ as _Si_ . We formally present the learning algorithm in Algorithm 2. The operation of updating or training LSH hash functions is defined as REHASH and the operation of updating the hash tables based on the updated hash functions and weights is defined as REBUILD. The triplet loss is defined as follows:"
+    },
+    {
+      "index": 52,
+      "text": "where _H_ denotes the LSH hash function at the current iteration and _\u03b1_ is a margin between positive and negative pairs. cos( _H_ ( _\u00b7_ ) _, H_ ( _\u00b7_ )) represents the cosine similarity. Note that in the application setting of unit norm like (Kitaev et al., 2020), using inner product is equivalent to cosine similarity. We provide a detailed justification of this learning approach in Appendix C.1."
+    },
+    {
+      "index": 53,
+      "text": "## 3.3.2 FURTHER SPEEDUP\n\nWe demonstrate how to optimize learnable LSH for further acceleration in NN training. Here, we provide the main insights; further details are in Appendix A."
+    },
+    {
+      "index": 54,
+      "text": "**Layer Selection:** In previous LSH-NN methods such as SLIDE or Reformer, the designation of whether a layer uses LSH is treated as a tunable hyperparameter. For example, Reformer applies LSH in"
+    },
+    {
+      "index": 55,
+      "text": "Figure 4: Attention distribution examples in different layers: Y-axis is the least number of attentions summing to 90% of full attentions. The annotations represent the median. The total number of attentions (or sequence length) is 512."
+    },
+    {
+      "index": 56,
+      "text": "three out of twelve attention layers in their final model based on empirical performance. In MONGOOSE we make this designation in a more principled manner. The intuition behind the design can be presented by visualizing the statistics of attention weights in different layers of the Transformer model (Figure 4). The three plots represent the distribution of the average number of coordinates with \u201cheavy\u201d attention for each layer. We also calculate the size of the minimal set of attention weights that captures 90% of the total attention ((Ramsauer et al., 2020) perform a similar experiment). The median for the left plot is 2, meaning that they are well-separated and LSH can perform well on such a distribution. On the other hand, learnable LSH can be very helpful for the right plot, because classical LSH is inefficient for this distribution. Therefore, we can use this observation when deciding between LSH or learnable LSH in each layer for later training stages or fine-tuning on downstream tasks."
+    },
+    {
+      "index": 57,
+      "text": "6\n\nPublished as a conference paper at ICLR 2021\n\nTable 1: This table summarizes the performance of MONGOOSE, SLIDE and Full-Computation implemented with PyTorch (Paszke et al., 2019). _P_ @1 _/_ 5 is top-1/5 precision. Time represents convergence time and Mem represents memory consumption."
+    },
+    {
+      "index": 58,
+      "text": "|**Datasets**|Full-Computation|SLIDE|MONGOOSE|\n|---|---|---|---|\n||_P_@1\n_P_@5\nTime (s)\nMem (GB)|_P_@1\n_P_@5\nTime\nMem|_P_@1\n_P_@5\nTime\nMem|\n|Wiki10-31K|**0.824**\n0.578\n63\n0.3|0.824\n0.556\n47 (1.3_\u00d7_)\n0.24 (1.3_\u00d7_)|**0.824**\n**0.618**\n**35 (1.8**_\u00d7_**)**\n**0.2 (1.5**_\u00d7_**)**|\n|Delicious-200K|0.446\n0.356\n483\n2.2|0.465\n**0.372**\n318 (1.5_\u00d7_)\n1.7 (1.3_\u00d7_)|**0.469**\n0.371\n**162 (3**_\u00d7_**)**\n**1.5 (1.5**_\u00d7_**)**|\n|Wiki-325K|0.501\n0.235\n5702\n3.9|0.438\n0.205\n4680 (1.2_\u00d7_)\n3.3 (1.2_\u00d7_)|**0.519**\n**0.255**\n**1906 (3**_\u00d7_**)**\n**2.7 (1.5**_\u00d7_**)**|\n|Amz-670K|0.332\n0.273\n8310\n6.7|0.335\n0.276\n3224 (2.6_\u00d7_)\n4.3 (1.6_\u00d7_)|**0.336**\n**0.281**\n**1279 (6.5**_\u00d7_**)**\n**3.3 (2**_\u00d7_**)**|"
+    },
+    {
+      "index": 59,
+      "text": "From a system design perspective, MONGOOSE improves the flexibility of LSH\u2019s usage in NN training. We provide a smart scheduler to decide when to perform LSH updates and visualization on when to use LSH or learnable LSH. Therefore, the training process has the following tunable parameters for LSH: (i) the layers which we apply random LSH to, (ii) the layers for which we can use learning to improve LSH\u2019s random hash functions, (iii) the runtime that LSH or learnable LSH should perform the update in. Setting these parameters appropriately will enable much more efficient NN training or fine-tuning, as supported by our theory and observations."
+    },
+    {
+      "index": 60,
+      "text": "## 4 EXPERIMENTS\n\nIn Section 4.1 we present the results of experiments that demonstrate the higher performance of MONGOOSE over other LSH-NN frameworks during training. Then we study the effectiveness of the two components: (i) smart scheduler in Section 4.2, (ii) learnable LSH in Section 4.3[1] ."
+    },
+    {
+      "index": 61,
+      "text": "## 4.1 MAIN RESULTS: MONGOOSE IN NN TRAINING\n\nWe present the results of main experiments that demonstrate MONGOOSE\u2019s advantage in end-to-end NN training over two different LSH-NN baselines on recommendation and language modeling tasks."
+    },
+    {
+      "index": 62,
+      "text": "## 4.1.1 TASK1: EXTREME MULTI-LABEL CLASSIFICATION\n\n**Settings:** We compare the performance of MONGOOSE against SLIDE and networks without LSH (Full-Computation) on 3 large-scale multi-label classification datasets: Wiki10-31k, Delicious200k, Wiki-325k and Amz-670k. The datasets are obtained from the Extreme Classification Repository (Bhatia et al., 2016), which is a benchmark for various recommendation systems. The model is a fully-connected network with one hidden-layer. The statistics of each dataset are in Appendix D. We report the best results of each framework in _P_ @1 _/_ 5 following metrics in (Bhatia et al., 2016)."
+    },
+    {
+      "index": 63,
+      "text": "**Results:** Table 1 shows the 2 _._ 75 test accuracy, wall-clock time to 0 _._ 50 2 _._ 50 ReformerMONGOOSE converge and memory consump0 _._ 45 2 _._ 25 tion for MONGOOSE and other 0 _._ 40 2 _._ 00 baselines. Left plot in Fig0 _._ 35 1 _._ 75 ure 5 visualizes _P_ @1 for MON0 _._ 30 1 _._ 50 GOOSE and other baselines durFull-Computation 1 _._ 25 0 _._ 25 ~~SLIDE~~ 1 _._ 00 ing the training process. MON0 _._ 20 MONGOOSE 0 _._ 75 GOOSE achieves 1.8 _\u00d7_ faster con0 10000 20000 30000 40000 50000 0 25000 50000 75000 100000 125000 Iterations Iterations vergence and 1.5 _\u00d7_ less memory consumption compared to FullFigure 5: Left plot: _P_ @1 versus training iteration on Wiki-325k. Right versus training iteration on Wiki-325k. Right Computation on Wiki10-31K, 3 _\u00d7_ plot: Loss versus training iteration on a synthetic copying task. faster convergence, 1.5 _\u00d7_ less memory on Delicious-200K and Wiki-325K and 6.5 _\u00d7_ faster convergence, 2 _\u00d7_ less memory on Amz670K. SLIDE has a large accuracy drop without a substantial speedup for Wiki-325k, but our method has a 3 _\u00d7_ speedup with no accuracy loss."
+    },
+    {
+      "index": 64,
+      "text": "Figure 5: Left plot: _P_ @1 versus training iteration on Wiki-325k. Right versus training iteration on Wiki-325k. Right plot: Loss versus training iteration on a synthetic copying task."
+    },
+    {
+      "index": 65,
+      "text": "Table 2: Time and memory advantage compared to Full-Computation on one layer.\n\n**Analysis:** The above mainly focuses on MONGOOSE\u2019s end-to-end performance during training. We also present closer analysis of a single linear layer during training in Table 2. In isolation, we find that MONGOOSE achieves up to 20 _\u00d7_ faster convergence and 4.5 _\u00d7_ less memory consumption compared to Full-Computation. The greater"
+    },
+    {
+      "index": 66,
+      "text": "|**Datasets**\nWiki10-31K\nDelicious-200K\nWiki-325K|SLIDE|MONGOOSE|\n|---|---|---|\n||Time\nMem|Time\nMem|\n||1.8_\u00d7_\n2_\u00d7_|**6.6**_\u00d7_\n**4**_\u00d7_|\n||1.8_\u00d7_\n2.2_\u00d7_|**8.6**_\u00d7_\n**4.5**_\u00d7_|\n||1.4_\u00d7_\n1.7_\u00d7_|**20**_\u00d7_\n**4**_\u00d7_|"
+    },
+    {
+      "index": 67,
+      "text": "> 1 MONGOOSE code is available at https://github.com/HazyResearch/mongoose\n\n7\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 68,
+      "text": "time and memory savings here compared to Table 1 are because we ignore the earlier large embedding layer of the model (Details are in Appendix D.3). We make three observations to help explain the memory and time savings fromMONGOOSE. First, matrix multiplication is only performed on a small subset of neurons. The average number of neurons sampled in the output layer for MONGOOSE on Delicious-200K is around 6k compared to the total number of 200k. Second, our scheduler further reduces updating costs. On Wiki-325K, we observe updating frequency drops significantly at the start of the second epoch. This is compatible with our observation of slow weight change in Figure 3. Finally, learnable LSH improves LSH query efficiency and quality. In addition, we observe that MONGOOSE obtains a slightly higher accuracy compared to Full-Computation, which is a side benefit from activation sparsity (Ba & Frey, 2013)."
+    },
+    {
+      "index": 69,
+      "text": "## 4.1.2 TASK2: EFFICIENT TRANSFORMER\n\n**Settings:** We run experiments on two tasks from Reformer (Kitaev et al., 2020). The first task is a synthetic sequence duplication task where inputs are of the form 0 _w_ 0 _w_ and _w \u2208{_ 0 _, ..., N }[\u2217]_ . This task is useful for demonstrating the effectiveness of LSH attention: it requires non-local attention lookups and therefore cannot be solved by any model relying on sparse attention with a limited range ( _e.g._ , local attention). We compare MONGOOSE with a 1-layer Reformer by replacing the dataindependent LSH in the attention layer with learnable LSH, updating the LSH parameters according to our smart scheduler. The second task is a standard language modeling task on the enwik8 dataset. For this second task, we use sequence length of 8192 and 10 LSH-attention layers."
+    },
+    {
+      "index": 70,
+      "text": "**Results:** We compare the test loss of MONGOOSE and Reformer on each task. The loss curve for the synthetic sequence duplication task is shown in Figure 5 (right). On this task, MONGOOSE achieves a loss value of 0.75, which is 0.5 better than Reformer. Moreover, MONGOOSE only needs 20% time to reach the same loss as Reformer (5 _\u00d7_ speed-up). Similarly, on enwik8, Reformer only reaches 2.65 in perplexity, while MONGOOSE achieves 2.59 in the same setting. Both MONGOOSE and Reformer (with LSH) save 6 _\u00d7_ memory over the original Transformer in above two tasks (more details are in Appendix D.4)."
+    },
+    {
+      "index": 71,
+      "text": "## 4.2 STUDY ON SMART SCHEDULER\n\nTable 3: Speed with respect to accuracy\n\n|In this section, we demonstrate the superiority of\nour smart scheduling algorithm over the two base-\nlines we mentioned in Section 1 on Wiki-325K.||_P_@1\n_P_@5\nSpeed(batch/s)|\n|---|---|---|\n||Infrequent Scheduler|0.39\n0.193\n31.2|\n||W/O Scheduler|0.521\n0.254\n0.4|\n||MONGOOSEScheduler|0.519\n0.255\n7.7|"
+    },
+    {
+      "index": 72,
+      "text": "## **Effect of Smart Scheduler:** The first approach\n\n(\u201cInfrequent Scheduler\u201d) performs an update on a fixed schedule, every 1000 iterations (6 times per epoch on Wiki-325K). The other baseline performs an update every iteration (\u201cW/O Scheduler\u201d). We compare speed (number of batches processed per second) and accuracy ( _P_ @1 and _P_ @5) of these schedulers in Table 3. On average, MONGOOSE Scheduler reduces more than **97** % of the update overhead compared to W/O Scheduler, leading an end-to-end 20 _\u00d7_ speed-up. Meanwhile, although Infrequent Scheduler is faster in speed, it fails to reach the same task accuracy as the other approaches. In fact, MONGOOSE Scheduler achieves Infrequent Scheduler\u2019s final accuracy in **66** % less time. We can see that MONGOOSE substantially reduces LSH update overhead while maintaining performance."
+    },
+    {
+      "index": 73,
+      "text": "## 4.3 STUDY ON LEARNABLE LSH\n\n**Effect of Learnable LSH:** In this section, we compare the NNS performance of MONGOOSE\u2019s learnable LSH scheme to classical LSH on their NNS ability using the same number of hash functions. In Figure 6 (left) we plot the difference between average inner products computed using neurons retrieved by learnable LSH (MONGOOSE) and random LSH (SLIDE) and inner products using the same number of randomly chosen neurons. A negative value on these plots indicates that LSH is performing worse than random sampling. We can see that at the beginning of training, when weights are initialized randomly, data-independent LSH is sufficient to partition the data. However, as training progresses, SimHash used in SLIDE fails to adapt to the evolving weight distribution, while our selection better approximates the full softmax."
+    },
+    {
+      "index": 74,
+      "text": "We conduct the same experiments for enwik8 language modeling. In Figure 6 (right), we can see that data-dependent hashing computes higher inner products within each bucket as training progresses."
+    },
+    {
+      "index": 75,
+      "text": "8\n\nPublished as a conference paper at ICLR 2021\n\nTable 4: This table compares MONGOOSE and HNSW. _P_ @1 _/_ 5 is the top-1/5 precision."
+    },
+    {
+      "index": 76,
+      "text": "|T|able 4: This table compares MONGOOSEand H|NSW. _P_@1_/_5is the top-1/5 p|recision.|\n|---|---|---|---|\n||Rebuild Time(s) vs Number of Neurons|Wiki-10k Training\nW|iki-325k Training|\n||10k\n100k\n300k\n_P_@|1\n_P_@5\nTime (s)\n_P_@1|_P_@5\nTime (s)|\n|HNSW|0.4983\n5.1168\n20.5933\n**0.82**|**9**\n0.602\n60\n0.4625|0.2052\n10106|\n|MONGOOSE|**0.4625 (1.1**_\u00d7_**)**\n**0.4780 (11**_\u00d7_**)**\n**0.8610 (23**_\u00d7_**)**\n0.82|4\n**0.618**\n**35 (1.7**_\u00d7_**)**\n**0.519**|**0.255**\n**1906 (5.3**_\u00d7_**)**|"
+    },
+    {
+      "index": 77,
+      "text": "For attention layers in the Transformer models, random LSH fails to approximate attention well in certain layers due to a skewed attention distribution (this phenomenon was also explained in Section 3.3.2 and Figure 4). In attention layers, our selection produces a better characterization of the full attention."
+    },
+    {
+      "index": 78,
+      "text": "**Other data-dependent NNS data structures:** In Section 1, we have briefly discussed that most existing data-dependent NNS-ds have high update costs. We choose an LSH-based data structure in MONGOOSE because update overhead for hash-table-based NNS-ds is less compared to other methods (e.g. graph-based) in practice (Wang et al., 2018; Gong et al., 2020). For example, in a recent paper, (Dong et al., 2019)"
+    },
+    {
+      "index": 79,
+      "text": "**----- Start of picture text -----**\n\n2\n2 . 5\n0\n\u2212 2 2 . 0\n\u2212 4 SLIDE 1 . 5\n\u2212 6 MONGOOSE\n1 . 0\n\u2212 8\n\u2212 10 0 . 5 Reformer\n\u2212 12 0 . 0 MONGOOSE\n0 50000 100000 150000 200000 0 20000 40000 60000 80000 100000\nIterations Iterations\ninner-product inner-product\nAvg. Avg.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 80,
+      "text": "Figure 6: The normalized inner product computed by NNS-ds neurons. In both Wiki-325k (left) and enwik8 (right), MONGOOSE has much higher average inner product than baselines."
+    },
+    {
+      "index": 81,
+      "text": "proposed a _k_ -nearest-neighbor graph-based algorithm for NNS that requires several hours to process 1 million data points. Although a recent work, HNSW (Malkov & Yashunin, 2018), is relatively fast in preprocessing and updating step among graph-based data-dependent NNS-ds empirically, it does not have guarantees (Fu et al., 2017). In Table 4 we compare the update times of the learnable LSH and HNSW, and their performance during training when both are equipped with the MONGOOSE smart scheduler. We can see that HNSW\u2019s updating overhead grows exponentially and becomes over 20 _\u00d7_ learnable LSH\u2019s overhead in 350k neurons layer. However, it is an ongoing work to reduce the updating overhead of graph-based NNS-ds, so it could be potentially included in MONGOOSE later."
+    },
+    {
+      "index": 82,
+      "text": "## 5 CONCLUSION\n\nIn this work, we make a novel observation on the slowly changing LSH hash codes during LSHNN training. Based on the observation, we present MONGOOSE, a learnable LSH framework that outperforms original LSH methods in efficient neural network training. We demonstrate two key designs in the framework. One is a smart scheduling algorithm which reduces the LSH update overhead. The other one is a low cost learnable LSH which can improve the query efficiency and hashing quality. We empirically verify the effectiveness of our framework on both recommendation and language modeling tasks. The slowly changing observation along with the smart scheduler in MONGOOSE opens up the opportunity of designing new NNS-ds for dynamic similarity search for efficient NN training."
+    },
+    {
+      "index": 83,
+      "text": "## ACKNOWLEDGMENTS\n\nWe would like to thank Xun Huang, Fred Sala, Avner May, Ben Coleman and the anonymous reviewers for helpful discussions and feedback. We gratefully acknowledge the support of NIH under No. U54EB020405 (Mobilize), NSF under Nos. CCF1763315 (Beyond Sparsity), CCF1563078 (Volume to Velocity), and 1937301 (RTML); ONR under No. N000141712266 (Unifying Weak Supervision); the Moore Foundation, NXP, Xilinx, LETI-CEA, Intel, IBM, Microsoft, NEC, Toshiba, TSMC, ARM, Hitachi, BASF, Accenture, Ericsson, Qualcomm, Analog Devices, the Okawa Foundation, American Family Insurance, Google Cloud, Swiss Re, Total, the HAI-AWS Cloud Credits for Research program, the Stanford Data Science Initiative (SDSI), and members of the Stanford DAWN project: Facebook, Google, and VMWare. The Mobilize Center is a Biomedical Technology Resource Center, funded by the NIH National Institute of Biomedical Imaging and Bioengineering through Grant P41EB027060. The U.S. Government is authorized to reproduce and distribute reprints for Governmental purposes notwithstanding any copyright notation thereon. Any opinions, findings, and conclusions or recommendations expressed in this material are those of the authors and do not necessarily reflect the views, policies, or endorsements, either expressed or implied, of NIH, ONR, or the U.S. Government."
+    },
+    {
+      "index": 84,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Alessandro Achille, Matteo Rovere, and Stefano Soatto. Critical learning periods in deep neural networks. _arXiv preprint arXiv:1711.08856_ , 2017."
+    },
+    {
+      "index": 85,
+      "text": "- Saurabh Agarwal, Hongyi Wang, Kangwook Lee, Shivaram Venkataraman, and Dimitris Papailiopoulos. Accordion: Adaptive gradient communication via critical learning regime identification. _arXiv preprint arXiv:2010.16248_ , 2020."
+    },
+    {
+      "index": 86,
+      "text": "- Amin Ahmad, Noah Constant, Yinfei Yang, and Daniel Cer. Reqa: An evaluation for end-to-end answer retrieval models. In _MRQA @ EMNLP_ , pp. 137\u2013146, 2019."
+    },
+    {
+      "index": 87,
+      "text": "- Alexandr Andoni and Piotr Indyk. Near-optimal hashing algorithms for approximate nearest neighbor in high dimensions. In _47th annual IEEE symposium on foundations of computer science (FOCS)_ , pp. 459\u2013468, 2006."
+    },
+    {
+      "index": 88,
+      "text": "- Alexandr Andoni and Ilya Razenshteyn. Optimal data-dependent hashing for approximate near neighbors. In _Proceedings of the forty-seventh annual ACM symposium on Theory of computing (STOC)_ , pp. 793\u2013801, 2015."
+    },
+    {
+      "index": 89,
+      "text": "- Alexandr Andoni, Thijs Laarhoven, Ilya Razenshteyn, and Erik Waingarten. Optimal hashing-based time-space trade-offs for approximate near neighbors. In _Proceedings of the Twenty-Eighth Annual ACM-SIAM Symposium on Discrete Algorithms_ , pp. 47\u201366. SIAM, 2017."
+    },
+    {
+      "index": 90,
+      "text": "- Alexandr Andoni, Assaf Naor, Aleksandar Nikolov, Ilya Razenshteyn, and Erik Waingarten. Datadependent hashing via nonlinear spectral gaps. In _Proceedings of the 50th Annual ACM SIGACT Symposium on Theory of Computing (STOC)_ , pp. 787\u2013800, 2018."
+    },
+    {
+      "index": 91,
+      "text": "- Jimmy Ba and Brendan Frey. Adaptive dropout for training deep neural networks. In _Advances in neural information processing systems (NeurIPS)_ , pp. 3084\u20133092, 2013."
+    },
+    {
+      "index": 92,
+      "text": "- Yoshua Bengio, R\u00e9jean Ducharme, Pascal Vincent, and Christian Jauvin. A neural probabilistic language model. _Journal of machine learning research (JMLR)_ , 3(Feb):1137\u20131155, 2003."
+    },
+    {
+      "index": 93,
+      "text": "- K. Bhatia, K. Dahiya, H. Jain, A. Mittal, Y. Prabhu, and M. Varma. The extreme classification repository: Multi-label datasets and code, 2016. URL http://manikvarma.org/downloads/ XC/XMLRepository.html."
+    },
+    {
+      "index": 94,
+      "text": "- Leonid Boytsov, David Novak, Yury Malkov, and Eric Nyberg. Off the beaten path: Let\u2019s replace term-based retrieval with k-nn search. In _Proceedings of the 25th ACM international on conference on information and knowledge management (CIKM)_ , pp. 1099\u20131108, 2016."
+    },
+    {
+      "index": 95,
+      "text": "- Jan van den Brand, Yin-Tat Lee, Danupon Nanongkai, Richard Peng, Thatchaphol Saranurak, Aaron Sidford, Zhao Song, and Di Wang. Bipartite matching in nearly-linear time on moderately dense graphs. In _2020 IEEE 61st Annual Symposium on Foundations of Computer Science (FOCS)_ , pp. 919\u2013930. IEEE, 2020a."
+    },
+    {
+      "index": 96,
+      "text": "- Jan van den Brand, Yin Tat Lee, Aaron Sidford, and Zhao Song. Solving tall dense linear programs in nearly linear time. In _Proceedings of the 52nd Annual ACM SIGACT Symposium on Theory of Computing (STOC)_ , pp. 775\u2013788, 2020b."
+    },
+    {
+      "index": 97,
+      "text": "- Jan van den Brand, Yin Tat Lee, Yang P Liu, Thatchaphol Saranurak, Aaron Sidford, Zhao Song, and Di Wang. Minimum cost flows, mdps, and _\u2113_ 1-regression in nearly linear time for dense instances. In _Proceedings of the 53rd Annual ACM SIGACT Symposium on Theory of Computing (STOC)_ . arXiv preprint arXiv:2101.05719, 2021."
+    },
+    {
+      "index": 98,
+      "text": "- Tom B Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. Language models are few-shot learners. _arXiv preprint arXiv:2005.14165_ , 2020."
+    },
+    {
+      "index": 99,
+      "text": "- M. Burtscher, R. Nasre, and K. Pingali. A quantitative study of irregular programs on gpus. In _2012 IEEE International Symposium on Workload Characterization (IISWC)_ , pp. 141\u2013151, 2012.\n\n10"
+    },
+    {
+      "index": 100,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper presents an interesting approach to accelerating neural network training by leveraging the 'slow change' phenomenon of model weights to optimize LSH updates. The integration of a smart scheduler with learnable hash functions is well-motivated and supported by empirical results. However, there are significant technical concerns regarding the notation used in the fundamental definitions and the consistency of the theoretical claims in Section 3.2, particularly surrounding the exponents in the complexity bounds and the formal definition of accuracy.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Incorrect and inconsistent LSH complexity exponents",
+          "quote": "Using LSH, one can achieve $(c_1, c_2)$ accuracy with query time $O(dn^{[\rho]})$, preprocessing time $O(dn^{[1+]\rho]})$, updating time $O(dn^{[\rho]})$.",
+          "explanation": "In standard LSH literature (e.g., Andoni & Indyk, 2006 referenced by the authors), the complexity exponent $\rho$ is typically defined such that query time is $O(n^\rho)$. Here, the authors write $n^{[\rho]}$, which looks like an OCR error or a bracketed index, but more importantly, the preprocessing time is written as $O(dn^{[1+]\rho]})$, which is mathematically malformed. Even assuming it meant $O(n^{1+\rho})$, standard results suggest preprocessing is $O(n^{1+\rho}/c_2)$. Furthermore, Theorem 3.3 uses $n^{[\rho]}$ again. If $\rho$ is defined as $(c_2/c_1)^2$ as stated in Section 2.2, this contradicts the standard definition where $\rho < 1$ is required for sublinear search. The notation $n^{[\rho]}$ is highly ambiguous\u2014it is unclear if the authors mean $n^\rho$ or if this is a constant from a specific derivation.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Inconsistency in (c1, c2)-accuracy definition",
+          "quote": "for any $i \\in [n]$ such that $\\langle w_i, x \\rangle \\ge c_1 \\|x\\|_2 \\|w_i\\|_2$, $\\text{Pr}[w_i \\in S] \\ge 1 - 1/\\text{poly}(n)$",
+          "explanation": "Definition 2.1 (i) and (ii) use $c_1$ and $c_2$ as coefficients for the cosine similarity. However, in the standard LSH formulation for Near Neighbor Search, $c$ is a factor such that we distinguish between distance $R$ and $cR$. Here, the authors define $\\rho = (c_2/c_1)^2$ in Section 2.2. If we follow the standard Andoni-Indyk $\\rho$ for SimHash/Cosine similarity, $\\rho$ is not typically a simple ratio of the thresholds squared. More concerningly, Theorem 3.3 claims to provide $(c_1, c_2)$ accuracy while initializing LSH with $(c_1 - \\epsilon_{mds}, c_2 + \\epsilon_{mds})$. If the query set $S$ (the 'corrupted' weights) is checked linearly, the query time should include $|S|$. The paper claims query time is $O_{\\text{poly}}(n^{[\\rho]}d)$, but if many weights change slightly (just below the threshold), $|S|$ could grow large, or the accuracy guarantee $\\epsilon_{mds}$ would be violated. The text does not sufficiently justify how the union of LSH and $S$ maintains the $(c_1, c_2)$ gap without increasing the query complexity beyond $n^\rho$.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Ambiguous amortized update time formula",
+          "quote": "The amortized expected time per call of $\\text{UPDATE}(w)$ is at most $O_{\\text{poly}}(d \\cdot ( \\frac{C_1 \\cdot n}{n^{[a]} \\epsilon_{mds}} + \\frac{C_2 \\cdot n}{n^{[a]} \\epsilon_{mds}^2} ))$",
+          "explanation": "In Theorem 3.3, the authors provide a bound on amortized time. I initially looked for the definition of $a$, which is given as $\\min\\{\\rho, \\alpha\\}$. However, $n^{[a]}$ appears in the denominator. If $a$ is the LSH exponent (typically small, e.g., 0.5), this would imply that as the database size $n$ increases, the update time per step decreases, which is counter-intuitive for a maintenance task. Usually, costs scale with $n$. If $n^{[a]}$ is intended to be $n^a$, it suggests the update cost is sublinear in $n$, which is a very strong claim. A reader might interpret $n^{[a]}$ as a typo for $n^a$. Moreover, the term $C_1$ (expected movement) and $C_2$ (variance) from Assumption 3.1 appear here, but the connection between the $L_2$ movement and the Hamming distance probability (which triggers LSH updates) is non-trivial and is not explicitly derived in the main text.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_3",
+          "title": "Mismatched logic between 'Slow Change' and scheduler triggers",
+          "quote": "$r \\leftarrow$ the number of indices $i$ that $\\|y_i\\|_2 \\ge \\epsilon_{mds}/2$. if $r < n^{[a]}$ then $v_{\\text{new}} \\leftarrow v$ else...",
+          "explanation": "The scheduler in Algorithm 1 skips LSH updates if the number of significantly changed weights $r$ is small. However, if LSH is not updated, the queries on those $r$ neurons will be incorrect (using old weights $v$ instead of $w$). To fix this, Line 23 says 'check $S$'. If $S$ contains all $i$ where $\\|w_i - v_i\\|_2 \\ge \\epsilon_{mds}/2$, then for the 'if $r < n^{[a]}$' case to be efficient, $|S|$ must be small. But the 'Slow Change' assumption only bounds the *expected* movement. If many weights move a small amount ($< \\epsilon_{mds}/2$), they aren't in $S$, so the query uses $v_i$. The paper claims this is fine due to 'robustness,' but does not formally show that the $(c_1, c_2)$ separation is preserved when query results are based on weights that have drifted by $\\epsilon_{mds}/2$.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0114,
+      "prompt_tokens": 13481,
+      "completion_tokens": 1554
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents MONGOOSE, an innovative framework that optimizes LSH-based neural network training through two key contributions: a dynamic scheduling algorithm that exploits the slow evolution of parameter weights to avoid redundant LSH updates, and a learnable hashing strategy to improve query efficiency. The methodology is well-motivated by the observation that only a small fraction of hash codes change frequently during training. The experimental results, showing significant speed-ups and memory reductions across recommendation and language modeling tasks, are robust. The primary issues identified relate to minor notational ambiguities in the formal definitions that could cause confusion, though they do not undermine the core algorithmic contributions.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistent indicator notation",
+          "quote": "S = {i \u2208 [n] : \u2225wi \u2212 vi\u22252 \u2265 \u03f5mds / 2}",
+          "explanation": "In Section 3.2.1, the indicator set S is defined using \u03f5_mds / 2. However, line 8 in Algorithm 1 uses the condition \u2225yi\u22252 \u2265 \u03f5_mds / 2 to update the scheduler count. The constant \u03f5_mds / 2 is reused consistently, but the text in 3.2.1 states: 'We take \u03f5_mds to be a sufficiently small precision parameter, i.e. \u03f5_mds \u226a c1 \u2212 c2'. It is mathematically ambiguous whether the threshold for S should be \u03f5_mds itself or the 'cushion' value of \u03f5_mds / 2 defined for the update logic. While this is likely an author choice to define the set 'significantly' different, it introduces a slight ambiguity for a reader trying to reconcile the definition with the algorithm's specific line 20.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguous variable in Assumption 3.1",
+          "quote": "We assume the (random) update sequence w(1), \u00b7 \u00b7 \u00b7 , w(T) \u2208 R n\u00d7d satisfies",
+          "explanation": "The text abruptly terminates before presenting the equation associated with the assumption, leading directly into the description of the expectation/variance. While the context implies a bounded movement condition, the missing constraint equation makes the specific mathematical requirement of the 'Slow change' assumption underspecified for a reader wanting to implement or rigorously analyze the bounds.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_2",
+          "title": "Notation mismatch in the scheduling logic",
+          "quote": "line 16: v\u03c0[new] (i) [\u2190]  wv\u03c0\u03c0[new] (( ii )) ii \u2208{ 1 r + 1 , 2 , \u00b7 \u00b7 \u00b7 , \u00b7 \u00b7 \u00b7, r, n} }",
+          "explanation": "The pseudocode in Line 16 of Algorithm 1 contains garbled notation (likely a transcription error from the OCR process). Specifically, the indices i, r and the assignment to v are syntactically broken (the set notation is illegible). While a reader familiar with sketching/data structure maintenance can infer the intent\u2014copying the weights w to the stale copy v for indices being updated\u2014it is technically underspecified as written.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0045,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 13482,
+      "completion_tokens": 745
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces MONGOOSE, a framework combining a dynamic scheduler with learnable LSH to accelerate neural network training. The core idea\u2014that model parameters change slowly enough to justify infrequent LSH updates\u2014is empirically motivated and practically appealing. However, the manuscript suffers from several critical omissions: key mathematical inequalities in Assumption 3.1, the runtime bound in Theorem 3.3, and the triplet loss formulation are completely missing, likely due to PDF extraction errors. Additionally, there is a direct numerical contradiction between the text's claim about SLIDE's accuracy degradation and the results in Table 1, and one algorithm line is severely garbled. While the high-level contributions and empirical validations are promising, these gaps undermine reproducibility and theoretical rigor. Addressing the missing formulas and resolving the data contradictions will significantly strengthen the paper.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Missing mathematical inequality in Assumption 3.1",
+          "quote": "We assume the (random) update sequence w_[(1)] , \u00b7 \u00b7 \u00b7 , w_[(] _[T]_) \u2208 R_[n][\u00d7][d] satisfies \n\n where the expectation and variance is conditioned on wi_[(] _[k]_)] for all k = 0 , 1 , \u00b7 \u00b7 \u00b7 , T \u2212 1 .",
+          "explanation": "Initially, I was confused because the text explicitly promises bounds on the expected movement and variance of weights, but no inequality follows. I checked the surrounding paragraphs and the referenced appendix, but the governing mathematical expression is entirely absent. This leaves the 'slow change' assumption formally undefined. Since the scheduler's design and its theoretical speedup claim in Section 3.2 directly rely on this boundedness property, the omission fundamentally weakens the theoretical foundation of the framework.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Missing runtime bound in Theorem 3.3",
+          "quote": "The amortized expected time per call of UPDATE( w ) is at most \n\n ",
+          "explanation": "I was immediately concerned upon reaching the end of Theorem 3.3, as the statement introduces a bound on the amortized update time but provides no formula. I verified that the theorem statement does not continue in subsequent lines or paragraphs. Without the explicit runtime expression, it is impossible to assess the claimed speedup over naive sequential updates or to understand how the scheduler's parameters (like alpha and rho) interact with the batch speedup assumption. This gap prevents verification of the main theoretical contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Missing triplet loss formulation",
+          "quote": "The triplet loss is defined as follows: \n\n where H denotes the LSH hash function at the current iteration and \u03b1 is a margin between positive and negative pairs.",
+          "explanation": "The paper transitions from stating that a triplet loss is used to describing variables H and \u03b1 without ever presenting the loss equation. I expected to see a standard form like max(0, \u03b1 - cos(H(p+)) + cos(H(p-))), but it is completely missing. Since the learnable hash component (Section 3.3) relies on optimizing this loss to track weight distributions, its absence blocks reproduction of the hashing mechanism and leaves the optimization objective ambiguous.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_3",
+          "title": "Contradiction between text claim and Table 1 results",
+          "quote": "In our experiments, we found that failing to update the LSH data structure in SLIDE causes a 28% decrease in top-1 accuracy for a fully-connected NN.",
+          "explanation": "This statement initially stood out as a strong quantitative claim. However, when I cross-referenced it with Table 1 (Section 4.1.1), I found a direct contradiction. The table compares Full-Computation and SLIDE on four fully-connected NN datasets, and SLIDE actually matches or slightly improves upon the full baseline on P@1 for three of them (e.g., 0.824 vs 0.824 on Wiki10-31K, 0.465 vs 0.446 on Delicious-200K). The claimed 28% drop is either numerically incorrect or refers to a different unreported experiment. This creates significant confusion regarding the actual empirical limitations of standard LSH in this setting.",
+          "comment_type": "logical",
+          "paragraph_index": 18,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_4",
+          "title": "Garbled update step in Algorithm 1",
+          "quote": "v\u03c0[new] ( i ) [\u2190]  wv\u03c0\u03c0 [new] (( ii )) ii \u2208{ \u2208{ r + 1 , 2 , \u00b7 \u00b7 \u00b7, \u00b7 \u00b7 \u00b7, r, n} }",
+          "explanation": "I initially tried to parse the logic of the 'smooth cut' procedure (lines 13-16) to understand how low-error coordinates are batch-updated, but this line is severely corrupted. It appears to intend an assignment that updates v for indices split by r, but the OCR artifacts and malformed set notation make it unintelligible. Even assuming the most plausible intended syntax, the boundary conditions for updating versus retaining old weights are opaque. This prevents a reader from correctly implementing the scheduler's lazy-update mechanism.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_5",
+          "title": "Overstated/ambiguous accuracy improvement claim",
+          "quote": "We find that it achieves up to 8% better accuracy compared to previous LSH approaches, with 6 _._ 5 _\u00d7_ speed-up and 6 _\u00d7_ reduction in memory usage.",
+          "explanation": "The abstract claims 'up to 8% better accuracy', which initially prompted me to locate the exact metric and baseline. Upon checking Table 1, MONGOOSE's P@1 improvements over SLIDE range from ~0.4% (Delicious-200K) to ~18.5% (Wiki-325K), while improvements over Full-Computation are modest (~3.6% on Wiki-325K). The '8%' figure is neither clearly derived from the reported tables nor contextualized as relative vs. absolute improvement. This framing overstates the empirical gains and could mislead readers about the magnitude of the accuracy benefit.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0098,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 13494,
+      "completion_tokens": 7934
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents a novel framework, MONGOOSE, that leverages the observation of slowly changing hash codes during neural network training to improve the efficiency of LSH-based methods. The smart scheduler and learnable hash functions are well-motivated and the empirical results show substantial speedups over baselines. However, there are several issues that affect the clarity and rigor of the theoretical contributions: a critical assumption is incomplete due to missing details (likely an OCR artifact), a key formula for the LSH exponent appears to be mismatched with the similarity measure, and a claim about memory reduction is unsupported by the reported data. Additionally, the description of the learnable LSH algorithm is underspecified in the pseudocode.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Incomplete definition of the 'slow change' assumption",
+          "quote": "We denote the initial weight matrix as w^{(0)} \u2208 \u211d^{n\u00d7d}. We assume the (random) update sequence w^{(1)}, ..., w^{(T)} \u2208 \u211d^{n\u00d7d} satisfies\n\nwhere the expectation and variance is conditioned on w_i^{(k)} for all k = 0,1,...,T-1.",
+          "explanation": "The bounds on the expected movement (C\u2081) and variance (C\u2082) that are central to the assumption are missing from the text. The line after 'satisfies' is blank, and only the conditioning phrase is provided. This is likely an OCR omission, but as presented it makes the theoretical foundation of the scheduler unverifiable. Without these bounds, the subsequent analysis and guarantees lose their grounding.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Mismatch between LSH exponent \u03c1 and similarity measure",
+          "quote": "\"denote \u03c1 = (c2/c1)^2\" (in Definition 2.1 context)",
+          "explanation": "The paper uses inner product (cosine similarity) to define the near-neighbor condition, and the thresholds c\u2081, c\u2082 are on normalized inner products. The exponent \u03c1 = (c\u2082/c\u2081)\u00b2 is standard for \u2113\u2082 distance (where c\u2081, c\u2082 are distance thresholds), but not for cosine similarity. For the random hyperplane LSH (SimHash) used later, the collision probability depends on the angle, giving a different exponent. The paper does not justify why this squared ratio is appropriate, and it is not mentioned that they are using a different LSH family (e.g., cross-polytope) that would yield such an exponent. This could introduce incorrect complexity estimates in the theoretical analysis.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_2",
+          "title": "Underspecified learnable LSH algorithm",
+          "quote": "14: H_new \u2190 REHASH(P+, P\u2212, L)  \u25b7 L is a loss function",
+          "explanation": "In Algorithm 2, the function REHASH is called with an argument L (the loss function), but L is not included in the input list (which only provides Q, G, H, S_i, t+, t\u2212). Moreover, the triplet loss is defined in Equation (1), but no loss object is passed. The operation 'REHASH' is never defined, and it is unclear whether it involves gradient descent, a closed-form update, or something else. Combined with the ambiguity of computing cosine similarity on hash outputs (which are typically binary), this makes the procedure irreproducible without further details.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_3",
+          "title": "Memory reduction claim not supported by reported numbers",
+          "quote": "\"with 6.5\u00d7 speed-up and 6\u00d7 reduction in memory usage\" (Abstract)",
+          "explanation": "The abstract claims a 6\u00d7 memory reduction, but the main results in Table 1 show at most a 2\u00d7 reduction (e.g., Amz-670K: 6.7 GB \u2192 3.3 GB). Table 2 reports per-layer memory savings up to 4.5\u00d7, but never 6\u00d7. The 6\u00d7 figure appears to be an overstatement or may refer to a different experiment not reported in the paper. This discrepancy could mislead readers about the practical memory benefits.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_4",
+          "title": "Forward reference to undefined \u03b1 in Algorithm 1",
+          "quote": "\"a = min{\u03c1, \u03b1}\" (Algorithm 1 input line)",
+          "explanation": "The parameter \u03b1 is used in Algorithm 1 but is not defined until Assumption 3.2 in the following subsection. While the meaning of \u03b1 can be inferred later, the ordering creates a minor readability issue. More importantly, the definition of a = min{\u03c1, \u03b1} requires that both \u03c1 and \u03b1 be known constants; \u03c1 was defined in the problem setting but \u03b1 is context-dependent. This is not a major error but could be clarified.",
+          "comment_type": "logical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0032,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 12801,
+      "completion_tokens": 5084
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a well-motivated framework for efficient neural network training using learnable LSH, backed by strong empirical results. However, the review identified several critical inconsistencies and gaps that undermine the manuscript's credibility and completeness. The primary issues include a significant discrepancy between the abstract's claims (6x memory reduction) and the actual experimental data (max 2x reduction), a missing complexity bound in the core theoretical theorem, and an incomplete mathematical definition of the learning objective (Triplet Loss) that contradicts its description. While the scheduling algorithm and empirical studies are compelling, these issues require revision before publication.",
+      "comments": [],
+      "cost_usd": 0.0088,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 25898,
+      "completion_tokens": 19815
+    }
+  }
+}

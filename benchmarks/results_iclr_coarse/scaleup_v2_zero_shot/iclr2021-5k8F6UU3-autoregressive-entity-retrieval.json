@@ -1,0 +1,459 @@
+{
+  "slug": "iclr2021-5k8F6UU3-autoregressive-entity-retrieval",
+  "title": "AUTOREGRESSIVE ENTITY RETRIEVAL [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## AUTOREGRESSIVE ENTITY RETRIEVAL\n\n**Nicola De Cao[1,2]** _[\u2217]_ **, Gautier Izacard[2,3,4] , Sebastian Riedel[2,5] , Fabio Petroni[2]**"
+    },
+    {
+      "index": 1,
+      "text": "1University of Amsterdam, 2Facebook AI Research\n\n3ENS, PSL University, 4Inria, 5University College London"
+    },
+    {
+      "index": 2,
+      "text": "nicola.decao@gmail.com, _{_ gizacard, sriedel, fabiopetroni _}_ @fb.com\n\n## ABSTRACT\n\nEntities are at the center of how we represent and aggregate knowledge. For instance, Encyclopedias such as Wikipedia are structured by entities (e.g., one per Wikipedia article). The ability to retrieve such entities given a query is fundamental for knowledge-intensive tasks such as entity linking and open-domain question answering. One way to understand current approaches is as classifiers among atomic labels, one for each entity. Their weight vectors are dense entity representations produced by encoding entity meta information such as their descriptions. This approach leads to several shortcomings: (i) context and entity affinity is mainly captured through a vector dot product, potentially missing fine-grained interactions between the two; (ii) a large memory footprint is needed to store dense representations when considering large entity sets; (iii) an appropriately hard set of negative data has to be subsampled at training time. In this work, we propose GENRE, the first system that retrieves entities by generating their unique names, left to right, token-by-token in an autoregressive fashion and conditioned on the context. This enables us to mitigate the aforementioned technical issues since: (i) the autoregressive formulation allows us to directly capture relations between context and entity name, effectively cross encoding both; (ii) the memory footprint is greatly reduced because the parameters of our encoder-decoder architecture scale with vocabulary size, not entity count; (iii) the exact softmax loss can be efficiently computed without the need to subsample negative data. We show the efficacy of the approach, experimenting with more than 20 datasets on entity disambiguation, end-to-end entity linking and document retrieval tasks, achieving new state-of-the-art or very competitive results while using a tiny fraction of the memory footprint of competing systems. Finally, we demonstrate that new entities can be added by simply specifying their unambiguous name. Code and pre-trained models at https://github.com/facebookresearch/GENRE."
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nThe ability to retrieve the correct entity from large Knowledge Bases (KBs) given a textual input is a fundamental building block for several applications (Ferrucci, 2012; Slawski, 2015; Yang et al., 2018a). Most commercial recommendation systems, for instance, include in their pipelines components to detect and disambiguate entity mentions in open text, in order to isolate relevant concepts from non-meaningful data (Slawski, 2015; Yang et al., 2018a). Another example are chat-bots and question answering systems, that are often equipped with retrieval components to surface specific KB entries (e.g., Wikipedia articles) to find knowledge for sustaining a conversation or answering a question (Ferrucci, 2012; Chen et al., 2017; Lewis et al., 2020b; Roller et al., 2020)."
+    },
+    {
+      "index": 4,
+      "text": "Although there has been extensive previous work on entity retrieval (e.g. Hoffart et al., 2011; Piccinno & Ferragina, 2014; Huang et al., 2015; Le & Titov, 2018; Logeswaran et al., 2019; Broscheit, 2019; Wu et al., 2020, to name just a few) there is a common design choice to most current solutions: entities are associated with a unique atomic label and the retrieval problem can be interpreted as multi-class classification across these labels. The match between input and label is calculated through a bi-encoder (Wu et al., 2020; Karpukhin et al., 2020): a dot product between dense vector encodings of the input and the entity\u2019s meta information (such as title and description)."
+    },
+    {
+      "index": 5,
+      "text": "> _\u2217_ Work done during internship with Facebook AI Research.\n\n1\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 6,
+      "text": "**----- Start of picture text -----**\n\nSuperman saved \u2028 From 1905 to 1985 Owhango had a\u2028 [START] Farnese Palace [END]\nis one of the most important\n[START] Metropolis [END] [START] railway station [END] palaces in the city of Rome\n1 Metropolis (comics) 1 Owhango railway station 1 Palazzo Farnese\n2 Metropolis (1927 film) 2 Train station 2 Palazzo dei Normanni\n3 Metropolis-Hasting algorithm 3      Owhango 3 Palazzo della Farnesina\n(a) Type specification. (b) Composing from context. (c) Translation.\nWhich US nuclear reactor had \u2028 Stripes had Conrad Dunn\nWhat is the capital of Holland? a major accident in 1979? featured in it\n1 Netherlands 1 Three Mile Island accident 1 Conrad Dunn\n2 Capital of the Netherlands 2 Nuclear reactor 2 Stripes (film)\n3      Holland 3 Chernobyl disaster 3 Kris Kristofferson\n(d) Entity normalization. (e) Implicit factual knowledge. (f) Exact copy.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 7,
+      "text": "Figure 1: Examples of entities correctly retrieved from GENRE (we show only the top-3 rank). On the _top_ three entity disambiguation instances and on the _bottom_ three document retrieval instances, two for open-domain question answering and one for fact checking. All of them are cast as sequenceto-sequence problems while inference is done using constrained beam search. Gold entities in **bold** . Sub-captions indicate the type of interaction between the input context and the entity names required."
+    },
+    {
+      "index": 8,
+      "text": "Critically, this formulation enables sub-linear search using modern maximum-inner-product-search libraries (Johnson et al., 2019) and hence supports retrieving from large entity databases."
+    },
+    {
+      "index": 9,
+      "text": "Unfortunately, the classifier approach to entity retrieval also has several shortcomings. First, unless a costly cross-encoder is used for re-ranking (Wu et al., 2020), the dot-product can miss fine-grained interactions between input and entity meta information (Humeau et al., 2020). Second, storing dense vectors for the whole KB requires a large memory footprint, especially in real-world scenarios (i.e., _\u223c_ 24GB to store 1024-dimensional vectors for all of the _\u223c_ 6M Wikipedia pages), and the size linearly grows with the addition of new entities. Third, computing an exact softmax over all entities is very expensive, hence current solutions need to subsample negative data (Logeswaran et al., 2019; Karpukhin et al., 2020) at training time. Tuning an appropriately hard set of negative instances can be challenging and time-consuming. Finally, existing systems can suffer from a cold-start problem since they cannot represent entities about which they have not yet gathered sufficient information, in the form, for instance, of a textual description or a set of relations with the existing entities."
+    },
+    {
+      "index": 10,
+      "text": "The treatment of entity identifiers as atomic labels in a classifier ignores the fact that we often have unambiguous, highly structured and compositional entity names. Wikipedia, for instance, associates unique titles to articles,[1] that may be the name of the subject or a description of its topic, as well as potential distinctive information to disambiguate[2] (see Figure 1 for some examples). These entity names often interact with mention contexts in a predictable and regular fashion. For example, often entity names are identical with the mention strings that refer to them (e.g., Fig. 1f). When this is not possible, they might be composed of tokens in the context (e.g., Fig. 1b), include a type specification that can inferred (e.g., Fig. 1a), be the translation of the string mention (e.g., Fig. 1c), require \u2018normalization\u2019 such as referring to the correct alias of a mention (e.g., Fig. 1d), or require factual knowledge that might be stored in the parameters of a model (e.g., Fig. 1e). These observations suggest that inputs could be _translated_ into unique entity names, word by word, instead of being classified among a huge set of options."
+    },
+    {
+      "index": 11,
+      "text": "In this paper, we propose GENRE (for _Generative ENtity REtrieval_ ), the first entity retriever that exploits a sequence-to-sequence architecture to generate entity names in an autoregressive fashion conditioned on the context. Concretely, GENRE uses a transformer-based architecture, pre-trained with a language modeling objective (i.e., we use BART weights from Lewis et al. (2020a)) and fine-tuned to generate entity names. This architecture has been shown to retain factual knowledge"
+    },
+    {
+      "index": 12,
+      "text": "> 1We use _entity name_ to refer to the corresponding Wikipedia article title throughout the rest of the paper."
+    },
+    {
+      "index": 13,
+      "text": "> 2often in the form of a description in parentheses after the name. Wikipedia naming conventions are described in https://en.wikipedia.org/wiki/Wikipedia:Article_titles."
+    },
+    {
+      "index": 14,
+      "text": "2\n\nPublished as a conference paper at ICLR 2021\n\nto some extent (Petroni et al., 2019) and language translation skills (Radford et al., 2019) among other things, both desirable properties for an entity retriever. Naturally, the generated output might not always be a valid entity name. To solve this problem, GENRE employs a constrained decoding strategy that forces each generated name to be in a predefined candidate set."
+    },
+    {
+      "index": 15,
+      "text": "The autoregressive formulation allows us to directly capture the aforementioned relations between context and entity name, effectively cross encoding both. Also, the memory footprint required is orders of magnitude smaller than current systems, since the parameters of a sequence-to-sequence model scale linearly with the vocabulary size, not entity count. Moreover, the exact softmax can be computed efficiently for each output token (i.e., all non-gold tokens are considered negative), thereby eliminating the need for negative data downsampling. Finally, our model never accesses any explicit meta-information about the entity beyond their title, hence new entities can be added by simply appending their unambiguous name to the candidate set (e.g., Fig. 1b refers to an entity added after training)."
+    },
+    {
+      "index": 16,
+      "text": "We empirically evaluate the performance of GENRE on more than 20 datasets, spanning three families of tasks: (i) entity disambiguation, using popular datasets and settings (both in and out-of\u2013 domain); (ii) end-to-end entity linking, with the GERBIL benchmarking tool (R\u00a8oder et al., 2018), by using a novel dynamically markup-constrained decoding strategy; (iii) document retrieval, with the recently proposed KILT benchmark (Petroni et al., 2020b) which spans 5 different sub-tasks. Our models achieve state-of-the-art or very competitive results on nearly all datasets, often with substantial improvement (+13.7 precision points on KILT for retrieval on average). Further, we show that compared with recent models, GENRE requires substantially less memory ( _\u223c_ 20 times smaller footprint on average). Finally, we demonstrate that our model can be applied in scenarios where the only entity information available is its name."
+    },
+    {
+      "index": 17,
+      "text": "We organize the paper as follows: in Section 2 we describe our problem formulation. Then, in Section 3 we present GENRE and eventually in Section 4 we extensively evaluate our method on the aforementioned settings. We will release code and pre-processed data to reproduce our experiments."
+    },
+    {
+      "index": 18,
+      "text": "## 2 ENTITY RETRIEVAL\n\nWe assume to have a collection of entities _E_ (e.g., Wikipedia articles) where each entity is an entry in a Knowledge Base (KB) such as Wikipedia. We want to approach the following retrieval problem: given a textual input source _x_ (e.g., question), a model has to return the most relevant entities from _E_ with respect to _x_ . We assume that each _e \u2208E_ is uniquely assigned to a textual representation (i.e., its name): a sequence of tokens _y_ (e.g., Wikipedia pages are identified by their titles)."
+    },
+    {
+      "index": 19,
+      "text": "A particular instance of this problem is Entity Disambiguation (ED) (see Figure 1 for an example) where an input _x_ is annotated with a mention and a system has to select either its corresponding entity from _E_ , or to predict that there is no corresponding entry in the KB. Another instance is pagelevel Document Retrieval (DR) where the input _x_ is intended as a query and _E_ as a collection of documents identified by their unique titles (e.g., Wikipedia articles)."
+    },
+    {
+      "index": 20,
+      "text": "## 3 METHOD\n\nWe address the retrieval problem with an sequence-to-sequence model that generates textual entity identifiers (i.e., entity names). Concretely, GENRE ranks each _e \u2208E_ by computing a score with an autoregressive formulation: score( _e|x_ ) = _p\u03b8_ ( _y|x_ ) =[\ufffd] _[N] i_ =1 _[p][\u03b8]_[(] _[y][i][|][y][<i][, x]_[)][where] _[y]_[is][the] set of _N_ tokens in the identifier of _e_ , and _\u03b8_ the parameters of the model. We take advantage of fine-tuning the BART (Lewis et al., 2020a) pre-trained language model. We train GENRE using a standard seq2seq objective, i.e., maximizing the output sequence likelihood with teacher forcing (Sutskever et al., 2011; 2014) and regularized with dropout (Srivastava et al., 2014) and label smoothing (Szegedy et al., 2016). Concretely, we use the objective that is typically used for neural machine translation (NMT, Wu et al., 2016), that is maximizing log _p\u03b8_ ( _y|x_ ) with respect to model\u2019s parameters _\u03b8_ which, due to the factorized formulation, can be calculated exactly. We do not need negative sampling to approximate the loss normalizer."
+    },
+    {
+      "index": 21,
+      "text": "3\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nda Vinci\nLeonardo began DiCaprio\nIn 1503,  _ In 1503,  [Leonardo_ In 1503,  [Leonardo](Leonardo_ (TV series)\n[ ] )\ncontinue continue continue\nmention entity close\n**----- End of picture text -----**"
+    },
+    {
+      "index": 22,
+      "text": "(a) Outside: we can either (b) Inside a mention: we can either (c) Inside an entity link: we can either gencontinue to generate the incontinue to generate the input or erate from the entities prefix trie or close if put or start a new mention. end the current mention. the generated prefix is a valid entity."
+    },
+    {
+      "index": 23,
+      "text": "Figure 2: Example of dynamically constrained _Markup_ decoding for entity linking using \u201c _In 1503, Leonardo began painting the Mona Lisa._ \u201d as input. There are 3 cases: when we are outside a mention/entity (a), inside a mention generation step (b), and inside an entity link generation step (c). The model is supposed to output the input source annotating mentions and pointing them to the respective entities: \u201c _In 1503,_ _**[Leonardo]** (Leonardo da Vinci) began painting the_ _**[Mona Lisa]** (Mona Lisa)_ \u201d."
+    },
+    {
+      "index": 24,
+      "text": "## 3.1 INFERENCE WITH CONSTRAINED BEAM SEARCH\n\nNaturally, at test time, we could compute a score for every element in _E_ and then sort them. Unfortunately, this might be prohibitively expensive when _E_ is very large (e.g., Wikipedia has _\u223c_ 6M entities). Hence, we exploit Beam Search (BS, Sutskever et al., 2014), an established approximate decoding strategies to efficiently navigate the search space. Instead of explicitly scoring all entities in _E_ , we search for the top- _k_ entities in _E_ decoding from our model using BS with _k_ beams. Note that using BS implies that the time cost of our retriever does not depend on the size of _E_ , but only on the size of the beams and the average length of entity representations as we do autoregressive generation. The average length of entity representations is tractable (e.g., Wikipedia titles have 6 BPE tokens on average) and we follow standard NMT settings where _k_ is small (e.g., 10)."
+    },
+    {
+      "index": 25,
+      "text": "Since we want to output only entities from _E_ we cannot use traditional BS while decoding. Indeed, allowing to generate any token from the vocabulary at every decoding step might lead the model to generate output strings that are not valid identifiers. Hence, we resort to Constrained BS, forcing to only decode valid entity identifiers. BS only considers one step ahead during decoding so we can only constrain the generation of a single next token conditioned on the previous ones. Thus, we define our constrain in terms of a prefix tree _T_ (aka trie) (Cormen et al., 2009) where nodes are annotated with tokens from the vocabulary. For each node _t \u2208T_ , its children indicate all the allowed continuations from the prefix defined traversing the trie from the root to _t_ ."
+    },
+    {
+      "index": 26,
+      "text": "See Figure 9 in Appendix C for an exampled of a trie. When the number of allowed outputs is tractable (e.g., generating a Wikipedia title among _\u223c_ 6M) the trie is relatively small it can be precomputed and stored into memory (e.g., constraining on Wikipedia titles using the BART tokenizer produces a trie with _\u223c_ 6M leaves, _\u223c_ 17M internal nodes that occupied _\u223c_ 600MB of disk space). We employed the constraints masking the log-probabilities of the invalid tokens and not their logits (i.e., we do not re-normalize the probability over the vocabulary).[3]"
+    },
+    {
+      "index": 27,
+      "text": "## 3.2 AUTOREGRESSIVE END-TO-END ENTITY LINKING\n\nWe additionally extend our autoregressive framework to address end-to-end Entity Linking (EL) where, given a document, a system has to both detect entity mentions and link those mentions to their respective KB entities. In this setting, we train the model to predict the source input again but with annotated spans. We use a _Markup_ annotation where spans boundaries are flagged with special tokens and accompanied by their corresponding entity identifiers."
+    },
+    {
+      "index": 28,
+      "text": "Differently from a setting where the output space is relatively small (e.g., a pre-defined set _E_ ), the space of annotated outputs is exponentially large. Hence, it is intractable to pre-compute a trie for decoding, and we compute it dynamically instead. In Figure 2 we show an example. At each generation step, the decoder is either generating a mention span, generating a link to a mention, or continuing from the input source. When outside a mention/entity step the decoder has only two options: (i) to continue by copying the next token from the input source, or (ii) to generate the _start of mention_ token (i.e., \u2018[\u2019) which makes the decoder enter the mention generating phase. While"
+    },
+    {
+      "index": 29,
+      "text": "> 3We experimented with both versions and we find masking the log-probability more effective.\n\n4\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 30,
+      "text": "generating a mention, the decoder has either to continue with the next token in the input source or to generate the _end of mention_ token (i.e., \u2018]\u2019) which makes the decoder enter the entity generating phase. Finally, when generating an entity, the decoder employs the entities trie such that it can only output a valid entity identifier as in Constrained Beam Search explained above."
+    },
+    {
+      "index": 31,
+      "text": "## 4 EXPERIMENTS\n\nWe extensively evaluate GENRE on more than 20 datasets across 3 tasks: Entity Disambiguation, end-to-end Entity Linking (EL), and page-level Document Retrieval. We describe the experimental settings in Section 4.1 where we discuss results in Section 4.2. All experiments are in English."
+    },
+    {
+      "index": 32,
+      "text": "## 4.1 SETTINGS\n\n**Entity Disambiguation (ED)** We reproduce the setting of Le & Titov (2018) using the same candidate sets, _in-domain_ and _out-of-domain_ datasets, and evaluating using the _InKB_ micro- _F_ 1. We train GENRE feeding each document where a single mention is flagged with two special start and end tokens and the target output is the textual representation of the corresponding entity. At test time, we decode using constrained beam search with a trie obtained using the provided candidate set (i.e., a subset of _E_ ). As large generative models benefit from large amount of data, we first pre-train GENRE on the BLINK data (Wu et al., 2020), i.e., 9M unique triples document-mention-entity from Wikipedia. Then, for the _in-domain_ scenario, we fine-tune using the AIDA-CoNLL dataset (Hoffart et al., 2011). For the _out-of-domain_ scenario, we evaluate on five test sets: MSNBC, AQUAINT, ACE2004, WNED-CWEB (CWEB) and WNED-WIKI (WIKI) (Gabrilovich et al., 2013; Guo & Barbosa, 2018). More task details and hyperparameters setting are reported in Appendix A.1."
+    },
+    {
+      "index": 33,
+      "text": "**End-to-End Entity Linking (EL)** For EL, we reproduce the setting of Kolitsas et al. (2018) using the same _in-domain_ and _out-of-domain_ datasets as well as evaluating the _InKB_ micro- _F_ 1 on the GERBIL benchmark platform (R\u00a8oder et al., 2018). Similarly to the ED setting, we first pre-traine our model on all abstract sections from Wikipedia[4] enriched by a string matching heuristic to solve co-references (i.e., if there is a string that matches exactly with another hyperlink we also add it to the dataset as a mention/entity pairs). Then, for the _in-domain_ scenario, we fine-tune using the AIDACoNLL dataset. We evaluate on seven _out-of-domain_ test sets: MSNBC, Derczynski (Der) (Derczynski et al., 2015), KORE 50 (K50) (Hoffart et al., 2012), N3-Reuters-128 (R128), N3-RSS-500 (R500) (R\u00a8oder et al., 2014), and OKE challenge 2015 and 2016 (OKE15 and OKE16) (Nuzzolese et al., 2015). More task details and hyperparameters setting are reported in Appendix A.2."
+    },
+    {
+      "index": 34,
+      "text": "**Page-level Document Retrieval (DR)** For this setting, we test GENRE on all the KILT benchmark tasks (Petroni et al., 2020b). Here, whole Wikipedia is used as the candidate set and we evaluate using R-precision (Beitzel et al., 2009). KILT consists of five tasks that use the same Wikipedia dump as a knowledge source: fact checking with FEVER (Thorne et al., 2018); open domain question answering using Natural Questions (Kwiatkowski et al., 2019), HotpotQA (Yang et al., 2018b), TriviaQA (Joshi et al., 2017), ELI5 (Fan et al., 2019); slot filling with T-REx (Elsahar et al., 2018), Zero Shot RE (Levy et al., 2017); entity disambiguation on AIDA CoNLL-YAGO, WNED-WIKI and WNED-CWEB; dialogue with Wizard of Wikipedia (Dinan et al., 2019). We train GENRE on BLINK and all KILT data simultaneously with a single model.[5] More details on the hyperparameter setting are reported in Appendix A.3."
+    },
+    {
+      "index": 35,
+      "text": "## 4.2 RESULTS\n\nOverall, GENRE achieves very competitive results in all of the three settings being the best performing system on average across all of them. See Appendix C for examples of inputs, ground truth and model predictions for all of the three tasks. In the following, we discuss how GENRE compares to SOTA systems as well as showing some quantitative analysis on its memory footprint, how"
+    },
+    {
+      "index": 36,
+      "text": "> 4It is based on the 2019/08/01 Wikipedia dump pre-processed by Petroni et al. (2020b).\n\n> 5Note that not all dataset available in KILT have a training set. Concretely, we train on FEVER, Natural Questions, HotpotQA, TriviaQA, T-REx, Zero Shot RE, AIDA CoNLL-YAGO, and Wizard of Wikipedia."
+    },
+    {
+      "index": 37,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\n|In-domain\nOut-of-domain|In-domain\nOut-of-domain|In-domain\nOut-of-domain|\n|---|---|---|\n|**Method**\n**AIDA**\n**MSNBC**\n**AQUAINT**\n**ACE2004**\n**CWEB**\n**WIKI***||**Avg.**|\n||||\n|Ganea & Hofmann (2017)\n92.2\n93.7\nGuo & Barbosa (2018)\n89\n92\nYang et al. (2018a)\n**95.9**\n92.6\nShahbazi et al. (2019)\n93.5\n92.3\nYang et al. (2019)\n93.7\n93.8\nLe & Titov (2019)\n89.6\n92.2\nFang et al. (2019)\n94.3\n92.8\nBLINK w/o candidate set**\n79.6\n80.0|88.5\n88.5\n77.9\n77.5\n87\n88\n77\n84.5\n89.9\n88.5\n**81.8**\n79.2\n90.1\n88.7\n78.4\n79.8\n88.2\n90.1\n75.6\n78.8\n**90.7**\n88.1\n78.2\n81.7\n87.5\n**91.2**\n78.5\n82.8\n80.3\n82.5\n64.2\n75.5|86.4\n86.2\n88.0\n87.1\n86.7\n86.8\n87.9\n77.0|\n||||\n|**GENRE**\n93.3\n**94.3**|89.9\n90.1\n77.3\n**87.4**\n**88.8**||\n|Ablations|||\n||||\n|GENRE only AIDA data\n88.6\n88.1\n77.1\n82.3\n71.9\n71.7\nGENRE only BLINK data\n89.3\n93.3\n90.9\n91.1\n76.0\n87.9\nGENRE w/o candidate set\n91.2\n86.9\n87.2\n87.5\n71.1\n86.4\nGENRE w/o constraints\n86.4\n80.0\n81.7\n82.1\n66.0\n81.1||80.0\n88.1\n85.1\n79.6|"
+    },
+    {
+      "index": 38,
+      "text": "Table 1: Micro _F_ 1 (InKB) on the in-domain test set and five out-of-domain test sets for the named entity disambiguation task. **Bold** indicates best model and underline indicates second best (not for ablations). *WIKI is usually considered out-of-domain but note that all methods use a part of Wikipedia to train. **results taken from https://github.com/facebookresearch/ BLINK and normalized to accommodate entities not in KB."
+    },
+    {
+      "index": 39,
+      "text": "it exploits the structured of the entity name space, and how it behaves on a _cold-start_ scenario where new unseen entities are added to the KB (descriptions of those entities are unobserved)."
+    },
+    {
+      "index": 40,
+      "text": "**Comparing GENRE to SOTA systems** In ED the difference in average _F_ 1 score between GENRE and the second best performing system is small (i.e., +0.8) however, ED is an established task with more than a decade of research that benchmarked on those datasets. Indeed all systems reported in Table 1 achieved high and similar results even if they were taken from three years back."
+    },
+    {
+      "index": 41,
+      "text": "The improvements on EL are instead more evident. GENRE is the best in-domain system for AIDA while performing remarkably well also on the out-of-domain setting (e.g., +13 _F_ 1 points on Derczynski, and +4.7 on KORE50). Noticeably, in two datasets (OKE15 and OKE16) our model performs poorly. However, these datasets are annotated with coreference (pronouns and common nouns are linked to entities) while our model was not specifically trained for that. Conversely, most of the other systems, have a mention detection component in their pipelines that can be trained or biased to also solve these cases. We considered out of the aim of this work to additional train and evaluate on coreference and we leave it for future work."
+    },
+    {
+      "index": 42,
+      "text": "On page-level DR, the superiority of GENRE is remarkable. Our model is the best performing system across all 5 KILT tasks and all datasets except on Natural Questions where it is the second best. We achieve +13.7 R-precision points on average with respect to the best performing baseline. In Table 3 we compare GENRE against all methods reported in the public leaderboard: DPR (Karpukhin et al., 2020), DPR+BERT (Devlin et al., 2019), DPR+BART, tf-idf (Leskovec et al., 2014), RAG (Lewis et al., 2020b), and BLINK+flair (Wu et al., 2020; Akbik et al., 2019). No model except ours was trained on the entire KILT dataset at the same time. A RAG model was trained for every single task as well as for DPR+BERT. Note that this gives and advantage to RAG and DPR+BERT to specialize on single tasks where we have only a single model to solve all of them which still performs better. We speculate that multi-task training could have helped since the all tasks share a common objective to retrieve entities. Both DPR and BLINK+flair were not trained specifically on KILT. However, DPR was trained using several QA datasets which include Natural Question and TriviaQA. In Appendix B we report additional results where we do not pre-train or fine-tune our models for both the ED and retrieval setting in Table 1 and 8 respectively. When we train GENRE only in the DPR or BLINK data, our model still outperforms them."
+    },
+    {
+      "index": 43,
+      "text": "6\n\nPublished as a conference paper at ICLR 2021\n\n|In-domain\nOut-of-domain|In-domain\nOut-of-domain|In-domain\nOut-of-domain|In-domain\nOut-of-domain|In-domain\nOut-of-domain|\n|---|---|---|---|---|\n|**Method**\n**AIDA**\n**MSNBC**\n**Der**\n**K50**||**R128**\n**R500**\n**OKE15***\n**OKE16***||**Avg.**|\n||||||\n|Hoffart et al. (2011)\nSteinmetz & Sack (2013)\nMoro et al. (2014)\nKolitsas et al. (2018)\nBroscheit (2019)\nMartins et al. (2019)\nvan Hulst et al. (2020)_\u2020_|72.8\n65.1\n32.6\n55.4\n42.3\n30.9\n26.5\n46.8\n48.5\n39.7\n29.8\n55.9\n82.4\n72.4\n34.1\n35.2\n79.3\n-\n-\n-\n81.9\n-\n-\n-\n80.5\n72.4\n41.1\n50.7|46.4\n**42.4**\n18.1\n20.5\n23.0\n29.1\n**50.3**\n38.2\n-\n-\n-\n-\n49.9\n35.0|**63.1**\n0.0\n46.2\n46.4\n41.9\n37.7\n61.9\n52.7\n-\n-\n-\n-\n**63.1**\n**58.3**|47.2\n34.7\n38.2\n53.4\n56.4|\n||||||\n|**GENRE**|**83.7**\n**73.7**\n**54.1**\n**60.7**|46.7\n40.3|56.1\n50.0|**58.2**|"
+    },
+    {
+      "index": 44,
+      "text": "Table 2: Micro _F_ 1 (InKB) on the in-domain test set and four out-of-domain test sets for the entity linking task. **Bold** indicates best model and underline indicates second best. *annotated with coreference (note that we do not train/evaluate our model to link pronouns and common nouns). _[\u2020]_ results from the Wikipedia 2019 setting as opposed to the 2014 setting (older dump and fewer entities)."
+    },
+    {
+      "index": 45,
+      "text": "**Memory Footprint** GENRE is not only performing better than other SOTA models on DR but it has a significant reduction of memory footprint (disk space). In Figure 4 we compare the number of model/index parameter against DPR, RAG, and BLINK. GENRE uses an order of magnitude less parameters (millions instead of billions) to store the entity index because it just has to use a prefix tree of the entity names as opposed to a dense vector for each entity. Concretely, GENRE occupied 14 times less memory than BLINK and 34 times less memory than DPR."
+    },
+    {
+      "index": 46,
+      "text": "**Exploiting the Structured Name Space** We investigated some properties of GENRE, comparing two variants of our model to BLINK on the ED task (using WNED-KILT validation set): one trained to generate entity names and another to generate numerical identifiers (IDs). All models are trained on the same data and we report results in Figure 5. When there is an exact match between a mention and its entity name, both BLINK and GENRE almost always make an accurate prediction. Different is the case of partial and no match: GENRE performance is much higher suggesting that our model uses the context more effectively, as the autoregressive formulation allows to cross-encode mention context and entity candidates directly capturing fine-grained interactions between the two. Moreover, when we switch to predicting IDs, the performance drops drastically (-20.3 points on average) indicating that it is important that entity names are meaningful, structured and compositional (as they are in Wikipedia) conversely to atomic IDs. Surprisingly, when there is no overlap between a mention-entity pair, performance are still relatively high by using IDs. This suggests that the model is good at memorizing and recalling identifiers even if numeric."
+    },
+    {
+      "index": 47,
+      "text": "**Ablation study** We here discuss an ablation study on the entity disambiguation task (see Table 1). Due to space limitation, we discuss an ablation study on document retrieval in Appendix B.2. In Table 1, GENRE only AIDA or BLINK data indicates the ablation for which we only train on one of the two datasets (i.e., only fine-tuning). GENRE (full) is also used with constrained decoding (see Section 3) and in combination with a candidate set (as provided by Le & Titov, 2018). GENRE without candidate set denotes ablating the provided (and small) candidate set and therefore using all the entities in the KB (in our case Wikipedia) as candidates. GENRE without constraints indicates ablating constrained decoding which implies no use of the provided candidates set but also unconstrained generation (i.e., the model may generate entity names that are not in the KB). Eventually, using constrained generation and exploiting the candidate sets proved useful. Training only on AIDA data is insufficient to get high _F_ 1 (but AIDA is quite small compared to the 9M datapoints of BLINK data)."
+    },
+    {
+      "index": 48,
+      "text": "**Entity frequency** The performance of a model naturally depends on how many times entities appear in the training data. We show the data distribution of the mention-entity frequency in Figure 3. Most of the pairs appears in Wikipedia (10931 / 13354) where 2423 do not (first bin). The average accuracy is 82.5% but noticeable it is higher for mention-entity pairs that are more frequent (right side of the plot). The accuracy for pairs that do not appear in Wikipedia is substantially lower than the average suggesting that those are harder cases (the very end tail of the distribution). The degradation in performance is minimal indicating that our model is good at predicting rare entities."
+    },
+    {
+      "index": 49,
+      "text": "7\n\nPublished as a conference paper at ICLR 2021\n\n|Fact Check.\nEntity Disambiguation\nSlot Filling\nOpen Domain QA\nDial.\n**Model**\n**FEV**\n**AY2**\n**WnWi**\n**WnCw**\n**T-REx**\n**zsRE**\n**NQ**\n**HoPo**\n**TQA**\n**ELI5**\n**WoW**\n**Avg.**\nDPR + BERT\n72.9\n-\n-\n-\n-\n40.1\n**60.7**\n25.0\n43.4\n-\n-\n-\nDPR\n55.3\n1.8\n0.3\n0.5\n13.3\n28.9\n54.3\n25.0\n44.5\n10.7\n25.5\n23.6\ntf-idf\n50.9\n3.7\n0.24\n2.1\n44.7\n60.8\n28.1\n34.1\n46.4\n13.7\n49.0\n30.5\nDPR + BART\n55.3\n75.5\n45.2\n46.9\n13.3\n28.9\n54.3\n25.0\n44.4\n10.7\n25.4\n38.6\nRAG\n61.9\n72.6\n48.1\n47.6\n28.7\n53.7\n59.5\n30.6\n48.7\n11.0\n57.8\n47.3\nBLINK + fair\n63.7\n81.5\n80.2\n68.8\n59.6\n78.8\n24.5\n46.1\n65.6\n9.3\n38.2\n56.0\n**GENRE**\n**83.6**\n**89.9**\n**87.4**\n**71.2**\n**79.4**\n**95.8**\n60.3\n**51.3**\n**69.2**\n**15.8**\n**62.9**\n**69.7**|Fact Check.\nEntity Disambiguation\nSlot Filling\nOpen Domain QA\nDial.\n**Model**\n**FEV**\n**AY2**\n**WnWi**\n**WnCw**\n**T-REx**\n**zsRE**\n**NQ**\n**HoPo**\n**TQA**\n**ELI5**\n**WoW**\n**Avg.**\nDPR + BERT\n72.9\n-\n-\n-\n-\n40.1\n**60.7**\n25.0\n43.4\n-\n-\n-\nDPR\n55.3\n1.8\n0.3\n0.5\n13.3\n28.9\n54.3\n25.0\n44.5\n10.7\n25.5\n23.6\ntf-idf\n50.9\n3.7\n0.24\n2.1\n44.7\n60.8\n28.1\n34.1\n46.4\n13.7\n49.0\n30.5\nDPR + BART\n55.3\n75.5\n45.2\n46.9\n13.3\n28.9\n54.3\n25.0\n44.4\n10.7\n25.4\n38.6\nRAG\n61.9\n72.6\n48.1\n47.6\n28.7\n53.7\n59.5\n30.6\n48.7\n11.0\n57.8\n47.3\nBLINK + fair\n63.7\n81.5\n80.2\n68.8\n59.6\n78.8\n24.5\n46.1\n65.6\n9.3\n38.2\n56.0\n**GENRE**\n**83.6**\n**89.9**\n**87.4**\n**71.2**\n**79.4**\n**95.8**\n60.3\n**51.3**\n**69.2**\n**15.8**\n**62.9**\n**69.7**|Fact Check.\nEntity Disambiguation\nSlot Filling\nOpen Domain QA\nDial.\n**Model**\n**FEV**\n**AY2**\n**WnWi**\n**WnCw**\n**T-REx**\n**zsRE**\n**NQ**\n**HoPo**\n**TQA**\n**ELI5**\n**WoW**\n**Avg.**\nDPR + BERT\n72.9\n-\n-\n-\n-\n40.1\n**60.7**\n25.0\n43.4\n-\n-\n-\nDPR\n55.3\n1.8\n0.3\n0.5\n13.3\n28.9\n54.3\n25.0\n44.5\n10.7\n25.5\n23.6\ntf-idf\n50.9\n3.7\n0.24\n2.1\n44.7\n60.8\n28.1\n34.1\n46.4\n13.7\n49.0\n30.5\nDPR + BART\n55.3\n75.5\n45.2\n46.9\n13.3\n28.9\n54.3\n25.0\n44.4\n10.7\n25.4\n38.6\nRAG\n61.9\n72.6\n48.1\n47.6\n28.7\n53.7\n59.5\n30.6\n48.7\n11.0\n57.8\n47.3\nBLINK + fair\n63.7\n81.5\n80.2\n68.8\n59.6\n78.8\n24.5\n46.1\n65.6\n9.3\n38.2\n56.0\n**GENRE**\n**83.6**\n**89.9**\n**87.4**\n**71.2**\n**79.4**\n**95.8**\n60.3\n**51.3**\n**69.2**\n**15.8**\n**62.9**\n**69.7**|\n|---|---|---|\n|||**Avg.**|\n||-\n40.1\n**60.7**\n25.0\n43.4\n-\n-\n13.3\n28.9\n54.3\n25.0\n44.5\n10.7\n25.5\n44.7\n60.8\n28.1\n34.1\n46.4\n13.7\n49.0\n13.3\n28.9\n54.3\n25.0\n44.4\n10.7\n25.4\n28.7\n53.7\n59.5\n30.6\n48.7\n11.0\n57.8\n59.6\n78.8\n24.5\n46.1\n65.6\n9.3\n38.2|-\n23.6\n30.5\n38.6\n47.3\n56.0|\n||**79.4**\n**95.8**\n60.3\n**51.3**\n**69.2**\n**15.8**\n**62.9**|**69.7**|"
+    },
+    {
+      "index": 50,
+      "text": "Table 3: R-Precision for page-level retrieval on KILT test data. **Bold** indicates the best model and underline indicates the second best. For our model, we indicated what datasets we used for training."
+    },
+    {
+      "index": 51,
+      "text": "|**Model**\n**Memory**\n**Param.**\n**Index**\nDPR\n70.9GB\n220M\n15B\nRAG\n40.4GB\n626M\n15B\nBLINK\n30.1GB\n680M\n6B\n**GENRE**\n**2.1GB**\n**406M**\n**17M**|**Type (support)**\n**BLINK**\n**GENRE**\n**IDs***|\n|---|---|\n||Exact match (1543)\n97.8\n96.6\n76.0\nPartial match (1531)\n70.7\n86.9\n63.8\nNo match (322)\n49.4\n59.9\n55.0|\n||Total (3396)\n81.0\n88.8\n68.5|"
+    },
+    {
+      "index": 52,
+      "text": "Table 4: Comparison between retrieval models on memory (disk space) footprint and number of model/index parameters."
+    },
+    {
+      "index": 53,
+      "text": "Table 5: Different types of matches between mentions and their entity names on the WNED-KILT.\n\n**Cold-start** We manually collect 50 Wikipedia articles that were created in 2020[6] to simulate a _cold-start_ setting where new entities are added to the KB and the only entity information available is their names. To create ED instances we resort to hyperlinks pointing to those entities in other Wikipedia articles. 19 out of 50 mentions have an exact match with their respective entity names and all of them were correctly classified by GENRE. In combination with the results from Table 5 we can conclude that GENRE has a bias on exactly copying the mention, and this helps on unseen data. GENRE also correctly classified 14/31 of the remaining mentions (45.2%). This demonstrates the ability of our solution to be applied in scenarios where entity metadata is unavailable (apart his name), a setting where, to the best of our knowledge, no existing system is capable to operate."
+    },
+    {
+      "index": 54,
+      "text": "We additionally test how GENRE performs on unseen mention-entity pairs on WikilinksNED Unseen-Mentions data (Onoe & Durrett, 2020) and we report all results in Table 6 in Appendix B.1. Surprisingly, GENRE performs almost the same for seen and unseen entity pairs (64.4 vs 63.2 accuracy) However, in the Onoe & Durrett (2020) setting we cannot guarantee entity descriptions have not been seen by BART during pre-training (given his training data contains Wikipedia)."
+    },
+    {
+      "index": 55,
+      "text": "## 5 RELATED WORKS\n\nCasting NLP tasks with a structured input or output into sequence-to-sequence problems has been explored for different problems, including semantic parsing (Rongali et al., 2020), semantic role labelling (Daza & Frank, 2018), discourse representation structure parsing (Liu et al., 2018), generation of fluent natural language responses from structured semantic representations (Balakrishnan et al., 2019), generation and parsing of abstract meaning representation (Konstas et al., 2017). In these works a structured representation, a tree or a graph for instance, is linearized into a sequence of symbols compatible with a seq2seq architecture. To the best of our knowledge, we are the first to cast entity retrieval as a sequence-to-sequence problem while decoding with an autoregressive formulation during inference."
+    },
+    {
+      "index": 56,
+      "text": "Related to our constrained generation mechanism, Daza & Frank (2018); Rongali et al. (2020) use a copying mechanism in order to limit lexical deviations between the input and output strings. In these tasks, as well as for our problem, it is natural to promote a copying mechanism due to the input and the output proximity. A different type of constraint, a structural constraint, is used in Bal-"
+    },
+    {
+      "index": 57,
+      "text": "> 6Note that both pre-training and fine-tuning use dumps from 2019.\n\n8\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 58,
+      "text": "**----- Start of picture text -----**\n\n1.0 6.9e+03\nAccuracy\n0.9 Data distribution 6.2e+03\n0.8 5.5e+03\n0.7 4.8e+03\n0.6 4.1e+03\n0.5 3.4e+03\n0.4 2.8e+03\n0.3 2.1e+03\n0.2 1.4e+03\n0.1 6.9e+02\n0.0 0.0e+00\nNone 2 [0] 2 [1] 2 [2] 2 [3] 2 [4] 2 [5] 2 [6] 2 [7] 2 [8] 2 [9] 2 [10] 2 [11] 2 [12] 2 [13] 2 [14] 2 [15] 2 [16] 2 [17]\nMention-entity pair appearances\nAccuracy Frequency\n**----- End of picture text -----**"
+    },
+    {
+      "index": 59,
+      "text": "Figure 3: Accuracy per mention-entity pair frequency (in Wikipedia) on the validation sets of all Entity Disambiguation tasks in KILT."
+    },
+    {
+      "index": 60,
+      "text": "akrishnan et al. (2019) to maintain a valid tree structure. Our constrained beam search encompasses both aspects, a copying mechanism that restrains the vocabulary and a structural constraint to obtain a well-formed annotated output. In addition to these tasks with close input and output, the integration of a mechanism to guide the output of neural networks has been explored in various settings. Lexically constrained decoding has been used to force the inclusion of pre-specified words for machine translation (Hokamp & Liu, 2017; Post & Vilar, 2018), and image captioning (Anderson et al., 2017). To the best of our knowledge, we are the first to exploit constrained generation for entity disambiguation, end-to-end entity linking, and query-based entity retrieval."
+    },
+    {
+      "index": 61,
+      "text": "Nogueira et al. (2020) propose to use a sequence-to-sequence model to re-rank document. Given a query and a document the model is trained to output the words \u201dtrue\u201d or \u201dfalse\u201d depending on whether the document is relevant or not. Differently from our approach for entity retrieval, it requires a limited list of candidates documents, obtained with BM25 for instance, in order to be computationally possible. Massarelli et al. (2019); Petroni et al. (2020a) explore the idea of using an autoregressive language model as neural retriever, by exploiting the implicit knowledge stored in their parameters to generate relevant sentences given a query. While intriguing, such solutions still lag behind retrievers with an explicit knowledge access (e.g., an explicit Wikipedia index). The idea of using a generative model for entity disambiguation was proposed in Petroni et al. (2020b) as they trained both BART and T5 in a seq2seq fashion on all KILT tasks (including ED). We expanded that intuition generalizing on multiple tasks (end-to-end EL and page-level retrieval) as well as introducing constrained decoding for an efficient and effective search."
+    },
+    {
+      "index": 62,
+      "text": "## 6 CONCLUSIONS\n\nIn this work, we propose GENRE, a novel paradigm to addresses entity retrieval: generate entity names autoregressively. Entity names have several properties that might help (even humans) retrieving them, including a compositional structure and a predictable interaction with the context. The autoregressive formulation allows us to directly capture some of these properties, leading to several advantages with respect to current solutions, including an efficient way to cross encode mention context and entity candidates, a much smaller memory footprint, and the ability to compute an exact softmax without the need to subsample negative data. We empirically show that these characteristics, combined with constrained decoding strategies, led to state-of-the-art performance on a plethora of entity retrieval datasets, spanning entity disambiguation, end-to-end entity linking, and page-level document retrieval, while resulting in systems with a remarkably contained memory footprint, a space reduction by a factor of twenty on average. We additionally demonstrate that new entities can be effectively considered in our system by simply appending their unambiguous name to the candidate set."
+    },
+    {
+      "index": 63,
+      "text": "## ACKNOWLEDGMENTS\n\nAuthors thank Patrick Lewis, Aleksandra Piktus, Michael Schlichtkrull, Ivan Titov, Jean Maillard, Edouard Grave, Sergio De Cao, Luisa Quarta for helpful discussions and technical support."
+    },
+    {
+      "index": 64,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Alan Akbik, Tanja Bergmann, Duncan Blythe, Kashif Rasul, Stefan Schweter, and Roland Vollgraf. FLAIR: An easy-to-use framework for state-of-the-art NLP. In _Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics (Demonstrations)_ , pp. 54\u201359, Minneapolis, Minnesota, June 2019. Association for Computational Linguistics. doi: 10.18653/v1/N19-4010. URL https://www.aclweb.org/anthology/ N19-4010."
+    },
+    {
+      "index": 65,
+      "text": "- Peter Anderson, Basura Fernando, Mark Johnson, and Stephen Gould. Guided open vocabulary image captioning with constrained beam search. In _Proceedings of the 2017 Conference on Empirical Methods in Natural Language Processing_ , pp. 936\u2013945, Copenhagen, Denmark, September 2017. Association for Computational Linguistics. doi: 10.18653/v1/D17-1098. URL https://www.aclweb.org/anthology/D17-1098."
+    },
+    {
+      "index": 66,
+      "text": "- Anusha Balakrishnan, Jinfeng Rao, Kartikeya Upasani, Michael White, and Rajen Subba. Constrained decoding for neural NLG from compositional representations in task-oriented dialogue. In _Proceedings of the 57th Annual Meeting of the Association for Computational Linguistics_ , pp. 831\u2013844, Florence, Italy, July 2019. Association for Computational Linguistics. doi: 10.18653/v1/P19-1080. URL https://www.aclweb.org/anthology/P19-1080."
+    },
+    {
+      "index": 67,
+      "text": "- Steven M. Beitzel, Eric C. Jensen, and Ophir Frieder. _Average R-Precision_ , pp. 195\u2013195. Springer US, Boston, MA, 2009. ISBN 978-0-387-39940-9. doi: 10.1007/978-0-387-39940-9 ~~4~~ 91. URL https://doi.org/10.1007/978-0-387-39940-9_491."
+    },
+    {
+      "index": 68,
+      "text": "- Samuel Broscheit. Investigating entity knowledge in BERT with simple neural end-to-end entity linking. In _Proceedings of the 23rd Conference on Computational Natural Language Learning (CoNLL)_ , pp. 677\u2013685, Hong Kong, China, November 2019. Association for Computational Linguistics. doi: 10.18653/v1/K19-1063. URL https://www.aclweb.org/anthology/ K19-1063."
+    },
+    {
+      "index": 69,
+      "text": "- Danqi Chen, Adam Fisch, Jason Weston, and Antoine Bordes. Reading Wikipedia to answer open-domain questions. In _Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)_ , pp. 1870\u20131879, Vancouver, Canada, July 2017. Association for Computational Linguistics. doi: 10.18653/v1/P17-1171. URL https: //www.aclweb.org/anthology/P17-1171."
+    },
+    {
+      "index": 70,
+      "text": "- Shuang Chen, Jinpeng Wang, Feng Jiang, and Chin-Yew Lin. Improving entity linking by modeling latent entity type information. In _Proceedings of the AAAI Conference on Artificial Intelligence_ , volume 34, pp. 7529\u20137537, 2020."
+    },
+    {
+      "index": 71,
+      "text": "- Thomas H Cormen, Charles E Leiserson, Ronald L Rivest, and Clifford Stein. _Introduction to algorithms_ . MIT press, 2009."
+    },
+    {
+      "index": 72,
+      "text": "- Angel Daza and Anette Frank. A sequence-to-sequence model for semantic role labeling. In _Proceedings of The Third Workshop on Representation Learning for NLP_ , pp. 207\u2013216, Melbourne, Australia, July 2018. Association for Computational Linguistics. doi: 10.18653/v1/W18-3027. URL https://www.aclweb.org/anthology/W18-3027."
+    },
+    {
+      "index": 73,
+      "text": "- Leon Derczynski, Diana Maynard, Giuseppe Rizzo, Marieke Van Erp, Genevieve Gorrell, Rapha\u00a8el Troncy, Johann Petrak, and Kalina Bontcheva. Analysis of named entity recognition and linking for tweets. _Information Processing & Management_ , 51(2):32\u201349, 2015."
+    },
+    {
+      "index": 74,
+      "text": "- Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidirectional transformers for language understanding. In _Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers)_ , pp. 4171\u20134186, Minneapolis, Minnesota, June 2019. Association for Computational Linguistics. doi: 10.18653/v1/N19-1423. URL https: //www.aclweb.org/anthology/N19-1423."
+    },
+    {
+      "index": 75,
+      "text": "- Emily Dinan, Stephen Roller, Kurt Shuster, Angela Fan, Michael Auli, and Jason Weston. Wizard of wikipedia: Knowledge-powered conversational agents. _Proceedings of the International Conference on Learning Representations (ICLR)_ , 2019.\n\n10"
+    },
+    {
+      "index": 76,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper presents a novel and well-motivated autoregressive approach to entity retrieval (GENRE), effectively utilizing a sequence-to-sequence model and constrained decoding to outperform established baselines while significantly reducing memory requirements. The methodology is logically sound, and the empirical evaluation covers a broad range of tasks and datasets. I have identified one minor issue regarding the mathematical notation in the formulation of the retrieval score, which appears to be a transcription error or an incomplete definition, though it does not detract from the overall clarity of the proposed method.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Malformed product operator in score function",
+          "quote": "score( e|x ) = p\u03b8( y|x ) =[] [N] i =1 [p][\u03b8][(] [y][i][|][y][<i][, x]_[)]",
+          "explanation": "The OCR extraction shows a corrupted product operator expression `=[] [N] i =1`. Given the context of autoregressive sequence modeling, this is clearly intended to represent the product of conditional probabilities over the tokens of the entity identifier $y = (y_1, ..., y_N)$, typically written as $\\prod_{i=1}^N p_\\theta(y_i | y_{<i}, x)$. While the intent is clear from the surrounding text, the presented formula is mathematically malformed.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0041,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 14321,
+      "completion_tokens": 326
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes GENRE, a novel autoregressive sequence-to-sequence approach for entity retrieval that generates entity names conditioned on context. The core idea is well-motivated, addressing known limitations of dense retrievers (memory footprint, lack of fine-grained context-entity interaction, and negative sampling). The methodology is largely sound, leveraging constrained beam search and a pre-trained BART model. However, several areas require clarification: a notation inconsistency regarding the target sequence, ambiguity in how the generative model handles negative/null cases in Entity Disambiguation, unclear baselines for specific performance claims in the Entity Linking section, and minor ambiguities in the constrained decoding probability normalization. These issues do not undermine the main contribution but should be addressed to ensure reproducibility and precise claim framing.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Notation inconsistency: 'set' vs 'sequence' for target tokens",
+          "quote": "where y is the set of N tokens in the identifier of e",
+          "explanation": "In Section 3, the autoregressive score is defined as a product over tokens: \\prod_{i=1}^N p_\\theta(y_i | y_{<i}, x). Immediately following the formula, the authors describe y as 'the set of N tokens'. In an autoregressive generation framework, the target y is inherently ordered (a sequence or tuple), not a set. While the mathematical intent is clear, referring to y as a set contradicts the positional, conditional nature of the generation process. Changing 'set' to 'sequence' or 'string' would align the prose with standard notation.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Ambiguity in constrained beam search probability normalization",
+          "quote": "We employed the constraints masking the log-probabilities of the invalid tokens and not their logits (i.e., we do not re-normalize the probability over the vocabulary).",
+          "explanation": "The authors state they mask log-probabilities and do not re-normalize. In practice, setting invalid log-probabilities to -\\infty masks them, but failing to re-normalize means the probability mass over the remaining valid tokens sums to less than 1. While beam search primarily depends on relative score ordering (making this practically viable), the phrasing is slightly ambiguous regarding how beam scores are updated and compared across steps. Clarifying whether beam scores are tracked as unnormalized log-likelihoods or how the under-normalization affects the final ranking would improve methodological clarity.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Underspecified handling of 'no entity' cases in Entity Disambiguation",
+          "quote": "where an input x is annotated with a mention and a system has to select either its corresponding entity from E, or to predict that there is no corresponding entry in the KB.",
+          "explanation": "Section 2 formally defines the ED task as including a null prediction (no corresponding entity). However, Section 3 and 3.1 only describe generating valid entity names using a prefix trie and constrained beam search. It is not explicitly stated how the model produces a 'no entity' prediction during inference. Does it generate a special <mask> or <none> token? Is there a rejection threshold? Or is the null case handled post-hoc? Clarifying the mechanism for negative cases in the generative pipeline is necessary for full reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 19,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_3",
+          "title": "Unclear baseline for Entity Linking performance delta claims",
+          "quote": "performing remarkably well also on the out-of-domain setting (e.g., +13 F1 points on Derczynski, and +4.7 on KORE50).",
+          "explanation": "In Section 4.2, the authors claim a +13 F1 improvement on the Derczynski dataset. However, Table 2 lists prior works achieving higher absolute scores on Derczynski (e.g., Hoffart et al. (2011) reports 63.1, while GENRE scores 54.1). The text does not specify which baseline the +13 delta refers to. Without clarifying the comparison model (or noting if it refers to an unlisted baseline), the claim is misleading and difficult to verify against the provided results. The authors should explicitly state the baseline or remove the specific delta to avoid confusion.",
+          "comment_type": "logical",
+          "paragraph_index": 41,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_4",
+          "title": "Slight overclaim on cold-start capability",
+          "quote": "a setting where, to the best of our knowledge, no existing system is capable to operate.",
+          "explanation": "The authors assert that no existing system can operate in a cold-start scenario using only entity names. While this holds true for dense retrievers that rely on pre-computed descriptive embeddings (like BLINK), string-matching baselines or text-encoding retrievers (e.g., DPR/RAG with name-only prompts) can technically operate with just names. The claim is slightly overstated; refining it to specify dense retrieval systems or acknowledging string-based fallbacks would be more precise.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0277,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 28456,
+      "completion_tokens": 15872
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "GENRE presents a novel and effective approach to entity retrieval via autoregressive generation with constrained decoding, achieving strong results across multiple benchmarks while reducing memory footprint. The paper is clearly written and the experiments are extensive. However, there are some methodological details that are underspecified, particularly for the end-to-end entity linking component (dynamic markup decoding and data construction), which could hinder reproducibility. Additionally, the description of the constrained beam search masking technique is somewhat ambiguous and could benefit from clarification. These issues are localized and fixable.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Underspecified dynamic markup decoding for end-to-end entity linking",
+          "quote": "When outside a mention/entity step the decoder has only two options: (i) to continue by copying the next token from the input source, or (ii) to generate the start of mention token (i.e., \u2018[\u2019)",
+          "explanation": "The description implies the decoder can 'copy' tokens from the input, but no mechanism (e.g., pointer network, copy attention, or simply generating from a vocabulary with access to the input) is specified. It is unclear how the model learns to reproduce the input text exactly, and how the dynamic constraint construction is implemented in detail. A reader would struggle to reproduce this component without additional implementation details.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Vague description of training data for end-to-end entity linking",
+          "quote": "we first pre-traine our model on all abstract sections from Wikipedia enriched by a string matching heuristic to solve co-references (i.e., if there is a string that matches exactly with another hyperlink we also add it to the dataset as a mention/entity pairs).",
+          "explanation": "The phrase 'all abstract sections from Wikipedia' is imprecise: does it include the entire abstract text or just the first paragraph per article? The heuristic for adding co-reference mentions is underspecified\u2014what exactly constitutes a 'string that matches exactly with another hyperlink' and how are false positives avoided? The data preparation step is therefore not reproducible without further clarification.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_2",
+          "title": "Ambiguity in constrained beam search masking",
+          "quote": "We employed the constraints masking the log-probabilities of the invalid tokens and not their logits (i.e., we do not re-normalize the probability over the vocabulary).",
+          "explanation": "The standard approach to constrained decoding is to mask logits before the softmax, yielding a normalized distribution over allowed tokens. The authors' approach of masking log-probabilities after the softmax without re-normalization means that the probabilities of allowed tokens no longer sum to one. This could affect comparative scores in beam search and is an unusual design choice. The description would benefit from a clearer explanation of how the masks are applied (e.g., setting masked log-probabilities to -inf?) and why this works better than masking logits.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0034,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 13032,
+      "completion_tokens": 5928
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper presents a strong contribution to the field of entity retrieval by framing the problem as a sequence-to-sequence generation task rather than a classifier. The approach effectively addresses the memory scalability and cross-encoding advantages claimed, achieving state-of-the-art results on KILT benchmarks. The evaluation is extensive and rigorous. However, there is a notable inconsistency in how the candidate set is utilized: removing the provided candidate set (searching the full KB) leads to a performance drop compared to using the small provided set, yet the authors describe the candidate set purely as an optimization for search efficiency, not as a necessary regularization for the model's logic. Additionally, there is a minor terminological imprecision regarding the constrained beam search implementation details.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.7-flash_0",
+          "title": "Performance degradation when ablating candidate sets",
+          "quote": "\"GENRE w/o candidate set denotes ablating the provided (and small) candidate set and therefore using all the entities in the KB\"",
+          "explanation": "In the ablation study (Table 1), the authors observe that removing the provided small candidate set (and thereby using the full Wikipedia KB) results in performance that is lower than the 'GENRE (full)' setting (which uses the small set). This contradicts the assumption that the candidate set is purely an indexing/search optimization; the data suggests the small set helps constrain the model's output distribution in a way that the large set does not. Specifically, when given the full candidate space (as in 'w/o candidate set'), the model may rely more heavily on its generative bias (copying/attention) and hallucinate entities or get 'distracted' by the vast number of valid continuations, whereas the small set restricts the output space to a distribution the model is confident about. This behavior is significant but not fully explained in the text, leaving a gap in the interpretation of the results.",
+          "comment_type": "logical",
+          "paragraph_index": 47,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.7-flash_1",
+          "title": "Terminology in constrained beam search implementation",
+          "quote": "\"We employed the constraints masking the log-probabilities of the invalid tokens and not their logits\"",
+          "explanation": "In Section 3.1, the paper describes the constrained decoding strategy using the phrase 'masking the log-probabilities of the invalid tokens'. In standard transformer-based architectures (like BART), the decoder computes logits (unnormalized scores) before the softmax activation function. Constrained beam search is mathematically described by masking the *logits* (setting them to negative infinity) before computing the softmax. Masking 'log-probabilities' (which implies the output already passed through the softmax layer) would result in a sum of valid probabilities less than 1. While the mathematical outcome for ranking (the log-likelihood difference) remains unaffected because the normalization constant is constant for a given prefix, the terminology is technically incorrect for the standard implementation of this algorithm and could confuse readers regarding the exact technical steps taken.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0081,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 26270,
+      "completion_tokens": 17974
+    }
+  }
+}

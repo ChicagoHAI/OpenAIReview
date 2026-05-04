@@ -1,0 +1,1286 @@
+{
+  "slug": "iclr2022-CzceR82C-score-based-generative-modeling-with-critically-damped-lange",
+  "title": "Score-Based Generative Modeling with Critically-Damped Langevin Diffusion",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n# SCORE-BASED GENERATIVE MODELING WITH CRITICALLY-DAMPED LANGEVIN DIFFUSION"
+    },
+    {
+      "index": 1,
+      "text": "**Tim Dockhorn[1,2,3,]** _[\u2217]_\n\n**Arash Vahdat[1] Karsten Kreis[1]**\n\n1NVIDIA 2University of Waterloo 3Vector Institute tim.dockhorn@uwaterloo.ca, _{_ avahdat,kkreis _}_ @nvidia.com"
+    },
+    {
+      "index": 2,
+      "text": "## ABSTRACT\n\nScore-based generative models (SGMs) have demonstrated remarkable synthesis quality. SGMs rely on a diffusion process that gradually perturbs the data towards a tractable distribution, while the generative model learns to denoise. The complexity of this denoising task is, apart from the data distribution itself, uniquely determined by the diffusion process. We argue that current SGMs employ overly simplistic diffusions, leading to unnecessarily complex denoising processes, which limit generative modeling performance. Based on connections to statistical mechanics, we propose a novel _critically-damped Langevin diffusion_ (CLD) and show that CLD-based SGMs achieve superior performance. CLD can be interpreted as running a joint diffusion in an extended space, where the auxiliary variables can be considered \u201cvelocities\u201d that are coupled to the data variables as in Hamiltonian dynamics. We derive a novel score matching objective for CLD and show that the model only needs to learn the score function of the conditional distribution of the velocity given data, an easier task than learning scores of the data directly. We also derive a new sampling scheme for efficient synthesis from CLD-based diffusion models. We find that CLD outperforms previous SGMs in synthesis quality for similar network architectures and sampling compute budgets. We show that our novel sampler for CLD significantly outperforms solvers such as Euler\u2013Maruyama. Our framework provides new insights into score-based denoising diffusion models and can be readily used for high-resolution image synthesis. Project page and code: https://nv-tlabs.github.io/CLD-SGM."
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nScore-based generative models (SGMs) and denoising diffusion probabilistic models have emerged as a promising class of generative models (Sohl-Dickstein et al., 2015; Song et al., 2021c;b; Vahdat et al., 2021; Kingma et al., 2021). SGMs offer high quality synthesis and sample diversity, do not require adversarial objectives, and have found applications in image (Ho et al., 2020; Nichol & Dhariwal, 2021; Dhariwal & Nichol, 2021; Ho et al., 2021), speech (Chen et al., 2021; Kong et al., 2021; Jeong et al., 2021), and music synthesis (Mittal et al., 2021), image editing (Meng et al., 2021; Sinha et al., 2021; Furusawa et al., 2021), super-resolution (Saharia et al., 2021; Li et al., 2021), image-to-image translation (Sasaki et al., 2021), and 3D shape generation (Luo & Hu, 2021; Zhou et al., 2021). SGMs use a diffusion process to gradually add noise to the data, transforming a complex data distribution into an analytically tractable prior distribution. A neural network is then utilized to learn the score function\u2014the gradient of the log probability density\u2014of the perturbed data. The learnt scores can be used to solve a stochastic differential equation (SDE) to synthesize new samples. This corresponds to an iterative denoising process, inverting the forward diffusion."
+    },
+    {
+      "index": 4,
+      "text": "In the seminal work by Song et al. (2021c), it has been shown that the score function that needs to be learnt by the neural network is uniquely determined by the forward diffusion process. Consequently, the complexity of the learning problem depends, other than on the data itself, only on the diffusion. Hence, the diffusion process is the key component of SGMs that needs to be revisited to further improve SGMs, for example, in terms of synthesis quality or sampling speed."
+    },
+    {
+      "index": 5,
+      "text": "> _\u2217_ Work done during internship at NVIDIA.\n\n1\n\nPublished as a conference paper at ICLR 2022\n\nFigure 1: In critically-damped Langevin diffusion, the data **x** _t_ is augmented with a velocity **v** _t_ . A diffusion coupling **x** _t_ and **v** _t_ is run in the joint data-velocity space (probabilities in **red** ). Noise is injected only into **v** _t_ . This leads to smooth diffusion trajectories ( **green** ) for the data **x** _t_ . Denoising only requires _\u2207_ **v** _t_ log _p_ ( **v** _t|_ **x** _t_ )."
+    },
+    {
+      "index": 6,
+      "text": "Inspired by statistical mechanics (Tuckerman, 2010), we propose a novel forward diffusion process, the _critically-damped Langevin diffusion (CLD)_ . In CLD, the data variable, **x** _t_ (time _t_ along the diffusion), is augmented with an additional \u201cvelocity\u201d variable **v** _t_ and a diffusion process is run in the joint data-velocity space. Data and velocity are coupled to each other as in Hamiltonian dynamics, and noise is injected only into the velocity variable. As in Hamiltonian Monte Carlo (Duane et al., 1987; Neal, 2011), the Hamiltonian component helps to efficiently traverse the joint data-velocity space and to transform the data distribution into the prior distribution more smoothly. We derive the corresponding score matching objective and show that for CLD the neural network is tasked with learning only the score of the conditional distribution of velocity given data _\u2207_ **v** _t_ log _pt_ ( **v** _t|_ **x** _t_ ), which is arguably easier than learning the score of diffused data directly. Using techniques from molecular dynamics (Bussi & Parrinello, 2007; Tuckerman, 2010; Leimkuhler & Matthews, 2013), we also derive a new SDE integrator tailored to CLD\u2019s reverse-time synthesis SDE."
+    },
+    {
+      "index": 7,
+      "text": "We extensively validate CLD and the novel SDE solver: **(i)** We show that the neural networks learnt in CLD-based SGMs are smoother than those of previous SGMs. **(ii)** On the CIFAR-10 image modeling benchmark, we demonstrate that CLD-based models outperform previous diffusion models in synthesis quality for similar network architectures and sampling compute budgets. We attribute these positive results to the Hamiltonian component in the diffusion and to CLD\u2019s easier score function target, the score of the velocity-data conditional distribution _\u2207_ **v** _t_ log _pt_ ( **v** _t|_ **x** _t_ ). **(iii)** We show that our novel sampling scheme for CLD significantly outperforms the popular Euler\u2013 Maruyama method. **(iv)** We perform ablations on various aspects of CLD and find that CLD does not have difficult-to-tune hyperparameters."
+    },
+    {
+      "index": 8,
+      "text": "In summary, we make the following technical contributions: **(i)** We propose CLD, a novel diffusion process for SGMs. **(ii)** We derive a score matching objective for CLD, which requires only the conditional distribution of velocity given data. **(iii)** We propose a new type of denoising score matching ideally suited for scalable training of CLD-based SGMs. **(iv)** We derive a tailored SDE integrator that enables efficient sampling from CLD-based models. **(v)** Overall, we provide novel insights into SGMs and point out important new connections to statistical mechanics."
+    },
+    {
+      "index": 9,
+      "text": "## 2 BACKGROUND\n\nConsider a diffusion process **u** _t \u2208_ R _[d]_ defined by the It\u02c6o SDE\n\nwith continuous time variable _t \u2208_ [0 _, T_ ], standard Wiener process **w** _t_ , drift coefficient _**f**_ : R _[d] \u00d7_ [0 _, T_ ] _\u2192_ R _[d]_ and diffusion coefficient _**G**_ : R _[d] \u00d7_ [0 _, T_ ] _\u2192_ R _[d][\u00d7][d]_ . Defining \u00af **u** _t_ := **u** _T \u2212t_ , a corresponding reverse-time diffusion process that inverts the above forward diffusion can be derived (Anderson, 1982; Haussmann & Pardoux, 1986; Song et al., 2021c) (with positive _dt_ and _t \u2208_ [0 _, T_ ]):"
+    },
+    {
+      "index": 10,
+      "text": "The reverse-time process can be used as a generative model. In particular, Song et al. (2021c) model data **x** , setting _p_ ( **u** 0)= _p_ data( **x** ). Currently used SDEs (Song et al., 2021c; Kim et al., 2021) have drift and diffusion coefficients of the simple form _**f**_ ( **x** _t, t_ )= _f_ ( _t_ ) **x** _t_ and _**G**_ ( **x** _t, t_ )= _g_ ( _t_ ) _**I** d_ . Generally, _**f**_ and _**G**_ are chosen such that the SDE\u2019s marginal, equilibrium density is approximately Normal at time _T_ , i.e., _p_ ( **u** _T_ ) _\u2248N_ ( **0** _,_ _**I** d_ ). We can then initialize **x** 0 based on a sample drawn from a complex"
+    },
+    {
+      "index": 11,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\ndata distribution, corresponding to a far-from-equilibrium state. While the state **x** 0 relaxes towards equilibrium via the forward diffusion, we can learn a model **s** _**\u03b8**_ ( **x** _t, t_ ) for the score _\u2207_ **x** _t_ log _pt_ ( **x** _t_ ), which can be used for synthesis via the reverse-time SDE in Eq. (2). If _**f**_ and _**G**_ take the simple form from above, the denoising score matching (Vincent, 2011) objective for this task is:"
+    },
+    {
+      "index": 12,
+      "text": "If _**f**_ and _**G**_ are affine, the conditional distribution _pt_ ( **x** _t|_ **x** 0) is Normal and available analytically (S\u00a8arkk\u00a8a & Solin, 2019). Different _\u03bb_ ( _t_ ) result in different trade-offs between synthesis quality and likelihood in the generative model defined by **s** _**\u03b8**_ ( **x** _t, t_ ) (Song et al., 2021b; Vahdat et al., 2021)."
+    },
+    {
+      "index": 13,
+      "text": "3 CRITICALLY-DAMPED LANGEVIN DIFFUSION\n\nWe propose to augment the data **x** _t \u2208_ R _[d]_ with auxiliary _velocity_[1] variables **v** _t \u2208_ R _[d]_ and utilize a diffusion process that is run in the joint **x** _t_ - **v** _t_ -space. With **u** _t_ = ( **x** _t,_ **v** _t_ ) _[\u22a4] \u2208_ R[2] _[d]_ , we set"
+    },
+    {
+      "index": 14,
+      "text": "where _\u2297_ denotes the Kronecker product. The coupled SDE that describes the diffusion process is\n\nwhich corresponds to _Langevin dynamics_ in each dimension. That is, each _xi_ is independently coupled to a velocity _vi_ , which explains the blockwise structure of _**f**_ and _**G**_ . The _mass M \u2208_ R[+] is a hyperparameter that determines the coupling between the **x** _t_ and **v** _t_ variables; _\u03b2 \u2208_ R[+] is a constant time rescaling chosen such that the diffusion converges to its equilibrium distribution within _t \u2208_ [0 _, T_ ] (in practice, we set _T_ =1) when initialized from a data-defined non-equilibrium state and is analogous to _\u03b2_ ( _t_ ) in previous diffusions (we could also use time-dependent _\u03b2_ ( _t_ ), but found constant _\u03b2_ \u2019s to work well, and therefore opted for simplicity); \u0393 _\u2208_ R[+] is a _friction_ coefficient that determines the strength of the noise injection into the velocities. Notice that the SDE in Eq. (5) consists of two components. The _H_ term represents a Hamiltonian component. Hamiltonian dynamics are frequently used in Markov chain Monte Carlo methods to accelerate sampling and efficiently explore complex probability distributions (Neal, 2011). The Hamiltonian component in our diffusion process plays a similar role and helps to quickly and smoothly converge the initial joint data-velocity distribution to the equilibrium, or prior (see Fig. 1). Furthermore, Hamiltonian dynamics on their own are trivially invertible (Tuckerman, 2010), which intuitively is also beneficial in our situation when using this diffusion for training SGMs. The _O_ term corresponds to an Ornstein-Uhlenbeck process (S\u00a8arkk\u00a8a & Solin, 2019) in the velocity component, which injects noise such that the diffusion dynamics properly converge to equilibrium for any \u0393 _>_ 0. It can be shown that the equilibrium distribution of this diffusion is _p_ EQ( **u** ) = _N_ ( **x** ; **0** _d,_ _**I** d_ ) _N_ ( **v** ; **0** _d, M_ _**I** d_ ) (see App. B.2)."
+    },
+    {
+      "index": 15,
+      "text": "There is a crucial balance between _M_ and \u0393 (McCall, 2010): For \u0393[2] _<_ 4 _M_ ( _underdamped_ Langevin dynamics) the Hamiltonian component dominates, which implies oscillatory dynamics of **x** _t_ and **v** _t_ that slow down convergence to equilibrium. For \u0393[2] _>_ 4 _M_ ( _overdamped_ Langevin dynamics) the _O_ - term dominates which also slows down convergence, since the accelerating effect by the Hamiltonian component is suppressed due to the strong noise injection. For \u0393[2] =4 _M_ ( _critical damping_ ), an ideal balance is achieved and convergence to _p_ EQ( **u** ) occurs as fast as possible in a smooth manner without oscillations (also see discussion in App. A.1) (McCall, 2010). Hence, we propose to set \u0393[2] =4 _M_ and call the resulting diffusion _critically-damped Langevin diffusion (CLD)_ (see Fig. 1)."
+    },
+    {
+      "index": 16,
+      "text": "Diffusions such as the VPSDE (Song et al., 2021c) correspond to overdamped Langevin dynamics with high friction coefficients \u0393 (see App. A.2). Furthermore, in previous works noise is injected directly into the data variables (pixels, for images). In CLD, only the velocity variables are subject to direct noise and the data is perturbed only indirectly due to the coupling between **x** _t_ and **v** _t_ ."
+    },
+    {
+      "index": 17,
+      "text": "> 1We call the auxiliary variables _velocities_ , as they play a similar role as velocities in physical systems. Formally, our velocity variables would rather correspond to physical momenta, but the term momentum is already widely used in machine learning and our mass _M_ is unitless anyway."
+    },
+    {
+      "index": 18,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n## 3.1 SCORE MATCHING OBJECTIVE\n\nConsidering the appealing convergence properties of CLD, we propose to utilize CLD as forward diffusion process in SGMs. To this end, we initialize the joint _p_ ( **u** 0)= _p_ ( **x** 0) _p_ ( **v** 0)= _p_ data( **x** 0) _N_ ( **v** 0; **0** _d, \u03b3M_ _**I** d_ ) with hyperparameter _\u03b3<_ 1 and let the distribution diffuse towards the tractable equilibrium\u2014or prior\u2014distribution _p_ EQ( **u** ). We can then learn the corresponding score functions and define CLD-based SGMs. Following a similar derivation as Song et al. (2021b), we obtain the score matching (SM) objective (see App. B.3):"
+    },
+    {
+      "index": 19,
+      "text": "Notice that this objective requires only the velocity gradient of the log-density of the joint distribution, i.e., _\u2207_ **v** _t_ log _pt_ ( **u** _t_ ). This is a direct consequence of injecting noise into the velocity variables _only_ . Without loss of generality, _pt_ ( **u** _t_ )= _pt_ ( **x** _t,_ **v** _t_ )= _pt_ ( **v** _t|_ **x** _t_ ) _pt_ ( **x** _t_ ). Hence,"
+    },
+    {
+      "index": 20,
+      "text": "This means that in CLD the neural network-defined score model _s_ _**\u03b8**_ ( **u** _t, t_ ) only needs to learn the score of the conditional distribution _pt_ ( **v** _t|_ **x** _t_ ), an arguably easier task than learning the score of _pt_ ( **x** _t_ ), as in previous works, or of the joint _pt_ ( **u** _t_ ). This is the case, because our velocity distribution is initialized from a simple Normal distribution, such that _pt_ ( **v** _t|_ **x** _t_ ) is closer to a Normal distribution for all _t\u2265_ 0 (and for any **x** _t_ ) than _pt_ ( **x** _t_ ) itself. This is most evident at _t_ =0: The data and velocity distributions are independent at _t_ =0 and the score of _p_ 0( **v** 0 _|_ **x** 0)= _p_ 0( **v** 0) simply corresponds to the score of the Normal distribution _p_ 0( **v** 0) from which the velocities are initialized, whereas the score of the data distribution _p_ 0( **x** 0) is highly complex and can even be unbounded (Kim et al., 2021). We empirically verify the reduced complexity of the score of _pt_ ( **v** _t|_ **x** _t_ ) in Fig. 2. We find that the score that needs to be learnt by the model is more similar to a score corresponding to a Normal distribution for CLD than for the VPSDE. We also measure the complexity of the neural networks that were learnt to model this score via the squared Frobenius norm of their Jacobians. We find that the CLD-based SGMs have significantly simpler and smoother neural networks than VPSDE-based SGMs for most _t_ , in particular when leveraging a mixed score formulation (see next section)."
+    },
+    {
+      "index": 21,
+      "text": "Figure 2: _Top:_ Difference _\u03be_ ( _t_ ) (via _L_ 2 norm) between score of diffused data and score of Normal distribution. _Bottom:_ Frobenius norm of Jacobian _JF_ ( _t_ ) of the neural network defining the score function for different _t_ . The underlying data distribution is a mixture of Normals. _Insets:_ Different axes (see App. E.1 for detailed definitions of _\u03be_ ( _t_ ) and and _JFF_ ( _t_ )).)."
+    },
+    {
+      "index": 22,
+      "text": "## 3.2 SCALABLE TRAINING\n\n**A Practical Objective.** We cannot train directly with for different _t_ . The underlying data distriEq. (6), since we do not have access to the marginal disbution is a mixture of Normals. _Insets:_ Diftribution _pt_ ( **u** _t_ ). As presented in Sec. 2, we could employ ferent axes (see App. E.1 for detailed defidenoising score matching (DSM) and instead sample **u** 0, nitions of _\u03be_ ( _t_ ) and and _JFF_ ( _t_ )).). and diffuse those samples, which would lead to a tractable objective. However, recall that in CLD the distribution at _t_ =0 is the product of a complex data distribution and a Normal distribution over the initial velocity. Therefore, we propose a hybrid version of score matching (Hyv\u00a8arinen, 2005) and denoising score matching (Vincent, 2011), which we call _hybrid score matching_ (HSM). In HSM, we draw samples from _p_ 0( **x** 0)= _p_ data( **x** 0) as in DSM, but then diffuse those samples while marginalizing over the full initial velocity distribution _p_ 0( **v** 0)= _N_ ( **v** ; **0** _d, \u03b3M_ _**I** d_ ) as in regular SM (HSM is discussed in detail in App. C). Since _p_ 0( **v** 0) is Normal (and _**f**_ and _**G**_ affine), _p_ ( **u** _t|_ **x** 0) is also Normal and this remains tractable. We can write this HSM objective as:"
+    },
+    {
+      "index": 23,
+      "text": "In HSM, the expectation over _p_ 0( **v** 0) is essentially solved analytically, while DSM would use a sample-based estimate. Hence, HSM reduces the variance of training objective gradients compared to pure DSM, which we validate in App. C.1. Furthermore, when drawing a sample **u** 0 to diffuse in"
+    },
+    {
+      "index": 24,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\nDSM, we are essentially placing an infinitely sharp Normal with unbounded score (Kim et al., 2021) at **u** 0, which requires undesirable modifications or truncation tricks for stable training (Song et al., 2021c; Vahdat et al., 2021). Hence, with DSM we could lose some benefits of the CLD framework discussed in Sec. 3.1, whereas HSM is tailored to CLD and fundamentally avoids such unbounded scores. Closed form expressions for the perturbation kernel _pt_ ( **u** _t|_ **x** 0) are provided in App. B.1."
+    },
+    {
+      "index": 25,
+      "text": "**Score Model Parametrization. (i)** Ho et al. (2020) found that it can be beneficial to parameterize the score model to predict the noise that was used in the reparametrized sampling to generate perturbed samples **u** _t_ . For CLD, **u** _t_ = _**\u00b5** t_ ( **x** 0) + _**L** t_ _**\u03f5**_ 2 _d_ , where **\u03a3** _t_ = _**L** t_ _**L**[\u22a4] t_[is][the][Cholesky][de-] composition of _pt_ ( **u** _t|_ **x** 0)\u2019s covariance matrix, _**\u03f5**_ 2 _d \u223cN_ ( _**\u03f5**_ 2 _d_ ; **0** 2 _d,_ _**I**_ 2 _d_ ), and _**\u00b5** t_ ( **x** 0) is _pt_ ( **u** _t|_ **x** 0)\u2019s mean. Furthermore, _\u2207_ **v** _t_ log _pt_ ( **u** _t|_ **x** 0) = _\u2212\u2113t_ _**\u03f5** d_ :2 _d_ , where _**\u03f5** d_ :2 _d_ denotes those _d_ components of _**\u03f5**_ 2 _d_ that actually affect _\u2207_ **v** _t_ log _pt_ ( **u** _t|_ **x** 0) (since we take velocity gradients only, not all are relevant)."
+    },
+    {
+      "index": 26,
+      "text": "**(ii)** Vahdat et al. (2021) showed that it can be beneficial to assume that the diffused marginal distribution is Normal at all times and parametrize the model with a Normal score and a residual \u201ccorrection\u201d. For CLD, the score is indeed Normal at _t_ = 0 (due to the independently initialized **x** and **v** at _t_ =0). Similarly, the target score is close to Normal for large _t_ , as we approach the equilibrium."
+    },
+    {
+      "index": 27,
+      "text": "Based on **(i)** and **(ii)** , we parameterize _s_ _**\u03b8**_ ( **u** _t, t_ ) = _\u2212\u2113t\u03b1_ _**\u03b8**_ ( **u** _t, t_ ) with _\u03b1_ _**\u03b8**_ ( **u** _t, t_ ) = _\u2113[\u2212] t_[1] **[v]** _[t][/]_[\u03a3] _[vv] t_ + _\u03b1_ _**\u03b8**[\u2032]_[(] **[u]** _[t][, t]_[)][, where][ \u03a3] _t[vv]_[corresponds to the] _[ v]_[-] _[v]_[ component of the \u201cper-dimension\u201d covariance matrix of] the Normal distribution _pt_ ( **u** _t|_ **x** 0 = **0** _d_ ). In other words, we assumed _p_ 0( **x** 0) = _\u03b4_ ( **x** ) when defining the analytic term of the score model. Formally, _\u2212_ **v** _/_ \u03a3 _[vv] t_ is the score of a Normal distribution with covariance \u03a3[\u02c6] _[vv] t_ _**[I]**[d]_[.][Following][ Vahdat et al.][ (][2021][), we refer to this parameterization as] _[ mixed score] parameterization_ . Alternative model parameterizations are possible, but we leave their exploration to future work. With this definition, the HSM training objective becomes (details in App. B.3): min _**\u03b8**_[E] _[t][\u223cU]_[[0] _[,T]_[ ]][E] **[x]**[0] _[\u223c][p]_[0][(] **[x]**[0][)][E] _**[\u03f5]**_[2] _[d][\u223cN]_[(] _**[\u03f5]**_[2] _[d]_[;] **[0]**[2] _[d][,]_ _**[I]**_[2] _[d]_[)] \ufffd _\u03bb_ ( _t_ ) _\u2113_[2] _t[\u2225]_ _**[\u03f5]**[d]_[:2] _[d][\u2212][\u03b1]_ _**[\u03b8]**_[(] _**[\u00b5]**[t]_[(] **[x]**[0][)+] _**[L]**[t]_ _**[\u03f5]**_[2] _[d][, t]_[)] _[\u2225]_[2] 2\ufffd _,_ (9) which corresponds to training the model to predict the noise only injected into the velocity during reparametrized sampling of **u** _t_ , similar to noise prediction in Ho et al. (2020); Song et al. (2021c)."
+    },
+    {
+      "index": 28,
+      "text": "**Objective Weightings.** For _\u03bb_ ( _t_ ) = \u0393 _\u03b2_ , the objective corresponds to maximum likelihood learning (Song et al., 2021b) (see App. B.3). Analogously to prior work (Ho et al., 2020; Vahdat et al., 2021; Song et al., 2021b), an objective better suited for high quality image synthesis can be obtained by setting _\u03bb_ ( _t_ ) = _\u2113[\u2212] t_[2][, which corresponds to \u201cdropping the variance prefactor\u201d] _[ \u2113]_[2] _t_[.]"
+    },
+    {
+      "index": 29,
+      "text": "## 3.3 SAMPLING FROM CLD-BASED SGMS\n\nTo sample from the CLD-based SGM we can either directly simulate the reverse-time diffusion process (Eq. (2)) or, alternatively, solve the corresponding probability flow ODE (Song et al., 2021c;b) (see App. B.5). To simulate the SDE of the reverse-time diffusion process, previous works often relied on Euler-Maruyama (EM) (Kloeden & Platen, 1992) and related methods (Ho et al., 2020; Song et al., 2021c; Jolicoeur-Martineau et al., 2021a). We derive a new solver, tailored to CLD-based models. Here, we provide the high-level ideas and derivations (see App. D for details)."
+    },
+    {
+      "index": 30,
+      "text": "Our generative SDE can be written as (with **u** \u00af _t_ = **u** _T \u2212t_ , **x** \u00af _t_ = **x** _T \u2212t_ , **v** \u00af _t_ = **v** _T \u2212t_ ):"
+    },
+    {
+      "index": 31,
+      "text": "It consists of a Hamiltonian component _AH_ , an Ornstein-Uhlenbeck process _AO_ , and the score model term _S_ . We could use EM to integrate this SDE; however, standard Euler methods are not well-suited for Hamiltonian dynamics (Leimkuhler & Reich, 2005; Neal, 2011). Furthermore, if _S_ was 0, we could solve the SDE in closed form. This suggests the construction of a novel integrator."
+    },
+    {
+      "index": 32,
+      "text": "We use the Fokker-Planck operator[2] formalism (Tuckerman, 2010; Leimkuhler & Matthews, 2013; 2015). Using a similar notation as Leimkuhler & Matthews (2013), the Fokker-Planck equation"
+    },
+    {
+      "index": 33,
+      "text": "> 2The _Fokker-Planck operator_ is also known as _Kolmogorov operator_ . If the underlying dynamics is fully Hamiltonian, it corresponds to the _Liouville operator_ (Leimkuhler & Matthews, 2015; Tuckerman, 2010)."
+    },
+    {
+      "index": 34,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\ncorresponding to the generative SDE is _\u2202pt_ (\u00af **u** _t_ ) _/\u2202t_ =( _L_[\u02c6] _[\u2217] A_[+ \u02c6] _[L][\u2217] S_[)] _[p][t]_[(\u00af] **[u]** _[t]_[)][,][where] _[L]_[\u02c6] _[\u2217] A_[and] _[L]_[\u02c6] _[\u2217] S_[are][the] non-commuting Fokker-Planck operators corresponding to the _A_ := _AH_ + _AO_ and _S_ terms, respectively. Expressions for _L_[\u02c6] _[\u2217] A_[and] _[L]_[\u02c6] _[\u2217] S_[can be found in App. D. We can construct a formal, but intractable] solution of the generative SDE as **u** \u00af _t_ = _e[t]_[( \u02c6] _L[\u2217] A_[+ \u02c6] _L[\u2217] S_[)] **u** \u00af0, where the operator _e[t]_[( \u02c6] _L[\u2217] A_[+ \u02c6] _L[\u2217] S_[)] (known as the _classical propagator_ in statistical physics) propagates states \u00af **u** 0 for time _t_ according to the dynamics defined by the combined operators _L_[\u02c6] _[\u2217] A_[+] _[L]_[\u02c6] _[\u2217] S_[.][Although this operation is not analytically tractable,] it can serve as starting point to derive a practical integrator. Using the symmetric Trotter theorem or Strang splitting formula as well as the Baker\u2013Campbell\u2013Hausdorff formula (Trotter, 1959; Strang, 1968; Tuckerman, 2010), it can be shown that:"
+    },
+    {
+      "index": 35,
+      "text": "for large _N \u2208_ N[+] and time step _\u03b4t_ := _t/N_ . The expression suggests that instead of directly evaluating the intractable _e[t]_[( \u02c6] _L[\u2217] A_[+ \u02c6] _L[\u2217] S_[)] , we can discretize the dynamics over _t_ into _N_ pieces of step size _\u03b4t_ , such that we only need to apply the _individual e \u03b4t_ 2 _L_[\u02c6] _[\u2217] A_ and _e[\u03b4t]_[ \u02c6] _L[\u2217] S_ many times one after another for small steps _\u03b4t_ . A finer discretization results in a smaller error (since _N_ = _t/\u03b4t_ , the error effectively scales as _O_ ( _\u03b4t_[2] ) for fixed _t_ ). Hence, this implies an integration method. Indeed, _e \u03b4t_ 2 _L_[\u02c6] _[\u2217] A_ \u00af **u** _t_ is available in closed form, as mentioned before; however, _e[\u03b4t] L_[ \u02c6] _[\u2217] S_ \u00af **u** _t_ is not. Therefore, we approximate this latter component of the integrator via a standard Euler step. Thus, the integrator formally has an error of the same order as standard EM methods. Nevertheless, as long as the dynamics is not dominated by the _S_ component, our proposed integration scheme is expected to be more accurate than EM, since we split off the analytically tractable part and only use an Euler approximation for the _S_ term. Recall that the model only needs to learn the score of the conditional distribution _pt_ ( **v** _t|_ **x** _t_ ), which is close to Normal for much of the diffusion, in which case the _S_ term will indeed be small. This suggests that the generative SDE dynamics are in fact dominated by _AH_ and _AO_ in practice. Note that only the propagator _e[\u03b4t] L_[ \u02c6] _[\u2217] S_ is computationally expensive, as it involves evaluating the neural network. We coin our novel SDE integrator for CLD-based SGMs _Symmetric Splitting CLD Sampler_ (SSCS). A detailed derivation, analyses, and a formal algorithm are presented in App. D."
+    },
+    {
+      "index": 36,
+      "text": "## 4 RELATED WORK\n\n**Relations to Statistical Mechanics and Molecular Dynamics.** Learning a mapping between a simple, tractable and a complex distribution as in SGMs is inspired by annealed importance sampling (Neal, 2001) and the Jarzynski equality from non-equilibrium statistical mechanics (Jarzynski, 1997a;b; 2011; Bahri et al., 2020). However, after Sohl-Dickstein et al. (2015), little attention has been given to the origins of SGMs in statistical mechanics. Intuitively, in SGMs the diffusion process is initialized in a non-equilibrium state **u** 0 and we would like to bring the system to equilibrium, i.e., the tractable prior distribution, _as quickly and as smoothly as possible_ to enable efficient denoising. This \u201cequilibration problem\u201d is a much-studied problem in statistical mechanics, particularly in molecular dynamics, where a molecular system is often simulated in thermodynamic equilibrium. Algorithms to quickly and smoothly bring a system to and maintain at equilibrium are known as _thermostats_ . In fact, CLD is inspired by the Langevin thermostat (Bussi & Parrinello, 2007). In molecular dynamics, advanced thermostats are required in particular for \u201cmultiscale\u201d systems that show complex behaviors over multiple time- and length-scales. Similar challenges also arise when modeling complex data, such as natural images. Hence, the vast literature on thermostats (Andersen, 1980; Nos\u00b4e, 1984; Hoover, 1985; Martyna et al., 1992; H\u00a8unenberger, 2005; Bussi et al., 2007; Ceriotti et al., 2009; 2010; Tuckerman, 2010) may be valuable for the development of future SGMs. Also the framework for developing SSCS is borrowed from statistical mechanics. The same techniques have been used to derive molecular dynamics algorithms (Tuckerman et al., 1992; Bussi & Parrinello, 2007; Ceriotti et al., 2010; Leimkuhler & Matthews, 2013; 2015; Kreis et al., 2017)."
+    },
+    {
+      "index": 37,
+      "text": "**Further Related Work.** Generative modeling by learning stochastic processes has a long history (Movellan, 2008; Lyu, 2009; Sohl-Dickstein et al., 2011; Bengio et al., 2014; Alain et al., 2016; Goyal et al., 2017; Bordes et al., 2017; Song & Ermon, 2019; Ho et al., 2020). We build on Song et al. (2021c), which introduced the SDE framework for modern SGMs. Nachmani et al. (2021) recently introduced non-Gaussian diffusion processes with different noise distributions. However, the noise is still injected directly into the data, and no improved sampling schemes or training objectives are introduced. Vahdat et al. (2021) proposed LSGM, which is complementary to CLD: we improve"
+    },
+    {
+      "index": 38,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\nthe diffusion process itself, whereas LSGM \u201csimplifies the data\u201d by first embedding it into a smooth latent space. LSGM is an overall more complicated framework, as it is trained in two stages and relies on additional encoder and decoder networks. Recently, techniques to accelerate sampling from pre-trained SGMs have been proposed (San-Roman et al., 2021; Watson et al., 2021; Kong & Ping, 2021; Song et al., 2021a). Importantly, these methods usually do not permit straightforward loglikelihood estimation. Furthermore, they are originally not based on the continuous time framework, which we use, and have been developed primarily for discrete-step diffusion models."
+    },
+    {
+      "index": 39,
+      "text": "A complementary work to CLD is \u201cGotta Go Fast\u201d (GGF) (Jolicoeur-Martineau et al., 2021a), which introduces an adaptive SDE solver for SGMs, tuned towards image synthesis. GGF uses standard Euler-based methods under the hood (Kloeden & Platen, 1992; Roberts, 2012), in contrast to our SSCS that is derived from first principles. Furthermore, our SDE integrator for CLD does not make any data-specific assumptions and performs extremely well even without adaptive step sizes."
+    },
+    {
+      "index": 40,
+      "text": "Some works study SGMs for maximum likelihood training (Song et al., 2021b; Kingma et al., 2021; Huang et al., 2021). Note that we did not focus on training our models towards high likelihood. Furthermore, Chen et al. (2020) and Huang et al. (2020) recently trained augmented Normalizing Flows, which have conceptual similarities with our velocity augmentation. Methods leveraging auxiliary variables similar to our velocities are also used in statistics\u2014such as Hamiltonian Monte Carlo (Neal, 2011)\u2014and have found applications, for instance, in Bayesian machine learning (Chen et al., 2014; Ding et al., 2014; Shang et al., 2015). As shown in Ma et al. (2019), our velocity is equivalent to momentum in gradient descent and related methods (Polyak, 1964; Kingma & Ba, 2015). Momentum accelerates optimization; the velocity in CLD accelerates mixing in the diffusion process. Lastly, our CLD method can be considered as a second-order Langevin algorithm, but even higher-order schemes are possible (Mou et al., 2021) and could potentially further improve SGMs."
+    },
+    {
+      "index": 41,
+      "text": "## 5 EXPERIMENTS\n\n**Architectures.** We focus on image synthesis and implement CLD-based SGMs using NCSN++ and DDPM++ (Song et al., 2021c) with 6 input channels (for velocity and data) instead of 3."
+    },
+    {
+      "index": 42,
+      "text": "**Relevant Hyperparameters.** CLD\u2019s hyperparameters are chosen as _\u03b2_ =4, \u0393=1 (or equivalently _M[\u2212]_[1] =4) in all experiments. We set the variance scaling of the inital velocity distribution to _\u03b3_ =0 _._ 04 and use the proposed HSM objective with the weighting _\u03bb_ ( _t_ )= _\u2113[\u2212] t_[2][, which promotes image quality.]"
+    },
+    {
+      "index": 43,
+      "text": "**Sampling.** We generate model samples via: **(i)** Probability flow using a Runge\u2013Kutta 4(5) method; reverse-time generative SDE sampling using either **(ii)** EM or **(iii)** our SSCS. For methods without adaptive stepsize (EM and SSCS), we use evaluation times chosen according to a quadratic function, like previous work (Song et al., 2021a; Kong & Ping, 2021; Watson et al., 2021) (indicated by QS)."
+    },
+    {
+      "index": 44,
+      "text": "**Evaluation.** We measure image sample quality for CIFAR-10 via Fr\u00b4echet inception distance (FID) with 50k samples (Heusel et al., 2017). We also evaluate an upper bound on the negative loglikelihood (NLL): _\u2212_ log _p_ ( **x** 0) _\u2264\u2212_ E **v** 0 _\u223cp_ ( **v** 0) log _p\u03b5_ ( **x** 0 _,_ **v** 0) _\u2212H_ , where _H_ is the entropy of _p_ ( **v** 0) and log _p\u03b5_ ( **x** 0 _,_ **v** 0) is an unbiased estimate of log _p_ ( **x** 0 _,_ **v** 0) from the probability flow ODE (Grathwohl et al., 2019; Song et al., 2021c). As in Vahdat et al. (2021), the stochasticity of log _p\u03b5_ ( **x** _,_ **v** ) prevents us from performing importance weighted NLL estimation over the velocity distribution (Burda et al., 2015). We also record the number of function\u2014neural network\u2014evaluations (NFEs) during synthesis when comparing sampling methods. All implementation details in App. B.5 and E."
+    },
+    {
+      "index": 45,
+      "text": "## 5.1 IMAGE GENERATION\n\nFollowing Song et al. (2021c), we focus on the widely used CIFAR-10 unconditional image generation benchmark. Our CLD-based SGM achieves an FID of 2.25 based on the probability flow ODE and an FID of 2.23 via simulating the generative SDE (Tab. 1). The only models marginally outperforming CLD are LSGM (Vahdat et al., 2021) and NSCN++/VESDE with 2,000 step predictorcorrector (PC) sampling (Song et al., 2021c). However, LSGM uses a model with _\u2248_ 475 _M_ parameters to achieve its high performance, while we obtain our numbers with a model of _\u2248_ 100 _M_ parameters. For a fairer comparison, we trained a smaller LSGM also with _\u2248_ 100 _M_ parameters, which is reported as \u201cLSGM-100M\u201d in Tab. 1 (details in App. E.2.7). Our model has a significantly better FID score than \u201cLSGM-100M\u201d. In contrast to NSCN++/VESDE, we achieve extremely strong results with much fewer NFEs (for example, see _n\u2208{_ 150 _,_ 275 _,_ 500 _}_ in Tab. 3 and also Tab. 2)\u2014the VESDE performs poorly in this regime. We conclude that when comparing models with similar"
+    },
+    {
+      "index": 46,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\nTable 1: Unconditional CIFAR-10 generative performance."
+    },
+    {
+      "index": 47,
+      "text": "|Class|Model|NLL_\u2193_|FID_\u2193_|\n|---|---|---|---|\n|**Score**|CLD-SGM (Prob. Flow)_(ours)_\nCLD-SGM (SDE)_(ours)_|_\u2264_3.31\n-|2.25\n2.23|\n||DDPM++, VPSDE (Prob. Flow) (Song et al.,2021c)|3.13|3.08|\n||DDPM++, VPSDE (SDE) (Song et al.,2021c)|-|2.41|\n||DDPM++, sub-VP (Prob. Flow) (Song et al.,2021c)|2.99|2.92|\n||DDPM++, sub-VP (SDE) (Song et al.,2021c)|-|2.41|\n||NCSN++, VESDE (SDE) (Song et al.,2021c)|-|2.20|\n||LSGM (Vahdat et al.,2021)|_\u2264_3.43|2.10|\n||LSGM-100M (Vahdat et al.,2021)|_\u2264_2.96|4.60|\n||DDPM (Ho et al.,2020)|_\u2264_3.75|3.17|\n||NCSN (Song & Ermon,2019)|-|25.3|\n|**Score**|Adversarial DSM (Jolicoeur-Martineau et al.,2021b)|-|6.10|\n||Likelihood SDE (Song et al.,2021b)|2.84|2.87|\n||DDIM (100 steps) (Song et al.,2021a)|-|4.16|\n||FastDDPM (100 steps) (Kong & Ping,2021)|-|2.86|\n||Improved DDPM (Nichol & Dhariwal,2021)|3.37|2.90|\n||VDM (Kingma et al.,2021)\nUDM (Kim et al.,2021)|_\u2264_2.49\n3.04|7.41 (4.00)\n2.33|\n||D3PM (Austin et al.,2021)|_\u2264_3.44|7.34|\n||Gotta Go Fast (Jolicoeur-Martineau et al.,2021a)|-|2.44|\n||DDPM Distillation (Luhman & Luhman,2021)|-|9.36|\n||SNGAN (Miyato et al.,2018)|-|21.7|\n||SNGAN+DGfow (Ansari et al.,2021)|-|9.62|\n||AutoGAN (Gong et al.,2019)|-|12.4|\n|**GANs**|TransGAN (Jiang et al.,2021)|-|9.26|\n||StyleGAN2 w/o ADA (Karras et al.,2020)|-|8.32|\n||StyleGAN2 w/ ADA (Karras et al.,2020)|-|2.92|\n||StyleGAN2 w/ Diffaug (Zhao et al.,2020)|-|5.79|\n||DistAug (Jun et al.,2020)|2.53|42.90|\n||PixelCNN (Oord et al.,2016)|3.14|65.9|\n||Glow (Kingma & Dhariwal,2018)|3.35|48.9|\n|**Aut.-Reg.,**|Residual Flow (Chen et al.,2019)|3.28|46.37|\n|**Flows,**|NVAE (Vahdat & Kautz,2020)|2.91|23.5|\n|**VAEs,**|NCP-VAE (Aneja et al.,2021)|-|24.08|\n|**EBMs**|DC-VAEParmar et al.(2021)|-|17.90|\n||IGEBM (Du & Mordatch,2019)|-|40.6|\n||VAEBM (Xiao et al.,2021)|-|12.2|\n||Recovery EBM (Gao et al.,2021)|3.18|9.58|"
+    },
+    {
+      "index": 48,
+      "text": "Figure 3: CIFAR-10 samples.\n\nFigure 4: CelebA-HQ-256 samples.\n\nnetwork capacity and under NFE budgets _\u2264_ 500, our CLD-SGM outperforms all published results in terms of FID. We attribute these positive results to our easier score matching task. Furthermore, our model reaches an NLL bound of 3 _._ 31, which is on par with recent works such as Nichol & Dhariwal (2021); Austin et al. (2021); Vahdat et al. (2021) and indicates that our model is not dropping modes. However, our bound is potentially quite loose (see discussion in App. B.5) and the true NLL might be significantly lower. We did not focus on training our models towards high likelihood."
+    },
+    {
+      "index": 49,
+      "text": "To demonstrate that CLD is also suitable for high-resolution image synthesis, we additionally trained a CLD-SGM on CelebA-HQ-256, but without careful hyperparameter tuning due to limited compute resources. Model samples in Fig. 4 appear diverse and high-quality (additional samples in App. F)."
+    },
+    {
+      "index": 50,
+      "text": "## 5.2 SAMPLING SPEED AND SYNTHESIS QUALITY TRADE-OFFS\n\nWe analyze the sampling speed vs. synthesis quality trade-off for CLD-SGMs and study SSCS\u2019s performance under different NFE budgets (Tabs. 2 and 3). We compare to Song et al. (2021c) and use EM to solve the generative SDE for their VPSDE and PC (reverse-diffusion + Langevin sampler) for the VESDE model. We also compare to the GGF (Jolicoeur-Martineau et al., 2021a) solver for the generative SDE as well as probability flow ODE sampling with a higher-order adaptive step size solver. Further, we compare to LSGM (Vahdat et al., 2021) (using our LSGM-100M), which also uses probability flow sampling. With one exception (VESDE with 2,000 NFE) our CLD-SGM outperforms all baselines, both for adaptive and fixed-step size methods. More results in App. F.2."
+    },
+    {
+      "index": 51,
+      "text": "Several observations stand out: **(i)** As expected (Sec. 3.3), for CLD, SSCS significantly outperforms EM under limited NFE budgets. When using a fine discretization of the SDE (high NFE), the two perform similarly, which is also expected, as the errors of both methods will become negligible. **(ii)** In the adaptive solver setting, using a simpler ODE solver, we even outperform GGF, which is tuned towards image synthesis. **(iii)** Our CLD-SGM also outperforms the LSGM-100M model in terms of FID. It is worth noting, however, that LSGM was designed primarily for faster synthesis, which it achieves by modeling a smooth distribution in latent space instead of the more complex data distribution directly. This suggests that it would be promising to combine LSGM with CLD and train a CLD-based LSGM, combining the strengths of the two approaches. It would also be interesting to develop a more advanced, adaptive SDE solver that leverages SSCS as the backbone"
+    },
+    {
+      "index": 52,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\n|Table 2: _(right)_Performance using adaptive stepsize solvers (ODE is based on probability fow, GGF|Table 2: _(right)_Performance using adaptive stepsize solvers (ODE is based on probability fow, GGF|simulates|\n|---|---|---|\n|generative SDE). _\u2020_: taken from Jolicoeur-Martineau et al. (2021a). LSGM corresponds to|the small LSGM-||\n|100M model for fair comparison (details in App. E.2.7). Error tolerances were chosen to obtain similar NFEs.|||\n|Table 3: _(bottom)_Performance using non-adaptive stepsize solvers (for\nPC, QS performed poorly). _\u2020_: 2.23 FID is our evaluation, Song et al.\n(2021c) reports 2.20 FID. See Tab. 9 in App. F.2 for extended results.\nModel\nSolver\nCLD\nODE\nVPSDE\nGGF|NFEs_\u2193_\n312\n330|FID_\u2193_\n**2.25**\n2.56\u2020|\n|FID at_n_function evaluations_\u2193_\nModel\nSampler\n_n_=50\n_n_=150\n_n_=275\n_n_=500\n_n_=1000\n_n_=2000\nVESDE\nGGF\nCLD\nODE|488\n147|2.99\u2020\n**2.71**|\n|CLD\nEM-QS\n52.7\n7.00\n3.24\n2.41\n**2.27**\n**2.23**\nCLD\nSSCS-QS\n**20.5**\n**3.07**\n**2.38**\n**2.25**\n2.30\n2.29\nVPSDE\nODE\nVPSDE\nGGF\nVESDE\nODE|141\n151\n182|2.76\n2.73\u2020\n7.63|\n|VPSDE\nEM-QS\n28.2\n4.06\n2.65\n2.47\n2.66\n2.60\nVESDE\nGGF|170|10.15\u2020|\n|VESDE\nPC\n460\n216\n11.2\n3.75\n2.43\n**2.23**\u2020\nLSGM\nODE|131|4.60|"
+    },
+    {
+      "index": 53,
+      "text": "and, for example, potentially test our method within a framework like GGF. Our current SSCS only allows for fixed step sizes\u2014nevertheless, it achieves excellent performance. Table 4:"
+    },
+    {
+      "index": 54,
+      "text": "Table 4: Mass hyperparameter.\n\n|5.3\nABLATIONSTUDIES\nWe perform ablation studies to study CLD\u2019s new hyperparameters (run with\na smaller version of our CLD-SGM used above; App. E for details).\n**Mass Parameter:** Tab. 4 shows results for a CLD-SGM trained with dif-\nferent_M \u2212_1 (also recall that_M \u2212_1 and\u0393are tied together via\u03932 = 4_M_; we\nare always in the critical-damping regime). Different mass values perform\nmostly similarly. Intuitively, training with smaller _M \u2212_1 means that noise\nfows from the velocity variables **v**_t_ into the data **x**_t_ more slowly, which\nnecessitates a larger time rescaling_\u03b2_. We found that simply tying_M \u2212_1 and\n_\u03b2_ together via_\u03b2_=8\n_\u221a_\n_M_ works well and did not further fne-tune.|_M \u2212_1\nNLL_\u2193_\nFID_\u2193_\n1\n_\u2264_3.30\n3.23\n4\n_\u2264_3.37\n3.14\n16\n_\u2264_3.26\n3.16\nTable 5: Initial velocity\ndistribution width.\n_\u03b3_\nNLL_\u2193_\nFID_\u2193_\n0.04\n_\u2264_3.37\n3.14\n0.4\n_\u2264_3.15\n3.21\n1\n_\u2264_3.15\n3.27|\n|---|---|"
+    },
+    {
+      "index": 55,
+      "text": "**Initial Velocity Distribution:** Tab. 5 shows results for a CLD-SGM trained with different initial velocity variance scalings _\u03b3_ . Varying _\u03b3_ similarly has only a small effect, but small _\u03b3_ seems slightly beneficial for FID, while the NLL bound suffers a bit. Due to our focus on synthesis quality as measued by FID, we opted for small _\u03b3_ . Intuitively, this means that the data at _t_ =0 is \u201cat rest\u201d, and noise flows from the velocity into the data variables only slowly."
+    },
+    {
+      "index": 56,
+      "text": "**Mixed Score:** Similar to previous work (Vahdat et al., 2021), we find training with the mixed score (MS) parametrization (Sec. 3.2) beneficial. With MS, we achieve an FID of 3.14, without only 3.56."
+    },
+    {
+      "index": 57,
+      "text": "**Hybrid Score Matching:** We also tried training with regular DSM, instead of HSM. However, training often became unstable. As discussed in Sec. 3.2, this is likely because when using standard DSM our CLD would suffer from unbounded scores close to _t_ =0, similar to previous SDEs (Kim et al., 2021). Consequently, we consider our novel HSM a crucial element for training CLD-SGMs."
+    },
+    {
+      "index": 58,
+      "text": "We conclude that CLD does not come with difficult-to-tune hyperparameters. We expect our chosen hyperparameters to immediately translate to new tasks and models. In fact, we used the same _M[\u2212]_[1] , _\u03b3_ , MS and HSM settings for CIFAR-10 and CelebA-HQ-256 experiments without fine-tuning."
+    },
+    {
+      "index": 59,
+      "text": "## 6 CONCLUSIONS\n\nWe presented _critically-damped Langevin diffusion_ , a novel diffusion process for training SGMs. CLD diffuses the data in a smoother, easier-to-denoise manner compared to previous SGMs, which results in smoother neural network-parametrized score functions, fast synthesis, and improved expressivity. Our experiments show that CLD outperforms previous SGMs on image synthesis for similar-capacity models and sampling compute budgets, while our novel SSCS is superior to EM in CLD-based SGMs. From a technical perspective, in addition to proposing CLD, we derive CLD\u2019s score matching objective termed as HSM, a variant of denoising score matching suited for CLD, and we derive a tailored SDE integrator for CLD. Inspired by methods used in statistical mechanics, our work provides new insights into SGMs and implies promising directions for future research."
+    },
+    {
+      "index": 60,
+      "text": "We believe that CLD can potentially serve as the backbone diffusion process of next generation SGMs. Future work includes using CLD-based SGMs for generative modeling tasks beyond images, combining CLD with techniques for accelerated sampling from SGMs, adapting CLD-based SGMs towards maximum likelihood, and utilizing other thermostating methods from statistical mechanics."
+    },
+    {
+      "index": 61,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n## 7 ETHICS AND REPRODUCIBILITY\n\nOur paper focuses on fundamental algorithmic advances to improve the generative modeling performance of SGMs. As such, the proposed CLD does not imply immediate ethical concerns. However, we validate CLD on image synthesis benchmarks. Generative modeling of images has promising applications, for example for digital content creation and artistic expression (Bailey, 2020), but can also be used for nefarious purposes (Vaccari & Chadwick, 2020; Mirsky & Lee, 2021; Nguyen et al., 2021). It is worth mentioning that compared to generative adversarial networks (Goodfellow et al., 2014), a very popular class of generative models, SGMs have the promise to model the data more faithfully, without dropping modes and introducing problematic biases. Generally, the ethical impact of our work depends on its application domain and the task at hand."
+    },
+    {
+      "index": 62,
+      "text": "To aid reproducibility of the results and methods presented in our paper, we made source code to reproduce the main results of the paper publicly available, including detailed instructions; see our project page https://nv-tlabs.github.io/CLD-SGM and the code repository https: //github.com/nv-tlabs/CLD-SGM. Furthermore, all training details and hyperparameters are already in detail described in the Appendix, in particular in App. E."
+    },
+    {
+      "index": 63,
+      "text": "## REFERENCES\n\n- Guillaume Alain, Yoshua Bengio, Li Yao, Jason Yosinski, Eric Thibodeau-Laufer, Saizheng Zhang,[\u00b4] and Pascal Vincent. GSNs: generative stochastic networks. _Information and Inference: A Journal of the IMA_ , 5(2):210\u2013249, 03 2016. ISSN 2049-8764."
+    },
+    {
+      "index": 64,
+      "text": "- Hans C. Andersen. Molecular dynamics simulations at constant pressure and/or temperature. _The Journal of Chemical Physics_ , 72(4):2384\u20132393, 1980."
+    },
+    {
+      "index": 65,
+      "text": "- Brian DO Anderson. Reverse-time diffusion equation models. _Stochastic Processes and their Applications_ , 12(3):313\u2013326, 1982."
+    },
+    {
+      "index": 66,
+      "text": "- Jyoti Aneja, Alexander Schwing, Jan Kautz, and Arash Vahdat. A Contrastive Learning Approach for Training Variational Autoencoder Priors. In _Neural Information Processing Systems (NeurIPS)_ , 2021."
+    },
+    {
+      "index": 67,
+      "text": "- Abdul Fatir Ansari, Ming Liang Ang, and Harold Soh. Refining Deep Generative Models via Discriminator Gradient Flow. In _International Conference on Learning Representations_ , 2021."
+    },
+    {
+      "index": 68,
+      "text": "- Jacob Austin, Daniel Johnson, Jonathan Ho, Danny Tarlow, and Rianne van den Berg. Structured Denoising Diffusion Models in Discrete State-Spaces. In _Neural Information Processing Systems (NeurIPS)_ , 2021."
+    },
+    {
+      "index": 69,
+      "text": "- Yasaman Bahri, Jonathan Kadmon, Jeffrey Pennington, Sam S. Schoenholz, Jascha Sohl-Dickstein, and Surya Ganguli. Statistical Mechanics of Deep Learning. _Annual Review of Condensed Matter Physics_ , 11:501\u2013528, 2020."
+    },
+    {
+      "index": 70,
+      "text": "- J. Bailey. The tools of generative art, from flash to neural networks. _Art in America_ , 2020.\n\n- Yoshua Bengio, Eric Laufer, Guillaume Alain, and Jason Yosinski. Deep Generative Stochastic Networks Trainable by Backprop. In _Proceedings of the 31st International Conference on Machine Learning_ , 2014."
+    },
+    {
+      "index": 71,
+      "text": "- Florian Bordes, Sina Honari, and Pascal Vincent. Learning to Generate Samples from Noise through Infusion Training. In _5th International Conference on Learning Representations, ICLR_ , 2017."
+    },
+    {
+      "index": 72,
+      "text": "- Yuri Burda, Roger Grosse, and Ruslan Salakhutdinov. Importance Weighted Autoencoders. _arXiv:1509.00519_ , 2015."
+    },
+    {
+      "index": 73,
+      "text": "- Giovanni Bussi and Michele Parrinello. Accurate sampling using Langevin dynamics. _Phys. Rev. E_ , 75:056707, 2007."
+    },
+    {
+      "index": 74,
+      "text": "- Giovanni Bussi, Davide Donadio, and Michele Parrinello. Canonical sampling through velocity rescaling. _The Journal of Chemical Physics_ , 126(1):014101, 2007.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__qwen3-235b-a22b-2507": {
+      "label": "Coarse (qwen3-235b-a22b-2507)",
+      "model": "openrouter/qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a well-motivated and technically sound extension of score-based generative modeling by introducing critically-damped Langevin diffusion (CLD). It makes a compelling case for improved sampling efficiency and denoising simplicity through principled use of Hamiltonian dynamics and conditional velocity scores. The integration of ideas from statistical mechanics is elegant, and the empirical results on CIFAR-10 and CelebA-HQ are strong for the model size. The derivation of the hybrid score matching objective and the SSCS sampler are notable contributions.\n\nOverview issues:\n\n- Lack of ablation for critical damping assumption: The paper asserts that critical damping (\u0393\u00b2 = 4M) yields optimal convergence but provides no ablation comparing underdamped or overdamped variants under identical conditions. While Fig. 2 shows smoother score functions, it does not isolate the effect of critical damping from other aspects of CLD. Without direct comparison to non-critically-damped versions of the same model, the claimed benefits of 'critical' damping remain unverified. This is a central claim of the paper, yet the ablation studies in Section 5.3 only vary M\u207b\u00b9 while keeping \u0393\u00b2 = 4M, thus not testing the damping regime itself. A proper ablation would require fixing M and varying \u0393 independently to compare under-, over-, and critically-damped dynamics.\n\n- Insufficient comparison to modern high-order solvers: The paper claims SSCS outperforms Euler\u2013Maruyama and compares favorably to GGF, but omits comparison to more advanced fixed-step or adaptive high-order integrators designed for second-order SDEs, such as stochastic Runge\u2013Kutta methods or geometric integrators. Given that CLD is inspired by molecular dynamics, where such solvers are standard, the evaluation of SSCS should include baselines like RATTLE or other splitting methods. The current comparison to EM is too weak to support the claim of a superior solver, especially since EM is known to perform poorly on Hamiltonian systems. This undermines the significance of the proposed sampling scheme.\n\n- Overstated simplicity of the velocity score objective: The paper argues that learning \u2207\u1d65 log p(v|x) is easier than learning \u2207\u2093 log p(x) because the former is closer to a Gaussian. However, this overlooks that p(v|x) still depends on the full data distribution through conditioning, and the score must capture complex dependencies between x and v induced by the diffusion path. The empirical justification in Fig. 2 relies on a synthetic mixture-of-Gaussians example, which may not reflect the complexity in high-dimensional image spaces. No evidence is provided that the learned score function is actually simpler in practice\u2014only Jacobian norms are shown, which conflate model smoothness with task difficulty. A more rigorous analysis of function complexity, such as effective dimensionality or spectral properties, would be needed to support this claim.\n\n- Missing analysis of velocity initialization sensitivity: The model's performance is shown to depend on \u03b3, the scaling of the initial velocity variance, with \u03b3 = 0.04 preferred for FID. However, no discussion is given as to why this value works best or how it interacts with the damping coefficient and time rescaling \u03b2. The choice appears empirical and unprincipled. Given that the entire framework hinges on the coupling between x and v, and that v\u2080 is unobserved, the sensitivity to this hyperparameter is a significant limitation. A more thorough investigation\u2014such as how \u03b3 affects mixing time or score estimation bias\u2014would strengthen the method's robustness claims.\n\n- Unverified claim about hyperparameter transferability: The paper states that hyperparameters 'immediately translate to new tasks' based on using the same settings for CIFAR-10 and CelebA-HQ without tuning. However, the CelebA-HQ results lack quantitative evaluation (only qualitative samples are shown), so this claim cannot be assessed. Without FID, NLL, or other metrics on CelebA-HQ, it is unclear whether performance is comparable or whether the model generalizes well. This weakens the argument for broad applicability and ease of use, especially for high-resolution generation where diffusion dynamics may behave differently.\n\n- No ablation of damping regime on sampling efficiency: The paper claims critical damping ensures optimal convergence, yet it never compares underdamped or overdamped versions of CLD in terms of sampling efficiency or sample quality under fixed compute budgets. The ablation in Table 4 varies only M\u207b\u00b9 while maintaining \u0393\u00b2 = 4M, so it does not test the actual damping regime. To substantiate the claim that critical damping is superior, the authors should fix M and vary \u0393 independently across underdamped (\u0393\u00b2 < 4M), critically damped (\u0393\u00b2 = 4M), and overdamped (\u0393\u00b2 > 4M) settings, then report FID and NFE for each. Without this, the central motivation for 'critically-damped' Langevin diffusion remains unsupported.\n\n- Missing comparison to higher-order SDE solvers: The paper evaluates SSCS against Euler\u2013Maruyama and adaptive GGF but omits comparison to established high-order integrators for second-order SDEs, such as stochastic Runge\u2013Kutta or geometric splitting methods commonly used in molecular dynamics. Since the derivation of SSCS is inspired by such methods, it should be benchmarked against them to demonstrate its relative advantage. At minimum, the authors should compare to a fixed-step RATTLE or OBABO integrator under identical NFE budgets on CIFAR-10 sampling. Otherwise, the claim that SSCS is a superior tailored solver lacks sufficient context.\n\n- No quantitative evaluation on high-resolution images: The paper claims CLD is suitable for high-resolution synthesis based on qualitative samples from CelebA-HQ-256, but provides no FID, IS, or NLL scores. This makes it impossible to assess whether the method scales effectively or maintains performance gains. To support the claim of broad applicability, the authors should report FID scores for the CelebA-HQ-256 model using 50k samples and standard evaluation protocols. Without quantitative results, the extension to high-resolution data remains anecdotal.\n\n- Unvalidated claim of easier score learning in high dimensions: The paper argues that learning \u2207\u1d65 log p(v|x) is easier than \u2207\u2093 log p(x) because the conditional is closer to Gaussian, but this is only supported by Jacobian norms on a low-dimensional mixture-of-Gaussians example. In high-dimensional image spaces, no evidence is given that the score function is actually simpler to learn. The authors should compute and compare the effective rank or spectral decay of the Jacobians of the score networks on CIFAR-10 for CLD versus VPSDE. Without such analysis, the claim about reduced complexity remains speculative and untested in the actual regime of interest.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Include ablation studies comparing underdamped, critically-damped, and overdamped variants of CLD while holding other factors constant, with metrics on convergence speed and sample quality.\n\n- Expand the sampling evaluation to include comparisons with modern high-order or geometric SDE solvers beyond Euler\u2013Maruyama and GGF.\n\n- Provide stronger empirical or theoretical justification for the claim that learning \u2207\u1d65 log p(v|x) is simpler than learning data scores, beyond Jacobian norms on a synthetic example.\n\n- Add a principled analysis of the initial velocity variance hyperparameter \u03b3, including its impact on training dynamics and generalization.\n\n- Report quantitative results (e.g., FID, NFE) for the CelebA-HQ-256 experiment to support claims about hyperparameter transferability and high-resolution performance.",
+      "comments": [
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_0",
+          "title": "Critical damping claim lacks internal derivation",
+          "quote": "For $\\Gamma^{2}{=}4M$ (*critical damping*), an ideal balance is achieved and convergence to $p_{\\text{EQ}}(\\mathbf{u})$ occurs as fast as possible in a smooth manner without oscillations (also see discussion in App. A.1) *(McCall, 2010)*.",
+          "explanation": "The claim that critical damping ensures fastest convergence is supported only by a citation to McCall (2010), not by any derivation within the paper. The drift matrix $\\bm{A} = \\beta \\begin{bmatrix} 0 & M^{-1} \\\\ -1 & -\\Gamma M^{-1} \\end{bmatrix} \\otimes \\bm{I}_d$ governs convergence, and its eigenvalues determine the rate. The characteristic equation $\\lambda^2 + \\beta \\Gamma M^{-1} \\lambda + \\beta^2 = 0$ has discriminant $\\beta^2 M^{-2}(\\Gamma^2 - 4M)$, so real repeated eigenvalues occur at $\\Gamma^2 = 4M$, minimizing the spectral abscissa. This standard result should be derived or referenced explicitly in the main text to justify the central design choice.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_1",
+          "title": "Ablation does not test damping regime",
+          "quote": "Tab. 4 shows results for a CLD-SGM trained with different  $M^{-1}$  (also recall that  $M^{-1}$  and  $\\Gamma$  are tied together via  $\\Gamma^2 = 4M$ ; we are always in the critical-damping regime). Different mass values perform mostly similarly.",
+          "explanation": "The ablation varies $M^{-1}$ while enforcing $\\Gamma^2 = 4M$, so the system remains critically damped in all cases. This does not test whether critical damping itself is superior to underdamped or overdamped dynamics. To support the claim that critical damping is optimal, the authors should fix $M$ and vary $\\Gamma$ independently to compare regimes. Without such a study, the central motivation for 'critically-damped' Langevin diffusion remains experimentally unverified.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_2",
+          "title": "Hyperparameter transferability claim lacks quantitative support",
+          "quote": "We expect our chosen hyperparameters to immediately translate to new tasks and models. In fact, we used the same  $M^{-1}$ ,  $\\gamma$ , MS and HSM settings for CIFAR-10 and CelebA-HQ-256 experiments without fine-tuning.",
+          "explanation": "The claim of immediate hyperparameter transferability relies on qualitative samples from CelebA-HQ-256 without FID, IS, or NLL scores. Without quantitative evaluation, it is impossible to assess whether performance matches that on CIFAR-10 or whether the settings are truly task-agnostic. This weakens the argument for broad applicability. The claim should be revised to reflect that transferability is plausible but not yet quantitatively demonstrated.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_3",
+          "title": "SSCS superiority over EM lacks advanced baselines",
+          "quote": "Our experiments show that CLD outperforms previous SGMs on image synthesis for similar-capacity models and sampling compute budgets, while our novel SSCS is superior to EM in CLD-based SGMs.",
+          "explanation": "The evaluation of SSCS compares only to Euler\u2013Maruyama and adaptive GGF, omitting established high-order integrators for second-order SDEs such as stochastic Runge\u2013Kutta or geometric splitting methods (e.g., RATTLE, OBABO). Given that CLD is inspired by molecular dynamics\u2014where such solvers are standard\u2014the omission undermines the claim of a superior tailored solver. A comparison to at least one fixed-step high-order method under matched NFE would strengthen the empirical contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_4",
+          "title": "Claim of easier score learning lacks high-dimensional validation",
+          "quote": "We empirically verify the reduced complexity of the score of  $p_t(\\mathbf{v}_t|\\mathbf{x}_t)$  in Fig. 2. We find that the score that needs to be learnt by the model is more similar to a score corresponding to a Normal distribution for CLD than for the VPSDE.",
+          "explanation": "The evidence for easier score learning relies on Jacobian norms and score similarity in a low-dimensional mixture-of-Gaussians example. In high-dimensional image spaces, no analysis\u2014such as spectral decay, effective rank, or gradient variance\u2014is provided to show that $\\nabla_{\\mathbf{v}_t} \\log p_t(\\mathbf{v}_t|\\mathbf{x}_t)$ is simpler than $\\nabla_{\\mathbf{x}_t} \\log p_t(\\mathbf{x}_t)$. The claim that the task is easier remains speculative without such validation on the actual data domain.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_5",
+          "title": "Velocity score gradient derivation ignores path dependence",
+          "quote": "Without loss of generality,  $p_t(\\mathbf{u}_t) = p_t(\\mathbf{x}_t,\\mathbf{v}_t) = p_t(\\mathbf{v}_t|\\mathbf{x}_t)p_t(\\mathbf{x}_t)$ . Hence,\n\n$$\n\\nabla_ {\\mathbf {v} _ {t}} \\log p _ {t} (\\mathbf {u} _ {t}) = \\nabla_ {\\mathbf {v} _ {t}} \\left[ \\log p _ {t} \\left(\\mathbf {v} _ {t} \\mid \\mathbf {x} _ {t}\\right) + \\log p _ {t} \\left(\\mathbf {x} _ {t}\\right) \\right] = \\nabla_ {\\mathbf {v} _ {t}} \\log p _ {t} \\left(\\mathbf {v} _ {t} \\mid \\mathbf {x} _ {t}\\right) \\tag {7}\n$$",
+          "explanation": "The derivation assumes $\\log p_t(\\mathbf{x}_t)$ is independent of $\\mathbf{v}_t$, but $\\mathbf{x}_t = \\mathbf{x}_0 + \\int_0^t \\mathbf{v}_s ds$, so $p_t(\\mathbf{x}_t)$ depends functionally on the path $\\{\\mathbf{v}_s\\}_{s\\leq t}$. Thus, $\\nabla_{\\mathbf{v}_t} \\log p_t(\\mathbf{x}_t)$ is not necessarily zero. The simplification in (7) ignores this implicit dependence. The paper should justify under what conditions\u2014such as linear response or local approximation\u2014this term can be neglected.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_6",
+          "title": "Conditional Gaussianity claim lacks justification",
+          "quote": "This is the case, because our velocity distribution is initialized from a simple Normal distribution, such that  $p_t(\\mathbf{v}_t|\\mathbf{x}_t)$  is closer to a Normal distribution for all  $t\\geq 0$  (and for any  $\\mathbf{x}_t$ ) than  $p_t(\\mathbf{x}_t)$  itself.",
+          "explanation": "While $p_0(\\mathbf{v}_0|\\mathbf{x}_0)$ is Normal due to independence, the conditional $p_t(\\mathbf{v}_t|\\mathbf{x}_t)$ evolves under nonlinear filtering and can become highly non-Gaussian. The argument based on $t=0$ does not extend to $t>0$ without assumptions such as linearity or small noise. The paper should specify the conditions under which the conditional remains approximately Gaussian or provide a derivation (e.g., via linear response) to support the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_7",
+          "title": "Jacobian norm conflates model smoothness with task difficulty",
+          "quote": "We also measure the complexity of the neural networks that were learnt to model this score via the squared Frobenius norm of their Jacobians. We find that the CLD-based SGMs have significantly simpler and smoother neural networks than VPSDE-based SGMs for most  $t$ , in particular when leveraging a mixed score formulation (see next section).",
+          "explanation": "The Frobenius norm of the Jacobian reflects the smoothness of the learned network, not the intrinsic complexity of the target score function. A smaller norm could result from architectural choices or regularization rather than an easier learning task. The paper should clarify that this metric measures model behavior, not task difficulty, or supplement it with direct analysis of the target score (e.g., via sample-based estimation).",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_8",
+          "title": "NLL bound does not support mode coverage claim",
+          "quote": "our model reaches an NLL bound of 3.31, which is on par with recent works such as Nichol & Dhariwal (2021); Austin et al. (2021); Vahdat et al. (2021) and indicates that our model is not dropping modes.",
+          "explanation": "The claim that the model is not dropping modes based on an NLL upper bound is unjustified. A tight bound can coexist with mode dropping if probability mass is misallocated. The authors acknowledge the bound may be loose, and no explicit mode coverage analysis is provided. The inference should be removed unless supported by diversity metrics or coverage estimates.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_9",
+          "title": "Inconsistent M\u207b\u00b9 and \u0393 relationship phrasing",
+          "quote": "CLD\u2019s hyperparameters are chosen as $\\beta{=}4$, $\\Gamma{=}1$ (or equivalently $M^{-1}{=}4$) in all experiments.",
+          "explanation": "The phrasing \"or equivalently\" incorrectly suggests $M^{-1} = 4$ is a direct reparameterization of $\\Gamma = 1$, when in fact it follows from $\\Gamma^2 = 4M$. This could mislead readers into thinking the relationship holds independently of the critical damping assumption. The sentence should clarify that $M^{-1} = 4$ is derived under $\\Gamma^2 = 4M$ with $\\Gamma = 1$.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_10",
+          "title": "Misleading comparison to VPSDE dynamics",
+          "quote": "Diffusions such as the VPSDE *(Song et al., 2021c)* correspond to overdamped Langevin dynamics with high friction coefficients $\\Gamma$ (see App. A.2).",
+          "explanation": "VPSDE is a first-order Ornstein-Uhlenbeck process, not a Langevin equation, and does not involve a friction parameter $\\Gamma$ or mass $M$. While both converge to $\\mathcal{N}(0,\\bm{I}_d)$, equating VPSDE to overdamped Langevin dynamics with high $\\Gamma$ is misleading. The comparison should clarify that VPSDE lacks the second-order structure and Hamiltonian coupling of CLD.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_11",
+          "title": "Ambiguous matrix grouping in drift definition",
+          "quote": "We propose to augment the data $\\mathbf{x}_{t}\\in\\mathbb{R}^{d}$ with auxiliary *velocity* variables $\\mathbf{v}_{t}\\in\\mathbb{R}^{d}$ and utilize a diffusion process that is run in the joint $\\mathbf{x}_{t}$-$\\mathbf{v}_{t}$-space. With $\\mathbf{u}_{t}=(\\mathbf{x}_{t},\\mathbf{v}_{t})^{\\top}\\in\\mathbb{R}^{2d}$, we set\n\n\\[ \\bm{f}(\\mathbf{u}_{t},t)\\coloneqq\\begin{pmatrix}\\left(\\begin{matrix}0&\\beta M^{-1}\\\\\n-\\beta&-\\Gamma\\beta M^{-1}\\end{matrix}\\right)\\otimes\\bm{I}_{d}\\end{pmatrix}\\,\\mathbf{u}_{t}\\,,\\qquad\\bm{G}(\\mathbf{u}_{t},t)\\coloneqq\\begin{pmatrix}0&0\\\\\n0&\\sqrt{2\\Gamma\\beta}\\end{pmatrix}\\otimes\\bm{I}_{d}, \\] (4)",
+          "explanation": "The outer $\\begin{pmatrix}\\end{pmatrix}$ in $\\bm{f}(\\mathbf{u}_t,t)$ is redundant and creates parsing ambiguity. The expression $\\left(\\begin{smallmatrix}0 & \\beta M^{-1} \\\\ -\\beta & -\\Gamma\\beta M^{-1}\\end{smallmatrix}\\right) \\otimes \\bm{I}_d$ is already a $2d \\times 2d$ matrix; wrapping it in another matrix environment adds unnecessary nesting. The notation should be simplified to avoid misinterpretation.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_12",
+          "title": "Covariance matrix typo in $\\bm{\\Sigma}_t$",
+          "quote": "With $\\bm{\\Sigma}_{t}=\\underbrace{\\begin{pmatrix}\\Sigma_{t}^{xx}&\\Sigma_{t}^{xv}\\cr\\Sigma_{t}^{vv}&\\Sigma_{t}^{vv}\\end{pmatrix}}_{\\text{\u201cper-dimension\u201d covariance matrix}}\\otimes\\bm{I}_{d},\\quad\\text{we have}\\quad\\ell_{t}\\coloneqq\\sqrt{\\frac{\\Sigma_{t}^{xx}}{\\Sigma_{t}^{xx}\\Sigma_{t}^{vv}-(\\Sigma_{t}^{xv})^{2}}}.$",
+          "explanation": "The lower-left block of the matrix is labeled $\\Sigma_t^{vv}$, but it should be $\\Sigma_t^{vx}$. Since the covariance matrix is symmetric, $\\Sigma_t^{vx} = \\Sigma_t^{xv}$, but the current notation incorrectly duplicates $\\Sigma_t^{vv}$. This undermines confidence in the derivation, even though the final expression for $\\ell_t$ is correct.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        }
+      ],
+      "cost_usd": 0.1339,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "This paper introduces Critically-Damped Langevin Diffusion (CLD) for score-based generative modeling, proposing a novel diffusion process that augments data with velocity variables. The authors claim CLD provides smoother denoising, better sampling efficiency, and improved generation quality compared to standard diffusion models. The paper includes theoretical derivations, a new training objective (HSM), a tailored sampler (SSCS), and experiments showing competitive FID scores on CIFAR-10.\n\nThe paper presents an interesting connection between statistical mechanics and score-based generative modeling. The core idea of using critically-damped dynamics with velocity augmentation is novel and well-motivated. The experimental results on CIFAR-10 are strong, showing improved FID scores with fewer function evaluations. However, the paper has several concerning gaps: the theoretical justification for critical damping's optimality in the context of generative modeling is weak, the ablation studies are insufficient to validate key claims, and the scalability claims are not adequately supported.\n\nOverview issues:\n\n- Insufficient Theoretical Justification for Critical Damping: The paper claims critical damping (\u0013\u00b2=4M) provides \"ideal balance\" and \"fastest possible convergence\" but provides no rigorous analysis for why this holds in the context of generative modeling. The argument relies on classical mechanics intuition (Section 3), but the generative modeling objective differs fundamentally from physical equilibration. The paper needs either (a) a theoretical analysis showing critical damping minimizes some relevant objective (e.g., denoising complexity, KL divergence), or (b) empirical evidence comparing underdamped, critically-damped, and overdamped regimes with matched computational budgets. Without this, the critical damping choice appears arbitrary.\n\n- Incomplete Ablation of Velocity Augmentation Benefits: The paper's central claim that velocity augmentation makes the learning task easier (Section 3.1) lacks proper validation. The authors show smoother neural networks qualitatively (Fig. 2) but don't isolate whether this improvement comes from (a) the velocity augmentation itself, (b) the critical damping condition, or (c) the new HSM objective. A minimal ablation should compare: standard VPSDE vs. CLD with same network capacity, CLD without velocity coupling (setting \u0013=0), and CLD with different damping regimes. Without these controls, the claimed benefits cannot be attributed specifically to the proposed mechanics.\n\n- Questionable Scalability Claims: The paper claims CLD \"can be readily used for high-resolution image synthesis\" but provides only anecdotal evidence on CelebA-HQ-256 without hyperparameter tuning or quantitative metrics. The velocity augmentation doubles the state dimensionality, which should increase computational costs. The paper needs to report (a) memory usage and training time comparisons with baselines at higher resolutions, and (b) whether the performance advantages observed on CIFAR-10 persist at scale. Without this, the scalability claims remain unsubstantiated.\n\n- Limited Baseline Comparisons: The experimental comparison (Tables 1-3) lacks recent strong baselines in diffusion acceleration. Notably absent are comparisons with (a) consistency models which achieve fast sampling with quality comparable to diffusion models, and (b) other second-order methods like HOLD (High-Order Langevin Dynamics) mentioned in the literature context. The paper should include these comparisons to properly position CLD's contributions relative to state-of-the-art fast sampling methods.\n\n- Missing Analysis of Hyperparameter Sensitivity: While Section 5.3 shows limited sensitivity to M and \u0013, it doesn't analyze the interaction between these parameters and the critical damping condition. The paper fixes \u0013\u00b2=4M but doesn't show what happens when this constraint is violated. A systematic study of how performance varies across the (M,\u0013) parameter space would strengthen the claim that CLD doesn't have \"difficult-to-tune hyperparameters.\" Additionally, the choice of \u0013=0.04 for initial velocity variance lacks justification.\n\n- Missing worked example of CLD dynamics: The paper introduces CLD as a novel diffusion process but never computes its behavior for a concrete, analytically tractable case. Readers would benefit from seeing the CLD equations solved for a simple 1D or 2D Gaussian distribution, where the forward and reverse processes can be derived analytically. This would demonstrate how the velocity coupling and critical damping manifest in practice, and provide a sanity check that the theoretical machinery works. For instance, compute the perturbation kernel p_t(u_t|u_0) for a 1D Gaussian and verify that the critical damping condition (\u0393\u00b2=4M) indeed yields the fastest convergence to the equilibrium distribution compared to underdamped/overdamped cases.\n\n- No demonstration that the result has bite: The paper claims CLD provides an easier learning target but lacks a concrete example showing this advantage. A minimal demonstration would take a simple synthetic distribution (e.g., mixture of Gaussians) and compare the learned score functions for VPSDE vs. CLD. Show quantitatively that the CLD score \u2207_v_t log p_t(v_t|x_t) is closer to the analytical score than \u2207_x_t log p_t(x_t) for VPSDE. This would directly validate the central claim that velocity augmentation simplifies the learning problem. Without such a demonstration, the claim remains speculative.\n\n- Missing inference discussion for velocity variables: The paper derives the HSM objective but never discusses practical inference challenges when sampling velocity variables during training. Since velocities are never observed, the paper should address: (a) how the choice of initial velocity variance \u03b3 affects training stability, (b) whether the conditional distribution p_t(v_t|x_t) remains well-conditioned throughout training, and (c) potential issues with velocity initialization in practice. A brief analysis or empirical study showing that inference over velocities is stable across different \u03b3 values would strengthen the method's practical applicability.\n\n- Incomplete comparison to existing thermostats: The paper positions CLD as inspired by Langevin thermostats but never formally compares it to other thermostatting methods mentioned (Nos\u00e9-Hoover, Bussi-Parrinello). Since the paper claims CLD provides new insights into SGMs through statistical mechanics connections, it should at least show how alternative thermostats would modify the SDE formulation. Even a brief analytical comparison showing why critical damping is preferable for generative modeling would substantiate the choice of CLD over other established methods from the field.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide theoretical justification or empirical evidence for why critical damping is optimal for generative modeling\n\n- Add comprehensive ablation studies isolating the contributions of velocity augmentation, critical damping, and HSM objective\n\n- Include quantitative scalability analysis with training/computation costs and performance metrics at higher resolutions\n\n- Compare against recent fast sampling baselines including consistency models and HOLD\n\n- Analyze hyperparameter sensitivity across the full (M,\u0013) parameter space including violations of critical damping",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Critical damping condition lacks mathematical justification",
+          "quote": "For $\\Gamma^{2}{=}4M$ (*critical damping*), an ideal balance is achieved and convergence to $p_{\\text{EQ}}(\\mathbf{u})$ occurs as fast as possible in a smooth manner without oscillations (also see discussion in App. A.1) *(McCall, 2010)*.",
+          "explanation": "The claim that critical damping provides the \"fastest possible convergence\" lacks mathematical justification for the stochastic differential equation context. While critical damping minimizes settling time in deterministic second-order systems, the paper's SDE requires analysis of the spectral gap or KL divergence decay rate. The reference to classical mechanics (McCall, 2010) doesn't directly apply to stochastic diffusion. The paper should analyze the eigenvalues of the generator matrix to show that the real part of the dominant eigenvalue is maximized at $\\Gamma^{2}=4M$, which would indeed indicate fastest exponential convergence.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Error in Strang splitting convergence order",
+          "quote": "A finer discretization results in a smaller error (since $N{=}t/\\delta t$, the error effectively scales as $\\mathcal{O}(\\delta t^{2})$ for fixed $t$).",
+          "explanation": "The error scaling claim is incorrect for SDEs. The Strang splitting formula achieves $\\mathcal{O}(\\delta t^{2})$ global error only for deterministic ODEs. For SDEs with non-commuting operators, the strong convergence order is $\\mathcal{O}(\\delta t^{3/2})$ due to the stochastic term $\\sqrt{2\\Gamma\\beta}d\\mathbf{w}_{t}$ in the $A_{O}$ component. The paper incorrectly applies the deterministic error bound to the stochastic case. Rewrite the claim as \"the error effectively scales as $\\mathcal{O}(\\delta t^{3/2})$ for fixed $t$ in the strong sense\".",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "NLL upper bound formulation error",
+          "quote": "We also evaluate an upper bound on the negative log-likelihood (NLL): $-\\log p(\\mathbf{x}_{0})\\leq{-}\\mathbb{E}_{\\mathbf{v}_{0}\\sim p(\\mathbf{v}_{0})}\\log p_{\\varepsilon}(\\mathbf{x}_{0},\\mathbf{v}_{0}){-}H$, where $H$ is the entropy of $p(\\mathbf{v}_{0})$ and $\\log p_{\\varepsilon}(\\mathbf{x}_{0},\\mathbf{v}_{0})$ is an unbiased estimate of $\\log p(\\mathbf{x}_{0},\\mathbf{v}_{0})$ from the probability flow ODE",
+          "explanation": "The NLL upper bound has a sign error. The bound should be: $-\\log p(x_0) \\leq -\\mathbb{E}_{v_0\\sim p(v_0)}[\\log p_\\varepsilon(x_0,v_0)] + H$, not minus H. Since $H = -\\mathbb{E}[\\log p(v_0)]$, adding H (a positive quantity) gives a looser upper bound. The current formulation with \"-H\" would make the bound tighter than it should be, potentially invalidating comparisons. The correct derivation follows from Jensen's inequality applied to $-\\log \\int p(x_0,v_0) dv_0$.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Inconsistent FID comparison claim",
+          "quote": "The only models marginally outperforming CLD are LSGM *(Vahdat et al., 2021)* and NSCN++/VESDE with 2,000 step predictor-corrector (PC) sampling *(Song et al., 2021c)*.",
+          "explanation": "This claim is contradicted by Table 1, which shows NCSN++, VESDE (SDE) achieves FID=2.20, better than CLD's FID of 2.23/2.25. The statement should be corrected to accurately reflect that multiple models achieve comparable or better performance, or qualified to specify the exact comparison conditions.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Missing justification for \"easier task\" claim",
+          "quote": "We derive a novel score matching objective for CLD and show that the model only needs to learn the score function of the conditional distribution of the velocity given data, an easier task than learning scores of the data directly.",
+          "explanation": "The paper claims learning $\\nabla_{v_t} \\log p_t(v_t|x_t)$ is \"an easier task\" but provides no justification. This is a crucial claim about computational benefits. The authors need either theoretical analysis showing the conditional score has better properties (e.g., lower variance, smoother gradients), or empirical evidence comparing learning difficulty on controlled examples. Without this, the claim remains unverified.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "Undefined analytic score term in objective",
+          "quote": "$\\min_{\\bm{\\theta}}\\mathbb{E}_{t\\sim\\mathcal{U}[0,T]}\\mathbb{E}_{\\mathbf{x}_{0}\\sim p_{0}(\\mathbf{x}_{0})}\\mathbb{E}_{\\bm{\\epsilon}_{2d}\\sim\\mathcal{N}(\\bm{\\epsilon}_{2d};\\mathbf{0}_{2d},\\bm{I}_{2d})}\\left[\\lambda(t)\\ell_{t}^{2}||\\bm{\\epsilon}_{d:2d}-\\alpha_{\\bm{\\theta}}(\\bm{\\mu}_{t}(\\mathbf{x}_{0})+\\bm{L}_{t}\\bm{\\epsilon}_{2d},t)||_{2}^{2}\\right],$ (9)",
+          "explanation": "Equation (9) trains the full $\\alpha_{\\bm{\\theta}}$ to predict $\\bm{\\epsilon}_{d:2d}$, but the mixed parameterization defines $\\alpha_{\\bm{\\theta}} = \\ell_{t}^{-1}\\mathbf{v}_{t}/\\Sigma_{t}^{vv} + \\alpha_{\\bm{\\theta}}^{\\prime}$ where the first term is analytically known. Training the full term defeats the purpose of mixed parameterization. The objective should train only the residual $\\alpha_{\\bm{\\theta}}^{\\prime}$ by subtracting the analytic term from the target.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Missing justification for quadratic sampling times",
+          "quote": "For methods without adaptive stepsize (EM and SSCS), we use evaluation times chosen according to a quadratic function, like previous work *(Song et al., 2021a; Kong and Ping, 2021; Watson et al., 2021)* (indicated by QS).",
+          "explanation": "The paper adopts quadratic sampling times without justification, merely citing previous work. This is problematic because CLD's dynamics differ fundamentally from standard diffusion processes. The quadratic schedule was designed for standard SDEs with different noise structures. For CLD's critically-damped dynamics, the optimal discretization may differ. The authors should provide theoretical justification or empirical demonstration that this choice works well for CLD.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Inconsistent hyperparameter relationship claim",
+          "quote": "Intuitively, training with smaller  $M^{-1}$  means that noise flows from the velocity variables  $\\mathbf{v}_t$  into the data  $\\mathbf{x}_t$  more slowly, which necessitates a larger time rescaling  $\\beta$ . We found that simply tying  $M^{-1}$  and  $\\beta$  together via  $\\beta = 8\\sqrt{M}$  works well and did not further fine-tune.",
+          "explanation": "The text claims smaller $M^{-1}$ necessitates larger $\\beta$, but then provides $\\beta = 8\\sqrt{M}$. This is contradictory because if $M^{-1}$ gets smaller, then $M$ gets larger, making $\\sqrt{M}$ larger, which means $\\beta$ gets larger. However, the intuitive explanation suggests an inverse relationship. Either the intuition is wrong, or the mathematical relationship needs correction to resolve the inconsistency.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Unsubstantiated scalability claim",
+          "quote": "Our framework provides new insights into score-based denoising diffusion models and can be readily used for high-resolution image synthesis.",
+          "explanation": "The abstract claims scalability to high-resolution synthesis but provides no evidence. The velocity augmentation doubles state dimensionality, increasing computational costs. The authors need either theoretical analysis showing how CLD scales with resolution, or empirical results demonstrating successful application to high-resolution synthesis with reasonable costs. The CelebA-HQ-256 results are anecdotal without quantitative metrics.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Ambiguous gradient notation for velocity components",
+          "quote": "Furthermore, $\\nabla_{\\mathbf{v}_{t}}\\log p_{t}(\\mathbf{u}_{t}|\\mathbf{x}_{0})=-\\ell_{t}\\bm{\\epsilon}_{d:2d}$, where $\\bm{\\epsilon}_{d:2d}$ denotes those $d$ components of $\\bm{\\epsilon}_{2d}$ that actually affect $\\nabla_{\\mathbf{v}_{t}}\\log p_{t}(\\mathbf{u}_{t}|\\mathbf{x}_{0})$",
+          "explanation": "The notation $\\bm{\\epsilon}_{d:2d}$ is ambiguous. Since $\\nabla_{\\mathbf{v}_{t}}\\log p_{t}$ is $d$-dimensional but $\\bm{\\epsilon}_{2d}$ is $2d$-dimensional, the relationship needs clarification. Define $\\bm{\\epsilon}_{d:2d}$ explicitly as the velocity components, e.g., $\\bm{\\epsilon}_{d:2d} = [\\bm{\\epsilon}_{d+1}, \\ldots, \\bm{\\epsilon}_{2d}]^{\\top}$, or use clearer notation like $\\bm{\\epsilon}_{v}$.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__glm-4.6_10",
+          "title": "Undefined weighting function \u03bb(t)",
+          "quote": "\\min  _ {\\boldsymbol {\\theta}} \\mathbb {E} _ {t \\sim \\mathcal {U} (0, T)} \\mathbb {E} _ {\\mathbf {u} _ {t} \\sim p _ {t} (\\mathbf {u} _ {t})} \\left[ \\lambda (t) \\| s _ {\\boldsymbol {\\theta}} (\\mathbf {u} _ {t}, t) - \\nabla_ {\\mathbf {v} _ {t}} \\log p _ {t} (\\mathbf {u} _ {t}) \\| _ {2} ^ {2} \\right] \\tag",
+          "explanation": "The weighting function $\\lambda(t)$ appears in objective (6) without definition. In score matching literature, $\\lambda(t)$ typically balances contributions across time steps, often chosen as $\\lambda(t) = g(t)^2$ where $g(t)$ is the diffusion coefficient. The paper should define $\\lambda(t)$ and explain its role, or reference where this choice is specified.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__glm-4.6_11",
+          "title": "Critical damping condition inconsistency",
+          "quote": "CLD\u2019s hyperparameters are chosen as $\\beta{=}4$, $\\Gamma{=}1$ (or equivalently $M^{-1}{=}4$) in all experiments.",
+          "explanation": "The parenthetical \"or equivalently $M^{-1}=4$\" creates confusion. If $\\Gamma=1$ and critical damping holds ($\\Gamma^2=4M$), then $M=0.25$, making $M^{-1}=4$ correct. However, the phrasing suggests $M^{-1}=4$ is equivalent to $\\Gamma=1$, which is misleading. The equivalence only holds under the critical damping constraint. Rewrite as: \"CLD's hyperparameters are chosen as $\\beta=4$, $\\Gamma=1$, and $M=0.25$ (satisfying $\\Gamma^2=4M$) in all experiments.\"",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        }
+      ],
+      "cost_usd": 0.2835,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes Critically-Damped Langevin Diffusion (CLD), an augmented-state diffusion process for score-based generative modeling. By introducing velocity variables and using a critically-damped Langevin dynamic, the authors aim to improve the smoothness and efficiency of the denoising process. The paper includes a novel score-matching objective (HSM) and a symmetric splitting integrator (SSCS) for sampling.\n\nThe paper makes a compelling technical contribution by applying concepts from statistical mechanics to improve diffusion-based generative models. The proposed framework is well-motivated and the empirical results on CIFAR-10 and CelebA-HQ are strong. The derivation of the hybrid score matching objective and the tailored SDE integrator are particularly notable strengths.\n\nOverview issues:\n\n- Unclear impact of the augmented state on computational overhead: The paper introduces an augmented state space (position and velocity) which effectively doubles the dimensionality of the input to the neural network. While the authors claim improved sampling quality, the computational cost of training and inference is not explicitly quantified in terms of wall-clock time or GPU memory usage compared to standard models with similar parameter counts. Section 5 mentions that the model uses 6 input channels instead of 3, but it does not detail the resulting increase in FLOPs or latency per NFE. To address this, the authors should provide a direct comparison of training time and inference latency per sample for a standard DDPM++ versus their CLD-SGM on the same hardware.\n\n- Limited evidence for the 'easier score' claim: The core motivation for CLD is that learning the score of the conditional distribution p(v|x) is easier than learning the score of the diffused data p(x). Figure 2 attempts to visualize this, but the evidence is largely qualitative and based on a toy mixture of Normals. It is not clear whether this 'easier' task property holds for high-dimensional, complex image datasets like CelebA-HQ or ImageNet. The authors should supplement this with a quantitative metric of score-matching difficulty, such as the variance of the score estimation error or the training convergence rate, measured on the actual image benchmarks rather than just toy distributions.\n\n- Lack of sensitivity analysis for hyperparameters M and Gamma: The paper sets the critical damping condition Gamma^2 = 4M and argues that this is an ideal balance. However, the ablation study in Table 4 tests only a few values of M and does not explore the performance degradation if the critical damping condition is violated (e.g., in the underdamped or overdamped regimes). Without demonstrating that the model is sensitive to deviations from this condition, the claim that critical damping is a necessary or optimal design choice remains speculative. Adding a plot showing FID versus the damping ratio (Gamma / sqrt(4M)) would provide much-needed evidence for the robustness and necessity of the proposed hyperparameter tuning.\n\n- Theoretical justification of the SSCS integrator: The derivation of the Symmetric Splitting CLD Sampler (SSCS) in Section 3.3 and Appendix D relies on the assumption that the score model term S is small, allowing for a split where the Hamiltonian and Ornstein-Uhlenbeck parts are solved exactly. The paper does not provide a formal error analysis of this splitting approach compared to standard solvers when the score term is large, which occurs early in the reverse diffusion process. Since the score function is most complex when t is near 0, the assumption that S is small may be violated at critical points in the sampling trajectory. A more rigorous discussion or a small-scale experiment visualizing the integration error as a function of time t would significantly strengthen the case for SSCS.\n\n- Empirical validation of the 'easier score' claim on high-dimensional data: The paper relies heavily on the claim that learning the conditional score of velocity is inherently easier than learning the data score, but this is only demonstrated on a low-dimensional mixture of Gaussians. To substantiate this claim for the image generation tasks that constitute the paper's primary contribution, the authors should compute the score estimation error (the L2 norm of the difference between the model output and the ground truth score) on a held-out set of CIFAR-10 images throughout the training process. Comparing this metric directly against a standard VPSDE model trained on the same architecture would provide the necessary evidence that the conditional score task is indeed more stable and easier to learn in high dimensions.\n\n- Quantitative analysis of the damping regime sensitivity: The paper posits that critical damping (Gamma^2 = 4M) is an optimal design choice, but the provided ablations only test a few discrete values of M. To demonstrate the 'bite' of this specific design restriction, the authors should provide a plot of FID versus the damping ratio (Gamma / sqrt(4M)) for a range of values spanning the underdamped, critically-damped, and overdamped regimes. This would clarify whether the performance gain is a robust property of the critical damping condition or if the model is relatively insensitive to these parameters, which would impact the claim that CLD is a superior, well-motivated diffusion process.\n\n- Formal assessment of the SSCS integrator's splitting error: The derivation of the Symmetric Splitting CLD Sampler (SSCS) assumes the score term S is small enough to justify the operator splitting. However, the score function is typically largest near t=0, where the reverse-time SDE is most sensitive. The paper lacks a quantitative comparison of the integration error (e.g., the drift/diffusion bias) between SSCS and a standard high-order SDE solver (like an adaptive-step Milstein method) at these critical time steps. A small-scale experiment measuring the cumulative discretization bias on a single image sample would demonstrate that the splitting approximation remains valid throughout the entire reverse-diffusion trajectory.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Provide a detailed wall-clock time and memory usage comparison between CLD-SGM and a baseline model (e.g., standard DDPM++) on the same hardware.\n\n- Expand the sensitivity analysis to include a plot of FID versus the damping ratio to empirically validate the critical damping assumption.\n\n- Include a more rigorous discussion or numerical experiment regarding the integration error of the SSCS solver, particularly at small t where the score function is most complex.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Unsubstantiated claim regarding task difficulty",
+          "quote": "We derive a novel score matching objective for CLD and show that the model only needs to learn the score function of the conditional distribution of the velocity given data, an easier task than learning scores of the data directly.",
+          "explanation": "The assertion that learning the conditional score of velocity is inherently easier than learning the data score is a central motivation, yet it is presented as a conclusion without rigorous justification. In high-dimensional image generation, the complexity of score matching is tied to the curvature and multi-modality of the target distribution, which does not necessarily simplify by conditioning on velocity. Please provide a formal argument or empirical evidence\u2014such as a comparison of the training loss landscape or score estimation error\u2014to substantiate this claim. If such evidence is unavailable, rephrase the statement as a hypothesis.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in the scope of the score matching objective",
+          "quote": "We derive the corresponding score matching objective and show that for CLD the neural network is tasked with learning only the score of the conditional distribution of velocity given data",
+          "explanation": "The text claims the network learns only the conditional score of velocity. However, the CLD-SGM model must account for the position variable x_t to perform reverse-time SDE integration, and the neural network takes both x_t and v_t as input. Claiming it learns only the conditional score is misleading because the network must model the dependency on x_t to be useful for the reverse process. Please clarify that the network is conditioned on the data variable to estimate the velocity score.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Inconsistency in Global Error Order Analysis",
+          "quote": "A finer discretization results in a smaller error (since $N{=}t/\\delta t$, the error effectively scales as $\\mathcal{O}(\\delta t^{2})$ for fixed $t$). Hence, th",
+          "explanation": "The text correctly identifies that the Strang splitting formula is second-order, but the subsequent replacement of the exact propagator with an Euler approximation limits the global error to O(delta t). The claim that the error effectively scales as O(delta t^2) is misleading in the context of the final algorithm. Please clarify that while the splitting structure is second-order, the use of an Euler approximation for the score term limits the global convergence rate to first-order, consistent with standard EM methods.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inaccurate characterization of non-Gaussian diffusion literature",
+          "quote": "s. *Nachmani et al. (2021)* recently introduced non-Gaussian diffusion processes with different noise distributions. However, the noise is still injected directly into the data, and no improved sampling schemes or training objectives are introduced.",
+          "explanation": "The claim that Nachmani et al. (2021) introduced no improved sampling schemes or training objectives is incorrect. Their work, Non-Gaussian Denoising Diffusion Models, explicitly proposes a new training objective based on the variational lower bound for non-Gaussian noise and introduces specific sampling procedures tailored to these distributions. Please correct this misrepresentation of their contributions.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        }
+      ],
+      "cost_usd": 0.1045,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces Critically-Damped Langevin Diffusion (CLD), an augmented state-space diffusion process for score-based generative models. The authors derive a hybrid score matching objective and a Strang-splitting sampler, reporting improved FID scores on CIFAR-10 under limited neural function evaluation budgets. While the physical motivation is interesting and the empirical results are competitive, the manuscript relies heavily on heuristic arguments from statistical mechanics without formal convergence guarantees or rigorous justification for the claimed simplification of the score matching target. Practical deployment is also limited by the absence of guidance mechanisms and incomplete computational comparisons.\n\nThe work offers a novel augmentation strategy for SGMs that successfully reduces the number of sampling steps required for high-quality synthesis. The derivation of the hybrid score matching objective and the SSCS sampler demonstrates solid engineering and a thoughtful connection to molecular dynamics. The CIFAR-10 experiments are well-conducted and the ablation studies provide reasonable hyperparameter sensitivity analysis. However, the theoretical claims regarding convergence speed and score complexity lack formal backing, and the practical utility is constrained by unaddressed conditional generation workflows.\n\nOverview issues:\n\n- Unsubstantiated claim regarding the simplicity of the conditional score target: Section 3.1 argues that learning $\\nabla_{\\mathbf{v}_t}\\log p_t(\\mathbf{v}_t|\\mathbf{x}_t)$ is inherently easier than learning $\\nabla_{\\mathbf{x}_t}\\log p_t(\\mathbf{x}_t)$ because the velocity prior is Gaussian. This intuition overlooks the fact that the conditional distribution is a high-dimensional convolution of the data manifold with the diffusion kernel, meaning it inherits the geometric complexity of the data rather than simplifying it. The empirical validation in Fig. 2 relies on a toy mixture of Gaussians, which fails to capture the intricate structure of natural images. Without a rigorous information-theoretic bound or empirical Jacobian analysis on actual CIFAR-10 samples, the core motivation for CLD remains heuristic. The authors should either provide a formal complexity argument for the conditional score or replace the toy experiment with a dimensionality-reduction analysis on real data.\n\n- Incomplete computational fairness and wall-clock reporting for SSCS: The paper compares SSCS against Euler-Maruyama and GGF primarily using Neural Function Evaluations (NFE) as the efficiency metric. While NFE is standard, SSCS introduces analytical propagation steps for the Hamiltonian and Ornstein-Uhlenbeck components that require matrix operations or solving linear systems at each step. The manuscript does not report wall-clock sampling times or FLOP counts, making it impossible to verify whether the reduced NFE actually translates to faster synthesis. Furthermore, comparing a fixed-step SSCS to adaptive solvers like GGF or RK45 ODE samplers on an NFE basis is misleading, as adaptive methods dynamically adjust step sizes based on local error estimates. The authors need to provide wall-clock timing experiments under identical hardware constraints and clarify whether SSCS's analytical steps introduce non-negligible overhead that could offset the NFE savings.\n\n- Absence of convergence rate analysis for CLD dynamics: The introduction of CLD is heavily motivated by statistical mechanics, specifically the claim that critical damping ($\\Gamma^2=4M$) yields the fastest non-oscillatory convergence to equilibrium. While this holds for linear harmonic oscillators, real data distributions are highly nonlinear and high-dimensional. The paper provides no theoretical analysis of the mixing time or convergence rate of the CLD SDE on general manifolds. The literature context explicitly notes that formal convergence guarantees for CLD in the SGM setting remain incomplete. Without a proof or empirical scaling analysis showing how the mixing time of CLD compares to overdamped or underdamped alternatives as dimensionality increases, the claim of universally accelerated convergence is unsupported. A formal derivation of the spectral gap or a dimensionality-scaling experiment would strengthen the theoretical foundation.\n\n- Unaddressed challenges in conditional generation and guidance: The augmented state space $(\\mathbf{x}_t, \\mathbf{v}_t)$ fundamentally changes how classifier guidance and classifier-free guidance operate in score-based models. Standard guidance relies on the gradient of the log-likelihood with respect to the data variable $\\mathbf{x}_t$. In CLD, the score model only predicts the velocity gradient, and the data score must be recovered implicitly through the SDE structure. The paper does not discuss how to implement guidance in this framework, nor does it provide experiments for conditional generation or inverse problems like inpainting. Given that guidance is a cornerstone of modern SGMs, this omission severely limits the practical applicability of the method. The authors should at least outline a derivation for guidance in the augmented space and provide a proof-of-concept experiment on a conditional task.\n\n- Misleading likelihood reporting and optimization trade-offs: Table 1 reports an upper bound on the negative log-likelihood (NLL) of $\\le 3.31$ for CLD-SGM, placing it on par with baselines like VDM and Likelihood SDE. However, the authors explicitly state in Section 5.1 that they did not train the model for high likelihood and that the bound is potentially quite loose. Comparing a likelihood-optimized baseline to a synthesis-optimized CLD model using a loose upper bound creates a false equivalence. The weighting function $\\lambda(t) = \\ell_t^{-2}$ deliberately drops the variance prefactor to prioritize sample quality over density estimation, which inherently decouples FID from likelihood. The paper should clearly separate synthesis-focused and likelihood-focused results, or explicitly report the true NLL using importance-weighted bounds to avoid misleading comparisons.\n\n- Worked example verifying the conditional score complexity claim: The paper argues that learning the conditional velocity score is inherently simpler, yet validates this only with a toy mixture of Gaussians in Figure 2. Readers need a concrete parametric model to calibrate this intuition. A standard 2D Gaussian mixture would allow explicit computation of the conditional score and its Jacobian norm. Computing these quantities analytically or numerically would demonstrate whether the velocity conditional genuinely retains less geometric complexity than the marginal data distribution. This example would ground the core motivation for CLD beyond heuristic arguments.\n\n- Simulation of mixing time across damping regimes: The introduction claims that critical damping yields the fastest non-oscillatory convergence, yet the paper provides no quantitative comparison of mixing rates across different damping coefficients. Without a simulation, it remains unclear whether this linear harmonic oscillator property holds for non-linear, high-dimensional distributions. The authors should simulate the forward CLD SDE alongside overdamped and underdamped alternatives on a known multi-modal distribution, such as a 2D mixture of Gaussians. Tracking the Wasserstein distance to the target distribution over time would directly verify the mixing speed advantage. This demonstration is necessary to substantiate the claim that CLD universally accelerates the diffusion process.\n\n- Formal limiting cases for the diffusion and sampler: The paper introduces a novel diffusion process and a tailored integrator but never verifies that standard baselines emerge as special cases. Readers will wonder whether the SSCS sampler reduces to Euler-Maruyama when the score term dominates or when the Hamiltonian coupling is removed. Similarly, the CLD SDE should reduce to the VPSDE in the limit of high friction. Deriving these limiting forms in the theory section would formally position CLD within the existing SDE framework. It would also clarify the computational trade-offs and help practitioners understand when the proposed method offers a genuine advantage.\n\nRecommendation: Major revision. The manuscript introduces a compelling augmentation strategy for SGMs with strong empirical results, but the core theoretical claims regarding score complexity and convergence speed lack formal justification. Additionally, the computational comparisons are incomplete, and the absence of guidance mechanisms limits practical utility. These gaps must be addressed before the work can meet the standards of a top venue.\n\nRevision targets:\n\n- Provide a formal convergence rate or mixing time analysis for the CLD SDE on nonlinear manifolds, or replace theoretical claims with rigorous empirical scaling experiments across dimensions.\n\n- Report wall-clock sampling times and per-step computational overhead for SSCS to validate that reduced NFE translates to actual speedups over adaptive baselines.\n\n- Derive and experimentally validate classifier-free guidance for the augmented $(\\mathbf{x}_t, \\mathbf{v}_t)$ state space, demonstrating conditional generation or inverse problem capabilities.\n\n- Replace the loose NLL upper bound with importance-weighted likelihood estimates or clearly separate synthesis and likelihood optimization results to prevent misleading comparisons.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Incorrect derivation of the conditional velocity score",
+          "quote": "Furthermore, $\\nabla_{\\mathbf{v}_{t}}\\log p_{t}(\\mathbf{u}_{t}|\\mathbf{x}_{0})=-\\ell_{t}\\bm{\\epsilon}_{d:2d}$, where $\\bm{\\epsilon}_{d:2d}$ denotes those $d$ components of $\\bm{\\epsilon}_{2d}$ that actually affect $\\nabla_{\\mathbf{v}_{t}}\\log p_{t}(\\mathbf{u}_{t}|\\mathbf{x}_{0})$ (since we take velocity gradients only, not all are relevant).",
+          "explanation": "The claim that the velocity score depends solely on the velocity noise component is mathematically incorrect for the general CLD covariance structure. Starting from $\nlog p_t(\nmathbf{u}_t|\nmathbf{x}_0) = -\frac{1}{2}\n|\nmathbf{\nepsilon}_{2d}\n|_2^2 + \nconst$ and using $\nmathbf{\nepsilon}_{2d} = \nmathbf{L}_t^{-1}(\nmathbf{u}_t - \nmathbf{\nmu}_t)$, the gradient is $\nabla_{\nmathbf{v}_t} \nlog p_t = -(\nmathbf{\nSigma}_t^{-1})_{vv}(\nmathbf{v}_t - \nmu_v) - (\nmathbf{\nSigma}_t^{-1})_{vx}(\nmathbf{x}_t - \nmu_x)$. Substituting the Cholesky factors reveals that $\nabla_{\nmathbf{v}_t} \nlog p_t$ depends linearly on both $\nmathbf{\nepsilon}_x$ and $\nmathbf{\nepsilon}_v$, with a coefficient for $\nmathbf{\nepsilon}_v$ that differs from $\nell_t$. The cross-term involving $\nmathbf{\nepsilon}_x$ vanishes only if $\nSigma_t^{xv}=0$, which does not hold for critically-damped Langevin dynamics. Consequently, Eq. (9) trains the model to predict an incorrect target. The authors should explicitly include the position noise dependence in the score target or acknowledge that the cross-covariance is being neglected as an approximation.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Incorrect bundling of deterministic drift into score term S",
+          "quote": "\\underbrace{\\begin{pmatrix}\\mathbf{0}_{d}\\\\ 2\\Gamma\\left[\\mathbf{s}(\\bar{\\mathbf{u}}_{t},T-t)+M^{-1}\\bar{\\mathbf{v}}_{t}\\right]\\end{pmatrix}\\beta dt}_{S}",
+          "explanation": "The term $M^{-1}\\bar{\\mathbf{v}}_t$ is a linear deterministic drift and belongs in the Hamiltonian/OU block $A_H+A_O$, not the score correction $S$. Including it in $S$ obscures the mathematical derivation and misleadingly implies the neural network predicts a hybrid quantity. More importantly, the authors justify their splitting scheme by noting that if $S=0$, the SDE can be solved in closed form. Since $M^{-1}\\bar{\\mathbf{v}}_t$ is linear in $\\mathbf{v}$, removing it from $S$ preserves the linearity of the $A_H+A_O$ block, ensuring the closed-form solvability claim holds. Rewrite the $S$ term to contain only $2\\Gamma \\beta \\mathbf{s}(\\bar{\\mathbf{u}}_t, T-t)$ in the velocity component, and explicitly write the full time-reversed deterministic drift in the $A_H + A_O$ block to maintain clarity and correctness.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Misleading error order claim for the integrator",
+          "quote": "Thus, the integrator formally has an error of the same order as standard EM methods.",
+          "explanation": "Standard Euler-Maruyama (EM) has a weak convergence order of 1 and strong order of 0.5. Strang splitting inherently achieves weak order 2. However, the authors approximate the score propagator $e^{\\delta t \\hat{\\mathcal{L}}_S^*}$ using a single Euler step, which is only first-order accurate. Composing a first-order approximation of one operator within a Strang split typically degrades the overall weak order back to 1, not 2. The claim that the error scales as $\\mathcal{O}(\\delta t^2)$ (weak) is therefore likely incorrect unless the Euler approximation of $S$ is refined or higher-order. The authors should clarify whether the $\\mathcal{O}(\\delta t^2)$ refers to weak error and justify that the Euler approximation of $S$ does not degrade the splitting order, or adjust the claim to reflect the actual weak order (likely 1).",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Factual inconsistency between text and Table 2 regarding high-NFE performance",
+          "quote": "When using a fine discretization of the SDE (high NFE), the two perform similarly, which is also expected, as the errors of both methods will become negligible.",
+          "explanation": "Table 2 contradicts this claim. At n=1000, EM-QS achieves an FID of 2.27 while SSCS-QS achieves 2.30. At n=2000, EM-QS achieves 2.23 while SSCS-QS achieves 2.29. In both cases, EM strictly outperforms SSCS rather than performing similarly. The authors should rewrite this sentence to accurately reflect that EM surpasses SSCS at high NFE budgets, or provide a justification for preferring SSCS despite its higher FID in this regime.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Exception claim ignores SSCS underperformance against VESDE-PC",
+          "quote": "With one exception (VESDE with 2,000 NFE) our CLD-SGM outperforms all baselines, both for adaptive and fixed-step size methods.",
+          "explanation": "This statement is inaccurate for the SSCS sampler presented in Table 2. VESDE with the PC sampler achieves an FID of 2.43 at n=1000 and 2.23 at n=2000, both of which are lower (better) than the corresponding CLD SSCS-QS results of 2.30 and 2.29. The claim of outperformance only holds for the EM sampler. The authors should clarify whether the statement refers exclusively to EM, or expand the exception list to include the n=1000 and n=2000 cases where SSCS falls behind VESDE-PC.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Overstated uniqueness of diffusion complexity",
+          "quote": "The complexity of this denoising task is, apart from the data distribution itself, uniquely determined by the diffusion process.",
+          "explanation": "This claim ignores the substantial impact of score network architecture, parameterization, and training dynamics on denoising difficulty. While the diffusion process defines the sequence of marginal distributions, the actual complexity of learning the score function depends heavily on how the neural network is structured and how the training objective is weighted across time steps. By stating uniqueness, the abstract dismisses well-known factors in SGM literature that dictate practical learning difficulty. The authors should acknowledge that the diffusion process is a primary factor but not the sole determinant. Rewrite \"The complexity of this denoising task is, apart from the data distribution itself, uniquely determined by the diffusion process.\" as \"The complexity of this denoising task is primarily shaped by the diffusion process, though it also depends on the score network's architecture and training procedure.\" because the learning difficulty is co-determined by model design and optimization, not solely by the forward diffusion trajectory.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Conflation of Hamiltonian dynamics and diffusion transformation",
+          "quote": "As in Hamiltonian Monte Carlo (Duane et al., 1987; Neal, 2011), the Hamiltonian component helps to efficiently traverse the joint data-velocity space and to transform the data distribution into the prior distribution more smoothly.",
+          "explanation": "The sentence attributes the distribution transformation to the Hamiltonian component, which is conceptually inaccurate. In both HMC and CLD, Hamiltonian dynamics provide momentum to reduce random-walk behavior and improve mixing, but the actual transformation from the data distribution to the prior is driven by the stochastic noise injection over time. The current wording blurs this distinction and may mislead readers about the mechanism. Rewrite to clarify that the Hamiltonian coupling improves trajectory smoothness and mixing, while the diffusion process itself performs the distribution transformation.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Ambiguous derivation reference for velocity-only score matching",
+          "quote": "SGMs. Following a similar derivation as Song et al. (2021b), we obtain the score matching (SM) objective (see App. B.3):",
+          "explanation": "Citing Song et al. (2021b) for this objective may confuse readers, as that work derives the score matching loss for matching the full position score $\\nabla_{\\mathbf{x}_t} \\nlog p_t(\\mathbf{x}_t)$ in standard diffusion SDEs. Equation (6) instead matches only the velocity score $\\nabla_{\\mathbf{v}_t} \\nlog p_t(\\mathbf{u}_t)$, which is a consequence of the CLD noise structure. The derivation adapts the standard SDE score matching proof by noting that the time-reversed drift for $\\mathbf{v}$ depends only on $\\nabla_{\\mathbf{v}} \\nlog p_t$, while $\\mathbf{x}$ evolves deterministically given $\\mathbf{v}$. The authors should explicitly clarify how the standard derivation is modified to yield a velocity-only objective. Rewrite \"Following a similar derivation as Song et al. (2021b)\" as \"Adapting the derivation from Song et al. (2021b) to the velocity-only noise structure\" because the standard SDE score matching proof targets the position score, and the authors must clarify how the CLD dynamics decouple the objective to require only the velocity gradient.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Typo in per-dimension covariance matrix",
+          "quote": "$\\bm{\\Sigma}_{t}=\\underbrace{\\begin{pmatrix}\\Sigma_{t}^{xx}&\\Sigma_{t}^{xv}\\cr\\Sigma_{t}^{vv}&\\Sigma_{t}^{vv}\\end{pmatrix}}_{\\text{\u201cper-dimension\u201d covariance matrix}}\\otimes\\bm{I}_{d},",
+          "explanation": "The displayed covariance matrix incorrectly lists $\\Sigma_t^{vv}$ in both the bottom-left and bottom-right positions. A covariance matrix must be symmetric, so the bottom-left entry should be $\\Sigma_t^{xv}$ to match the top-right entry and the determinant formula given immediately afterward. This typo could cause confusion when readers attempt to reconstruct the Cholesky factor or verify the expression for $\\ell_t$. Rewrite the matrix as $\\begin{pmatrix}\\Sigma_{t}^{xx}&\\Sigma_{t}^{xv}\\cr\\Sigma_{t}^{xv}&\\Sigma_{t}^{vv}\\end{pmatrix}$ to ensure symmetry and consistency with the subsequent definition of $\\ell_t$.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Misrepresentation of Nachmani et al. (2021) contributions",
+          "quote": "s. *Nachmani et al. (2021)* recently introduced non-Gaussian diffusion processes with different noise distributions. However, the noise is still injected directly into the data, and no improved sampling schemes or training objectives are introduced.",
+          "explanation": "This statement misrepresents the actual contributions of Nachmani et al. (2021). They explicitly propose a novel score matching objective specifically tailored to non-Gaussian noise distributions and derive a corresponding sampling algorithm that leverages this new objective. Claiming they introduce \"no improved sampling schemes or training objectives\" directly contradicts their core methodological work. The authors should accurately describe how CLD differs from this line of research, perhaps by emphasizing that CLD augments the state space with velocity variables rather than modifying the noise distribution in the data space.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Overstated contrast between GGF and SSCS integrators",
+          "quote": "uses standard Euler-based methods under the hood *(Kloeden and Platen, 1992; Roberts, 2012)*, in contrast to our SSCS that is derived from first principles. Furthermore,",
+          "explanation": "This characterization of GGF is misleading. While GGF employs Euler-Maruyama as a base integrator, its primary algorithmic innovation lies in adaptively adjusting step sizes based on local error estimates and exploiting the analytical structure of linear SDEs common in SGMs. Describing it merely as \"standard Euler-based methods\" ignores these refinements that drive its performance. Furthermore, SSCS is also constructed from established numerical analysis techniques (Strang splitting and Lie-Trotter formulas) applied to the CLD SDE, so framing it as uniquely \"derived from first principles\" is an overstatement. A fairer comparison would acknowledge that both methods leverage the specific mathematical structure of their respective SDEs to improve sampling efficiency.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Clarify unbiasedness claim for ODE-based density estimate",
+          "quote": "$\\log p_{\\varepsilon}(\\mathbf{x}_{0},\\mathbf{v}_{0})$ is an unbiased estimate of $\\log p(\\mathbf{x}_{0},\\mathbf{v}_{0})$ from the probability flow ODE *(Grathwohl et al., 2019; Song et al., 2021c)*.",
+          "explanation": "The probability flow ODE yields a density estimate that converges to the true log-density only in the limit as the discretization step size approaches zero. For any finite step size used in practice, truncation errors introduce bias into the estimated log-density. Stating that the estimate is \"unbiased\" is mathematically incorrect for practical implementations. Additionally, discretization can cause the estimated density to deviate from a valid probability distribution (i.e., not integrating to exactly one), which may affect the tightness of the Jensen's inequality bound. The authors should rephrase this to reflect asymptotic consistency and clarify how discretization bias impacts the reported NLL upper bounds.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Table column misalignment for GAN and Distillation baselines",
+          "quote": "|  DDPM Distillation (Luhman & Luhman, 2021) | - | 9.36  |   |",
+          "explanation": "The table header specifies four columns: Class, Model, NLL\u2193, FID\u2193. The rows for DDPM Distillation and the GAN family place their reported FID values in the NLL column instead. This misalignment obscures the actual metrics and contradicts the header structure. Rewrite \"|  DDPM Distillation (Luhman & Luhman, 2021) | - | 9.36  |   |\" as \"|  DDPM Distillation (Luhman & Luhman, 2021) | - | - | 9.36 |\" because the reported value is the FID score, which belongs in the fourth column, not the NLL column.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Typographical error in model acronym",
+          "quote": "b. 1). The only models marginally outperforming CLD are LSGM *(Vahdat et al., 2021)* and NSCN++/VESDE with 2,000 step predictor-corrector (PC) sampling *(Song et al., 2021c)*. Howe",
+          "explanation": "\"NSCN++\" is a typo for \"NCSN++\". The standard acronym appears consistently in Table 1 and the surrounding text. Rewrite \"NSCN++/VESDE\" as \"NCSN++/VESDE\" because the former is a typographical error that contradicts the established notation and will confuse readers.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Ambiguous hyperparameter context for mixed score comparison",
+          "quote": "With MS, we achieve an FID of 3.14, without only 3.56.",
+          "explanation": "The comparison between mixed score (MS) and standard score parametrization lacks specification of the hyperparameter settings used for each condition. It is unclear whether the FID of 3.14 corresponds to the optimal $M^{-1}=4$ or $\\beta=8$ settings from Table 4, or a different configuration. Specifying the exact hyperparameters for both the MS and non-MS runs would clarify the magnitude of the improvement and ensure reproducibility. Rewrite 'With MS, we achieve an FID of 3.14, without only 3.56.' as 'With MS (using $M^{-1}=4, \\beta=8$), we achieve an FID of 3.14, without only 3.56.' because specifying the exact hyperparameter configuration for both conditions is necessary to contextualize the reported improvement and ensure reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Mischaracterization of expressivity claims in conclusion",
+          "quote": "CLD diffuses the data in a smoother, easier-to-denoise manner compared to previous SGMs, which results in smoother neural network-parametrized score functions, fast synthesis, and improved expressivity.",
+          "explanation": "The conclusion asserts that CLD results in \"improved expressivity\" as an experimental outcome. However, the paper's empirical evaluation only reports standard generation metrics such as FID, Inception Score, and Precision/Recall, which measure sample quality and diversity rather than the model's theoretical expressivity or capacity to represent complex distributions. Elevating these quality metrics to a claim of improved expressivity mischaracterizes the experimental results. Remove \"improved expressivity\" from the list of demonstrated outcomes or replace it with \"higher sample quality\" to accurately reflect the reported FID and IS results.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Overstated claim regarding mode coverage in SGMs",
+          "quote": "SGMs have the promise to model the data more faithfully, without dropping modes and introducing problematic biases.",
+          "explanation": "This sentence makes a strong assertion that score-based models do not drop modes. In practice, SGMs can still suffer from mode coverage issues, especially when the score network lacks capacity or when the reverse-time discretization introduces significant error. The literature contains numerous examples where SGMs fail to capture all modes of a multi-modal distribution, similar to GANs or VAEs. Claiming they are immune to mode dropping is inaccurate and contradicts established empirical findings. The authors should revise this to acknowledge that SGMs can achieve strong mode coverage but do not guarantee it, or provide a specific theoretical bound that supports the current wording. Rewrite \"SGMs have the promise to model the data more faithfully, without dropping modes and introducing problematic biases.\" as \"SGMs can achieve strong mode coverage and high-fidelity samples, though they may still face challenges with mode dropping under limited model capacity or coarse discretization.\" because this accurately reflects the current empirical consensus on score-based models.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_17",
+          "title": "Unjustified heuristic on score term magnitude",
+          "quote": "Recall that the model only needs to learn the score of the conditional distribution $p_{t}(\\mathbf{v}_{t}|\\mathbf{x}_{t})$, which is close to Normal for much of the diffusion, in which case the $S$ term will indeed be small.",
+          "explanation": "The justification for the splitting scheme's accuracy relies on the heuristic that the $S$ term is \"small\" because the conditional distribution is close to Normal. However, the magnitude of the score term $\\nabla_{\\mathbf{v}} \\nlog p_t(\\mathbf{v}_t|\\mathbf{x}_t)$ depends on the variance of the conditional distribution, which scales as $\\mathcal{O}(1)$ for much of the diffusion process, not vanishing. A Gaussian distribution has a score that is linear in $\\mathbf{v}$ and does not become \"small\" unless the variance is very large or the state is near the mean. The authors should provide a more rigorous bound or empirical justification for why the $S$ term's contribution to the global error is negligible compared to the Hamiltonian/OU dynamics, rather than relying on this heuristic.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_18",
+          "title": "Inaccurate description of LSGM training procedure",
+          "quote": "LSGM is an overall more complicated framework, as it is trained in two stages and relies on additional encoder and decoder networks.",
+          "explanation": "The description of LSGM's training procedure oversimplifies the actual methodology. While LSGM does utilize an encoder-decoder architecture, the score model and latent space components are typically optimized jointly in a single end-to-end training loop following an initial pre-training phase, rather than in strictly disjoint two stages. This distinction matters when assessing computational overhead and implementation complexity. Clarifying the training dynamics would provide a more precise baseline for comparing the practical deployment costs of LSGM versus CLD.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_19",
+          "title": "Oversimplified dismissal of continuous-time acceleration methods",
+          "quote": "Importantly, these methods usually do not permit straightforward log-likelihood estimation. Furthermore, they are originally not based on the continuous time framework, which we use, and have been developed primarily for discrete-step diffusion models.",
+          "explanation": "This claim overlooks that several sampling acceleration techniques, including distillation-based approaches and certain ODE solvers, can be formulated within or naturally extended to a continuous-time framework. Many discrete-step methods approximate the probability flow ODE, which inherently supports likelihood estimation via the divergence term. Dismissing them as strictly incompatible with continuous-time formulations or likelihood computation is an oversimplification. The authors should acknowledge that the continuous-time perspective serves as a unifying lens that many discrete methods can approximate or reformulate, rather than treating it as a strict boundary.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 20
+        }
+      ],
+      "cost_usd": 0.3827,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper introduces a novel critically-damped Langevin diffusion (CLD) for score-based generative models, with theoretical grounding in statistical mechanics. The core idea\u2014augmenting data with velocity variables and using critical damping to accelerate convergence\u2014is well-motivated and leads to a simpler score-matching objective. The empirical results on CIFAR-10 are strong, showing improved FID scores under comparable model sizes and sampling budgets. The paper is clearly written and makes several technical contributions including a hybrid score matching objective and a tailored SDE integrator.\n\nOverview issues:\n\n- Theoretical guarantee of faster convergence is not quantitatively established: The paper claims that critical damping achieves the fastest convergence to equilibrium, but this claim is supported only by qualitative reasoning and references to classical Langevin dynamics. No quantitative analysis is provided for how much faster CLD converges compared to standard diffusions (e.g., VPSDE) in terms of mixing time or the number of steps required to reach a given proximity to the prior. This is important because the practical benefits of CLD (smoother score functions, better sample quality) are attributed to this faster convergence. The paper should include either a theoretical bound on the mixing time for CLD or an empirical measurement (e.g., the 2-Wasserstein distance to the equilibrium distribution over time) comparing CLD to VPSDE and VESDE.\n\n- The hybrid score matching objective's variance reduction is not convincingly demonstrated: Section 3.2 introduces hybrid score matching (HSM) and claims it reduces variance compared to standard denoising score matching (DSM). The supporting evidence is relegated to Appendix C.1, but the paper does not provide any quantitative comparison of training stability or convergence speed. Given that the authors state DSM training 'often became unstable' (Section 5.3), a proper ablation showing loss curves, gradient variance over time, or final FID with DSM (if it converges at all) would be necessary to justify HSM as a crucial element. Without this, readers cannot assess whether the instability is inherent to CLD or due to implementation choices.\n\n- The SSCS integrator's error analysis is incomplete and potentially misleading: Section 3.3 claims the SSCS integrator has error scaling O(\u03b4t\u00b2) and that it outperforms Euler-Maruyama because the score term S is small when the conditional score is near-Gaussian. However, the derivation acknowledges that the S component is approximated via Euler steps, so the global error is dominated by that approximation. The claim that SSCS is 'more accurate than EM' is not formally justified\u2014the paper does not bound the error of SSCS relative to EM, nor does it analyze how the magnitude of S affects the error. The empirical results in Table 3 show SSCS outperforming EM at low NFEs, but this could be due to the specific quadratic step size schedule (QS) rather than the splitting scheme. A controlled experiment comparing SSCS and EM with identical step sizes (not just the QS schedule) would clarify this.\n\n- The comparison with LSGM-100M is not controlled for architecture or compute: The paper compares CLD-SGM (100M parameters) against a smaller LSGM-100M model and claims superiority. However, LSGM-100M uses a different architecture (VAE + diffusion in latent space) and was likely trained with different hyperparameters. The paper does not specify whether LSGM-100M was trained with the same compute budget, learning rate schedule, or data augmentation. Moreover, LSGM's original design goal was faster sampling, not necessarily better FID at a given parameter count. A fairer comparison would be to train LSGM with the same backbone architecture (e.g., NCSN++/DDPM++) and similar training duration, or to compare CLD against VPSDE using identical architectures and training protocols (which the paper does for VPSDE but not for LSGM).\n\n- The negative log-likelihood bound is potentially too loose to be informative: The paper reports an NLL bound of \u22643.31 for CLD on CIFAR-10, but acknowledges in Section 5.1 that this bound 'is potentially quite loose' due to the stochasticity of the log-probability estimate from the probability flow ODE. The bound is computed by marginalizing over the velocity distribution, which introduces additional variance. Without a tighter bound or an importance-weighted estimate, readers cannot assess whether CLD's likelihood is competitive with methods like VDM (2.49) or Likelihood SDE (2.84). The paper should either provide a corrected bound using more samples from the velocity distribution or acknowledge that the NLL comparison is inconclusive.\n\n- Generalization to other data modalities is asserted but not demonstrated: The paper claims CLD can be 'readily used for high-resolution image synthesis' and implies applicability beyond images, but only provides results on CIFAR-10 (32x32) and CelebA-HQ-256. No experiments on other modalities (e.g., audio, text, molecular data) or even on larger image datasets like ImageNet are presented. Given that the paper's contribution is a general-purpose diffusion process, the lack of cross-modal validation weakens the claim of broad applicability. At minimum, the paper should discuss potential challenges for non-image data (e.g., discrete data, variable-length sequences) and why CLD's assumptions (e.g., Euclidean space, continuous variables) may limit its generality.\n\nRecommendation: major revision. The paper presents a novel and promising approach, but several key claims lack rigorous support. The theoretical advantages of critical damping need quantitative backing, the hybrid score matching objective requires proper ablation, and the sampling integrator's benefits should be isolated from confounding factors. The comparison with LSGM-100M is not adequately controlled. These issues are addressable with additional experiments and analysis, but the paper in its current form does not fully substantiate its contributions.\n\nRevision targets:\n\n- Provide a quantitative comparison of convergence speed (e.g., mixing time or distance to equilibrium) between CLD and standard diffusions like VPSDE/VESDE, either theoretically or empirically.\n\n- Include an ablation study comparing HSM vs. DSM for CLD training, showing loss curves, gradient variance, and final FID scores to justify HSM as a crucial component.\n\n- Add a controlled experiment comparing SSCS and Euler-Maruyama with identical step sizes (not just the QS schedule) to isolate the effect of the splitting scheme on sampling quality.\n\n- Either retrain LSGM-100M with the same architecture backbone as CLD-SGM, or provide a more detailed comparison controlling for architecture, training compute, and hyperparameters.\n\n- Improve the NLL bound by using importance weighting over the velocity distribution or by reporting a corrected bound with uncertainty estimates.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Score function uniqueness claim is imprecise",
+          "quote": "In the seminal work by *Song et al. (2021c)*, it has been shown that the score function that needs to be learnt by the neural network is uniquely determined by the forward diffusion process.",
+          "explanation": "This claim is imprecise. Song et al. (2021c) showed that the reverse-time SDE is determined by the forward SDE, but the score function \u2207_x log p_t(x) depends on the data distribution, not just the diffusion. The sentence could be read as claiming the score is a property of the diffusion independent of the data, which is false. Rewrite to clarify: 'Song et al. (2021c) showed that the score function needed for the reverse-time SDE is the gradient of the log-density of the forward process marginals, which are determined by the forward SDE and the data distribution.'",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Overstatement about score learning difficulty without evidence",
+          "quote": "the neural network is tasked with learning only the score of the conditional distribution of velocity given data  $\\nabla_{\\mathbf{v}_t}\\log p_t(\\mathbf{v}_t|\\mathbf{x}_t)$  which is arguably easier than learning the score of diffused data directly.",
+          "explanation": "The claim that learning the conditional score is 'arguably easier' is asserted without theoretical or empirical justification in this section. The phrase 'arguably easier' is vague. Consider adding a brief rationale, e.g., 'because the conditional distribution p_t(v_t|x_t) is Gaussian with known mean and variance, so its score is linear in v_t, making it a simpler target for the neural network.'",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Contradiction between claimed smoothness and later results",
+          "quote": "We show that the neural networks learnt in CLD-based SGMs are smoother than those of previous SGMs.",
+          "explanation": "This claim in the introduction is too broad. Section 5.1 only shows smoother score functions for CLD compared to VPSDE on CIFAR-10, not for other baselines like VESDE or DDPM. Qualify the claim: 'On CIFAR-10, we observe that the neural networks learned in CLD-based SGMs have smaller Lipschitz constants than those trained with VPSDE, suggesting smoother score functions.'",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Error metric and order reconciliation needed",
+          "quote": "it can be shown that:\n\n$e^{t(\\hat{\\mathcal{L}}_{A}^{*}{+}\\hat{\\mathcal{L}}_{S}^{*})}=\\lim_{N\\to\\infty}\\left[e^{\\frac{\\delta t}{2}\\hat{\\mathcal{L}}_{A}^{*}}e^{\\delta t\\hat{\\mathcal{L}}_{S}^{*}}e^{\\frac{\\delta t}{2}\\hat{\\mathcal{L}}_{A}^{*}}\\right]^{N}\\approx\\left[e^{\\frac{\\delta t}{2}\\hat{\\mathcal{L}}_{A}^{*}}e^{\\delta t\\hat{\\mathcal{L}}_{S}^{*}}e^{\\frac{\\delta t}{2}\\hat{\\mathcal{L}}_{A}^{*}}\\right]^{N}+\\mathcal{O}(N\\delta t^{3}),$ (10)\n\nfor large $N\\in\\mathbb{N}^{+}$ and time step $\\delta t:=t/N$. The expression suggests that instead of directly evaluating the intractable $e^{t(\\hat{\\mathcal{L}}_{A}^{*}{+}\\hat{\\mathcal{L}}_{S}^{*})}$, we can discretize the dynamics over $t$ into $N$ pieces of step size $\\delta t$, such that we only need to apply the *individual* $e^{\\frac{\\delta t}{2}\\hat{\\mathcal{L}}_{A}^{*}}$ and $e^{\\delta t\\hat{\\mathcal{L}}_{S}^{*}}$ many times one after another for small steps $\\delta t$. A finer discretization results in a smaller error (since $N{=}t/\\delta t$, the error effectively scales as $\\mathcal{O}(\\delta t^{2})$ for fixed $t$).",
+          "explanation": "The paper claims the integrator has error O(\u03b4t\u00b2) from the splitting formula, but this applies to deterministic operator splitting, not to the SDE discretization error of the S component approximated by Euler. Standard EM for SDEs has strong order 0.5 and weak order 1.0, not O(\u03b4t\u00b2). The paper should clarify which error metric (strong vs. weak) is being used and reconcile the O(\u03b4t\u00b2) claim with the lower-order Euler approximation of the S term.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Euler approximation of S component invalidates O(\u03b4t\u00b2) claim",
+          "quote": "Therefore, we approximate this latter component of the integrator via a standard Euler step. Thus, the integrator formally has an error of the same order as standard EM methods. Nevertheless, as long as the dynamics is not dominated by the $S$ component, our proposed integration scheme is expected to be more accurate than EM, since we split off the analytically tractable part and only use an Euler approximation for the $S$ term.",
+          "explanation": "Mixing a second-order splitting with a first-order (or 0.5-order) approximation of one component does not automatically yield a second-order method. The paper claims the integrator has error of the same order as EM, but then argues it is more accurate because the S component is small. No rigorous error bound is provided for the combined scheme. The paper needs to provide a formal error analysis or explicitly state that the method is heuristic and empirically validated.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Conditional score smallness claim lacks justification",
+          "quote": "Recall that the model only needs to learn the score of the conditional distribution $p_{t}(\\mathbf{v}_{t}|\\mathbf{x}_{t})$, which is close to Normal for much of the diffusion, in which case the $S$ term will indeed be small.",
+          "explanation": "The S term in the generative SDE involves the score of the joint distribution p_t(x_t, v_t), not just the conditional p_t(v_t|x_t). Even if p_t(v_t|x_t) is Gaussian, the paper does not show that the combination s(\u016b_t, T-t) + M^{-1} v\u0304_t is small. Moreover, 'close to Normal' is vague and not quantified. The paper should provide a quantitative bound or reference showing that the score residual is small in practice.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Operator splitting assumes linearity of Fokker-Planck operators",
+          "quote": "We can construct a formal, but intractable solution of the generative SDE as $\\bar{\\mathbf{u}}_{t}=e^{t(\\hat{\\mathcal{L}}_{A}^{*}{+}\\hat{\\mathcal{L}}_{S}^{*})}\\bar{\\mathbf{u}}_{0}$, where the operator $e^{t(\\hat{\\mathcal{L}}_{A}^{*}{+}\\hat{\\mathcal{L}}_{S}^{*})}$ (known as the *classical propagator* in statistical physics) propagates states $\\bar{\\mathbf{u}}_{0}$ for time $t$ according to the dynamics defined by the combined operators $\\hat{\\mathcal{L}}_{A}^{*}+\\hat{\\mathcal{L}}_{S}^{*}$.",
+          "explanation": "The operators L_A^* and L_S^* are linear differential operators acting on probability densities, not on individual state vectors. The expression e^{t(L_A^*+L_S^*)} u_0 is not standard: the propagator acts on densities, not on a single state. The paper should clarify that the splitting is applied to the evolution of the probability density, and then the resulting scheme is interpreted as a numerical integrator for the SDE trajectories.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Misleading comparison with LSGM-100M",
+          "quote": "a fairer comparison, we trained a smaller LSGM also with $\\approx$$100M$ parameters, which is reported as \u201cLSGM-100M\u201d in Tab. 1 (details in App. E.2.7). Our model has a significantly better FID score than \u201cLSGM-100M\u201d.",
+          "explanation": "The comparison is not controlled for architecture or training protocol. LSGM is a latent-space model with a VAE encoder-decoder, whereas CLD-SGM operates in pixel space. The 100M parameter count may be distributed very differently. The paper does not state whether the LSGM-100M model was trained with the same compute budget, learning rate schedule, or data augmentation as CLD-SGM. Without these controls, the FID gap could reflect architectural differences rather than the superiority of CLD.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "NLL bound comparison is misleading",
+          "quote": "our model reaches an NLL bound of 3.31, which is on par with recent works such as Nichol & Dhariwal (2021); Austin et al. (2021); Vahdat et al. (2021) and indicates that our model is not dropping modes. However, our bound is potentially quite loose (see discussion in App. B.5) and the true NLL might be significantly lower.",
+          "explanation": "The paper uses the NLL bound to claim mode coverage, but the bound is acknowledged to be 'potentially quite loose.' The comparison with other methods is unfair because those methods report tighter bounds or exact NLLs. For example, VDM reports \u22642.49, Likelihood SDE reports 2.84, and Improved DDPM reports 3.37. The CLD bound of \u22643.31 is worse than VDM and Likelihood SDE, but the paper dismisses this by saying the true NLL might be lower. Without a tighter bound or an importance-weighted estimate, the claim that CLD's NLL is 'on par' is not supported.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "CelebA-HQ-256 results lack quantitative evaluation",
+          "quote": "To demonstrate that CLD is also suitable for high-resolution image synthesis, we additionally trained a CLD-SGM on CelebA-HQ-256, but without careful hyperparameter tuning due to limited compute resources. Model samples in Fig. 4 appear diverse and high-quality (additional samples in App. F).",
+          "explanation": "The paper provides only qualitative samples for CelebA-HQ-256, with no FID, IS, or NLL numbers. This is insufficient to demonstrate suitability for high-resolution synthesis. The statement 'appear diverse and high-quality' is subjective. Given that the paper claims CLD is a general-purpose method, the lack of quantitative results on a standard benchmark weakens the claim. The authors should either report FID for CelebA-HQ-256 or acknowledge that the high-resolution results are preliminary.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Misleading claim about outperforming all baselines",
+          "quote": "With one exception (VESDE with 2,000 NFE) our CLD-SGM outperforms all baselines, both for adaptive and fixed-step size methods.",
+          "explanation": "This claim is contradicted by the data in Table 3. At n=2000, CLD with EM-QS achieves FID 2.23 and VESDE with PC achieves FID 2.23 (the paper notes this is their evaluation; Song et al. reports 2.20). The claim states 'with one exception' but the table shows that at n=2000, CLD with SSCS-QS gets FID 2.29, which is worse than CLD with EM-QS (2.23) and VESDE with PC (2.23). So the 'one exception' is not just VESDE at 2000 NFE; CLD's own SSCS at 2000 NFE is also worse than its EM variant. The claim should be rephrased to accurately reflect that CLD outperforms baselines at most NFE budgets, but not universally.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Contradiction between SSCS outperforming EM and data at high NFE",
+          "quote": "As expected (Sec. 3.3), for CLD, SSCS significantly outperforms EM under limited NFE budgets. When using a fine discretization of the SDE (high NFE), the two perform similarly, which is also expected, as the errors of both methods will become negligible.",
+          "explanation": "The statement 'the two perform similarly' at high NFE is not supported by the data. At n=2000, EM-QS achieves FID 2.23 while SSCS-QS achieves FID 2.29 \u2014 a difference of 0.06 in FID. While small, the claim that they 'perform similarly' is vague. More importantly, at n=1000, SSCS gets 2.30 vs EM's 2.27 \u2014 EM is actually slightly better. The claim should acknowledge that at high NFE, EM can slightly outperform SSCS, which is not 'similar' in the sense of being indistinguishable.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Unsubstantiated claim about outperforming GGF with simpler ODE solver",
+          "quote": "In the adaptive solver setting, using a simpler ODE solver, we even outperform GGF, which is tuned towards image synthesis.",
+          "explanation": "This claim is not fully supported by the data in the table. At similar NFEs, CLD ODE (312 NFE, FID 2.25) outperforms VPSDE GGF (330 NFE, FID 2.56) and VESDE GGF (488 NFE, FID 2.99). However, the comparison is not controlled: the ODE solver for CLD uses a different number of function evaluations (312) than GGF for VPSDE (330) and VESDE (488). The claim that CLD 'outperforms GGF' conflates the effect of the model (CLD vs VPSDE/VESDE) with the solver (ODE vs GGF). A proper comparison would use the same solver for both CLD and baselines, or at least match NFE more closely.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Incomplete table caption and missing column headers",
+          "quote": "Table 3: (bottom) Performance using non-adaptive stepsize solvers (for PC, QS performed poorly). \u2020: 2.23 FID is our evaluation, Song et al. (2021c) reports 2.20 FID. See Tab. 9 in App. F.2 for extended results.",
+          "explanation": "The table caption says 'Table 3: (bottom) Performance using non-adaptive stepsize solvers' but the bottom part includes adaptive solvers like ODE and GGF. This is inconsistent: ODE and GGF are adaptive step-size solvers, not non-adaptive. The caption should be corrected to reflect that the bottom part includes adaptive solvers, or the table should be restructured.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Missing baseline for DSM instability claim",
+          "quote": "We also tried training with regular DSM, instead of HSM. However, training often became unstable. As discussed in Sec. 3.2, this is likely because when using standard DSM our CLD would suffer from unbounded scores close to  $t = 0$ , similar to previous SDEs (Kim et al., 2021). Consequently, we consider our novel HSM a crucial element for training CLD-SGMs.",
+          "explanation": "The claim that DSM training 'often became unstable' is vague and unsupported. The paper does not report any quantitative results for DSM training \u2014 no FID, no NLL, no loss curves, not even a success rate. Without such data, readers cannot assess whether the instability is inherent to CLD or due to a specific implementation choice. The authors should either provide a comparison table showing DSM results or state explicitly that DSM training failed entirely and describe the failure mode.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Ambiguity in hyperparameter ablation tables",
+          "quote": "Table 4: Mass hyperparameter.\n\n|  M-1 | NLL\u2193 | FID\u2193  |\n| --- | --- | --- |\n|  1 | \u22643.30 | 3.23  |\n|  4 | \u22643.37 | 3.14  |\n|  16 | \u22643.26 | 3.16  |\n\nTable 5: Initial velocity distribution width.\n\n|  \u03b3 | NLL\u2193 | FID\u2193  |\n| --- | --- | --- |\n|  0.04 | \u22643.37 | 3.14  |\n|  0.4 | \u22643.15 | 3.21  |\n|  1 | \u22643.15 | 3.27  |",
+          "explanation": "Table 5 reports NLL \u22643.37 and FID 3.14 for \u03b3=0.04. Table 4 reports NLL \u22643.37 and FID 3.14 for M\u207b\u00b9=4. The text states that \u03b3=0.04 and M\u207b\u00b9=4 are the default settings used in the main experiments. If these two rows correspond to the same model configuration, then the NLL and FID values are identical, which is consistent. However, the text does not explicitly state that \u03b3=0.04 is the default used in Table 4, nor does it specify which \u03b3 was used for the mass ablation. This creates ambiguity. The authors should add a footnote or caption stating the default \u03b3 used in Table 4 and the default M\u207b\u00b9 used in Table 5.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Unsubstantiated claim of hyperparameter transferability",
+          "quote": "We conclude that CLD does not come with difficult-to-tune hyperparameters. We expect our chosen hyperparameters to immediately translate to new tasks and models. In fact, we used the same  $M^{-1}$ ,  $\\gamma$ , MS and HSM settings for CIFAR-10 and CelebA-HQ-256 experiments without fine-tuning.",
+          "explanation": "The claim that hyperparameters 'immediately translate to new tasks and models' is too strong given the evidence. The paper only tests two datasets (CIFAR-10 and CelebA-HQ-256), both of which are natural images of similar resolution. This does not demonstrate transfer to different modalities (e.g., audio, text, molecular data) or even to significantly different image domains. The authors should either soften the claim to 'translate to other image datasets' or provide evidence on at least one non-image modality.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        }
+      ],
+      "cost_usd": 0.0443,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper proposes Critically-Damped Langevin Diffusion (CLD) for score-based generative modeling by augmenting data with velocity variables and using critical damping for smooth convergence. While the method shows promising results on CIFAR-10, the review identifies critical issues regarding the validity of the LSGM-100M baseline comparison, the lack of visual evidence for high-resolution results, insufficient theoretical justification for the sampler's error bounds, and an overreaching claim about hyperparameter robustness.\n\nCLD introduces a novel diffusion process with interesting connections to statistical mechanics. The core idea of using velocity augmentation and critical damping is sound and empirically effective on CIFAR-10. However, the paper's claims of outperforming all published results are undermined by a suspiciously weak LSGM-100M baseline. Additionally, the theoretical contributions regarding the sampler's error bounds are not sufficiently rigorous for a top-tier venue. The high-resolution results are mentioned but not shown, which is a significant omission for a visual task paper.\n\nOverview issues:\n\n- Comparison to LSGM-100M baseline is misleading: Section 5.1 claims CLD outperforms 'all published results' (Section 5.1). However, Table 1 shows LSGM-100M at 4.60 FID while the main LSGM is 2.10 FID. A 100M parameter LSGM is significantly weaker than the authors' own LSGM. This suggests the baseline might not be trained optimally or the comparison is unfair. The paper attributes the gap to CLD's superiority, which is unjustified without verifying the LSGM-100M training details.\n\n- Visual evidence for high-resolution synthesis is missing: Section 5.1 claims success on CelebA-HQ-256, stating samples 'appear diverse and high-quality' and referencing Figure 4. The provided text does not contain Figure 4. For a generative model paper, visual quality is the primary metric. The reviewer cannot verify the claim without seeing the samples. This is a critical omission for a top-tier venue.\n\n- Theoretical justification for SSCS error bound is insufficient: Section 3.3 derives the SSCS (Symmetric Splitting CLD Sampler) using Fokker-Planck operator splitting. The paper claims the error is O(\u03b4t\u00b2) and that the dynamics are dominated by the linear parts (A_H and A_O) in practice. However, this is an empirical observation, not a theoretical bound. The paper does not provide a rigorous analysis of the error bound for the reverse-time SDE where the neural network term S is non-zero, which is essential for validating the theoretical contribution of the sampler.\n\n- Scope of hyperparameter robustness claim is too broad: Section 3.4 (Ablation) claims 'CLD does not come with difficult-to-tune hyperparameters' and 'We expect our chosen hyperparameters to immediately translate to new tasks... without fine-tuning.' This is a strong claim. They tune \u03b2, \u0393, \u03b3, M. While they show a small grid search (Tab 4, 5), they only test CIFAR-10 and CelebA-HQ. Claiming 'no difficult-to-tune hyperparameters' based on one dataset is weak. What if the data is discrete? What if the dimensionality is huge? The claim is too broad.\n\n- Demonstration of result bite on synthetic data: The paper demonstrates CLD on CIFAR-10 and CelebA-HQ, but does not show that the theoretical benefits (easier score function, smoother networks) hold on a synthetic, tractable dataset where the true score can be computed. A standard test for diffusion models is a mixture of Gaussians or a 1D or 2D Gaussian mixture, where the score function is known analytically. Without this, readers cannot verify the authors' claim that the conditional velocity score is 'easier' or that the resulting networks are 'smoother' in a rigorous sense. You should add a section or subsection where you train CLD on a 2D Gaussian mixture, compute the learned score, and compare its Lipschitz constant or gradient norm to the score of the VPSDE on the same data.\n\n- Worked special case for the sampling integrator: Section 3.3 derives the Symmetric Splitting CLD Sampler (SSCS) using Fokker-Planck operator splitting. While the paper shows empirical superiority, it lacks a concrete, fully-specified example of the integrator in action. To validate the theoretical claim that the error is dominated by the linear parts, you should compute the SSCS update equations for a specific time step and compare the trajectory of the state variables against the ground truth solution of the reverse-time SDE (which is available in closed form for this specific CLD process). This would provide a clear, visual, and mathematical demonstration of the error properties claimed in the text.\n\n- Missing inference or implementation discussion for high-dimensional data: The paper claims CLD can be readily used for high-resolution image synthesis but does not discuss the implementation implications of the velocity augmentation. In high dimensions (e.g., 256x256 images), the velocity variable doubles the input dimensionality of the neural network. The paper does not analyze the computational cost or memory footprint of this doubling compared to standard SGMs. You should add a discussion or a small table comparing the FLOPs or memory usage of the CLD score network versus a standard VPSDE score network with the same parameter count, specifically addressing whether the velocity augmentation introduces prohibitive overhead.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a rigorous theoretical analysis of the error bound for the SSCS sampler, specifically addressing the impact of the non-linear neural network term S on the splitting error.\n\n- Include the actual visual samples for the CelebA-HQ-256 experiments in the main text or clearly state that they are missing and cannot be verified.\n\n- Clarify the training details of the LSGM-100M baseline to ensure a fair comparison, or remove the comparison if the baseline was not trained optimally.\n\n- Reframe the claim about hyperparameter robustness to be more conservative, acknowledging that while the tested hyperparameters work well, generalization to new tasks requires further investigation.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Visual evidence for high-resolution synthesis is missing",
+          "quote": "Model samples in Fig. 4 appear diverse and high-quality (additional samples in App. F).",
+          "explanation": "The text references Figure 4 to demonstrate high-resolution synthesis on CelebA-HQ-256, but the provided text block does not contain the image. For a generative model paper, visual quality is the primary metric. The reviewer cannot verify the claim without seeing the samples. This is a critical omission for a top-tier venue.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Theoretical justification for SSCS error bound is insufficient",
+          "quote": "a t$. A finer discretization results in a smaller error (since $N{=}t/\\delta t$, the error effectively scales as $\\mathcal{O}(\\delta t^{2})$ for fix",
+          "explanation": "The derivation in Section 3.3 relies on Fokker-Planck operator splitting, which yields a local truncation error of O(\u03b4t\u00b3). While the global error for fixed T is O(\u03b4t\u00b2), the paper applies this reasoning to the reverse-time SDE which includes the non-linear neural network term S. The error bound for the full reverse-time dynamics is not rigorously established. The authors should either provide a theoretical bound for the full reverse-time SDE or clarify that the O(\u03b4t\u00b2) claim is an empirical observation.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Misleading comparison to LSGM-100M baseline",
+          "quote": "es.\n\nnetwork capacity and under NFE budgets  $\\leq 500$ , our CLD-SGM outperforms all published results in terms of FID. ",
+          "explanation": "The paper claims CLD outperforms 'all published results' in Section 5.1. However, Table 1 includes 'LSGM-100M', which is a custom baseline trained specifically for this comparison (details in App. E.2.7), not a published result. The claim that CLD outperforms 'all published results' is therefore misleading. The authors should either remove this claim or clarify that LSGM-100M is a custom baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Scope of hyperparameter robustness claim is too broad",
+          "quote": "We conclude that CLD does not come with difficult-to-tune hyperparameters.",
+          "explanation": "The paper claims CLD has no difficult-to-tune hyperparameters based on experiments on CIFAR-10 and CelebA-HQ. This claim is too broad. It fails to address discrete data domains (e.g., text, graphs) or scenarios with different data structures. The authors should either restrict the claim to continuous image datasets or provide a theoretical argument for the universality of the hyperparameters.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.7-flash_4",
+          "title": "Inconsistent FID reporting for VESDE",
+          "quote": "VESDE | PC | 460 | 216 | 11.2 | 3.75 | 2.43 | 2.23\u2020",
+          "explanation": "Table 3 shows VESDE-PC achieving 2.23 FID at 2,000 NFE, which is comparable to CLD's 2.23 FID at the same NFE. However, the text states 'With one exception (VESDE with 2,000 NFE) our CLD-SGM outperforms all baselines,' implying CLD is strictly better. Additionally, the footnote marker '\u2020' appears in the table but is not referenced in the surrounding text. The authors should resolve this discrepancy and ensure consistency between the text and the table.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.7-flash_5",
+          "title": "Demonstration of result bite on synthetic data is missing",
+          "quote": "t) \\tag {7}\n$$\n\nThis means that in CLD the neural network-defined score model  $s_{\\theta}(\\mathbf{u}_t,t)$  only needs to learn the score of the conditional distribution  $p_t(\\mathbf{v}_t|\\mathbf{x}_t)$ , an arguably easier task than learning the score of  $p",
+          "explanation": "The paper claims the conditional velocity score is 'easier' and that networks are 'smoother' in a rigorous sense. However, the authors only demonstrate this on CIFAR-10 and CelebA-HQ, where the true score is unknown. To validate these claims, the authors should train CLD on a synthetic dataset with a known score function, such as a 2D Gaussian mixture, and compare the learned score properties (e.g., Lipschitz constant) to the VPSDE baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.7-flash_6",
+          "title": "Worked special case for the sampling integrator is missing",
+          "quote": "work. We coin our novel SDE integrator for CLD-based SGMs *Symmetric Splitting CLD Sampler* (SSCS). ",
+          "explanation": "The paper derives the SSCS using Fokker-Planck operator splitting but lacks a concrete, fully-specified example of the integrator in action. To validate the theoretical claim that the error is dominated by the linear parts, the authors should compute the SSCS update equations for a specific time step and compare the trajectory of the state variables against the ground truth solution of the reverse-time SDE (which is available in closed form for this specific CLD process). This would provide a clear, visual, and mathematical demonstration of the error properties claimed in the text.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.7-flash_7",
+          "title": "Missing inference or implementation discussion for high-dimensional data",
+          "quote": "Our framework provides new insights into score-based denoising diffusion models and can be readily used for high-resolution image synthesis.",
+          "explanation": "The paper claims CLD is 'readily used for high-resolution image synthesis' but does not address the computational cost of the velocity augmentation. Doubling the input dimensionality of the neural network significantly increases memory and FLOPs. The authors should provide a quantitative comparison of the computational overhead of CLD versus standard SGMs (e.g., FLOPs or memory usage) to clarify whether the velocity augmentation introduces prohibitive overhead for high-resolution synthesis.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.7-flash_8",
+          "title": "Misleading claim about score function difficulty",
+          "quote": "which is arguably easier than learning the score of diffused data directly.",
+          "explanation": "The claim that learning the conditional velocity score is 'arguably easier' is not strongly supported by the text or results. The paper shows CLD outperforms VPSDE, but does not provide a quantitative comparison of the complexity of the learned score functions (e.g., Lipschitz constants, gradient norms) between CLD and standard SGMs. Without such evidence, the assertion remains a qualitative claim.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.7-flash_9",
+          "title": "Overstated generalization of hyperparameter robustness",
+          "quote": "We believe that CLD can potentially serve as the backbone diffusion process of next generation SGMs.",
+          "explanation": "The conclusion claims CLD can serve as the backbone for 'next generation' SGMs, which is speculative without evidence. The technical contributions (HSM objective, SSCS sampler) are specific to the CLD formulation. The authors should distinguish between the specific technical contributions and broader speculative applications.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.1254,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

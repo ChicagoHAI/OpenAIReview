@@ -1,0 +1,430 @@
+{
+  "slug": "neurips2021-OU98jZWS-diffusion-models-beat-gans-on-image-synthesis",
+  "title": "Diffusion Models Beat GANs on Image Synthesis [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Diffusion Models Beat GANs on Image Synthesis**\n\n**Prafulla Dhariwal** _[\u21e4]_ **Alex Nichol** _[\u21e4]_ OpenAI OpenAI `prafulla@openai.com alex@openai.com`"
+    },
+    {
+      "index": 1,
+      "text": "## **Abstract**\n\nWe show that diffusion models can achieve image sample quality superior to the current state-of-the-art generative models. We achieve this on unconditional image synthesis by finding a better architecture through a series of ablations. For conditional image synthesis, we further improve sample quality with classifier guidance: a simple, compute-efficient method for trading off diversity for fidelity using gradients from a classifier. We achieve an FID of 2.97 on ImageNet 128 _\u21e5_ 128, 4.59 on ImageNet 256 _\u21e5_ 256, and 7.72 on ImageNet 512 _\u21e5_ 512, and we match BigGAN-deep even with as few as 25 forward passes per sample, all while maintaining better coverage of the distribution. Finally, we find that classifier guidance combines well with upsampling diffusion models, further improving FID to 3.94 on ImageNet 256 _\u21e5_ 256 and 3.85 on ImageNet 512 _\u21e5_ 512."
+    },
+    {
+      "index": 2,
+      "text": "## **1 Introduction**\n\nFigure 1: Selected samples from our best ImageNet 512 _\u21e5_ 512 model (FID 3.85)"
+    },
+    {
+      "index": 3,
+      "text": "Over the past few years, generative models have gained the ability to generate human-like natural language [9], high-quality synthetic images [8, 34, 57] and highly diverse human speech and music [70, 17]. These models can be used in a variety of ways, such as generating images from text prompts [78, 56] or learning useful feature representations [18, 10]. While these models are already capable"
+    },
+    {
+      "index": 4,
+      "text": "> _\u21e4_ Equal contribution\n\n35th Conference on Neural Information Processing Systems (NeurIPS 2021).\n\nof producing realistic images and sound, there is still much room for improvement beyond the current state-of-the-art, and better generative models could have wide-ranging impacts on graphic design, games, music production, and countless other fields."
+    },
+    {
+      "index": 5,
+      "text": "GANs [25] currently hold the state-of-the-art on most image generation tasks [8, 74, 34] as measured by sample quality metrics such as FID [29], Inception Score [61] and Precision [38]. However, some of these metrics do not fully capture diversity, and it has been shown that GANs capture less diversity than state-of-the-art likelihood-based models [57, 49, 48]. Furthermore, GANs are often difficult to train, collapsing without carefully selected hyperparameters and regularizers [8, 47, 7]. While GANs hold the state-of-the-art, their drawbacks make them difficult to scale and apply to new domains. As a result, much work has been done to achieve GAN-like sample quality with likelihood-based models [22, 57, 31, 48, 12]. While these models capture more diversity and are typically easier to scale and train than GANs, they still fall short in terms of visual fidelity. Furthermore, except for VAEs, sampling from these models is slower than GANs in terms of wall-clock time."
+    },
+    {
+      "index": 6,
+      "text": "Diffusion models are a class of likelihood-based models which have recently been shown to produce high-quality images [63, 66, 31, 49] while offering desirable properties such as distribution coverage, a stationary training objective, and easy scalability. These models generate samples by gradually removing noise from a signal, and their training objective can be expressed as a reweighted variational lower-bound [31]. This class of models already holds the state-of-the-art [67] on CIFAR-10 [37], but still lags behind GANs on difficult generation datasets like LSUN and ImageNet. We hypothesize that this gap exists for at least two reasons: first, that the model architectures used by recent GAN literature have been heavily explored and refined; second, that GANs are able to trade off diversity for fidelity, producing high quality samples but not covering the whole distribution. We aim to bring these benefits to diffusion models, first by improving model architecture and then by devising a scheme for trading off diversity for fidelity."
+    },
+    {
+      "index": 7,
+      "text": "The rest of the paper is organized as follows. In Section 2, we give a brief background of diffusion models based on Ho et al. [31] and the improvements from Nichol and Dhariwal [49] and Song et al. [64], and we describe our evaluation setup. In Section 3, we introduce simple architecture improvements that give a substantial boost to FID. In Section 4, we describe a method for using gradients from a classifier to guide a diffusion model during sampling. Finally, in Section 5 we show that models with our improved architecture achieve state-of-the-art on unconditional image synthesis tasks, and with classifier guidance achieve state-of-the-art on conditional image synthesis."
+    },
+    {
+      "index": 8,
+      "text": "## **2 Background**\n\nIn this section, we provide a brief overview of diffusion models. For a more detailed mathematical description, we refer the reader to Appendix C. On a high level, diffusion models sample from a distribution by reversing a gradual noising process. In particular, sampling starts with noise _xT_ and produces gradually less-noisy samples _xT \u2212_ 1 _, xT \u2212_ 2 _, ..._ until reaching a final sample _x_ 0. In particular, a diffusion model learns to produce a slightly more \u201cdenoised\u201d _xt\u2212_ 1 from _xt_ . Ho et al. [31] parameterize this model using a function _\u270f\u2713_ ( _xt, t_ ) which predicts the noise component of a noisy sample _xt_ . To train this function, each sample in a minibatch is produced by randomly drawing a data sample _x_ 0, a timestep _t_ , and noise _\u270f_ , which together give rise to a noised sample _xt_ (Equation 3, Appendix C). The training objective is then _||\u270f\u2713_ ( _xt, t_ ) _\u2212 \u270f||_[2] , i.e. a simple mean-squared error loss between the true noise and the predicted noise (Equation 12, Appendix C)."
+    },
+    {
+      "index": 9,
+      "text": "Ho et al. [31] show that, under reasonable assumptions, we can then model the denoising distribution _p\u2713_ ( _xt\u2212_ 1 _|xt_ ) of _xt\u2212_ 1 given _xt_ as a diagonal Gaussian _N_ ( _xt\u2212_ 1; _\u00b5\u2713_ ( _xt, t_ ) _,_ \u2303 _\u2713_ ( _xt, t_ )), where the mean _\u00b5\u2713_ ( _xt, t_ ) can be calculated as a function of _\u270f\u2713_ ( _xt, t_ ) (Equation 13, Appendix C). Ho et al. [31] observe that the simple mean-squared error objective, _L_ simple, works better in practice than the actual variational lower bound _L_ vlb that can be derived from interpreting the denoising diffusion model as a VAE. They also note that training with this objective and using their corresponding sampling procedure is equivalent to the denoising score matching model from Song and Ermon [65], who use Langevin dynamics to sample from a denoising model trained with multiple noise levels to produce high quality image samples. We often use \u201cdiffusion models\u201d as shorthand to refer to both classes of models."
+    },
+    {
+      "index": 10,
+      "text": "Following the breakthrough work of Song and Ermon [65] and Ho et al. [31], several recent papers have proposed improvements to diffusion models. Nichol and Dhariwal [49] find that fixing"
+    },
+    {
+      "index": 11,
+      "text": "2\n\nthe variance \u2303 _\u2713_ ( _xt, t_ ) to a constant as done in Ho et al. [31] is sub-optimal for sampling with fewer diffusion steps, and propose to parameterize \u2303 _\u2713_ ( _xt, t_ ) as a neural network whose output _v_ is interpolated as \u2303 _\u2713_ ( _xt, t_ ) = exp( _v_ log _\u03b2t_ + (1 _\u2212 v_ ) log _\u03b2_[\u02dc] _t_ ). Here, _\u03b2t_ and _\u03b2_[\u02dc] _t_ (Equation 5, Appendix C) are the variances in Ho et al. [31] corresponding to upper and lower bounds for the reverse process variances. Additionally, Nichol and Dhariwal [49] propose a hybrid objective for training both _\u270f\u2713_ ( _xt, t_ ) and \u2303 _\u2713_ ( _xt, t_ ) using the weighted sum _L_ simple + _\u03bbL_ vlb. Learning the reverse process variances with their hybrid objective allows sampling with fewer steps without much drop in sample quality. We adopt this objective and parameterization, and use it throughout our experiments."
+    },
+    {
+      "index": 12,
+      "text": "Song et al. [64] propose DDIM, which formulates an alternative non-Markovian noising process that has the same forward marginals as DDPM, but allows producing different reverse samplers by changing the variance of the reverse noise. By setting this noise to 0, they provide a way to turn any model _\u270f\u2713_ ( _xt, t_ ) into a deterministic mapping from latents to images, and find that this provides an alternative way to sample with fewer steps. We adopt this sampling approach when using fewer than 50 sampling steps, since Nichol and Dhariwal [49] found it to be beneficial in this regime."
+    },
+    {
+      "index": 13,
+      "text": "**Sample Quality Metrics** : For comparing sample quality across models, we perform quantitative evaluations using the following metrics. While these metrics are often used in practice and correspond well with human judgement, they are not a perfect proxy, and finding better metrics for sample quality evaluation is still an open problem."
+    },
+    {
+      "index": 14,
+      "text": "We use FID [29] as our default metric for overall sample quality comparisons as it captures both fidelity and diversity and has been the de facto standard metric for state-of-the-art generative models [33, 34, 8, 31]. We use Precision and Recall [38] as proxies for separately measuring fidelity and diversity, respectively. We include sFID [48] as a metric that better captures spatial relationships than FID, and also include Inception Score (IS) [61] as another proxy for fidelity. When comparing against other methods, we re-compute these metrics using public samples or models whenever possible. This is for two reasons: first, some papers [33, 34, 31] compare against arbitrary subsets of the training set which are not readily available; and second, subtle implementation differences can affect the resulting FID values [51]. For consistent comparisons, we use the full training set as the reference batch [29, 8], and evaluate metrics for all models using the same codebase."
+    },
+    {
+      "index": 15,
+      "text": "## **3 Architecture Improvements**\n\nHo et al. [31] adopted the UNet architecture [58] for diffusion models, which Jolicoeur-Martineau et al. [32] found to substantially improve sample quality over the previous architectures [65, 39] used for denoising score matching. The UNet model uses a stack of residual layers and downsampling convolutions, followed by a stack of residual layers with upsampling convolutions, with skip connections connecting the layers with the same spatial size. In addition, they use a global attention layer at the 16 _\u21e5_ 16 resolution with a single head, and add a projection of the timestep embedding into each residual block. Song et al. [67] found that further changes to the UNet architecture improved performance on the CIFAR-10 [37] and CelebA-64 [40] datasets. We show the same result on ImageNet 128 _\u21e5_ 128, finding that architecture can indeed give a substantial boost to sample quality on a much larger and more diverse datasets at a higher resolution."
+    },
+    {
+      "index": 16,
+      "text": "We explore the following architectural changes: increasing depth versus width, holding model size relatively constant; increasing the number of attention heads; using attention at 32 _\u21e5_ 32, 16 _\u21e5_ 16, and 8 _\u21e5_ 8 resolutions rather than only at 16 _\u21e5_ 16; using the BigGAN [8] residual block for upsampling and downsampling the activations, following [67]; and finally; rescaling residual connections with ~~_p_~~ 12[,] following [67, 33, 34]."
+    },
+    {
+      "index": 17,
+      "text": "We train models with the above architecture changes on ImageNet 128 _\u21e5_ 128 and compare them on FID, evaluated at two different points of training, in Table 1. Aside from rescaling residual connections, all of the other modifications improve performance and have a positive compounding effect. On wall-clock (Figure 5, Appendix A.1) we find that increased depth hurts training time most, so we opt not to use this change in further experiments. We also study other attention configurations that better match the Transformer architecture [72]. We try two configurations: constant attention heads, or constant channels per head. Table 2 shows our results, indicating that more heads or fewer channels per head improves FID. On wall-clock (Figure 5, Appendix A.1), we see that 64 channels is best so we opt to use 64 channels per head as our default. We note that this choice also better matches modern transformer architectures, and is on par with our other configurations in terms of final FID."
+    },
+    {
+      "index": 18,
+      "text": "3\n\nTable 1: Ablation of various architecture changes, evaluated at 700K and 1200K iterations\n\n|Channels|Depth|Heads|Attention\nresolutions|BigGAN\nup/downsample|Rescale\nresblock|FID\n700K|FID\n1200K|\n|---|---|---|---|---|---|---|---|\n|160|2|1|16|7|7|15.33|13.21|\n|128|4|||||-0.21|-0.48|\n|||4||||-0.54|-0.82|\n||||32,16,8|||-0.72|-0.66|\n|||||3||-1.20|-1.21|\n||||||3|0.16|0.25|\n|160|2|4|32,16,8|3|7|**-3.14**|**-3.00**|"
+    },
+    {
+      "index": 19,
+      "text": "Table 2: Ablation of attention heads. More heads or lower channels per heads both improve FID. The base model was a smaller version of the best model from Table 1."
+    },
+    {
+      "index": 20,
+      "text": "|Number of heads|Channels per head|FID|\n|---|---|---|\n|1||14.08|\n|2||-0.50|\n|4||-0.97|\n|8||-1.17|\n||32|-1.36|\n||64|-1.03|\n||128|-1.08|"
+    },
+    {
+      "index": 21,
+      "text": "We also experiment with a layer [49] that we refer to as adaptive group normalization (AdaGN), which incorporates the timestep and class embedding into each residual block after a group normalization operation [75], similar to adaptive instance norm [33] and FiLM [54]. We define this layer as AdaGN( _h, y_ ) = _ys_ GroupNorm( _h_ )+ _yb_ , where _h_ is the intermediate activations of the residual block following the first convolution, and _y_ = [ _ys, yb_ ] is obtained from a linear projection of the timestep and class embedding. We had already seen AdaGN improve our earliest diffusion models, and so had included it by default in all our runs. We explicitly ablate this choice (Table 6, Appendix A.1), and find that FID becomes worse by 2.02 when we remove the adaptive group normalization layer."
+    },
+    {
+      "index": 22,
+      "text": "variable width with 2 residual blocks per resolution, multiple heads with 64 channels per head, attention at 32, 16 and 8 resolutions, BigGAN residual blocks for up and downsampling, and adaptive group normalization for injecting timestep and class embeddings into residual blocks."
+    },
+    {
+      "index": 23,
+      "text": "## **4**\n\nIn addition to employing well designed architectures, GANs for conditional image synthesis [45, 8] make heavy use of class labels. This often takes the form of class-conditional normalization statistics [20, 14] as well as discriminators with heads explicitly designed to behave like classifiers _p_ ( _y|x_ ) [46]. As further evidence that class information is crucial to the success of these models, Lucic et al. [42] find that it is helpful to generate synthetic labels when working in a label-limited regime. Given this observation for GANs, it makes sense to explore different ways to condition diffusion models on class labels. We already incorporate class information into adaptive group normalization layers (Section 3). Here, we explore a different approach: exploiting a classifier _p_ ( _y|x_ ) to improve a diffusion generator. Sohl-Dickstein et al. [63] and Song et al. [67] show one way to achieve this, wherein a pre-trained diffusion model can be conditioned using the gradients of a classifier. In particular, we can train a classifier _p\u03c6_ ( _y|xt, t_ ) on noisy images _xt_ , and then use gradients _rxt_ log _p\u03c6_ ( _y|xt, t_ ) to guide the diffusion sampling process towards an arbitrary class label _y_ ."
+    },
+    {
+      "index": 24,
+      "text": "For class conditional diffusion sampling, we reproduce the derivation from Sohl-Dickstein et al. [63] in Appendix D.2. For DDIM, we perform a score-based derivation in Appendix D.3 inspired by Song et al. [67]. The resulting sampling algorithms we use for guidance are Algorithms 1 and 2 respectively. Both algorithms incorporate class information by adding the gradients of a classifier to each sampling step with an appropriate step size. In these algorithms, we choose the notation"
+    },
+    {
+      "index": 25,
+      "text": "4\n\n**Algorithm 1** Classifier guided diffusion sampling, given a diffusion model ( _\u00b5\u2713_ ( _xt_ ) _,_ \u2303 _\u2713_ ( _xt_ )), classifier _p\u03c6_ ( _y|xt_ ), and gradient scale _s_ ."
+    },
+    {
+      "index": 26,
+      "text": "Input: class label _y_ , gradient scale _s xT_ sample from _N_ (0 _,_ **I** ) **for all** _t_ from _T_ to 1 **do** _\u00b5,_ \u2303 _\u00b5\u2713_ ( _xt_ ) _,_ \u2303 _\u2713_ ( _xt_ ) _xt\u2212_ 1 sample from _N_ ( _\u00b5_ + _s_ \u2303 _rxt_ log _p\u03c6_ ( _y|xt_ ) _,_ \u2303) **end for return** _x_ 0"
+    },
+    {
+      "index": 27,
+      "text": "**Algorithm 2** Classifier guided DDIM sampling, given a diffusion model _\u270f\u2713_ ( _xt_ ), classifier _p\u03c6_ ( _y|xt_ ), and gradient scale _s_ ."
+    },
+    {
+      "index": 28,
+      "text": "Input: class label _y_ , gradient scale _s xT_ sample from _N_ (0 _,_ **I** ) **for all** _t_ from _T_ to 1 **do** \u02c6 \u00af _\u270f \u270f\u2713_ ( _xt_ ) _\u2212[p]_ 1 _\u2212 \u21b5t rxt_ log _p\u03c6_ ( _y|xt_ ) \u00af _xt\u2212[p]_ 1 _\u2212\u21b5_ \u00af _t\u270f_ \u02c6 \u00af \u02c6 _xt\u2212_ 1 _[p] \u21b5t\u2212_ 1 \u21e3 ~~_p_~~ _\u21b5_ \u00af _t_ \u2318 + _[p]_ 1 _\u2212 \u21b5t\u2212_ 1 _\u270f_"
+    },
+    {
+      "index": 29,
+      "text": "**end for return** _x_ 0\n\nFigure 2: Samples from an unconditional diffusion model with guidance to condition on the class \"Pembroke Welsh corgi\". Using classifier scale 1.0 (left; FID: 33.0) does not produce convincing samples in this class, whereas classifier scale 10.0 (right; FID: 12.0) produces much more class-consistent images."
+    },
+    {
+      "index": 30,
+      "text": "_p\u03c6_ ( _y|xt, t_ ) = _p\u03c6_ ( _y|xt_ ) and _\u270f\u2713_ ( _xt, t_ ) = _\u270f\u2713_ ( _xt_ ) for brevity, noting that they refer to separate functions for each timestep _t_ and at training time the models must be conditioned on the input _t_ ."
+    },
+    {
+      "index": 31,
+      "text": "To apply guidance to a large scale generative task, we train models on ImageNet. Our classifier architecture is simply the downsampling trunk of the UNet model with an attention pool [55] at the 8x8 layer to produce the final output. We train these classifiers on the same noising distribution as the corresponding diffusion model, and also add random crops to reduce overfitting."
+    },
+    {
+      "index": 32,
+      "text": "In initial experiments with unconditional ImageNet models, we found it necessary to scale the classifier gradients by a constant factor larger than 1. When using a scale of 1, we observed that the classifier assigned reasonable probabilities (around 50%) to the desired classes for the final samples, but these samples did not match the intended classes upon visual inspection. Scaling up the classifier gradients remedied this problem, and the class probabilities from the classifier increased to nearly 100%. Figure 2 shows an example of this effect. To understand the effect of scaling classifier gradients,result, the conditioning process is still theoretically grounded in a re-normalized classifier distributionnote that _s \u00b7 rx_ log _p_ ( _y|x_ ) = _rx_ log _Z_[1] _[p]_[(] _[y][|][x]_[)] _[s]_[,][where] _[Z]_[is][an][arbitrary][constant.][As][a] proportional to _p_ ( _y|x_ ) _[s]_ . When _s >_ 1, this distribution becomes sharper than _p_ ( _y|x_ ), since larger values are amplified by the exponent. In other words, using a larger gradient scale focuses more on the modes of the classifier, which is potentially desirable for producing higher quality (but less diverse) samples."
+    },
+    {
+      "index": 33,
+      "text": "In the above derivations, we assumed that the underlying diffusion model was unconditional, modeling _p_ ( _x_ ). It is also possible to train conditional diffusion models, _p_ ( _x|y_ ), and use classifier guidance in"
+    },
+    {
+      "index": 34,
+      "text": "5\n\nTable 3: Effect of classifier guidance on sample quality. Both conditional and unconditional models were trained for 2M iterations on ImageNet 256 _\u21e5_ 256 with batch size 256."
+    },
+    {
+      "index": 35,
+      "text": "|||Conditional\nGuidance\nScale\nFID\nsFID\nIS\nPrecision\nRecall\n7\n7\n26.21\n**6.35**\n39.70\n0.61\n0.63\n7\n3\n1.0\n33.03\n6.99\n32.92\n0.56\n**0.65**\n7\n3\n10.0\n**12.00**\n10.40\n**95.41**\n**0.76**\n0.44\n3\n7\n10.94\n6.02\n100.98\n0.69\n**0.63**\n3\n3\n1.0\n**4.59**\n**5.25**\n186.70\n0.82\n0.52\n3\n3\n10.0\n9.11\n10.93\n**283.92**\n**0.88**\n0.32|Conditional\nGuidance\nScale\nFID\nsFID\nIS\nPrecision\nRecall\n7\n7\n26.21\n**6.35**\n39.70\n0.61\n0.63\n7\n3\n1.0\n33.03\n6.99\n32.92\n0.56\n**0.65**\n7\n3\n10.0\n**12.00**\n10.40\n**95.41**\n**0.76**\n0.44\n3\n7\n10.94\n6.02\n100.98\n0.69\n**0.63**\n3\n3\n1.0\n**4.59**\n**5.25**\n186.70\n0.82\n0.52\n3\n3\n10.0\n9.11\n10.93\n**283.92**\n**0.88**\n0.32|Conditional\nGuidance\nScale\nFID\nsFID\nIS\nPrecision\nRecall\n7\n7\n26.21\n**6.35**\n39.70\n0.61\n0.63\n7\n3\n1.0\n33.03\n6.99\n32.92\n0.56\n**0.65**\n7\n3\n10.0\n**12.00**\n10.40\n**95.41**\n**0.76**\n0.44\n3\n7\n10.94\n6.02\n100.98\n0.69\n**0.63**\n3\n3\n1.0\n**4.59**\n**5.25**\n186.70\n0.82\n0.52\n3\n3\n10.0\n9.11\n10.93\n**283.92**\n**0.88**\n0.32|Conditional\nGuidance\nScale\nFID\nsFID\nIS\nPrecision\nRecall\n7\n7\n26.21\n**6.35**\n39.70\n0.61\n0.63\n7\n3\n1.0\n33.03\n6.99\n32.92\n0.56\n**0.65**\n7\n3\n10.0\n**12.00**\n10.40\n**95.41**\n**0.76**\n0.44\n3\n7\n10.94\n6.02\n100.98\n0.69\n**0.63**\n3\n3\n1.0\n**4.59**\n**5.25**\n186.70\n0.82\n0.52\n3\n3\n10.0\n9.11\n10.93\n**283.92**\n**0.88**\n0.32|Conditional\nGuidance\nScale\nFID\nsFID\nIS\nPrecision\nRecall\n7\n7\n26.21\n**6.35**\n39.70\n0.61\n0.63\n7\n3\n1.0\n33.03\n6.99\n32.92\n0.56\n**0.65**\n7\n3\n10.0\n**12.00**\n10.40\n**95.41**\n**0.76**\n0.44\n3\n7\n10.94\n6.02\n100.98\n0.69\n**0.63**\n3\n3\n1.0\n**4.59**\n**5.25**\n186.70\n0.82\n0.52\n3\n3\n10.0\n9.11\n10.93\n**283.92**\n**0.88**\n0.32|\n|---|---|---|---|---|---|---|\n|4\n6\n8\n10\n12\n14\n16||FID\nsFID"
+    },
+    {
+      "index": 36,
+      "text": "IS\nprecision\nrecall|||||\n||||100\n150\n200\n250\n300||0.3\n0.4\n0.5\n0.6\n0.7\n0.8\n0.9||\n||0|2\n4\n6\n8\n10\ngradient scale\n0\n2\n4\n6\n8\n10\ngradient scale\n0\n2\n4\n6\n8\n10\ngradient scale|||||"
+    },
+    {
+      "index": 37,
+      "text": "Figure 3: ImageNet 128 _\u21e5_ 128 model.\n\nthe exact same way. Table 3 shows that the sample quality of both unconditional and conditional models can be greatly improved by classifier guidance. We see that, with a high enough scale, the guided unconditional model can get quite close to the FID of an unguided conditional model, although training directly with the class labels still helps. Guiding a conditional model further improves FID."
+    },
+    {
+      "index": 38,
+      "text": "trade-off in sample fidelity versus diversity. We explicitly evaluate how this trade-off varies with the gradient scale in Figure 3. We see that scaling the gradients beyond 1.0 smoothly trades off recall (a measure of diversity) for higher precision and IS (measures of fidelity). Since FID and sFID depend on both diversity and fidelity, their best values are obtained at an intermediate point. We also compare our guidance with the truncation trick from BigGAN (Figure 6, Appendix A.2). We find that classifier guidance is strictly better than BigGAN-deep when trading off FID for Inception Score. Less clear cut is the precision/recall trade-off, which shows that classifier guidance is only a better choice up until a certain precision threshold, after which point it cannot achieve better precision."
+    },
+    {
+      "index": 39,
+      "text": "## **5 Results**\n\nTo evaluate our improved model architecture on unconditional image generation, we train separate diffusion models on three LSUN [77] classes: bedroom, horse, and cat. To evaluate classifier guidance, we train conditional diffusion models on the ImageNet [59] dataset at 128 _\u21e5_ 128, 256 _\u21e5_ 256, and 512 _\u21e5_ 512 resolution."
+    },
+    {
+      "index": 40,
+      "text": "Table 4 summarizes our results. ADM refers to our **a** blated **d** iffusion **m** odel, and ADM-G additionally uses classifier **g** uidance. Our diffusion models can obtain the best FID on each task, and the best sFID on all but one task. With the improved architecture, we already obtain state-of-the-art image generation on LSUN and ImageNet 64 _\u21e5_ 64. For higher resolution ImageNet, we observe that classifier guidance allows our models to substantially outperform the best GANs. These models obtain perceptual quality similar to GANs, while maintaining a higher coverage of the distribution as measured by recall, and can even do so using only 25 sampling steps. We also evaluate the computational requirements for training our models (Table 10, Appendix B), and find that we can obtain competitive sample quality while using the same or less compute than the corresponding BigGAN-deep or StyleGAN2 model."
+    },
+    {
+      "index": 41,
+      "text": "Figure 4 compares random samples from the best BigGAN-deep model to our guided diffusion model. While the samples are of similar perceptual quality, the diffusion model contains more modes than the GAN, such as zoomed ostrich heads, single flamingos, different orientations of cheeseburgers, and a"
+    },
+    {
+      "index": 42,
+      "text": "6\n\nTable 4: Sample quality comparison with state-of-the-art generative models for each task. LSUN diffusion models are sampled using 1000 steps (see Appendix L). ImageNet diffusion models are sampled using 250 steps, except when we use the DDIM sampler with 25 steps. *No BigGAN-deep model was available at this resolution, so we trained our own. _[\u2020]_ Values are taken from a previous paper, due to lack of public models or samples. _[\u2021]_ Results use two-resolution stacks. _[\u00a7]_ Results use compute-intensive classifier rejection sampling."
+    },
+    {
+      "index": 43,
+      "text": "|Model\nFID\nsFID\nPrec\nRec\n**LSUN Bedrooms 256**_\u21e5_**256**\nDCTransformer_\u2020_ [48]\n6.40\n6.66\n0.44\n**0.56**\nDDPM [31]\n4.89\n9.07\n0.60\n0.45\nIDDPM [49]\n4.24\n8.21\n0.62\n0.46\nStyleGAN [33]\n2.35\n6.62\n0.59\n0.48\n**ADM (dropout)**\n**1.90**\n**5.59**\n**0.66**\n0.51\n**LSUN Horses 256**_\u21e5_**256**\nStyleGAN2 [34]\n3.84\n6.46\n0.63\n0.48\n**ADM**\n2.95\n**5.94**\n0.69\n**0.55**\n**ADM (dropout)**\n**2.57**\n6.81\n**0.71**\n**0.55**\n**LSUN Cats 256**_\u21e5_**256**\nDDPM [31]\n17.1\n12.4\n0.53\n0.48\nStyleGAN2 [34]\n7.25\n**6.33**\n0.58\n0.43\n**ADM (dropout)**\n**5.57**\n6.69\n**0.63**\n**0.52**\n**ImageNet 64**_\u21e5_**64**\nBigGAN-deep* [8]\n4.06\n3.96\n**0.79**\n0.48\nIDDPM [49]\n2.92\n**3.79**\n0.74\n0.62\n**ADM**\n2.61\n**3.77**\n0.73\n0.63\n**ADM (dropout)**\n**2.07**\n4.29\n0.74\n**0.63**|Model\nFID\nsFID\nPrec\nRec\n**ImageNet 128**_\u21e5_**128**|\n|---|---|\n||BigGAN-deep [8]\n6.02\n7.18\n**0.86**\n0.35\nLOGAN_\u2020_ [74]\n3.36\n**ADM**\n5.91\n**5.09**\n0.70\n**0.65**\n**ADM-G (25 steps)**\n5.98\n7.04\n0.78\n0.51\n**ADM-G**\n**2.97**\n**5.09**\n0.78\n0.59\n**ImageNet 256**_\u21e5_**256**|\n||DCTransformer_\u2020_ [48]\n36.51\n8.24\n0.36\n**0.67**\nVQ-VAE-2_\u2020\u2021_ [57]\n31.11\n17.38\n0.36\n0.57\nVQ-VAE-2 (RS)_\u2020\u2021\u00a7_ [57]\n_\u21e0_10\nVQ-GAN_\u2021_ [21]\n15.97\n19.05\n0.63\n0.58\nVQ-GAN (RS)_\u2021\u00a7_ [21]\n5.06\n7.34\n0.79\n0.48\nIDDPM_\u2021_ [49]\n12.26\n5.42\n0.70\n0.62\nSR3_\u2020\u2021_ [60]\n11.30\nBigGAN-deep [8]\n6.95\n7.36\n**0.87**\n0.28\n**ADM**\n10.94\n6.02\n0.69\n0.63\n**ADM-G (25 steps)**\n5.44\n5.32\n0.81\n0.49\n**ADM-G**\n**4.59**\n**5.25**\n0.82\n0.52\n**ImageNet 512**_\u21e5_**512**|\n||BigGAN-deep [8]\n8.43\n8.13\n**0.88**\n0.29\n**ADM**\n23.24\n10.19\n0.73\n**0.60**\n**ADM-G (25 steps)**\n8.41\n9.67\n0.83\n0.47\n**ADM-G**\n**7.72**\n**6.57**\n0.87\n0.42|"
+    },
+    {
+      "index": 44,
+      "text": "We also check our generated samples for nearest neighbors in the Inception-V3 feature space in Appendix E, and we show additional samples in Appendices M-O."
+    },
+    {
+      "index": 45,
+      "text": "We also compare guidance to using a two-stage upsampling stack. Nichol and Dhariwal [49] and Saharia et al. [60] train two-stage diffusion models by combining a low-resolution diffusion model with a corresponding upsampling diffusion model. In this approach, the upsampling model is trained to upsample images from the training set, and conditions on low-resolution images that are concatenated channel-wise to the model input using a simple interpolation (e.g. bilinear). During sampling, the low-resolution model produces a sample, and then the upsampling model is conditioned on this sample. This greatly improves FID on ImageNet 256 _\u21e5_ 256, but does not reach the same performance as state-of-the-art models like BigGAN-deep [49, 60], as seen in Table 4."
+    },
+    {
+      "index": 46,
+      "text": "In Table 5, we show that guidance and upsampling improve sample quality along different axes. We use the **u** psampling stack from Nichol and Dhariwal [49] combined with our architecture improvements, which we refer to as ADM-U. While upsampling improves precision while keeping a high recall, guidance provides a knob to trade off diversity for much higher precision. We achieve the best FIDs by using guidance at a lower resolution before upsampling to a higher resolution, indicating that these approaches complement one another."
+    },
+    {
+      "index": 47,
+      "text": "## **6 Related Work**\n\nScore based generative models were introduced by Song and Ermon [66] as a way of modeling a data distribution using its gradients, and then sampling using Langevin dynamics [73]. Ho et al. [31] found a connection between this method and diffusion models [63], and achieved excellent sample quality by leveraging this connection. After this breakthrough work, many works followed up with"
+    },
+    {
+      "index": 48,
+      "text": "7\n\nFigure 4: Samples from BigGAN-deep with truncation 1.0 (FID 6.95, left) vs samples from our diffusion model with guidance (FID 4.59, middle) and samples from the training set (right)."
+    },
+    {
+      "index": 49,
+      "text": "Table 5: Comparing our single, upsampling and classifier guided models. The upsamplers are 64 _!_ 256 and 128 _!_ 512. When combining guidance with upsampling, we only guide the lower resolution model. All models are sampled using 250 sampling steps."
+    },
+    {
+      "index": 50,
+      "text": "|Model\nFID\nsFID\nIS\nPrec Rec\n**ImageNet 256**_\u21e5_**256**\nADM\n10.94 6.02 100.98 0.69 **0.63**\nADM, ADM-U\n7.49\n**5.13** 127.49 0.72 **0.63**\nADM-G\n4.59\n5.25 186.70 0.82 0.52\nADM-G, ADM-U\n**3.94**\n6.14 **215.84 0.83** 0.53|Model\nFID\nsFID\nIS\nPrec Rec\n**ImageNet 512**_\u21e5_**512**|\n|---|---|\n||ADM\n23.24 10.19\n58.06\n0.73 0.60\nADM, ADM-U\n9.96\n**5.62**\n121.78 0.75 **0.64**\nADM-G\n7.72\n6.57\n172.71 **0.87** 0.42\nADM-G, ADM-U\n**3.85**\n5.86\n**221.72** 0.84 0.53|"
+    },
+    {
+      "index": 51,
+      "text": "more promising results: Kong et al. [36] and Chen et al. [11] demonstrated that diffusion models work well for audio; Jolicoeur-Martineau et al. [32] found that a GAN-like setup could improve samples from these models; Song et al. [67] explored ways to leverage techniques from stochastic differential equations to improve the sample quality obtained by score-based models; Song et al. [64] and Nichol and Dhariwal [49] proposed methods to improve sampling speed; Nichol and Dhariwal [49] and Saharia et al. [60] demonstrated promising results on the difficult ImageNet generation task using upsampling diffusion models. Also related to diffusion models, and following the work of Sohl-Dickstein et al. [63], Goyal et al. [27] described a technique for learning a model with learned iterative generation steps, and found that it could achieve good image samples when trained with a likelihood objective."
+    },
+    {
+      "index": 52,
+      "text": "Other generative techniques provide natural levers for this trade-off. Brock et al. [8] introduced the truncation trick for GANs, wherein the latent vector is sampled from a truncated normal distribution. They found that increasing truncation naturally led to a decrease in diversity but an increase in fidelity. More recently, Razavi et al. [57] proposed to use classifier rejection sampling to filter out bad samples from an autoregressive likelihood-based model, and found that this technique improved FID. DeVries et al. [16] found that filtering out low-density regions of the training set improves GAN training performance. Most likelihood-based models also allow for low-temperature sampling [1], which provides a natural way to emphasize modes of the data distribution (see Appendix I)."
+    },
+    {
+      "index": 53,
+      "text": "8\n\nOther likelihood-based models have been shown to produce high-fidelity image samples. VQ-VAE [71] and VQ-VAE-2 [57] are autoregressive models trained on top of quantized latent codes, greatly reducing the computational resources required to train these models on large images. These models produce diverse and high quality images, but still fall short of GANs without expensive rejection sampling and special metrics to compensate for blurriness. DCTransformer [48] is a related method which relies on a more intelligent compression scheme. VAEs are another promising class of likelihood-based models, and recent methods such as NVAE [69] and VDVAE [12] have successfully been applied to difficult image generation domains. Energy-based models are another class of likelihood-based models with a rich history [1, 13, 30]. Sampling from the EBM distribution is challenging, and Xie et al. [76] demonstrate that Langevin dynamics can be used to sample coherent images from these models. Du and Mordatch [19] further improve upon this approach, obtaining high quality images. More recently, Gao et al. [24] incorporate diffusion steps into an energy-based model, and find that doing so improves image samples from these models."
+    },
+    {
+      "index": 54,
+      "text": "body of work [23, 53, 2] aims to optimize GAN latent spaces for text prompts using pre-trained CLIP [55] models. More similar to our work, Song et al. [67] uses a classifier to generate class-conditional CIFAR-10 images with a diffusion model. In some cases, classifiers can act as stand-alone generative models. For example, Santurkar et al. [62] demonstrate that a robust image classifier can be used as a stand-alone generative model, and Grathwohl et al. [28] train a model which is jointly a classifier and an energy-based model."
+    },
+    {
+      "index": 55,
+      "text": "## **7 Limitations and Future Work**\n\nWhile we believe diffusion models are an extremely promising direction for generative modeling, they are still slower than GANs at sampling time due to the use of multiple denoising steps (and therefore forward passes). Since our diffusion models are also larger than the competing GAN generators, each forward pass takes anywhere from 5-20 times longer too. A promising direction to reduce this latency gap is Luhman and Luhman [43], who explore a way to distill the DDIM sampling process into a single step model. The samples from the single step model are not yet competitive with GANs, but are much better than previous single-step likelihood-based models. Future work in this direction might be able to completely close the sampling speed gap between diffusion models and GANs without sacrificing image quality."
+    },
+    {
+      "index": 56,
+      "text": "Unlike GANs, Flows, and VAEs, diffusion models do not learn an explicit latent representation. While DDIM provides a way to encode images into an implicit latent space, it is unclear how semantically meaningful this latent representation is compared to those of other model classes. This could make it difficult to use diffusion models for representation learning or image editing applications."
+    },
+    {
+      "index": 57,
+      "text": "from the gradients of a classification function. This could be used to condition an image generator with a text caption using a noisy version of CLIP [55], similar to recent methods that guide GANs using text prompts [23, 53, 2]. Our proposed classifier guidance technique is currently limited to labeled datasets. In the future, our method could be extended to unlabeled data by clustering samples to produce synthetic labels [42] or by training discriminative models to use for guidance. This also suggests that large unlabeled datasets could be leveraged in the future to pre-train powerful diffusion models that can later be improved by using a classifier with desirable properties."
+    },
+    {
+      "index": 58,
+      "text": "## **8 Societal Impact**\n\nOur proposed technique makes generative models more accessible in terms of compute costs, especially because new classifiers can be trained and used on top of existing high-quality diffusion models. While we believe this is generally a benefit of these models, it could also have negative societal implications. For example, cheaper generative models could enable bad actors to generate fake news, propaganda images, or doctored photos. Additionally, the wide-spread deployment of these models could displace jobs in art, graphic design, animation, and photography. One could imagine, however, that democratizing generative models could also have positive impacts in the long run, creating new types of jobs such as generative photo editing. Intentionally deceitful generated"
+    },
+    {
+      "index": 59,
+      "text": "9\n\nimages are a more direct concern, and detecting and mitigating propaganda and fake news based on generative models is an ongoing area of research [4, 3, 5]."
+    },
+    {
+      "index": 60,
+      "text": "## **9 Conclusion**\n\nWe have shown that diffusion models, a class of likelihood-based models with a stationary training objective, can obtain better sample quality than state-of-the-art GANs. Our improved architecture is sufficient to achieve this on unconditional image generation tasks, and our classifier guidance technique allows us to do so on class-conditional tasks. In the latter case, we find that the scale of the classifier gradients can be adjusted to trade off diversity for fidelity. These guided diffusion models can reduce the sampling time gap between GANs and diffusion models, although diffusion models still require multiple forward passes during sampling. Finally, by combining guidance with upsampling, we can further improve sample quality on high-resolution conditional image synthesis."
+    },
+    {
+      "index": 61,
+      "text": "## **References**\n\n- [1] David Ackley, Geoffrey Hinton, and Terrence Sejnowski. A learning algorithm for boltzmann machines. _Cognitive science, 9(1):147-169_ , 1985."
+    },
+    {
+      "index": 62,
+      "text": "- [2] Adverb. The big sleep. `https://twitter.com/advadnoun/status/ 1351038053033406468` , 2021.\n\n- [3] Shruti Agarwal, Hany Farid, Yuming Gu, Mingming He, Koki Nagano, and Hao Li. Protecting world leaders against deep fakes. In _Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Workshops_ , June 2019."
+    },
+    {
+      "index": 63,
+      "text": "- [4] Hadeer Ahmed, Issa Traore, and Sherif Saad. Detection of online fake news using n-gram analysis and machine learning techniques. pages 127\u2013138, 10 2017. ISBN 978-3-319-69154-1. doi: 10.1007/978-3-319-69155-8_9."
+    },
+    {
+      "index": 64,
+      "text": "- [5] Hadeer Ahmed, Issa Traore, and Sherif Saad. Detecting opinion spams and fake news using text classification. _Security and Privacy_ , 1(1):e9, 2018. doi: https://doi.org/10.1002/spy2.9. URL `https://onlinelibrary.wiley.com/doi/abs/10.1002/spy2.9` ."
+    },
+    {
+      "index": 65,
+      "text": "- [6] Shane Barratt and Rishi Sharma. A note on the inception score. _arXiv:1801.01973_ , 2018.\n\n- [7] Andrew Brock, Theodore Lim, J. M. Ritchie, and Nick Weston. Neural photo editing with introspective adversarial networks. _arXiv:1609.07093_ , 2016."
+    },
+    {
+      "index": 66,
+      "text": "- [8] Andrew Brock, Jeff Donahue, and Karen Simonyan. natural image synthesis. _arXiv:1809.11096_ , 2018."
+    },
+    {
+      "index": 67,
+      "text": "- [9] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are few-shot learners. _arXiv:2005.14165_ , 2020."
+    },
+    {
+      "index": 68,
+      "text": "- [10] Mark Chen, Alec Radford, Rewon Child, Jeffrey Wu, Heewoo Jun, David Luan, and Ilya Sutskever. Generative pretraining from pixels. In _International Conference on Machine Learning_ , pages 1691\u20131703. PMLR, 2020."
+    },
+    {
+      "index": 69,
+      "text": "- [11] Nanxin Chen, Yu Zhang, Heiga Zen, Ron J. Weiss, Mohammad Norouzi, and William Chan. Wavegrad: Estimating gradients for waveform generation. _arXiv:2009.00713_ , 2020."
+    },
+    {
+      "index": 70,
+      "text": "- [12] Rewon Child. Very deep vaes generalize autoregressive models and can outperform them on images. _arXiv:2011.10650_ , 2021."
+    },
+    {
+      "index": 71,
+      "text": "- [13] Peter Dayan, Geoffrey E Hinton, Radford M Neal, and Richard S Zemel. The helmholtz machine. _Neural computation_ , 7(5):889\u2013904, 1995.\n\n10"
+    },
+    {
+      "index": 72,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__claude-opus-4.7": {
+      "label": "Zero Shot (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This is a strong, well-executed paper that convincingly demonstrates diffusion models can match or exceed GANs on image synthesis through architectural ablations and classifier guidance. The experimental methodology is thorough, metrics are comprehensive, and the classifier guidance derivation is principled. Most issues I identified are minor presentation/clarity concerns rather than substantive technical problems. The main concerns are: (1) a subtle issue in how the renormalization argument for classifier scaling is framed, (2) some underspecified details about the classifier architecture and training that affect reproducibility, and (3) a few places where tables/text have OCR-damaged layout that could mislead a careful reader about which numbers correspond to which conditions.",
+      "comments": [
+        {
+          "id": "zero_shot__claude-opus-4.7_0",
+          "title": "Renormalization argument for classifier scaling is not quite rigorous",
+          "quote": "note that _s \u00b7 rx_ log _p_ ( _y|x_ ) = _rx_ log _Z_[1] _[p]_[(] _[y][|][x]_[)] _[s]_[,][where] _[Z]_[is][an][arbitrary][constant.][As][a] proportional to _p_ ( _y|x_ ) _[s]_ .",
+          "explanation": "The authors argue that scaling the classifier gradient by s corresponds to sampling from a renormalized distribution proportional to p(y|x)^s. This is correct as stated for the classifier term, but the actual sampling procedure combines this with the unconditional score \u2207 log p(x). The resulting distribution being sampled is proportional to p(x) \u00b7 p(y|x)^s, not a renormalized conditional distribution p(y|x)^s alone. The text's framing ('conditioning process is still theoretically grounded') glosses over the fact that this is no longer the true posterior p(x|y) except when s=1. This is a well-known subtlety (later formalized by Ho & Salimans in classifier-free guidance work) and the claim here is a mild overclaim about theoretical grounding. Not a fatal issue but worth flagging because readers may take 'theoretically grounded' too literally.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_1",
+          "title": "Algorithm 2 DDIM update formula appears garbled",
+          "quote": "\u02c6 \u00af _\u270f \u270f\u2713_ ( _xt_ ) _\u2212[p]_ 1 _\u2212 \u21b5t rxt_ log _p\u03c6_ ( _y|xt_ ) \u00af _xt\u2212[p]_ 1 _\u2212\u21b5_ \u00af _t\u270f_ \u02c6 \u00af \u02c6 _xt\u2212_ 1 _[p] \u21b5t\u2212_ 1 \u21e3 ~~_p_~~ _\u21b5_ \u00af _t_ \u2318 + _[p]_ 1 _\u2212 \u21b5t\u2212_ 1 _\u270f_",
+          "explanation": "The DDIM update in Algorithm 2 is OCR-mangled enough that a reader trying to reproduce the method from the algorithm block alone would struggle. The intended formula appears to be \u03b5\u0302 = \u03b5_\u03b8(x_t) - \u221a(1-\u1fb1_t) \u2207_{x_t} log p_\u03c6(y|x_t), followed by x_{t-1} = \u221a\u1fb1_{t-1} ((x_t - \u221a(1-\u1fb1_t) \u03b5\u0302)/\u221a\u1fb1_t) + \u221a(1-\u1fb1_{t-1}) \u03b5\u0302. While this is likely an OCR rendering artifact rather than an authorial error, the key derivation in Appendix D.3 needs to be referenced carefully; the sign and \u221a(1-\u1fb1_t) factor on the classifier gradient are non-trivial and the algorithm as displayed is nearly unreadable.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_2",
+          "title": "Classifier training details underspecified",
+          "quote": "Our classifier architecture is simply the downsampling trunk of the UNet model with an attention pool [55] at the 8x8 layer to produce the final output. We train these classifiers on the same noising distribution as the corresponding diffusion model, and also add random crops to reduce overfitting.",
+          "explanation": "For reproducibility, key classifier training choices are left implicit: the exact classifier size (channels, depth), whether the classifier shares the timestep conditioning mechanism used by the diffusion model, the loss (standard cross-entropy on noised inputs presumably), optimizer/lr, training iteration count, and crop parameters. Since classifier guidance is the paper's central methodological contribution and the gradient scale and classifier quality both directly affect results, these details matter. Appendix likely contains them, but the main text leaves a reader unable to reason about, e.g., whether the classifier is trained to convergence or why a scale of ~10 rather than ~3 is needed.",
+          "comment_type": "logical",
+          "paragraph_index": 31,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_3",
+          "title": "Table 1 ablation deltas are relative but reference row is ambiguous",
+          "quote": "|160|2|1|16|7|7|15.33|13.21|\n|128|4|||||-0.21|-0.48|",
+          "explanation": "The ablation table reports FID changes like '-0.21' for subsequent rows, which the reader must interpret as deltas relative to the baseline (15.33 / 13.21). However, the composition semantics are unclear: are these deltas cumulative (each row adds to the previous) or independent (each row varies one knob from the baseline)? The final row shows '-3.14/-3.00' with multiple changes applied simultaneously, suggesting the rows are cumulative modifications, but the '7' (no) markers in some columns of intermediate rows complicate this reading. A careful reader could reach an incorrect conclusion about which individual change contributes what. The paper should state explicitly whether modifications compound row-by-row.",
+          "comment_type": "logical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_4",
+          "title": "Figure 2 FID values for unconditional guidance don't match Table 3",
+          "quote": "Using classifier scale 1.0 (left; FID: 33.0) does not produce convincing samples in this class, whereas classifier scale 10.0 (right; FID: 12.0) produces much more class-consistent images.",
+          "explanation": "Figure 2's caption cites FID 33.0 at scale 1.0 and 12.0 at scale 10.0 for the unconditional model with guidance. Table 3 lists FID = 33.03 and 12.00 for the unconditional+guided rows, so these are consistent (just rounded). This is fine \u2014 I initially worried they were separate experiments, but they align. Noting for completeness rather than as an issue. No action needed; this comment can be considered a self-resolving check.",
+          "comment_type": "logical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_5",
+          "title": "Rescale residual connection factor notation appears damaged",
+          "quote": "finally; rescaling residual connections with ~~_p_~~ 12[,] following [67, 33, 34].",
+          "explanation": "This is almost certainly 1/\u221a2 (the standard rescaling from Song et al.'s NCSN++ and StyleGAN2), but the OCR has rendered it as 'p 12'. While most readers will guess the intended factor, the ablation (Table 1 row for 'Rescale resblock') shows this change hurts FID by +0.16/+0.25, which is consistent with the reported finding that the rescaling does not help in this setting. Since this is an OCR issue not an author error, flagging only for clarity \u2014 the paper should confirm the factor is 1/\u221a2.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_6",
+          "title": "Claim about matching BigGAN-deep with 25 steps is somewhat overstated",
+          "quote": "we match BigGAN-deep even with as few as 25 forward passes per sample, all while maintaining better coverage of the distribution.",
+          "explanation": "Checking Table 4: at ImageNet 256\u00d7256, ADM-G (25 steps) achieves FID 5.44 vs BigGAN-deep 6.95 \u2014 so the claim holds on FID. However, at ImageNet 512\u00d7512, ADM-G (25 steps) gets FID 8.41 vs BigGAN-deep 8.43 \u2014 essentially a tie, not a clear beat. At 128\u00d7128, 25-step ADM-G is 5.98 vs BigGAN-deep 6.02 \u2014 again essentially a tie. The abstract's 'match' is accurate but 'even with as few as 25' slightly oversells given that the full-step versions are substantially better and 25-step tends to only match rather than exceed. Minor framing concern.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__claude-opus-4.7_7",
+          "title": "AdaGN definition: location of bias/scale application",
+          "quote": "We define this layer as AdaGN( _h, y_ ) = _ys_ GroupNorm( _h_ )+ _yb_ , where _h_ is the intermediate activations of the residual block following the first convolution",
+          "explanation": "The definition is clear in isolation, but how y_s and y_b are produced from the timestep and class embeddings matters for reproducibility: are y_s and y_b each produced by separate linear projections, or is a single projection split? Is any nonlinearity applied? Is y_s initialized to 1 (identity scaling) or 0? These choices are known to affect training stability in FiLM-style conditioning. The paper defers detail by writing 'y = [y_s, y_b] is obtained from a linear projection,' which is sufficient for a reader familiar with FiLM but slightly underspecified for independent reproduction.",
+          "comment_type": "logical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1649,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 16619,
+      "completion_tokens": 3274
+    },
+    "zero_shot__gpt-5.5": {
+      "label": "Zero Shot (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper is technically strong and the main empirical story is well supported: the architectural ablations, classifier guidance experiments, and comparisons to GAN baselines are largely coherent, and many potentially concerning simplifications are either standard in the diffusion literature or deferred to appendices. The main issues I found are localized rather than fatal. The most concrete technical problem is that the displayed DDIM guidance algorithm introduces a gradient scale parameter but does not use it in the update. There are also a few places where the theoretical interpretation of classifier guidance is stated more strongly or less precisely than the equations justify, especially for scaled guidance and for applying guidance on top of an already class-conditional diffusion model. Finally, the \u201c25 forward passes\u201d phrasing is somewhat misleading because classifier guidance requires classifier-gradient computation in addition to denoising-network evaluations.",
+      "comments": [
+        {
+          "id": "zero_shot__gpt-5.5_0",
+          "title": "DDIM guidance algorithm introduces scale parameter but omits it from the update",
+          "quote": "**Algorithm 2** Classifier guided DDIM sampling, given a diffusion model _\u270f\u2713_ ( _xt_ ), classifier _p\u03c6_ ( _y|xt_ ), and gradient scale _s_ . \n\nInput: class label _y_ , gradient scale _s xT_ sample from _N_ (0 _,_ **I** ) **for all** _t_ from _T_ to 1 **do** \u02c6 \u00af _\u270f \u270f\u2713_ ( _xt_ ) _\u2212[p]_ 1 _\u2212 \u21b5t rxt_ log _p\u03c6_ ( _y|xt_ )",
+          "explanation": "I first read this as the DDIM analogue of Algorithm 1, where the guidance strength should be adjustable by the user-provided scale _s_. The surrounding text also says that both algorithms use a gradient scale, and later experiments vary this scale continuously, so the intended update is presumably something like \\(\\hat\\epsilon = \\epsilon_\\theta(x_t) - s\\sqrt{1-\\bar\\alpha_t}\\nabla_{x_t}\\log p_\\phi(y\\mid x_t)\\). However, in the displayed Algorithm 2 line, the gradient is multiplied by \\(\\sqrt{1-\\bar\\alpha_t}\\) but not by _s_. Algorithm 1 does include _s_ explicitly. If this is not corrected elsewhere, a reader implementing the pseudocode literally would be unable to reproduce the reported DDIM guidance-strength sweep, because the input scale has no effect. This looks like a localized but real algorithmic omission rather than a conceptual flaw.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_1",
+          "title": "Scaled classifier guidance is described as a normalized classifier distribution, but the normalization is ambiguous",
+          "quote": "To understand the effect of scaling classifier gradients,result, the conditioning process is still theoretically grounded in a re-normalized classifier distributionnote that _s \u00b7 rx_ log _p_ ( _y|x_ ) = _rx_ log _Z_[1] _[p]_[(] _[y][|][x]_[)] _[s]_[,][where] _[Z]_[is][an][arbitrary][constant.][As][a] proportional to _p_ ( _y|x_ ) _[s]_ . When _s >_ 1, this distribution becomes sharper than _p_ ( _y|x_ ), since larger values are amplified by the exponent.",
+          "explanation": "The intended point is reasonable: multiplying \\(\\nabla_x \\log p(y\\mid x)\\) by _s_ is equivalent, up to an additive constant in the log-density, to using the potential \\(p(y\\mid x)^s\\). That does explain why larger _s_ sharpens the guidance signal. What remains mathematically imprecise is the phrase \u201cre-normalized classifier distribution\u201d together with the statement that _Z_ is an arbitrary constant. If this is meant as a distribution over images _x_ for a fixed class _y_, then \\(p(y\\mid x)^s\\) is only an unnormalized likelihood-like factor, and the normalizing constant over _x_ is not arbitrary, even though its gradient can be ignored for sampling. If it is meant as a classifier distribution over labels _y_ given _x_, then the normalizer \\(Z(x)=\\sum_y p(y\\mid x)^s\\) depends on _x_, and its gradient would not vanish. The practical heuristic is clear, but the theoretical wording could mislead readers about what distribution the scaled guidance exactly corresponds to.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_2",
+          "title": "Using classifier guidance on an already conditional model is not the same conditioning derivation",
+          "quote": "In the above derivations, we assumed that the underlying diffusion model was unconditional, modeling _p_ ( _x_ ). It is also possible to train conditional diffusion models, _p_ ( _x|y_ ), and use classifier guidance in \n\nthe exact same way.",
+          "explanation": "The authors correctly acknowledge that the preceding derivation assumes an unconditional base model. For an unconditional model, multiplying by a classifier likelihood has a clean Bayes-rule interpretation: \\(p(x)p(y\\mid x)\\propto p(x\\mid y)\\). I then checked whether the same interpretation carries over to a conditional base model, but it does not directly. If the base model already approximates \\(p(x\\mid y)\\), applying the classifier gradient again samples from a reweighted distribution proportional to something like \\(p_\\theta(x\\mid y)p_\\phi(y\\mid x)^s\\), not simply the desired conditional distribution \\(p(x\\mid y)\\). This may be exactly the intended fidelity/diversity trade-off, and the experiments show it is useful, but calling it usable \u201cin the exact same way\u201d without spelling out the changed target distribution risks suggesting that the same Bayes-theoretic justification still applies. A short clarification that conditional-model guidance is an additional sharpening/reweighting heuristic would resolve the issue.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gpt-5.5_3",
+          "title": "\u201c25 forward passes\u201d understates the computation required by guided sampling",
+          "quote": "we match BigGAN-deep even with as few as 25 forward passes per sample, all while maintaining better coverage of the distribution.",
+          "explanation": "The empirical claim that the 25-step guided models match or beat BigGAN-deep on the reported metrics is supported by the later tables. My concern is specifically with the computation phrasing. Classifier-guided sampling does not require only 25 ordinary generator forward passes in the same sense as a GAN generator: each denoising step also requires evaluating the classifier gradient with respect to the image, which entails at least a classifier forward/backward computation, in addition to the diffusion model evaluation. The limitations section later acknowledges that diffusion sampling is still slower than GAN sampling, so the paper is not hiding the broad latency issue. Still, in the abstract this wording could lead readers to underestimate the actual sampling-time compute of the guided 25-step models. \u201c25 denoising steps\u201d or \u201c25 diffusion-model evaluations, plus classifier guidance\u201d would be more precise.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1866,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 11310,
+      "completion_tokens": 5203
+    }
+  }
+}

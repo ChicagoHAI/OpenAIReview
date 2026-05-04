@@ -1,0 +1,600 @@
+{
+  "slug": "iclr2021-SO73JUgk-auber-automated-bert-regularization",
+  "title": "AUBER: AUTOMATED BERT REGULARIZATION [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## AUBER: AUTOMATED BERT REGULARIZATION\n\n## Anonymous authors"
+    },
+    {
+      "index": 1,
+      "text": "Paper under double-blind review\n\n## ABSTRACT\n\nHow can we effectively regularize BERT? Although BERT proves its effectiveness in various downstream natural language processing tasks, it often overfits when there are only a small number of training instances. A promising direction to regularize BERT is based on pruning its attention heads based on a proxy score for head importance. However, heuristic-based methods are usually suboptimal since they predetermine the order by which attention heads are pruned. In order to overcome such a limitation, we propose AUBER, an effective regularization method that leverages reinforcement learning to automatically prune attention heads from BERT. Instead of depending on heuristics or rule-based policies, AUBER learns a pruning policy that determines which attention heads should or should not be pruned for regularization. Experimental results show that AUBER outperforms existing pruning methods by achieving up to 9.39% better accuracy. In addition, our ablation study empirically demonstrates the effectiveness of our design choices for AUBER."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nHow can we effectively regularize BERT (Devlin et al. (2018))? In natural language processing (NLP), fine-tuning a large-scale pre-trained language model has greatly enhanced generalization. In particular, BERT has demonstrated effectiveness through improvements in many downstream NLP tasks such as sentence classification and question answering."
+    },
+    {
+      "index": 3,
+      "text": "Despite its recent success and wide adoption, BERT on a downstream task is prone to overfitting due to over-parameterization; BERT-base has 110M parameters and BERT-large has 340M parameters. The overfitting worsens when the target downstream task only has a small number of training examples. Devlin et al. (2018) and Phang et al. (2018) show that datasets with 10,000 or less training examples sometimes fail to fine-tune BERT."
+    },
+    {
+      "index": 4,
+      "text": "To mitigate this critical issue, multiple studies attempt to regularize BERT by pruning parameters or using dropout to decrease its model complexity (Michel et al. (2019); Voita et al. (2019); Lee et al. (2020)). Among these approaches, we regularize BERT by pruning attention heads since pruning yields simple and explainable results and it can be used along with other regularization methods. In order to avoid combinatorial search, whose computational complexity grows exponentially with the number of heads, the existing methods measure the importance of each attention head based on heuristics such as an approximation of sensitivity of BERT to pruning a specific attention head. However, these approaches are based on hand-crafted heuristics that are not guaranteed to be directly related to the model performance, and therefore, would result in a suboptimal performance."
+    },
+    {
+      "index": 5,
+      "text": "In this paper, we propose AUBER, an effective method for regularizing BERT. AUBER overcomes the limitation of past attempts to prune attention heads from BERT by leveraging reinforcement learning. When pruning attention heads from BERT, our method automates this process by learning policies rather than relying on a predetermined rule-based policy and heuristics. AUBER prunes BERT sequentially in a layer-wise manner. For each layer, AUBER extracts features that are useful for the reinforcement learning agent to determine which attention head to be pruned from the current layer. The final pruning policy found by the reinforcement learning agent is used to prune the corresponding layer. Before AUBER proceeds to process the next layer, BERT is fine-tuned to recapture the information lost due to pruning attention heads. An overview of AUBER transitioning from the second to the third layer of BERT is demonstrated in Figure 1."
+    },
+    {
+      "index": 6,
+      "text": "Our contributions are summarized as follows:\n\n1\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 7,
+      "text": "Accuracy (Reward) Replay Memory Accuracy (Reward) Replay Memory\nLayer 12 Layer 12\nAttention Head\nLayer 3 Attention Head Fine-Tune Layer 3 Embedding (state) DQN\nEmbedding (state) Prune Attention\nLayer 2 DQN Layer 2 Heads (action)\nPrune Attention\nLayer 1 Heads (action) Layer 1\nBERT-base BERT-base\nPruned Not Yet Pruned\n**----- End of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "- Figure 1: An overview of AUBER transitioning from Layer 2 to Layer 3 of BERT-base.\n\n- Method. We propose AUBER for automatically learning to regularize BERT by reinforcement learning. AUBER is designed to carefully represent the state of BERT and reduce the action search cost by dually-greedy search space pruning."
+    },
+    {
+      "index": 9,
+      "text": "- Analysis. We theoretically justify our design choice of using L1 norm of the value matrix of each attention head as an element of a state (see Theorem 1)."
+    },
+    {
+      "index": 10,
+      "text": "- Experiments. We perform extensive experiments, and show that AUBER successfully regularizes BERT improving the performance by up to 9.39% and outperforms other head pruning methods. Through ablation study, we empirically show that our design choices for AUBER are effective."
+    },
+    {
+      "index": 11,
+      "text": "## 2 PRELIMINARY\n\nWe describe preliminaries on multi-headed self-attention (Section 2.1), BERT (Section 2.2), and deep Q-learning (Section 2.3)."
+    },
+    {
+      "index": 12,
+      "text": "## 2.1 MULTI-HEADED SELF-ATTENTION\n\nAn attention function maps a query vector and a set of key-value vector pairs to an output. We compute the query, key, and value vectors by multiplying the input embeddings Q, K, V \u2208 R[N][\u00d7][d] with the parameterized matrices W[Q] \u2208 R[d][\u00d7][n] , W[K] \u2208 R[d][\u00d7][n] , and W[V] \u2208 R[d][\u00d7][m] respectively, where N is the number of tokens in the sentence, and n, m, and d are query, value, and embedding dimension respectively. In multi-headed attention, H independently parameterized attention heads are applied in parallel to project the input embeddings into multiple representation subspaces. Each attention head contains parameter matrices Wi[Q] \u2208 R[d][\u00d7][n] , Wi[K] \u2208 R[d][\u00d7][n] , and Wi[V] \u2208 R[d][\u00d7][m] . Output matrices of H independent attention heads are concatenated and projected by a matrix W[O] \u2208 R[Hm][\u00d7][d] to obtain the final result. This process can be represented as:"
+    },
+    {
+      "index": 13,
+      "text": "where\n\nA multi-headed self-attention follows the same mapping methods as general multi-headed attention function except that all the query, key, and value embeddings come from the same sequence."
+    },
+    {
+      "index": 14,
+      "text": "## 2.2 BERT\n\nBERT (Devlin et al. (2018)) is a multi-layer Transformer (Vaswani et al. (2017)) pre-trained on masked language model and next sentence prediction tasks. It is then fine-tuned on specific tasks including language inference and question answering. BERT-base has 12 Transformer layers and each layer has 12 self-attention heads. Despite its success in various NLP tasks, BERT sometimes overfits when the training dataset is small due to over-parameterization. Thus, there has been a growing interest in BERT regularization through various methods such as dropout (Lee et al. (2020))."
+    },
+    {
+      "index": 15,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nRepeat E times\nReward\n(4) Evaluate\nthe reward (5) Store the tuple of  Replay Memory\n(state, action, next state, reward)\n(6) Update\nStage 1 DQN\nTrain DQN for  Layer  (1) State vector (2) Action\nLayer ! DQN\n!\n(3) Prune an attention head and update state vector referring to the action\nUntil all the heads in the layer ! are pruned or Action = 13\nLayer  (1) State vector (2) Action\nDQN\n!\nStage 2\nPrune Layer !\n(3) Prune an attention head and update state vector referring to the action\nUntil all the heads in the layer ! are pruned or Action = 13\n**----- End of picture text -----**"
+    },
+    {
+      "index": 16,
+      "text": "Figure 2: Overall of AUBER while pruning layer i. It trains DQN and then uses the trained DQN to make the final decision on which heads to prune. 2.3 DEEP Q-LEARNING"
+    },
+    {
+      "index": 17,
+      "text": "A deep Q network (DQN) is a multi-layer neural network that outputs a vector of action-value pairs for a given state s. It is a function that maps a ds-dimensional state space to a da-dimensional action space. Two important features of the DQN algorithm are target network and experience replay (Mnih et al. (2013)). The target network has the same architecture as that of the policy network, and its parameters are copied every \u03c4 steps from the policy network. For experience replay, transition tuples (i.e. (state, action, reward, next state)) are stored in a first-in-first-out memory buffer, and a subset of those tuples, uniformly sampled from the buffer, update the parameters of the policy network."
+    },
+    {
+      "index": 18,
+      "text": "## 3 PROPOSED METHOD\n\nWe propose AUBER, our method for regularizing BERT by automatically learning to prune attention heads from BERT. After presenting the overview of the proposed method in Section 3.1, we describe how we frame the problem of pruning attention heads into a reinforcement learning problem in Section 3.2. Section 3.3 explains how states are represented in AUBER and provides a justification for the process. Section 3.4 describes how AUBER reduces the extremely large search space, and describe the full algorithm."
+    },
+    {
+      "index": 19,
+      "text": "## 3.1 OVERVIEW\n\nhead pruning methods rely on hand-crafted heuristics and hyperparameters, which give sub-optimal results. The goal of AUBER is to automate the pruning process for successful regularization. Designing such regularization method entails the following challenges:"
+    },
+    {
+      "index": 20,
+      "text": "1. Automation. How can we automate the head pruning process for regularization without resorting to sub-optimal heuristics?"
+    },
+    {
+      "index": 21,
+      "text": "2. State representation. When automating the regularization process as a reinforcement learning problem, how can we represent the state of BERT in a way useful for the pruning?"
+    },
+    {
+      "index": 22,
+      "text": "3. Action search space scalability. BERT has many parameters and attention heads in each layer. How can we handle prohibitively large action search space for pruning?"
+    },
+    {
+      "index": 23,
+      "text": "We propose the following main ideas to address the challenges:\n\n3\n\nUnder review as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 24,
+      "text": "1. Regularization with reinforcement learning (Section 3.2). We exploit reinforcement learning, specifically DQN, with accuracy enhancement as reward. DQN has shown a superior performance for many tasks, and is a natural choice for model-free and off-policy learning (Sutton & Barto (2018)), which is exactly our setting. Experience replay also allows efficient usage of previous experiences and stable convergence (Mnih et al. (2013))."
+    },
+    {
+      "index": 25,
+      "text": "2. L1 norm of value matrix as state representation (Section 3.3). We use L1 norm of value matrix of each attention head to represent the state of a layer. When a head is pruned, the corresponding value is set to 0."
+    },
+    {
+      "index": 26,
+      "text": "3. Dually-greedy search space pruning (Section 3.4). To reduce the search space, we use two greedy methods: 1) we prune layer-by-layer, and an action is performed only within a layer, and 2) in each layer, we prune one attention head at a time to reduce the search space."
+    },
+    {
+      "index": 27,
+      "text": "- 3.2 AUTOMATED REGULARIZATION WITH REINFORCEMENT LEARNING\n\nAUBER leverages reinforcement learning for efficient search of regularization strategy without relying on heuristics. We exploit DQN among various reinforcement learning frameworks which have shown a superior performance in model-free and off-policy environment. The overall flow is described in Figure 2. In this section, we introduce the detailed setting of our reinforcement learning framework."
+    },
+    {
+      "index": 28,
+      "text": "Initial state. Each layer of BERT has multiple attention heads, each of which has its own query, key, and value matrices. For layer l of BERT, we derive the initial state sl using L1 norm of the value matrix of each attention head. Further details for this computation is elaborated in Section 3.3."
+    },
+    {
+      "index": 29,
+      "text": "Action. The action space a of AUBER is discrete. For a BERT model with H attention heads per layer, the number of possible actions is H + 1 (i.e. a \u2208{1, 2, . . . , H, H + 1}). When the action a = i \u2208{1, 2, . . . , H \u2212 1, H} is chosen, the corresponding i[th] attention head is pruned. The action a = H + 1 signals the DQN agent to quit pruning. To facilitate exploration via off-policy learning, actions are chosen in a decaying-epsilon-greedy manner: the agent chooses a random action with probability \u03f5 that decays over time or otherwise selects an action based on the current policy, where"
+    },
+    {
+      "index": 30,
+      "text": "\u03f5 = \u03f5final +[\u03f5][initial][ \u2212][\u03f5][f][inal] (3) e[s/\u03f5][decay]\n\nHere, s is the total number of actions taken by the agent up to the current episode, \u03f5initial is the starting value of \u03f5 (i.e. when s = 0), \u03f5final is the value that \u03f5 converges to as s \u2192\u221e, and \u03f5decay is a hyperparameter that adjusts the rate of decay of \u03f5."
+    },
+    {
+      "index": 31,
+      "text": "Next State. After the i[th] head is pruned, the value of i[th] index of sl is set to 0. This modified state is provided as the next state to the agent. This mechanism allows the agent to recognize which attention heads have been pruned and decide the next best pruning policy based on past decisions. When the action a = H + 1, the next state is set to the terminating state which ends an episode."
+    },
+    {
+      "index": 32,
+      "text": "Reward. To evaluate the reward, the training data split into two sets: mini-training set and minidev set. We use the data in mini-training set for fine-tuning and data in mini-dev set for reward evaluation. The reward of AUBER is the change in accuracy"
+    },
+    {
+      "index": 33,
+      "text": "\u2206acc = current accuracy \u2212 prev ~~a~~ ccuracy, (4) where current ~~a~~ ccuracy is the accuracy of the current BERT model evaluated on the mini-dev set, and prev ~~a~~ ccuracy is the accuracy obtained from the previous state or the accuracy of the original BERT model if no attention heads are pruned."
+    },
+    {
+      "index": 34,
+      "text": "If we set the reward simply as current ~~a~~ ccuracy, DQN cannot capture the differences among reward values if the changes in accuracy are relatively small. Setting the reward as the change in accuracy has the normalization effect, thus stabilizing the training process of the DQN agent. The reward for action a = H + 1 is a hyper-parameter that can be adjusted to encourage or discourage active pruning. In AUBER, it is set to 0 to encourage the DQN agent to prune only when the expected change in accuracy is positive."
+    },
+    {
+      "index": 35,
+      "text": "Fine-tuning. After the best pruning policy for layer l of BERT is found, the BERT model pruned according to the best pruning policy is fine-tuned with a smaller learning rate. This fine-tuning step is crucial since it adjusts the weights of remaining attention heads to compensate for the information lost due to pruning. Then, the initial state of the layer l + 1 is calculated and provided to the agent. Since frequent fine-tuning may lead to overfitting, we separate the training dataset into two: a mini-"
+    },
+    {
+      "index": 36,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2021\n\nvalidation dataset and a mini-training dataset. The mini-validation dataset is the dataset on which the pruned BERT model is evaluated on to return a reward. After the optimal pruning policy is determined by using the mini-validation dataset, the mini-training dataset is used to fine-tune the pruned model. When all layers are pruned by AUBER, the final model is fine-tuned with the entire training dataset with early stopping."
+    },
+    {
+      "index": 37,
+      "text": "## 3.3 STATE REPRESENTATION\n\nThe initial state sl of layer l of BERT is computed through the following procedure. We first calculate the L1 norm of the value matrix of each attention head. Then, we standardize the norm values to have a mean \u00b5 = 0 and a standard deviation \u03c3 = 1. Finally, the softmax function is applied to the norm values to yield sl. The justification of using L1 norm is given by Theorem 1 (proof in Appendix A.1) that L1 norm of the value matrix of a head bounds the L1 norm of its output matrix, which implies the importance of the head in the layer."
+    },
+    {
+      "index": 38,
+      "text": "Theorem 1. For a layer with H heads, let N be the number of tokens in the sentence and m, n, and d be the value, query, and embedding dimension respectively. Let Q, K, V \u2208 R[N][\u00d7][d] be the input query, key, and value matrices, and Wi[Q][,][ W][ K] i[, and][ W][ V] i be the weight parameters of the i[th] head such that Wi[Q][, W][ K] i \u2208 R[d][\u00d7][n] and Wi[V] \u2208 R[d][\u00d7][m] . Let Oi be the output of the i[th] head. Then, \u2225Oi\u22251 \u2264 C\u2225Wi[V][\u2225][1][where the constant][ C][=][ N][\u2225][V][ \u2225][1][.] \u25a1"
+    },
+    {
+      "index": 39,
+      "text": "Algorithm 1: AUBER: Automatic BERT Regularization\n\nInput : A BERT model Bt fine-tuned on task t, # L of layers in BERT model, # H of attention heads per layer of BERT model, and # E of episodes. Output: Regularized Bt. 1 for l \u2190 1 to L do 2 Initialize policy network P and replay memory M 3 for e \u2190 1 to E do 4 Bt[\u2217][\u2190][copy][(][B][t][)] 5 sl \u2190 Bt[\u2217][.state] ~~v~~ ector(l) 6 prev accuracy \u2190 eval(Bt[\u2217][)] 7 while action \u2215= H + 1 do 8 if Bt[\u2217][.one] ~~h~~ ead left then 9 action \u2190 H + 1 10 else 11 action \u2190 P.choose action(sl) 12 end 13 if action = H + 1 then 14 s[\u2217] l[\u2190][Terminal State] 15 reward \u2190 0 16 else 17 Bt[\u2217][.prune] ~~h~~ ead(action) 18 s[\u2217] l[\u2190][copy][(][s][l][)] 19 s[\u2217] l[[][action][]][ \u2190][0] 20 current ~~a~~ ccuracy \u2190 eval(Bt[\u2217][)] 21 reward \u2190 current ~~a~~ ccuracy \u2212 prev accuracy 22 prev ~~a~~ ccuracy \u2190 current ~~a~~ ccuracy 23 end 24 M.push(sl, action, s[\u2217] l[, reward][)] 25 sl \u2190 s[\u2217] l 26 end 27 P.optimize(M ) 28 end 29 Bt.prune(P.final ~~p~~ olicy(l)) 30 Bt.finetune() 31 end"
+    },
+    {
+      "index": 40,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2021\n\n## 3.4 DUALLY-GREEDY SEARCH SPACE PRUNING\n\nThe total number of attention heads in 12-layer BERT is 144, when 12 attention heads are used. Naively designing actions would lead to 2[144] possible actions which are prohibitively large. Our idea to reduce the search space is dually-greedy pruning: we prune layer-by-layer in a greedy manner (from lower to upper layers), and in each layer we greedily prune 1 attention head at a time."
+    },
+    {
+      "index": 41,
+      "text": "For each layer l with H attention heads, the agent receives an initial layer embedding sl which encodes useful characteristics (l1 norm of the attention heads) of this layer. Then, the agent outputs the index of an attention head that is expected to increase the training accuracy when removed. After an attention head i is pruned, the value of the i[th] index of sl is set to 0, and it is provided as the next state to the agent. This process is repeated until the action a becomes H + 1. The model pruned up to layer l is fine-tuned on the training dataset, and a new initial layer embedding sl+1 is calculated"
+    },
+    {
+      "index": 42,
+      "text": "Algorithm 1 illustrates the process of AUBER. Algorithm 1 receives a BERT model Bt, which is fine-tuned on a specific task t, and the parameters for BERT and reinforcement learning. The algorithm aims to output the regularized Bt. In line 2, we initialize a policy network P and a replay memory M for layer l. Lines 3-28 train the policy network P for E episodes. For each episode, lines 8-25 choose an action based on the current state vector sl, prune an attention head based on the action, compute the resulting reward and the next state s[\u2217] l[,][and store the transition tuple into] M . This process is repeated until action = H + 1, which indicates the termination of pruning. In line 27, we optimize P with transition tuples sampled from M . Finally, in lines 29-30, we use the trained policy network to find the optimal pruning policy for layer l, prune Bt according to the policy, and finally fine-tune Bt. After pruning a layer l, we proceed to prune the next layer l + 1 up to layer L."
+    },
+    {
+      "index": 43,
+      "text": "## 4 EXPERIMENTS\n\nWe conduct experiments to answer the following questions of AUBER.\n\n- Q1 Accuracy (Section 4.2). Given a BERT model fine-tuned on a specific NLP task, how well does AUBER improve the accuracy of the model?"
+    },
+    {
+      "index": 44,
+      "text": "- Q2 State Representation (Section 4.3). How useful is the L1 norm of the value matrices of attention heads in representing the state of BERT?"
+    },
+    {
+      "index": 45,
+      "text": "- Q3 Order of Processing Layers (Section 4.4). How does the order in which the layers are processed by AUBER affect regularization?"
+    },
+    {
+      "index": 46,
+      "text": "- 4.1 EXPERIMENTAL SETUP\n\nDatasets. We test AUBER on four GLUE datasets (Wang et al. (2019)) - MRPC, CoLA, RTE, and WNLI which contain less than 10,000 training instances; it has been observed that datasets with 10,000 or less training examples often fail in fine-tuning BERT (Devlin et al. (2018); Phang et al. (2018)). Detailed information of these datasets is described in Table 1."
+    },
+    {
+      "index": 47,
+      "text": "Table 1: Datasets.\n\n|dataset|# of classes|# of train|# of dev|\n|---|---|---|---|\n|MRPC1|2|3668|408|\n|CoLA2|2|8551|1043|\n|RTE3|2|2490|277|\n|WNLI4|2|635|71|"
+    },
+    {
+      "index": 48,
+      "text": "> 1 `https://www.microsoft.com/en-us/download/details.aspx?id=52398`\n\n> 2 `https://nyu-mll.github.io/CoLA/`"
+    },
+    {
+      "index": 49,
+      "text": "> 3 `https://aclweb.org/aclwiki/Recognizing_Textual_Entailment`\n\n> 4 `https://cs.nyu.edu/faculty/davise/papers/WinogradSchemas/WS.html`"
+    },
+    {
+      "index": 50,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2021\n\nTable 2: Performance of AUBER and competitors on 4 GLUE tasks. tuning is measured. AUBER gives the best performance for the same number of pruned heads. Bold font indicates the best accuracy among competing pruning methods."
+    },
+    {
+      "index": 51,
+      "text": "||MRPC|CoLA|RTE|WNLI|Average|\n|---|---|---|---|---|---|\n|Original|84.07|57.01|63.54|46.48|62.77|\n|AUBER|85.62\u00b10.51|60.59\u00b10.73|65.34\u00b11.30|56.06\u00b10.63|66.90\u00b10.79|\n|Random|84.02\u00b11.12|57.89\u00b10.90|63.47\u00b11.29|54.08\u00b12.14|64.86\u00b11.36|\n|Confdence|83.70\u00b10.47|57.69\u00b12.19|64.26\u00b11.64|55.77\u00b10.77|65.36\u00b11.27|\n|Michel et al. (2019)|84.22\u00b10.33|58.86\u00b10.64|63.90\u00b10.00|55.21\u00b11.84|65.55\u00b10.70|\n|Voita et al. (2019)|83.92\u00b10.71|55.34\u00b10.81|64.12\u00b11.65|52.96\u00b15.51|64.08\u00b12.17|"
+    },
+    {
+      "index": 52,
+      "text": "BERT Model. We use the pre-trained bert-base-cased model with 12 layers and 12 attention heads per layer provided by huggingface[5] . We fine-tune this model on each dataset mentioned in Table 1 to obtain the initial model. Initial models for MRPC, CoLA, and WNLI are fine-tuned on the corresponding dataset for 3 epochs, and the initial model for RTE is fine-tuned for 4 epochs. The maximum sequence length is set to 128, and the batch size per GPU is set to 32. The learning rate for fine-tuning initial models for MRPC, CoLA, and WNLI is set to 0.00002, and the learning rate for fine-tuning the initial model for RTE is set to 0.00001."
+    },
+    {
+      "index": 53,
+      "text": "Reinforcement Learning. We use a 4-layer feedforward neural network for the DQN agent. The dimensions of input, output, and all hidden layers are set to 12, 13, and 512, respectively. LeakyReLU is applied after all layers except for the last one. We train the DQN agent for 150 episodes. For the epsilon greedy strategy for choosing actions, \u03f5initial and \u03f5final are set to 1 and 0.05 respectively, and the epsilon decreases exponentially with the decay rate \u03f5decay of 256. The replay memory size is set to 5000, and the batch size for training the DQN agent is set to 128. The discount value \u03b3 for the DQN agent is set to 1. The learning rate is set to 0.000002 when fine-tuning BERT after processing a layer. Before processing each layer, the training dataset is randomly split into 1 : 2 to yield a mini-training dataset and a mini-validation dataset. When fine-tuning the final model, the patience value of early stopping is set to 20."
+    },
+    {
+      "index": 54,
+      "text": "Competitors. We compare AUBER with other methods that prune BERT\u2019s attention heads. If AUBER prunes P number of attention heads from BERT, we prune P heads in all the competitors."
+    },
+    {
+      "index": 55,
+      "text": "- Random. Prune attention heads randomly.\n\n- Prune P heads with the smallest confidence score, which is the average of"
+    },
+    {
+      "index": 56,
+      "text": "- the maximum attention weight after a series of forward passes. A high confidence score indicates that the weight is concentrated on a single token."
+    },
+    {
+      "index": 57,
+      "text": "- Michel et al. (2019). Perform a forward and backward pass to calculate gradients and use them to assign an importance score to each attention head."
+    },
+    {
+      "index": 58,
+      "text": "- Voita et al. (2019). Construct a new loss function that minimizes both the classification error and the number of used heads so that unproductive heads are pruned while maintaining the model performance."
+    },
+    {
+      "index": 59,
+      "text": "we prune the attention heads in layer-wise manner and fine-tune the model every layer.\n\nImplementation. We construct all models using PyTorch framework. All the models are trained and tested on a GeForce GTX 1080 Ti GPU."
+    },
+    {
+      "index": 60,
+      "text": "## 4.2 ACCURACY\n\nWe evaluate the performance of AUBER against competitors. Table 2 shows the results on four GLUE datasets listed in Table 1. Note that AUBER outperforms all of its competitors on regularizing BERT, providing the best accuracy for all the datasets. While most of the competitors fail to improve performance of BERT on the dev dataset of MRPC and CoLA, AUBER improves the performance of BERT by up to 9.39% on those datasets."
+    },
+    {
+      "index": 61,
+      "text": "> 5 `https://github.com/huggingface/transformers`\n\n7\n\nUnder review as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 62,
+      "text": "Table 3: We compare AUBER with four variants: AUBER-Query, AUBER-Key, AUBER-L2, and AUBER-Reverse on four GLUE datasets. AUBER-Query and AUBER-Key use the query and key matrices respectively, and AUBER-L2 uses the L2 norm of the value matrix to obtain the initial state. AUBER-Reverse processes BERT starting from the final layer (e.g. 12[th] layer for BERT-base). Bold font indicates the best accuracy among competing pruning methods."
+    },
+    {
+      "index": 63,
+      "text": "|\nitial state. AUBER-Reverse processes BERT s\nERT-base). Bold font indicates the best accuracy|tarting from the fnal layer (e.g. 12th layer fo\namong competing pruning methods.|\n|---|---|\n|(a) MRPC (Accuracy)\nPolicy\n# of heads pruned\ndev\nAUBER\n20\n86.03\nAUBER-Query\n27\n83.33\nAUBER-Key\n42\n84.56\nAUBER-L2\n33\n83.33\nAUBER-Reverse\n58\n86.52\n(c) RTE (Accuracy)\nPolicy\n# of heads pruned\ndev\nAUBER\n87\n66.43\nAUBER-Query\n83\n65.34\nAUBER-Key\n86\n63.18\nAUBER-L2\n61\n66.43\nAUBER-Reverse\n99\n64.62|(b) CoLA (Matthew\u2019s correlation)|\n||Policy\n# of heads pruned\ndev|\n||AUBER\n53\n61.28|\n||AUBER-Query\n72\n55.52\nAUBER-Key\n55\n55.78|\n||AUBER-L2\n63\n54.85|\n||AUBER-Reverse\n57\n59.48|\n||(d) WNLI (Accuracy)|\n||Policy\n# of heads pruned\ndev|\n||AUBER\n86\n56.34|\n||AUBER-Query\n96\n56.34\nAUBER-Key\n101\n56.34|\n||AUBER-L2\n94\n53.52|\n||AUBER-Reverse\n101\n54.93|"
+    },
+    {
+      "index": 64,
+      "text": "4.3 EFFECT OF STATE REPRESENTATION\n\nWe validate that the L1 norm of value matrix of each attention head effectively guides AUBER to predict the best action. Table 3 shows the performances of the variants of AUBER."
+    },
+    {
+      "index": 65,
+      "text": "## 4.3.1 AUBER WITH THE KEY/QUERY MATRICES AS THE STATE VECTOR\n\nAmong the query, key, and value matrices of each attention head, we show that the value matrix best represents the current state of BERT. Here we evaluate the performance of AUBER against AUBER-Query and AUBER-Key. AUBER-Query and AUBER-Key use the query and key matrices respectively to obtain the initial state. Note that AUBER, which uses the value matrix to obtain state vectors, outperforms AUBER-Query and AUBER-Key on all four tasks."
+    },
+    {
+      "index": 66,
+      "text": "## 4.3.2 AUBER WITH L2 NORM OF THE VALUE MATRICES AS THE STATE VECTOR\n\nL1 norm of the value matrices is used to compute the state vector based on the theoretical derivation. In this ablation study, we experimentally show that the L1 norm of the value matrices is appropriate for state vector. We set a new variant AUBER-L2 which leverages L2 norm of the value matrices to compute the initial state vector instead of L1 norm. The performance of AUBER is far more superior than AUBER-L2 in most cases bolstering that L1 norm of the value matrices effectively represents the state of BERT."
+    },
+    {
+      "index": 67,
+      "text": "## 4.4 EFFECT OF ORDER OF PROCESSING LAYERS\n\nmance. We evaluate the performance of AUBER against AUBER-Reverse which processes BERT layers in the opposite direction (i.e. starting from the 12[th] layer) to what AUBER does. As shown in Table 3, AUBER provides a better performance than AUBER-Reverse in 3 out of 4 cases. This shows that pruning lower layers first and then move to upper layers by AUBER is effective. A possible explanation is that it is easier to train task-specific parameters (those in upper layers) after learning general parameters (those in lower layers), rather than that in the reverse order."
+    },
+    {
+      "index": 68,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\n## 5 RELATED WORK\n\nBERT Regularization. To prevent overfitting of BERT on downstream NLP tasks, various regularization techniques have been proposed. Variants of dropout improves the stability of fine-tuning large pre-trained language models even when presented with a small number of training examples (Lee et al. (2020); Fan et al. (2020)). Using slanted triangular learning rate schedule and discriminative fine-tuning has been proven to effectively prevent overfitting (Howard & Ruder (2018)). Jiang et al. (2019) propose SMART, which regularizes the model by smoothing it and preventing aggressive update while Liu et al. (2019) train BERT model with multi-task learning algorithm to remedy overfitting. Introducing adversarial training to enhance the generalization of BERT has been tackled in Zhu et al. (2020). Pre-training tasks have also been changed for a better regularization. Xu et al. (2020) modify the pre-training task, next sentence prediction, to additionally predict previous sentence so that it can capture more correlation. Our method has definite advantages for it can be used along with any of the aforementioned methods."
+    },
+    {
+      "index": 69,
+      "text": "BERT Pruning. A number of studies have analyzed the effectiveness of pruning parameters in BERT. Gordon et al. (2020) experimentally prove overparameterization of BERT by showing that pruning 30 \u2212 40% of parameters does not affect model performance. Chen et al. (2020) find out the best parameter pruning strategy from the viewpoint of the lottery ticket hypothesis while Guo et al. (2019) deploy reweighted L1 regularization with proximal algorithm. However, these methods primarily aim to compress BERT model not to regularize it, and, therefore, no specific method to enhance the model performance has been proposed."
+    },
+    {
+      "index": 70,
+      "text": "Thanks to the unique structure of BERT that consists of multi-headed attention, not only parameter pruning but also structured attention head pruning has been addressed (Voita et al. (2019); Michel et al. (2019); Kovaleva et al.; McCarley (2019)). Michel et al. (2019); Kovaleva et al.; Prasanna et al. (2020) evaluate the role and importance of each attention head by measuring heuristics: the average of its maximum attention weight, where average is taken over tokens in a set of sentences used for evaluation, or the expected sensitivity of the model to attention head pruning. Their results show that a large percentage of attention heads with low importance scores can be pruned without significantly impacting performance. The approach to set L0 regularization term to minimize both the training loss and the number of used attention heads has been also presented (Voita et al. (2019); McCarley (2019)). However, they usually yield suboptimal results since they predetermine the order in which the attention heads are pruned by using heuristics."
+    },
+    {
+      "index": 71,
+      "text": "Automation of Neural Network Pruning To automate the process of Convolutional Neural Network pruning, Lin et al.; He & Han (2018) have leveraged reinforcement learning to determine the best pruning strategy for each layer. Important features that characterize a layer are provided to a reinforcement learning agent to determine how much of the current layer should be pruned. To the best of our knowledge, AUBER is the first attempt to use reinforcement learning to prune attention heads from Transformer-based models such as BERT."
+    },
+    {
+      "index": 72,
+      "text": "## 6 CONCLUSION\n\nWe propose AUBER, an effective method to regularize BERT by automatically pruning attention heads. Instead of depending on heuristics or rule-based policies, AUBER leverages reinforcement learning to learn a pruning policy that determines which attention heads should be pruned for better regularization. Experimental results demonstrate that AUBER effectively regularizes BERT, increasing the performance of the original model on the dev dataset by up to 9.39%. In addition, we experimentally demonstrate the effectiveness of our design choices for AUBER."
+    },
+    {
+      "index": 73,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Tianlong Chen, Jonathan Frankle, Shiyu Chang, Sijia Liu, Yang Zhang, Zhangyang Wang, and Michael Carbin. The lottery ticket hypothesis for pre-trained BERT networks. CoRR, abs/2007.12223, 2020."
+    },
+    {
+      "index": 74,
+      "text": "- Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: pre-training of deep bidirectional transformers for language understanding. CoRR, abs/1810.04805, 2018."
+    },
+    {
+      "index": 75,
+      "text": "- Angela Fan, Edouard Grave, and Armand Joulin. Reducing transformer depth on demand with structured dropout. In ICLR, 2020."
+    },
+    {
+      "index": 76,
+      "text": "- Mitchell A. Gordon, Kevin Duh, and Nicholas Andrews. Compressing BERT: studying the effects of weight pruning on transfer learning. In RepL4NLP@ACL, 2020."
+    },
+    {
+      "index": 77,
+      "text": "- Fu-Ming Guo, Sijia Liu, Finlay S. Mungall, Xue Lin, and Yanzhi Wang. Reweighted proximal pruning for large-scale language representation. CoRR, abs/1909.12486, 2019."
+    },
+    {
+      "index": 78,
+      "text": "- Yihui He and Song Han. ADC: automated deep compression and acceleration with reinforcement learning. CoRR, abs/1802.03494, 2018."
+    },
+    {
+      "index": 79,
+      "text": "- Jeremy Howard and Sebastian Ruder. In ACL, 2018.\n\n- Haoming Jiang, Pengcheng He, Weizhu Chen, Xiaodong Liu, Jianfeng Gao, and Tuo Zhao. SMART: robust and efficient fine-tuning for pre-trained natural language models through principled regularized optimization. CoRR, abs/1911.03437, 2019."
+    },
+    {
+      "index": 80,
+      "text": "- Olga Kovaleva, Alexey Romanov, Anna Rogers, and Anna Rumshisky. Revealing the dark secrets of BERT. In EMNLP-IJCNLP."
+    },
+    {
+      "index": 81,
+      "text": "- Cheolhyoung Lee, Kyunghyun Cho, and Wanmo Kang. Mixout: large-scale pretrained language models. In ICLR, 2020."
+    },
+    {
+      "index": 82,
+      "text": "Ji Lin, Yongming Rao, Jiwen Lu, and Jie Zhou. Runtime neural pruning. In NeurIPS.\n\n- Xiaodong Liu, Pengcheng He, Weizhu Chen, and Jianfeng Gao. Multi-task deep neural networks for natural language understanding. In ACL, 2019."
+    },
+    {
+      "index": 83,
+      "text": "- J. S. McCarley. Pruning a bert-based question answering model. CoRR, abs/1910.06360, 2019.\n\n- Paul Michel, Omer Levy, and Graham Neubig. Are sixteen heads really better than one? In NuerIPS, 2019."
+    },
+    {
+      "index": 84,
+      "text": "- Volodymyr Mnih, Koray Kavukcuoglu, David Silver, Alex Graves, Ioannis Antonoglou, Daan Wierstra, and Martin A. Riedmiller. Playing atari with deep reinforcement learning. CoRR, abs/1312.5602, 2013."
+    },
+    {
+      "index": 85,
+      "text": "- Jason Phang, Thibault F\u00b4evry, and Samuel R. Bowman. Sentence encoders on stilts: Supplementary training on intermediate labeled-data tasks. CoRR, abs/1811.01088, 2018."
+    },
+    {
+      "index": 86,
+      "text": "- Sai Prasanna, Anna Rogers, and Anna Rumshisky. When BERT plays the lottery, all tickets are winning. In EMNLP, 2020."
+    },
+    {
+      "index": 87,
+      "text": "- Richard S. Sutton and Andrew G. Barto. Reinforcement Learning: An Introduction. A Bradford Book, Cambridge, MA, USA, 2018. ISBN 0262039249."
+    },
+    {
+      "index": 88,
+      "text": "- Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In NeurIPS, 2017."
+    },
+    {
+      "index": 89,
+      "text": "- Elena Voita, David Talbot, Fedor Moiseev, Rico Sennrich, and Ivan Titov. Analyzing multi-head self-attention: Specialized heads do the heavy lifting, the rest can be pruned. In ACL, 2019."
+    },
+    {
+      "index": 90,
+      "text": "- Alex Wang, Amanpreet Singh, Julian Michael, Felix Hill, Omer Levy, and Samuel R. Bowman. GLUE: A multi-task benchmark and analysis platform for natural language understanding. In ICLR, 2019.\n\n10"
+    },
+    {
+      "index": 91,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper presents AUBER, a reinforcement learning-based approach to automating the pruning of BERT attention heads for regularization. The methodology of treating pruning as a sequential decision-making process at the layer level is interesting and addresses the search space complexity of pruning combinations. However, the paper contains a significant technical flaw regarding the theoretical justification of its state representation (Theorem 1), where a constant is defined using the term it is supposed to bound. Additionally, the experimental section lacks clarity on whether the reported large performance gains (9.39%) are compared against properly tuned baselines, given that BERT fine-tuning instability on small datasets is a known issue often solved by simple hyperparameter searches.",
+      "comments": [],
+      "cost_usd": 0.0087,
+      "prompt_tokens": 10056,
+      "completion_tokens": 1237
+    },
+    "zero_shot__qwen3-235b-a22b-2507": {
+      "label": "Zero Shot (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents AUBER, a reinforcement learning-based method for automating attention head pruning in BERT to improve regularization, particularly in low-data regimes. The motivation is sound, the approach is innovative, and the experimental evaluation is comprehensive, including ablation studies and comparisons with strong baselines. The method is well-structured, with a clear reinforcement learning setup and justification for key design choices. However, there are a few moderate issues related to reward definition, algorithmic consistency, and theoretical justification that need clarification. While these do not invalidate the core contribution, they affect reproducibility and theoretical soundness. The paper would benefit from tightening the formalism around the reward and final policy extraction.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_0",
+          "title": "Inconsistent reward definition between text and algorithm",
+          "quote": "\u2206acc = current accuracy \u2212 prev ~~a~~ ccuracy, (4)\n...\nreward \u2190 current ~~a~~ ccuracy \u2212 prev accuracy",
+          "explanation": "The paper defines the reward as the change in accuracy (\u0394acc) in Equation (4), which is consistent with Algorithm 1 where reward is computed as the difference between current and previous accuracy. However, the text claims this formulation 'stabilizes the training process' by normalizing small changes\u2014yet in DQN, the reward scale is typically handled via normalization or clipping, not differencing. More critically, the reward in line 21 of Algorithm 1 uses an instantaneous difference, but this creates a non-stationary reward signal: if pruning one head causes a small drop, then pruning another beneficial head later will only get credit for the incremental gain, not the full recovery. This could misattribute credit. The issue is compounded by the fact that the agent receives feedback per head, but the policy is trained to optimize cumulative reward\u2014yet Algorithm 1 does not use discounting (\u03b3=1) or sum rewards. The reward should accumulate or use absolute performance. The text does not clarify whether rewards are cumulative. This discrepancy affects the learning dynamics and makes the agent's objective ambiguous.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_1",
+          "title": "Final policy extraction not specified in algorithm",
+          "quote": "Bt.prune(P.final ~~p~~ olicy(l))",
+          "explanation": "Line 29 of Algorithm 1 calls P.final_policy(l), but the method for extracting the final pruning policy from the trained DQN is not described. The DQN learns a value function for individual actions (prune head i or stop), but pruning multiple heads requires a sequence. The text mentions that pruning stops when action H+1 is taken, but in training, the agent explores different sequences across episodes. The final policy should presumably be the one that maximized cumulative reward in an evaluation run, or a greedy rollout. However, this is not specified. Without knowing how the head removal sequence is determined post-training, the method is underspecified. This is a key step for reproducibility. The paper says the agent 'finds the best pruning policy', but the algorithm does not define what constitutes the 'best' policy\u2014maximum total reward? highest final accuracy? shortest path to optimum?",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_2",
+          "title": "Discount factor \u03b3 = 1 contradicts typical DQN practice and may destabilize learning",
+          "quote": "The discount value \u03b3 for the DQN agent is set to 1.",
+          "explanation": "Setting \u03b3 = 1 in DQN is unusual and potentially problematic, especially in episodic tasks with variable length. A discount factor of 1 implies no preference for immediate rewards and can lead to unbounded Q-values if episodes are long or poorly controlled. In standard RL theory (e.g. Sutton & Barto), \u03b3 < 1 ensures convergence in infinite-horizon settings and stabilizes learning. While finite-horizon tasks can use \u03b3 = 1, here episodes vary in length (depending on when H+1 is chosen), and the reward is small (accuracy change). Combined with no reward normalization, this risks numerical instability. The authors may have intended \u03b3 = 1 to treat all pruning steps equally, but this undermines the temporal credit assignment. The claim that \u03b3=1 is used 'to ensure all steps are equally weighted' is not supported by RL theory; equal weighting is not a standard justification. This choice may affect training stability and performance, especially across layers.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_3",
+          "title": "Theorem 1 contains a likely dimension mismatch and incorrect bound",
+          "quote": "\u2225Oi\u22251 \u2264 C\u2225Wi[V][\u2225][1][where the constant][ C][=][ N][\u2225][V][ \u2225][1][.]",
+          "explanation": "Theorem 1 claims \u2225Oi\u2225\u2081 \u2264 C\u2225Wi[V]\u2225\u2081 with C = N\u2225V\u2225\u2081. But Oi = softmax(QWi[Q](KWi[K])\u1d40/\u221ad_k) (VWi[V]), so its L1 norm depends on matrix products. The L1 norm of a matrix product is not generally bounded by the product of L1 norms in this way. Specifically, \u2225ABC\u2225\u2081 \u2264 \u2225A\u2225\u2081\u2225B\u2225\u2081\u2225C\u2225\u2081 is not valid under standard matrix norms. Moreover, Wi[V] \u2208 \u211d^{d\u00d7m}, while V \u2208 \u211d^{N\u00d7d}, so dimensions don't align in the expression C = N\u2225V\u2225\u2081. Likely intended was the input V after projection, i.e. VWi[V], but even then, the bound is questionable. A valid bound would involve operator norms or Frobenius norms. The theorem appears to confuse element-wise and spectral norms. While the intent\u2014to justify L1 norm of Wi[V] as a proxy for head importance\u2014is reasonable, the derivation lacks rigor and the stated inequality is likely incorrect. This weakens the theoretical justification for the state representation.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_4",
+          "title": "Ambiguity in fine-tuning schedule and data splitting",
+          "quote": "After the optimal pruning policy is determined by using the mini-validation dataset, the mini-training dataset is used to fine-tune the pruned model.",
+          "explanation": "The paper states that the dataset is split 1:2 into mini-training and mini-validation, but doesn't specify whether this split is fixed per layer, sampled anew each episode, or fixed for all episodes. In Algorithm 1, each episode evaluates and prunes independently, so if the split varies per episode, the reward signal becomes noisy due to data variation. If fixed, the agent may overfit to the split. Moreover, the final fine-tuning uses the entire dataset, but earlier fine-tuning uses a subset. This risks inconsistency in model adaptation. The method does not clarify how this affects reproducibility. A reader would not know whether to re-split per episode or keep one split. While this is implementation detail, it affects experimental fairness and should be specified.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0009,
+      "prompt_tokens": 10037,
+      "completion_tokens": 1513
+    },
+    "zero_shot__glm-4.6": {
+      "label": "Zero Shot (glm-4.6)",
+      "model": "z-ai/glm-4.6",
+      "overall_feedback": "The paper presents AUBER, a reinforcement learning approach for pruning BERT attention heads to regularize the model. The core idea is novel and the experimental setup is comprehensive. However, there are several issues that undermine the claims: Theorem 1 appears mathematically incorrect, the claimed 9.39% accuracy improvement is not supported by the presented results, and there are multiple formatting errors that could confuse readers. The method itself shows promise, but the technical inaccuracies need to be addressed.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.6_0",
+          "title": "Incorrect bound in Theorem 1",
+          "quote": "Theorem 1. For a layer with H heads, let N be the number of tokens in the sentence and m, n, and d be the value, query, and embedding dimension respectively. Let Q, K, V \u2208 R[N][\u00d7][d] be the input query, key, and value matrices, and Wi[Q][,][ W][ K] i[, and][ W][ V] i be the weight parameters of the i[th] head such that Wi[Q][, W][ K] i \u2208 R[d][\u00d7][n] and Wi[V] \u2208 R[d][\u00d7][m] . Let Oi be the output of the i[th] head. Then, \u2225Oi\u22251 \u2264 C\u2225Wi[V][\u2225][1][where the constant][ C][=][ N][\u2225][V][ \u2225][1][.] \u25a1",
+          "explanation": "The theorem claims that the L1 norm of a head's output Oi is bounded by the L1 norm of its value matrix Wi[V]. However, in multi-headed attention, the output is computed as Oi = softmax(QiKi^T/\u221an) * Vi, where Vi = input * Wi[V]. The L1 norm of Oi depends not just on Wi[V] but also on the attention weights from the softmax term. The theorem as stated is missing the attention weights in the bound and appears incorrect. The authors should either provide a corrected theorem that accounts for the attention weights, or clarify the assumptions under which this bound holds.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__glm-4.6_1",
+          "title": "Inaccurate accuracy improvement claim",
+          "quote": "Experimental results show that AUBER outperforms existing pruning methods by achieving up to 9.39% better accuracy.",
+          "explanation": "The paper claims up to 9.39% better accuracy, but Table 2 shows different values: MRPC improvement is 1.55 percentage points (1.84% relative), CoLA is 3.58 points (6.28% relative), RTE is 1.8 points (2.83% relative), and WNLI is 9.58 points (20.6% relative). The abstract specifically mentions 'up to 9.39% on those datasets' referring to MRPC and CoLA, but neither reaches 9.39%. This discrepancy undermines the paper's claims and needs correction.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__glm-4.6_2",
+          "title": "Corrupted epsilon decay formula",
+          "quote": "\u03f5 = \u03f5final +[\u03f5][initial][ \u2212][\u03f5][f][inal] (3) e[s/\u03f5][decay]",
+          "explanation": "The epsilon decay formula appears corrupted with formatting issues. It should likely be: \u03f5 = \u03f5final + (\u03f5initial - \u03f5final) * exp(-s/\u03f5decay). As written, the formula is unreadable and could confuse readers trying to implement the method.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_3",
+          "title": "OCR artifacts in text",
+          "quote": "\u2206acc = current accuracy \u2212 prev ~~a~~ ccuracy, (4) where current ~~a~~ ccuracy is the accuracy of the current BERT model evaluated on the mini-dev set, and prev ~~a~~ ccuracy is the accuracy obtained from the previous state",
+          "explanation": "There are OCR artifacts with '~~a~~' appearing instead of 'accuracy' in multiple places. While readable, these artifacts appear throughout the paper and reduce professionalism. They should be cleaned up.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_4",
+          "title": "Inconsistent dimension notation in attention",
+          "quote": "We compute the query, key, and value vectors by multiplying the input embeddings Q, K, V \u2208 R[N][\u00d7][d] with the parameterized matrices W[Q] \u2208 R[d][\u00d7][n] , W[K] \u2208 R[d][\u00d7][n] , and W[V] \u2208 R[d][\u00d7][m] respectively",
+          "explanation": "The paper states W[Q], W[K] \u2208 R[d\u00d7n], W[V] \u2208 R[d\u00d7m], but then later says 'n, m, and d be the value, query, and embedding dimension respectively'. This is inconsistent - if n is the value dimension and m is the query dimension, then W[Q] should be in R[d\u00d7m] and W[V] in R[d\u00d7n]. The standard convention is that query and key have the same dimension, so this needs clarification.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0087,
+      "prompt_tokens": 9633,
+      "completion_tokens": 2616
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper presents a novel approach for BERT head pruning using reinforcement learning, framed as a sequential decision-making process. The methodology is well-documented, and the ablation studies provide clear justifications for the specific design choices. However, there are significant gaps in the mathematical derivation of the state representation, specifically in Theorem 1, and the presentation contains notation inconsistencies that complicate the understanding of the proposed RL formulation.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Mathematical inconsistency in Theorem 1",
+          "quote": "Theorem 1. For a layer with H heads... Let Oi be the output of the i[th] head. Then, \u2225Oi\u22251 \u2264 C\u2225Wi[V][\u2225][1][where the constant][ C][=][ N][\u2225][V][ \u2225][1][.]",
+          "explanation": "The theorem states that the L1 norm of the output is bounded by the L1 norm of the weight matrix $W_i^V$. However, the variables in the constant $C$ are not properly defined. Specifically, the variable 'V' appears in the constant but was previously defined as an input matrix $V \\in R^{N \\times d}$, which depends on the input sequence, not a static property of the head. Furthermore, the tensor dimensions do not align for a standard matrix norm inequality here (the output $O_i$ is $N \\times m$ while $W_i^V$ is $d \\times m$). The dependency of the bound on the input sequence $V$ makes it a poor candidate for a state representation that is supposed to be fixed for a layer. This undermines the theoretical justification for the chosen state representation.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Notation confusion in Reward function",
+          "quote": "\u2206acc = current accuracy \u2212 prev ~~a~~ ccuracy, (4) where current ~~a~~ ccuracy is the accuracy of the current BERT model evaluated on the mini-dev set, and prev ~~a~~ ccuracy is the accuracy obtained from the previous state or the accuracy of the original BERT model if no attention heads are pruned.",
+          "explanation": "The term 'prev accuracy' is overloaded. In a Reinforcement Learning context, defining a reward based on a rolling 'prev accuracy' that also resets/updates based on the previous state creates ambiguity in the credit assignment for the DQN. It is unclear if the agent is being rewarded for the net gain over the original full model or for the localized gain of the current pruning step. This ambiguity makes it difficult to assess if the agent's policy is learning to optimize the final architecture or merely local greedy increments, potentially leading to sub-optimal local minima.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_2",
+          "title": "Inconsistency between algorithm description and pseudocode",
+          "quote": "In line 27, we optimize P with transition tuples sampled from M",
+          "explanation": "The pseudocode in Algorithm 1, lines 3-28, indicates that the policy network $P$ is optimized (line 27) *after* the inner loop over sequences/actions completes for a fixed layer. However, DQN typically requires on-line updates (or batch updates at each step) to ensure the agent learns the relationship between state changes and rewards. The grouping of these updates suggests an offline policy iteration rather than standard deep Q-learning, which is not clearly addressed in the prose and could lead to performance issues that the reader cannot reproduce from the provided description.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0037,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10057,
+      "completion_tokens": 799
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a clear and practically motivated application of reinforcement learning to automate BERT attention head pruning, addressing a genuine need for regularization on small datasets. The methodological pipeline (layer-wise DQN training, delta-accuracy reward, and fine-tuning between layers) is well-structured, and the empirical results are compelling. However, several technical and reproducibility concerns remain. The theoretical justification for the state representation relies on a loosely bounded constant that lacks tightness analysis. The comparative experiments in Table 2 claim a fixed-pruning-head baseline but fail to report the exact number of heads pruned, making the comparison unverifiable. Additionally, the interaction between the mini-dataset split, reward evaluation, and fine-tuning within the RL loop is underspecified in the algorithm description. These issues are localized and fixable, but should be clarified to ensure rigorous reproducibility and accurate interpretation of the theoretical claims.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Theorem 1 bounding constant lacks tightness justification",
+          "quote": "Then, \u2225Oi\u22251 \u2264 C\u2225Wi[V][\u2225][1][where the constant][ C][=][ N][\u2225][V][ \u2225][1][. \u25a1",
+          "explanation": "The authors use Theorem 1 to justify using the L1 norm of the value matrix as a state representation. The constant is given as C = N\u2016V\u2016\u2081. While using the induced L1 norm or entry-wise sums, a factor of N can mathematically arise because softmax attention matrices have row sums equal to 1 (making the induced L\u221e norm 1, but the induced L1 norm can scale with N). However, the bound is quite loose and does not account for the scaling factor 1/\u221an or the specific geometry of Q and K projections. More importantly, the theorem does not explain why the L1 norm of W^V_i correlates with pruning importance rather than just output magnitude. I initially worried this was a derivation error, but recognizing standard matrix norm inequalities, it appears to be a valid but overly pessimistic bound. The authors should clarify the norm type (induced vs. entry-wise) and discuss whether the constant N is practically impactful or merely a theoretical artifact. Severity remains moderate as it affects the theoretical grounding but not the empirical pipeline.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Unverifiable baseline comparison in Table 2",
+          "quote": "Table 2: Performance of AUBER and competitors on 4 GLUE tasks. tuning is measured. AUBER gives the best performance for the same number of pruned heads.",
+          "explanation": "The table caption explicitly states that comparisons are made 'for the same number of pruned heads,' yet neither Table 2 nor the surrounding text reports the fixed pruning count (P) used for any method. Table 3 later reveals that AUBER's variants prune different numbers of heads across tasks (e.g., 20 for MRPC, 87 for RTE), suggesting that pruning counts are task-dependent and not globally fixed. Without knowing the exact P used in Table 2, readers cannot verify the fairness of the comparison or determine whether AUBER's superiority stems from smarter pruning or simply a different pruning budget. This is a significant reproducibility and evaluation clarity issue. The authors should report the exact pruning counts or FLOPs/parameter ratios for all methods in Table 2.",
+          "comment_type": "logical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Underspecified dataset handling during RL training loop",
+          "quote": "The reward of AUBER is the change in accuracy \u2206acc = current accuracy \u2212 prev ~~a~~ ccuracy, (4) where current ~~a~~ ccuracy is the accuracy of the current BERT model evaluated on the mini-dev set... Before processing each layer, the training dataset is randomly split into 1 : 2 to yield a mini-training dataset and a mini-validation dataset.",
+          "explanation": "The text describes using a mini-dev set for reward calculation and a mini-training set for fine-tuning. However, Algorithm 1 only shows a single `eval(Bt[\u2217])` call without specifying which dataset split it uses. During the E episodes of DQN training, does the agent evaluate on the mini-dev set at each step? If so, does fine-tuning occur after each episode or only after the layer's policy is finalized? The description in Section 3.2 and Section 4.1 implies fine-tuning happens after the DQN loop concludes (line 30: `Bt.finetune()`), but the interaction between the 1:2 split, the reward computation, and the episode-level evaluation is ambiguous. A reproducer could easily mishandle the validation/training split, leading to data leakage or unstable reward signals. Clarifying the exact sequence of eval/fine-tune operations within and across layers is necessary.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_3",
+          "title": "Ad-hoc state transformation (standardization + softmax) lacks justification",
+          "quote": "Then, we standardize the norm values to have a mean \u00b5 = 0 and a standard deviation \u03c3 = 1. Finally, the softmax function is applied to the norm values to yield sl.",
+          "explanation": "The authors describe transforming the L1 norms into a state vector via standardization followed by softmax. While standardization mitigates scale drift across layers, applying softmax afterward converts the norms into a probability distribution. This operation heavily suppresses smaller values and amplifies differences, effectively forcing the agent to focus on the single 'largest' norm head. The paper does not explain why this transformation is chosen over simple L1 normalization or direct vector concatenation, nor does it analyze how softmax scaling affects DQN policy convergence. I checked the ablation studies, but they only compare L1 vs L2 norms and Query/Key matrices, not state normalization strategies. This is a minor underspecification; the method works empirically, but the design rationale is opaque and could mislead readers into thinking softmax is theoretically required for head importance ranking.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0081,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10100,
+      "completion_tokens": 6679
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "",
+      "comments": [],
+      "cost_usd": 0.0036,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 9598,
+      "completion_tokens": 8192
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a novel and promising approach to regularize BERT via reinforcement learning-based attention head pruning, which shows significant improvements over existing heuristics on small-data GLUE tasks. The experimental design is thorough, with well-defined baselines and ablation studies. However, there are several inconsistencies that need to be addressed: discrepancies between the stated numerical results in the text and those presented in the tables, a weak theoretical justification for the state representation metric, and an ambiguous mathematical formula in the reinforcement learning setting. Resolving these numerical and logical inconsistencies will strengthen the paper's claims.",
+      "comments": [],
+      "cost_usd": 0.0084,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 19222,
+      "completion_tokens": 19360
+    }
+  }
+}

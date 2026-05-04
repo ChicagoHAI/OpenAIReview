@@ -1,0 +1,988 @@
+{
+  "slug": "iclr2022-JsfFpJhI-learning-identity-preserving-transformations-on-data-manifol",
+  "title": "Learning Identity-Preserving Transformations on Data Manifolds",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## - LEARNING IDENTITY-PRESERVING TRANSFORMA TIONS ON DATA MANIFOLDS"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nMany machine learning techniques incorporate identity-preserving transformations into their models to generalize their performance to previously unseen data. These transformations are typically selected from a set of functions that are known to maintain the identity of an input when applied (e.g., rotation, translation, flipping, and scaling). However, there are many natural variations that cannot be labeled for supervision or defined through examination of the data. As suggested by the manifold hypothesis, many of these natural variations live on or near a lowdimensional, nonlinear manifold. Several techniques represent manifold variations through a set of learned Lie group operators that define directions of motion on the manifold. However theses approaches are limited because they require transformation labels when training their models and they lack a method for determining which regions of the manifold are appropriate for applying each specific operator. We address these limitations by introducing a learning strategy that does not require transformation labels and developing a method that learns the local regions where each operator is likely to be used while preserving the identity of inputs. Experiments on MNIST and Fashion MNIST highlight our model\u2019s ability to learn identity-preserving transformations on multi-class datasets. Additionally, we train on CelebA to showcase our model\u2019s ability to learn semantically meaningful transformations on complex datasets in an unsupervised manner."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nA goal of many machine learning models is to accurately identify objects as they undergo natural transformations \u2013 a task that humans are adept at. According to the manifold hypothesis, natural variations in high-dimensional data lie on or near a low-dimensional, nonlinear manifold (Fefferman et al., 2016). Additionally, the manifolds representing different classes are separated by low density regions (Rifai et al., 2011a). Natural physical laws govern the possible transformations that objects can undergo and many of the identity-preserving transformations (e.g., changes in viewpoint, color, and lighting) are shared among classes of data. Sharing of transformations between classes enables increased efficiency in defining data variations \u2013 a model can represent a limited set of transformations that can describe a majority of variations in many classes. Several machine learning models incorporate specific identity-preserving transformations that are shared among a large number of classes to generalize the performance of their model to unseen data. These include equivariant models that incorporate transformations like translation and rotation into intermediate network layers (Cohen & Welling, 2016; Cohen et al., 2018) and data augmentation techniques that apply known identity-preserving variations to data while training (Cubuk et al., 2019; Ho et al., 2019; Lim et al., 2019; Sohn et al., 2020; He et al., 2020; Chen et al., 2020). However, many datasets have natural transformations shared among classes that are not easily prespecified from intuition, making it critical that we develop a model that can learn both 1) a representation for these transformations without explicit transformation labels and 2) the context for which locations in the data space each transformation is likely to be relevant."
+    },
+    {
+      "index": 3,
+      "text": "Manifold learning strategies estimate the low-dimensional manifold structure of data. A subset of these techniques learn to transform points on the manifold through nonlinear Lie group operators (Rao & Ruderman, 1999; Miao & Rao, 2007; Culpepper & Olshausen, 2009; Sohl-Dickstein et al., 2010; Cohen & Welling, 2014; Hauberg et al., 2016; Connor & Rozell, 2020; Connor et al., 2021). Lie group operators represent infinitesimal transformations which can be applied to data"
+    },
+    {
+      "index": 4,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\nthrough an exponential mapping to transform points along a manifold, and a manifold can be globally defined by a set of operators that each move in different directions along it (Hoffman, 1966; Dodwell, 1983). A Lie group operator model is well-suited for representing natural data variations because the operators can be learned from the data, applied to data points to transform them beyond their local neighborhoods, and used to estimate geodesic paths."
+    },
+    {
+      "index": 5,
+      "text": "While the Lie group operator models have many benefits, previous approaches demonstrate the two shortcomings noted above. First, to learn Lie group operators that represent a data manifold, pairs of training points are selected which lie within a neighborhood of one another. The training objective encourages efficient paths between these nearby points and the choice of training point pairs influences the types of manifold transformations that are learned. Recent papers incorporating Lie group operators into machine learning models have either used predefined operators that represent known transformations groups (e.g., the 3D rotational group _SO_ (3) (Falorsi et al., 2019)), required transformation labels for selecting point pairs when training (Connor & Rozell, 2020), or randomly selected pairs of points from the same class (Connor et al., 2021). To learn an effective model with datasets having no labeled transformation structure, we require a point pair selection strategy that identifies points that are related through the transformations the model aims to learn. Second, existing Lie group operator models have lacked a method for determining which regions of the manifold are appropriate for each operator, meaning that every operator is equally likely to be used at every point on the manifold. This is a flawed assumption because, while many transformations are shared between classes, there are also data variations that are unique to specific data classes. Additionally, in a dataset with several manifolds (each representing a different class), there is a limited extent to which a transformation can be applied without moving a point onto another manifold."
+    },
+    {
+      "index": 6,
+      "text": "The main contributions of this paper are the development of methods to address the two critical shortcomings of Lie group operator-based manifold models noted above. Specifically, motivated by finding perceptually similar training samples without transformation labels, we first introduce a point pair selection strategy to learn a manifold representation of natural variations shared across multiple data classes without requiring transformations labels. Second, we develop a method that uses a pretrained classifier (measuring identity-preservation of transformed samples) to learn the local regions where each operator is likely to be used while preserving the identity of transformed samples. This approach enables us to analyze the local structure of the data manifold in the context of the learned operators and to describe the invariances of the classifier. We demonstrate the efficacy of these strategies in the context of the Manifold Autoencoder (MAE) model (Connor & Rozell, 2020) to learn semantically meaningful transformations on MNIST (LeCun et al., 1998), Fashion MNIST (Xiao et al., 2017), and CelebA (Liu et al., 2015)."
+    },
+    {
+      "index": 7,
+      "text": "## 2 BACKGROUND\n\n**Manifold Learning** Manifold learning models estimate the low-dimensional structure of highdimensional data by utilizing the property that local neighborhoods on the manifold are approximately linear. Traditional techniques represent the manifold through a low-dimensional embedding of the data points (Tenenbaum et al., 2000; Roweis & Saul, 2000; Belkin & Niyogi, 2003; Maaten & Hinton, 2008) or through estimates of linear tangent planes that represent local directions of manifold motion (Doll\u00b4ar et al., 2007; Bengio & Monperrus, 2005; Park et al., 2015). While these traditional manifold learning approaches are useful for understanding low-dimensional data structure, in many cases the input data space is an inefficient representation of the data. For example, data in the pixel space suffers from the curse of dimensionality and cannot be smoothly interpolated while maintaining identity (Bengio et al., 2005). Many approaches have used neural networks to learn a low-dimensional latent space in which manifold models can be incorporated. The contractive autoencoder (CAE) estimates manifold tangents by minimizing the the Jacobian of the encoder network, encouraging invariance of latent vectors to image space perturbations (Rifai et al., 2011c;b;a; Kumar et al., 2017). Several methods estimate geodesic paths in the latent space of a trained variational autoencoder (VAE) model (Arvanitidis et al., 2018; Chen et al., 2018; Shao et al., 2018; Arvanitidis et al., 2019) and use this approach to learn VAEs with priors that are estimated using the Riemannian metrics computed in the latent space (Arvanitidis et al., 2021; Kalatzis et al., 2020)."
+    },
+    {
+      "index": 8,
+      "text": "**Lie Group Operators** A Lie group is a group of continuous transformations which also defines a manifold by representing infinitesimal transformations that can be applied to input data (Hoffman,"
+    },
+    {
+      "index": 9,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\n1966; Dodwell, 1983). Several methods incorporate Lie groups into neural networks to represent data transformations that are identity-preserving within the model (Cohen & Welling, 2014; Cohen et al., 2018; Cosentino et al., 2021). A prevalent strategy is to learn a dictionary of Lie group _\u00b7_ operators that are mapped to a specific group element through the matrix exponential expm( ) (Rao & Ruderman, 1999; Ham & Lee, 2006; Miao & Rao, 2007; Culpepper & Olshausen, 2009; SohlDickstein et al., 2010; Cohen & Welling, 2014; Connor & Rozell, 2020; Connor et al., 2021). In these models, each operator **\u03a8** _m_ , called a _transport operator_ , describes a single direction along the manifold and is parameterized by a single coefficient _cm_ . Given an initial data point **z** , the transport operators define a generative model where transformations can be derived from sampling sparse coefficients _cm \u223c_ Laplace (0 _, \u03b6_ ):"
+    },
+    {
+      "index": 10,
+      "text": "where _\u03f5 \u223cN_ (0 _, \u03c3\u03f5_[2] **[I]**[)][.]\n\nThe manifold autoencoder (MAE) incorporates the transport operator model into the latent space of an autoencoder to learn a dictionary of operators that represent the global, nonlinear manifold structure in the latent space (Connor & Rozell, 2020). This model has been shown to effectively learn reusable operators with transformation supervision, and it will provide the context for demonstrating the effectiveness of the methods developed in this paper."
+    },
+    {
+      "index": 11,
+      "text": "**Disentanglement** One class of methods that also aim to identify factors of variation in data is disentanglement methods which learn features that each vary one independent characteristic of the data (Higgins et al., 2018). In a supervised learning scenario, there are many disentangling techniques that separate data style from content by encouraging similarity between the content features in samples from the same class (Tenenbaum & Freeman, 2000; Reed et al., 2014; Mathieu et al., 2016; Bouchacourt et al., 2018) or encouraging features to map to known class (Cheung et al., 2015) or transformation labels (Hinton et al., 2011; Kulkarni et al., 2015; Yang et al., 2015). There are also techniques that can disentangle latent representations without labels like InfoGAN (Chen et al., 2016) and _\u03b2_ -VAE (Higgins et al., 2017). The goal of our work is distinct from disentanglement work because, rather than identifying independently varying factors of variation, we aim to learn non-linear operators that correspond to transformations on the data manifold (which may not vary independently). Our approach is advantageous because it can faithfully represent longer transformation paths, learn variations while maintaining image reconstruction, and change the number of learned variations by increasing or decreasing the number of learned operators."
+    },
+    {
+      "index": 12,
+      "text": "## 3 METHODS\n\nThe MAE learns a low-dimensional latent representation of the data by defining an encoder function _f_ : _X \u2192Z_ that maps high-dimensional data points **x** _\u2208_ R _[D]_ to low-dimensional latent vectors **z** _\u2208_ R _[d]_ and a decoder function _g_ : _Z \u2192X_ that maps the latent vectors back into the data space (Connor & Rozell, 2020). Transport operators **\u03a8** are incorporated into the latent space to learn manifoldbased transformations. Before learning the transport operators, the autoencoder is pretrained to extract a latent representation of the data using the traditional autoencoder reconstruction objective."
+    },
+    {
+      "index": 13,
+      "text": "After pretraining, the autoencoder weights are fixed and the operators are trained with the following objective, which encourages the learning of transport operators that generate efficient paths between the latent vectors **z** 0 and **z** 1 (coinciding with _f_ ( **x** 0) and _f_ ( **x** 1)) that are nearby on the manifold:"
+    },
+    {
+      "index": 14,
+      "text": "where _\u03b3, \u03b6 >_ 0.\n\nObjective (2) is minimized via an alternating minimization scheme. Specifically, at each training iteration, points pairs **x** 0 and **x** 1 are selected in the input space and encoded into the latent space **z** 0 and **z** 1. Then, coefficients **c** are inferred between the encoded latent vectors (by minimizing (2) with respect to **c** ) to estimate the best path between **z** 0 and **z** 1. After inference, the coefficients are"
+    },
+    {
+      "index": 15,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2022\n\nfixed and a gradient step is taken to minimize (2) with respect to transport operator weights. Once learned, these operators represent different types of motion that traverse the manifold and they can be combined to generate natural paths on the manifold."
+    },
+    {
+      "index": 16,
+      "text": "After fitting transport operators to the latent space of a fixed autoencoder network, there is a final fine-tuning training phase that updates the network weights and transport operators simultaneously using a joint objective that combines the autoencoder reconstruction loss with _L_ \u03a8. This fine-tuning step addresses the potential of a mismatch between the data manifold and the learned latent structure by adapting the latent structure to fit the transport operators learned between the selected training point pairs. We empirically find that breaking up training into these three phases increases the stability with which the transport operators can be learned. Given the context of this MAE model, in the following sections we describe our contributions."
+    },
+    {
+      "index": 17,
+      "text": "## 3.1 UNSUPERVISED TRANSFORMATION LEARNING\n\nThere are many possible strategies for selecting training point pairs for a Lie group operator model and the choice of a strategy can dictate the types of learned transformations. Point pairs may be selected as random samples from the dataset or from within the same class. These points, however, are likely to be outside of local manifold neighborhoods and may not provide representations of the natural, perceptually smooth variations. Point pairs can also be selected as nearest neighbors in the pixel or autoencoder latent space (denoted with _h_ ( **x** ) = **x** and _h_ ( **x** ) = _f_ ( **x** ) in (3), respectively):"
+    },
+    {
+      "index": 18,
+      "text": "However, semantic transformations of interest may not be exhibited through pixel similarity nor through unsupervised autoencoder feature similarity. In some applications there is additional information that can aid in point pair selection, such as rotation angle, semantic label, or time index in a temporal sequence. However, for most complex datasets, information about the transformations of interest is not available. This necessitates a strategy for selecting training point pairs which can be used to learn natural transformations without requiring additional transformation supervision."
+    },
+    {
+      "index": 19,
+      "text": "We generalize transport operator training to incorporate an unsupervised learning strategy that can be applied to a wide array of datasets. In particular, we assume access to a classifier pretrained on a large-scale dataset (likely taken from a model zoo) with similar statistics as our training dataset of interest (Nguyen et al., 2020). In this approach, we select point pairs by setting _h_ ( **x** ) from (3) equal to the penultimate layer of the classifier, similar to the previously proposed perceptual loss (Johnson et al., 2016). It has been shown that high-level features in such classifier networks correspond to semantic characteristics of the data and finding points nearby in this feature space can result in image pairs that are perceptually similar without being exactly the same (Johnson et al., 2016; Yosinski et al., 2015). Incorporating the classifier features as a supervision strategy for point pair selection enables our model to learn transport operators without requiring transformation labels or class labels. We show that this metric leads to learned operators that correspond to semantically identifiable transformations. Discussion of different point pair strategies can be found in Appendix E."
+    },
+    {
+      "index": 20,
+      "text": "## 3.2 LEARNING LOCAL TRANSPORT OPERATOR STATISTICS TO ENCOURAGE IDENTITY PRESERVATION\n\nA trained transport operator model provides a dictionary of operators that can be applied globally across the entire data space. This model has flexibility to define local manifold characteristics through the coefficients **c** which specify the combination of operators to apply to a given point. The standard prior on the coefficients is a factorial Laplace distribution parameterized by a single scale parameter _\u03b6_ , which encourages transformations to be defined by a sparse set of operators:"
+    },
+    {
+      "index": 21,
+      "text": "By setting a fixed prior on coefficients across the entire manifold, there is an implicit assumption that the manifold structure is the same over the whole dataset and every operator is equally likely to be applied at every point. However, this is a flawed assumption because not all transformations"
+    },
+    {
+      "index": 22,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\nin one class of data are present in all other classes and within classes there may be regions with different manifold structure. Failing to capture the local statistics of transport operator usage could result in transformed points that depart from the data manifold and change their identity."
+    },
+    {
+      "index": 23,
+      "text": "To address this limitation, we introduce a coefficient encoder network which maps latent vectors to scale parameters that specify the Laplace distribution on the coefficients at those latent points. The goal of this network is to estimate local coefficient distributions that maximize the identitypreservation of points (as measured by a pretrained classifier) transformed with operators characterized by sampled coefficients as in (1). Given labeled observations ( **z** _, y_ ) and a pretrained classifier to produce augmented sampleson the latent space _r_ ( _\u00b7_ ), we aim to learn a network \ufffd **z** without changing the classifier output _q\u03c6_ ( **c** _|_ **z** ) that outputs parameters that can be used _r_ (\ufffd **z** ) = _y_ ."
+    },
+    {
+      "index": 24,
+      "text": "To maximize the likelihood of augmented input data maintaining the same classifier output, we adapt the concept of consistency regularization from semi-supervised learning (Bachman et al., 2014; Sohn et al., 2020). In our context, we have a pretrained classifier and a dictionary of transport operators and we aim to find a distribution on the coefficients at individual input points that result in consistent classification outputs when _T_ \u03a8( **c** ) is applied. The specific objective can be chosen from a variety of loss functions that encourage similarity in classifier probability outputs. We specifically minimize the KL-divegence between the classifier output\ufffd _r_ ( **z** ) and the estimated probability of the transformed output _r_ ( **z** )."
+    },
+    {
+      "index": 25,
+      "text": "Unfortunately, the consistency regularization objective can be trivially minimized by setting **c** = 0, resulting in an identity transformation and the same classifier output. Therefore, we want to encourage the largest coefficient values possible while maintaining the identity of our initial data point. This motivates the addition of a KL-divergence regularizer that encourages the distribution _q\u03c6_ ( **c** _|_ **z** ) to be similar to a specified Laplace prior with a fixed scale _\u03b6_ like in (4). Our final objective for training the coefficient encoder network is: (a more detailed derivation can be found in Appendix A)"
+    },
+    {
+      "index": 26,
+      "text": "The coefficient encoder introduces a principled way to build identity-preservation directly into our model and to identify local manifold characteristics throughout the latent space. Additionally, it can quantify the extent with which operators can be applied in different parts of the latent space without changing class prediction, indicating transformations to which the classifier is invariant. Likewise, points or region that have small encoded coefficient scale weights indicate closeness to class boundaries and can undergo only small transformations without changing identity."
+    },
+    {
+      "index": 27,
+      "text": "## 3.3 DECREASING COMPUTATIONAL COMPLEXITY OF COEFFICIENT INFERENCE\n\nTo compute the gradient for the matrix exponential during training and inference, previous works have used a linear approximation (Rao & Ruderman, 1999), learned the operators in a factored form (Sohl-Dickstein et al., 2010), or used analytic gradients that are not favorable for parallel computations (Culpepper & Olshausen, 2009; Connor & Rozell, 2020; Connor et al., 2021). The main computational bottleneck for learning transport operators is the coefficient inference step, where (2) is minimized with respect to **c** . The _\u2113_ 1 norm term is non-smooth, leading to slower convergence when using subgradients found via automatic differentiation (Boyd & Vandenberghe, 2004). In this work we employ a forward-backward splitting scheme (Beck & Teboulle, 2009) that alternates between automatic differentiation of the matrix exponential term, and proximal gradients for the _\u2113_ 1 norm (Parikh & Boyd, 2014). This significantly speeds up the training process and allows for scaling up the learning of transport operators to complex datasets. To the best knowledge of the authors, this is the first work to demonstrate learning of Lie group operators on datasets as large and complex as CelebA. Additional details on the inference algorithm are provided in Appendix B."
+    },
+    {
+      "index": 28,
+      "text": "## 4 ANALYSIS\n\nFor our experiments, we examine the ability of our proposed approaches to enable the MAE model to learn natural transformations of datasets where the underlying identity-preserving transformations are not easily identifiable. We also highlight the benefits of incorporating the coefficient encoder network that captures the transport operator local usage statistics by encoding coefficient scale values that best maintain the identity of latent vectors."
+    },
+    {
+      "index": 29,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\nWe work with three datasets: MNIST (LeCun et al., 1998), Fashion MNIST (Xiao et al., 2017), and CelebA (Liu et al., 2015). We select MNIST and Fashion MNIST because they contain several classes that share natural transformations but they do not have transformation labels. We select CelebA to highlight our ability learn natural transformations in a larger, more complex dataset. As a classic dataset used in papers that aim to disentangle dataset features (Higgins et al., 2017; Chen et al., 2016; Hu et al., 2018; Lin et al., 2019), CelebA contains semantically meaningful natural transformations that may be amenable to qualitative labeling."
+    },
+    {
+      "index": 30,
+      "text": "In all experiments, we followed the general training procedure put forth previously (Connor & Rozell, 2020) by separating the network training into three phases: the autoencoder training phase, the transport operator training phase, and the fine-tuning phase. The fine-tuning phase adapts the autoencoder latent space to fit the learned transformations in the event that that pretrained latent space does not match the desired data manifold. We select training point pairs that are nearest neighbors in the feature space of the final, pre-logit layer of a ResNet-18 (He et al., 2015) classifier pretrained on ImageNet (Russakovsky et al., 2015). After completely training the MAE, we fix the autoencoder network weights and transport operator weights and train the coefficient encoder network with the objective derived in Section 3.2. Additional details on the datasets, network architectures, and training procedure are available in the Appendix."
+    },
+    {
+      "index": 31,
+      "text": "We compare against the contractive autoencoder (CAE) (Rifai et al., 2011c) and _\u03b2_ -VAE (Higgins et al., 2017), two other methods for incorporating data structure into the latent space.. The CAE represents another technique that learns a manifold representation in a neural network latent space. In their model, the manifold is represented by estimated tangent planes at latent point locations. The _\u03b2_ -VAE learns to disentangle factors of variation along latent dimensions through an increase in the weighted penalty on the KL-divergence term in the VAE objective. We choose these methods because they also learn natural dataset variations in the latent space without transformation labels."
+    },
+    {
+      "index": 32,
+      "text": "## 4.1 LEARNING NATURAL DATA VARIATIONS\n\nFirst, we show how well the perceptual point pair selection strategy described in Section 3.1 enables the MAE model to learn natural data variations in datasets and we highlight the usefulness of a nonlinear manifold model for generating latent space paths. Fig. 1 shows the paths generated by transport operators trained in this model. The image in the middle column in each block of images is the reconstructed version of the input image **x** 0. The images to the left and right of the middle show the reconstructed images generated by an individual learned operator applied to the encoded latent vector **z** 0: **z** _c_ = expm( **\u03a8** _mc_ ) **z** 0, _c_ = _\u2212Nc, ..., Nc_ . We see an individual operator generates a similar transformation across multiple inputs, and in many cases, the transformations induced by the transport operators are semantically meaningful. We also show that the perceptual point pair selection strategy is effective over a range of datasets."
+    },
+    {
+      "index": 33,
+      "text": "While many of the operators can be assigned a semantic label through qualitative visual inspection, the CelebA dataset has attribute labels for the images which enable a quantitative analysis of the connection between learned transport operators and dataset attributes. To classify attributes, we fine-tune a ResNet-18 pretrained on ImageNet with 16 classification heads for attributes including smile, beard, hair color, and pale skin (Mao et al., 2020). With this classifier, we are able to identify transport operators that correspond to specific dataset attributes. Fig. 2 shows the classification outputs of the attribute classifier for example transport operators. Our model learns operators that vary hair color and skin paleness as well as several others which are shown in the Appendix."
+    },
+    {
+      "index": 34,
+      "text": "In Fig. 1 we compare transport operator paths to those generated by the CAE and the _\u03b2_ -VAE. The CAE-generated paths are the directions of motion on the tangent planes estimated at individual points. The _\u03b2_ -VAE paths are generated by varying the value of one latent dimension while the others remain fixed. While our method and the _\u03b2_ -VAE learn several qualitatively similar transformations, our method is capable of doing so without significantly sacrificing reconstruction performance. In the Appendix, we include examples of the transformations generated by each learned operator."
+    },
+    {
+      "index": 35,
+      "text": "A primary motivation for learning the data manifold is to generate new views of data that cannot arise from pre-defined functions. To highlight the ability of our model to generate new views that preserve identity, we compare both interpolated and extrapolated paths from the MAE to those from the CAE, _\u03b2_ -VAE, and a traditional auto-encoder in Fig. 3. Interpolated paths offer insight in the smooth variations between two data points, while extrapolated paths show the capacity to generate"
+    },
+    {
+      "index": 36,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a)\n(b)\n(c)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 37,
+      "text": "Figure 1: Paths generated by applying a subset of learned transport operators on three datasets. In each figure, images in the middle column of the image block are the reconstructed inputs and images to the right and left are images decoded from transformed latent vectors in positive and negative directions, respectively. (a) Comparing the transformations generated by three learned transport operators to transformations generated by _\u03b2_ -VAE and CAE. The transport operators learn semantically meaningful transformations similar to the disentangled _\u03b2_ -VAE representation while maintaining a higher resolution in image outputs. (b-c) Transport operators learned using the perceptual point pair selection strategy generate natural transformations on both MNIST and Fashion MNIST."
+    },
+    {
+      "index": 38,
+      "text": "(a) (b) Figure 2: Paths generated by the application of two learned transport operators with the associated attribute classifier probability outputs for the transformed images. Our model learns operators that correspond to meaningful CelebA dataset attributes like (a) hair color (b) pale skin."
+    },
+    {
+      "index": 39,
+      "text": "new views of data. For MAE, the paths are estimated by inferring coefficients **c** _[\u2217]_ between two _M_ latent points **z** 0 and **z** 1 and then generating the path: **z** _t_ = expm _m_ =1[\u03a8] _[m][c] m[\u2217][t]_ **z** 0. When \ufffd\ufffd \ufffd the path multiplier _t_ is between 0 and 1 that indicates interpolation and path multipliers beyond 1 indicate extrapolation. For all other methods, Eucilidean distance between features is used for both interpolation and extrapolation. In these figures, the first block of images corresponds to the interpolated path with the selected final point **x** 1 surrounded in an orange box. The second block of images corresponds to the extrapolated paths."
+    },
+    {
+      "index": 40,
+      "text": "To quantify the identity preservation of each transformation, we input each generated image into a pretrained classifier and plot the prediction of the correct class. All four methods perform interpolation effectively but our trained model estimates the extrapolated paths more accurately. Fig. 4 shows how that accuracy varies during extrapolation sequences for 4000 samples. The MAE is better at generating extrapolated outputs that maintain class identity. The lower classification accuracy in fashion MNIST is due to both a more challenging dataset and the lower resolution of autoencoder image outputs when compared to input images."
+    },
+    {
+      "index": 41,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a)\n(b)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 42,
+      "text": "Figure 3: Identity preservation of transformed paths as quantified by a pretrained classifier output. In the figures on the top, the first block of images corresponds to the interpolated path with selected final point **x** 1 surrounded in an orange box. The second block of images corresponds to the extrapolated paths. Below the images are plots of the probability of the class label associated with the inputs **z** 0 and **z** 1. A path multiplier between 0 and 1 indicates interpolation and path multipliers beyond 1 indicate extrapolation. (a) MNIST (b) Fashion MNIST."
+    },
+    {
+      "index": 43,
+      "text": "**----- Start of picture text -----**\n\n(a) (b)\n**----- End of picture text -----**\n\nFigure 4: The average accuracy of the classifier output for images at each point along the interpolation/extrapolation sequence. When the path multiplier is between 0 and 1 that indicates interpolation and path multipliers beyond 1 indicate extrapolation. (a) MNIST (b) Fashion MNIST."
+    },
+    {
+      "index": 44,
+      "text": "## 4.2 LEARNING LOCAL MANIFOLD STRUCTURE\n\nAfter the MAE is trained, we have a dictionary of transport operators that describe manifold transformations and a network with a latent space that is adapted to the manifold. We then train the coefficient encoder network to estimate the coefficient scale weights as a function of points in the latent space. To visualize how the use of the transport operators varies over the latent space, we generate an Isomap embedding (Tenenbaum et al., 2000) of latent vectors and color each point by the encoded scale parameter for coefficients associated with each of the transport operators. Fig. 5a shows these embeddings for MNIST data. Each operator has regions of the latent space where their use is concentrated."
+    },
+    {
+      "index": 45,
+      "text": "By training the coefficient encoder to maximize the similarity between the classification outputs for an input sample and for a transformed version of that sample, the network aids in identifying which transport operators can be applied to inputs in regions of the data space without changing the identity of the input. This helps significantly with data augmentation where the goal is to create new samples with in-class variations. To highlight this benefit, in Fig. 6 we show samples augmented by applying transport operators with randomly sampled coefficients to an input latent vector. In each block of images, the leftmost image (in a green box) is the input image and the images to the right are decoded augmentations. The top row shows samples augmented with transport operators controlled by coefficients sampled from Laplace distributions with encoded coefficient scale weights. The bottom row shows samples augmented with transport operators controlled by coefficients sampled from Laplace distributions with a fixed scale parameter. While both strategies generate some realistic variations of the data, using the encoded scale weights improves identity-preservation of the transformed output. The augmentations with the encoded scale weights are better at maintaining the identity of the sampled points."
+    },
+    {
+      "index": 46,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a) (b)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 47,
+      "text": "Figure 5: (a) Visualizations of the encoded coefficient scale weights. The leftmost image shows an Isomap embedding of the latent vectors with input images overlaid. The scatter plots on the right show the same Isomap embedding colored by the encoded coefficient scale weights for several operators (yellow indicates large scale weights and blue small scale weights). We see operators whose use is localized in regions of the manifold space. (b) The average coefficient scale weights for each class on each transport operator for MNIST. High scale weights for a given operator (yellow) indicate it can be applied to a given class without easily changing identity. The images on the right show examples of the operators applied to classes with high encoded scale weights (in the top yellow boxes) and classes with low encoded scale weights (in bottom blue boxes). The examples with low coefficient scale weights change classes more easily than other examples."
+    },
+    {
+      "index": 48,
+      "text": "Figure 6: Examples of samples generated by transport operators using coefficients sampled with encoded scale weights (top row) and with a fixed scale weight (bottom row). Images in the green box are the input images and the remaining images in each row are transformed outputs."
+    },
+    {
+      "index": 49,
+      "text": "Because the coefficient encoder uses a pretrained classifier to determine the coefficient distributions in the latent space, the resulting encoded scale weights can inform about the types of manifold transformations the classifier is invariant to. Fig. 5b shows the average coefficient scale weights for each class (rows) and each transport operator (columns) for MNIST. From this we can identify classes for which the classifier is both sensitive and robust to transformations, represented by small and large scale weights respectively. We can also examine which classes share the use of the same transformations. The images to the right in Fig. 5b show transport operators being applied to samples with high encoded scale weights (in a yellow box) and samples with low encoded scale weights (in a blue box). We can examine the characteristics of transformations that are better suited to some classes than others. For instance, operator 3 in Fig. 5b increases the curve at the bottom of digits. This is a natural transformation for classes 3, 5, and 6 which all have higher coefficient scale weights for this operator, but when this is applied to a 1, that makes it look like an 8."
+    },
+    {
+      "index": 50,
+      "text": "## 5 CONCLUSION\n\nIn this work we develop methods to improve the effectiveness and utility of Lie group operator models for learning manifold representations of datasets with complex transformations that cannot be labeled. We do this by introducing a perceptual point pair selection strategy for training operators and by developing a method that uses a pretrained classifier to learn local regions where operators are likely to be used while preserving the identity of transformed samples. We demonstrate the efficacy of our approach in learning natural dataset variations with the MAE. While this is a powerful model, users should be mindful of the biases that are introduced through training with specific supervision methods when drawing conclusions about learned data transformations. This work presents a promising technique for learning representations of natural data variations that can improve model robustness. In future work we can address some limitations by expanding this work to consider methods for localizing manifold structure with limited or no class labels and improving the reconstruction fidelity by applying the model within more complex generative model embeddings."
+    },
+    {
+      "index": 51,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n## REFERENCES\n\nGeorgios Arvanitidis, Lars Kai Hansen, and S\u00f8ren Hauberg. Latent space oddity: on the curvature of deep generative models. In _International Conference on Learning Representations_ , 2018."
+    },
+    {
+      "index": 52,
+      "text": "- Georgios Arvanitidis, Soren Hauberg, Philipp Hennig, and Michael Schober. Fast and robust shortest paths on manifolds learned from data. In _The 22nd International Conference on Artificial Intelligence and Statistics_ , pp. 1506\u20131515. PMLR, 2019."
+    },
+    {
+      "index": 53,
+      "text": "- Georgios Arvanitidis, Bogdan Georgiev, and Bernhard Sch\u00a8olkopf. A prior-based approximate latent riemannian metric. _arXiv preprint arXiv:2103.05290_ , 2021."
+    },
+    {
+      "index": 54,
+      "text": "Philip Bachman, Ouais Alsharif, and Doina Precup. Learning with pseudo-ensembles. _arXiv preprint arXiv:1412.4864_ , 2014."
+    },
+    {
+      "index": 55,
+      "text": "- Amir Beck and Marc Teboulle. A Fast Iterative Shrinkage-Thresholding Algorithm for Linear Inverse Problems. _SIAM Journal on Imaging Sciences_ , 2(1):183\u2013202, January 2009. ISSN 1936-4954. doi: 10.1137/080716542. URL http://epubs.siam.org/doi/10.1137/ 080716542."
+    },
+    {
+      "index": 56,
+      "text": "Mikhail Belkin and Partha Niyogi. Laplacian eigenmaps for dimensionality reduction and data representation. _Neural computation_ , 15(6):1373\u20131396, 2003."
+    },
+    {
+      "index": 57,
+      "text": "- Yoshua Bengio and Martin Monperrus. Non-local manifold tangent learning. _Advances in Neural Information Processing Systems_ , 17:129\u2013136, 2005."
+    },
+    {
+      "index": 58,
+      "text": "- Yoshua Bengio, Olivier Delalleau, and Nicolas Le Roux. The curse of dimensionality for local kernel machines. _Techn. Rep_ , 1258:12, 2005."
+    },
+    {
+      "index": 59,
+      "text": "- Diane Bouchacourt, Ryota Tomioka, and Sebastian Nowozin. Multi-level variational autoencoder: Learning disentangled representations from grouped observations. In _AAAI Conference on Artificial Intelligence_ , volume 32, 2018."
+    },
+    {
+      "index": 60,
+      "text": "- Stephen P. Boyd and Lieven Vandenberghe. _Convex optimization_ . Cambridge University Press, Cambridge, UK ; New York, 2004. ISBN 978-0-521-83378-3."
+    },
+    {
+      "index": 61,
+      "text": "- Nutan Chen, Alexej Klushyn, Richard Kurle, Xueyan Jiang, Justin Bayer, and Patrick Smagt. Metrics for deep generative models. In _International Conference on Artificial Intelligence and Statistics_ , pp. 1540\u20131550. PMLR, 2018."
+    },
+    {
+      "index": 62,
+      "text": "- Ting Chen, Simon Kornblith, Mohammad Norouzi, and Geoffrey Hinton. A simple framework for contrastive learning of visual representations, 2020."
+    },
+    {
+      "index": 63,
+      "text": "- Xi Chen, Yan Duan, Rein Houthooft, John Schulman, Ilya Sutskever, and Pieter Abbeel. Infogan: Interpretable representation learning by information maximizing generative adversarial nets, 2016."
+    },
+    {
+      "index": 64,
+      "text": "- Brian Cheung, Jesse A. Livezey, Arjun K. Bansal, and Bruno A. Olshausen. Discovering hidden factors of variation in deep networks. In Yoshua Bengio and Yann LeCun (eds.), _International Conference on Learning Representations, ICLR Workshop Track Proceedings_ , 2015."
+    },
+    {
+      "index": 65,
+      "text": "- Taco Cohen and Max Welling. Learning the irreducible representations of commutative lie groups. In _International Conference on Machine Learning_ , pp. 1755\u20131763. PMLR, 2014."
+    },
+    {
+      "index": 66,
+      "text": "- Taco Cohen and Max Welling. Group equivariant convolutional networks. In _International conference on machine learning_ , pp. 2990\u20132999. PMLR, 2016."
+    },
+    {
+      "index": 67,
+      "text": "- Taco S Cohen, Mario Geiger, Jonas K\u00a8ohler, and Max Welling. Spherical cnns. In _International Conference on Learning Representations_ , 2018."
+    },
+    {
+      "index": 68,
+      "text": "Marissa Connor and Christopher Rozell. Representing closed transformation paths in encoded network latent space. In _AAAI Conference on Artificial Intelligence_ , volume 34, pp. 3666\u20133675, 2020.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes an unsupervised learning framework for Lie group operators on data manifolds, utilizing a pretrained classifier for perceptual point-pair selection and a coefficient encoder to learn local operator statistics for identity-preserving transformations.\n\nThe paper presents a clever approach to unsupervised manifold transformation learning by bridging the gap between Lie group operators and perceptual loss. It successfully demonstrates the ability to learn semantically meaningful transformations on complex datasets like CelebA. The methodology is well-structured and the empirical results provide strong evidence for the effectiveness of the proposed local coefficient scaling.\n\nOverview issues:\n\n- Reliance on Pretrained Classifier for Identity Definition: The methodology in Section 3.1 and 3.2 relies heavily on a pretrained classifier (ResNet-18) to define both the perceptual similarity for point-pair selection and the identity-preservation constraint. This introduces a significant confounding factor: the learned transformations are not necessarily intrinsic to the data manifold but are instead reflections of the biases and invariances of the specific classifier used. The paper should explicitly address how the choice of the pretrained model affects the learned operators. Providing an ablation study where the classifier architecture or the training dataset (e.g., using a different model zoo) is varied would clarify whether these operators are generalizable or specific to the ResNet-18 ImageNet features.\n\n- Lack of Theoretical Convergence for Alternating Minimization: Section 3 describes a three-phase training process involving alternating minimization between operator weights and coefficient inference. While the authors empirically observe stability, there is no discussion regarding the convergence properties of this objective, particularly given the non-convexity of the matrix exponential mapping. The objective in Equation 2 includes an L1 penalty and a matrix exponential, which can lead to unstable gradients if the manifold is not well-behaved. Including a brief analysis or a discussion on the conditions under which this optimization is guaranteed to reach a stable fixed point would strengthen the theoretical foundation of the work.\n\n- Ambiguity in Manifold Structure Assumptions: The paper assumes that data lies on a low-dimensional manifold, but the introduction of the coefficient encoder suggests that the manifold may be highly non-uniform or potentially a union of disjoint manifolds. In Section 3.2, the use of a coefficient encoder to learn local statistics implies that the global Lie group approximation may be insufficient. The paper does not clearly distinguish between cases where the manifold is globally smooth versus instances where the 'identity' is defined by class boundaries that the transformation should not cross. A more rigorous definition of the manifold assumption\u2014specifically addressing how the model handles class-to-class boundary crossings\u2014would clarify the scope of the method's applicability.\n\n- Computational Scalability and Inference Bottlenecks: While Section 3.3 introduces a forward-backward splitting scheme to improve the coefficient inference step, the paper lacks a quantitative analysis of the computational overhead compared to standard augmentation techniques. As the number of operators (M) increases, the cost of computing the matrix exponential and the proximal gradient steps may become prohibitive for larger latent dimensions. Providing a scalability analysis, such as a plot of training time versus the number of latent dimensions or operators, would be beneficial for practitioners looking to scale this to higher-dimensional latent spaces.\n\n- Need for a formal definition of the identity-preservation metric: The paper relies on a pretrained classifier to define identity preservation, but it does not formally define what constitutes a 'successful' identity-preserving transformation in terms of the classifier's output. Specifically, it is unclear if the model requires the top-1 prediction to remain invariant or if the entire probability distribution must stay within a specific KL-divergence threshold. To make this contribution rigorous, the authors should define a formal 'identity-preservation score' based on the classifier's output and provide a sensitivity analysis showing how this score behaves as the transformation magnitude increases. This would allow readers to distinguish between 'near-identity' transformations and those that drift toward class boundaries.\n\n- Lack of a non-vacuous example showing failure of identity preservation: The paper demonstrates successful identity preservation but does not provide a concrete example of a Data Generating Process (DGP) or a specific transformation where the model's identity-preservation constraint is violated. A non-vacuous result would show a case where the model correctly identifies that a transformation would change the object's identity (e.g., a transformation that moves a digit '3' toward the manifold of a digit '8') and consequently constrains the coefficient scale to zero. Adding a synthetic experiment, such as a controlled morphing between two distinct MNIST digits, would demonstrate that the coefficient encoder is actually performing identity-preservation rather than simply learning a generic smoothness prior.\n\n- Missing comparison to an ablation with a random point-pair selection: The paper claims that the perceptual point-pair selection strategy is a key contribution, but it does not provide a direct quantitative comparison against a baseline that uses random point-pair selection within the same MAE framework. To justify the complexity of the perceptual selection, the authors should report the identity-preservation accuracy and reconstruction quality for a model trained with random pairs versus the proposed perceptual method. This comparison is necessary to verify that the improvement in transformation quality is indeed due to the perceptual metric rather than just the underlying MAE architecture.\n\nRecommendation: minor revision. The paper is well-motivated and provides convincing empirical results, but it requires further clarification on the dependency on pretrained models and the theoretical stability of the training process. Addressing these points will significantly improve the paper's robustness and reproducibility.\n\nRevision targets:\n\n- Include an ablation study varying the pretrained classifier architecture to demonstrate the sensitivity of the learned transformations to the choice of the perceptual feature extractor.\n\n- Provide a brief analysis or discussion on the convergence properties of the three-phase training objective, specifically addressing the stability of the matrix exponential optimization.\n\n- Include a scalability analysis (e.g., training time vs. number of operators) to better characterize the computational cost of the forward-backward splitting scheme.\n\n- Clarify the handling of class boundaries in the manifold assumption to explain how the model prevents identity-changing transformations in dense, multi-class regions.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Logical contradiction in identity-preservation claim",
+          "quote": "For instance, operator 3 in Fig. 5b increases the curve at the bottom of digits. This is a natural transformation for classes 3, 5, and 6 which all have higher coefficient scale weights for this operator, but when this is applied to a 1, that makes it look like an 8.",
+          "explanation": "The paper claims the coefficient encoder identifies which operators can be applied without changing identity. However, the example provided shows the model applying a transformation that turns a 1 into an 8. If the encoder is functioning as intended, the scale weight for this operator should be near zero for the 1 class. This example suggests the model fails to prevent identity-changing transformations, which contradicts the stated goal of the coefficient encoder. Please clarify whether this is a failure case or if the model's identity-preservation constraint is less restrictive than implied.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency regarding the necessity of transformation labels",
+          "quote": "However, many datasets have natural transformations shared among classes that are not easily prespecified from intuition, making it critical that we develop a model that can learn both 1) a representation for these transformations without explicit transformation labels and 2) the context for which locations in the data space each transformation is likely to be relevant.",
+          "explanation": "The introduction claims that a critical goal is to learn transformations without explicit transformation labels. It then states that previous work by Connor and Rozell (2020) required transformation labels for selecting point pairs when training. This is factually incorrect; the Manifold Autoencoder (MAE) framework by Connor and Rozell (2020) is an unsupervised approach that uses latent space proximity, not transformation labels. Please correct this characterization of the baseline method.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Contradiction regarding class label usage",
+          "quote": "In future work we can address some limitations by expanding this work to consider methods for localizing manifold structure with limited or no class labels",
+          "explanation": "The conclusion frames the need for methods that work with limited or no class labels as a future limitation. However, Section 3.1 claims the proposed method already learns representations without requiring transformation labels or class labels. If the current method is already label-agnostic, this framing is contradictory. Please clarify whether the coefficient encoder requires class labels or if this is a misstatement of the current capabilities.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inaccurate description of CAE objective",
+          "quote": "The contractive autoencoder (CAE) estimates manifold tangents by minimizing the the Jacobian of the encoder network, encouraging invariance of latent vectors to image space perturbations",
+          "explanation": "The description of the Contractive Autoencoder (CAE) is technically imprecise. The CAE objective minimizes the Frobenius norm of the Jacobian of the encoder mapping, not the Jacobian matrix itself. Minimizing the matrix would force the encoder to be a constant function, collapsing the representation. Please revise this to clarify that the Frobenius norm of the Jacobian is the target of the penalty.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Ambiguity in path generation formula",
+          "quote": "For MAE, the paths are estimated by inferring coefficients  $\\mathbf{c}^*$  between two latent points  $\\mathbf{z}_0$  and  $\\mathbf{z}_1$  and then generating the path:  $\\mathbf{z}_t = \\m",
+          "explanation": "The formula suggests the path is a single geodesic generated by a linear combination of generators. If the manifold is highly non-linear or consists of multiple disjoint components, a single matrix exponential may not be sufficient to traverse the space between two arbitrary points. Please clarify the assumption regarding the path geometry and whether the sum inside the exponential is intended to represent a single Lie group element.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistent notation for latent space transformation",
+          "quote": "The images to the left and right of the middle show the reconstructed images generated by an individual learned operator applied to the encoded latent vector $\\mathbf{z}_{0}$: $\\mathbf{z}_{c}=\\mathrm{expm}(\\mathbf{\\P",
+          "explanation": "The notation Psi_m * c is dimensionally inconsistent if Psi_m is a matrix and c is a scalar. Typically, the Lie group operator is defined as expm(c * Psi_m), where c scales the generator matrix. Please adjust the order to expm(c * Psi_m) to align with standard Lie algebra conventions.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.0819,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a method to learn identity-preserving transformations on data manifolds using Lie group operators within a Manifold Autoencoder framework. The approach introduces a perceptual point-pair selection strategy and a coefficient encoder network that leverages a pretrained classifier to learn local operator usage statistics. While the idea of combining manifold learning with consistency regularization is interesting, the methodology relies heavily on an external classifier for both training and evaluation. This creates a circular dependency that limits the paper's claim of learning intrinsic data variations. Several technical details require clarification, and the experimental validation lacks quantitative benchmarks necessary for a complete assessment.\n\nThe paper addresses a relevant problem in self-supervised representation learning by attempting to learn semantic transformations without explicit labels. The integration of Lie group operators into a latent autoencoder space is a solid foundation, and the coefficient encoder network offers a practical way to model local manifold statistics. The qualitative results on MNIST and CelebA demonstrate that the model can generate semantically plausible paths. However, the heavy reliance on a pretrained classifier and the absence of rigorous quantitative metrics weaken the overall contribution.\n\nOverview issues:\n\n- Circular evaluation metric and classifier bias: The coefficient encoder network is explicitly trained to maximize the similarity between the classifier outputs of an input and its transformed version (Section 3.2). The primary quantitative metric for identity preservation in Section 4.1 is the accuracy of that same pretrained classifier along the generated paths. This creates a circular evaluation where the model is optimized and measured against the exact same biased proxy. The classifier likely captures superficial features rather than true semantic identity, meaning the model may be preserving the classifier's decision boundary rather than the data's intrinsic manifold structure. The authors should decouple the evaluation metric from the training supervision by introducing ground-truth transformation labels, human evaluation, or an independent metric like FID or LPIPS to validate true identity preservation.\n\n- Mathematical ambiguity in the consistency objective: Equation (5) in Section 3.2 defines the objective using a KL divergence term $D_{KL}(r(\\mathbf{z})\\|r(\\widehat{\\mathbf{z}}))$. Standard consistency regularization typically employs mean squared error or cross-entropy loss between probability vectors. Using KL divergence between two point estimates is non-standard and requires clarification. The authors must specify whether they treat the softmax outputs as categorical distributions, or if they sample multiple coefficients from $q_\\phi(\\mathbf{c}|\\mathbf{z})$ to form a distribution over transformed points before computing the divergence. Without this clarification, the objective is mathematically ambiguous and the implementation details are insufficient for reproducibility.\n\n- Absence of quantitative reconstruction and generation metrics: The paper claims the proposed method learns semantically meaningful transformations without significantly sacrificing reconstruction performance, yet Section 4 provides no quantitative reconstruction metrics such as MSE, PSNR, or FID. The evaluation relies almost entirely on qualitative visualizations and classifier accuracy plots. A methodology paper proposing a new training objective and architectural modification must demonstrate that the latent space adaptation does not degrade the generative quality of the base autoencoder. The authors should include a table reporting reconstruction losses and generation quality metrics across all datasets, comparing the MAE with and without the coefficient encoder to isolate the impact of the proposed components.\n\n- Unsubstantiated scalability and novelty claims: Section 3.3 claims that the forward-backward splitting scheme significantly speeds up training and enables scaling to complex datasets like CelebA, asserting it is the first work to demonstrate Lie group operator learning on such data. CelebA is relatively modest by modern standards, and the claim of being the first to scale to it is difficult to verify without computational benchmarks. The paper provides no timing comparisons, memory usage statistics, or FLOPs analysis to substantiate the claimed efficiency gains over previous Lie group methods. Including a computational complexity analysis and runtime benchmarks against baseline MAE implementations would validate the scalability argument and provide practical value to the community.\n\n- Heavy dependency on external supervision without ablation: Both the point-pair selection strategy in Section 3.1 and the coefficient encoder in Section 3.2 depend entirely on a pretrained ResNet-18 classifier trained on ImageNet. This design choice means the learned transformations are fundamentally constrained by the biases and feature representations of an external model. The paper does not ablate the impact of this external supervision or test the framework on datasets where a reliable pretrained classifier is unavailable. The brief mention of biases in the conclusion is insufficient. The authors should conduct ablation studies removing the classifier dependency, perhaps by testing unsupervised point-pair selection or self-supervised consistency objectives, to demonstrate that the method can learn intrinsic manifold variations independently.\n\n- Missing demonstration on a synthetic manifold with ground truth: The paper relies entirely on real-world datasets to validate the method, leaving readers without a clear view of how the operators and coefficient encoder behave on a known structure. A synthetic dataset, such as a curved 2D manifold embedded in higher dimensions or a varying-density Swiss roll, would allow direct comparison against ground-truth geodesics and local statistics. This demonstration would clarify whether the coefficient encoder correctly identifies regions of high versus low manifold curvature and operator applicability. To address this, the authors should generate a synthetic manifold, apply the proposed training pipeline, and plot the learned operator fields and encoded scale weights against the known analytical manifold structure.\n\n- Unsubstantiated downstream utility claims for augmentation and robustness: The introduction and conclusion assert that the learned transformations improve model robustness and aid data augmentation, yet the experiments stop at qualitative path generation and classifier accuracy along those paths. Readers cannot verify whether the proposed local coefficient distributions actually translate to better generalization or more stable training in practice. The paper needs to bridge the gap between learning manifold operators and applying them to a concrete downstream task. The authors should train a standard classifier on MNIST or Fashion MNIST using data augmented by the coefficient encoder and report test accuracy and calibration error compared to a baseline trained with standard augmentations. This step would directly test the claim that localized transformations yield more faithful training samples than global ones.\n\n- Lack of quantitative comparison for point pair selection strategies: Section 3.1 introduces the perceptual point-pair selection strategy as a key contribution, but the paper only provides visual examples of the resulting transformations. It does not quantify how much this strategy improves operator learning or reconstruction quality compared to simpler baselines like latent-space nearest neighbors or random sampling within classes. Without this comparison, it is unclear whether the perceptual metric is necessary or if standard latent distances suffice. The authors should run controlled experiments on MNIST comparing the perceptual strategy against latent-NN and random selection, reporting final reconstruction loss and a quantitative measure of operator smoothness or path consistency. Such a table would isolate the exact benefit of the classifier features used for supervision.\n\n- Missing verification that the method recovers the standard MAE: The coefficient encoder network is designed to generalize the fixed Laplace prior used in the original MAE framework. The paper never verifies that fixing the encoder to output a constant scale parameter successfully recovers the baseline MAE results. This verification is essential to prove that the new architecture does not introduce unintended inductive biases or training instabilities. The authors should include an ablation where the coefficient encoder is replaced by a fixed scalar, train the model, and report that the reconstruction and path generation metrics match the original MAE performance. Confirming this baseline recovery establishes the method's consistency with prior work.\n\nRecommendation: Major revision\n\nRevision targets:\n\n- Decouple the evaluation metric from the training classifier by introducing independent quantitative metrics (e.g., FID, LPIPS) or human evaluation to validate true identity preservation.\n\n- Clarify the mathematical formulation of Equation (5) and specify whether stochastic sampling is used to define the distribution for the KL divergence term.\n\n- Add a quantitative table reporting reconstruction losses and generation quality metrics for all datasets, comparing the full model against ablated versions.\n\n- Provide computational benchmarks (training time, memory, FLOPs) to substantiate the scalability claims in Section 3.3.\n\n- Conduct ablation studies on the reliance on the pretrained classifier, testing the framework with unsupervised point-pair selection or self-supervised consistency objectives.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Factual error in literature review regarding MAE",
+          "quote": "Recent papers incorporating Lie group operators into machine learning models have either used predefined operators that represent known transformations groups (e.g., the 3D rotational group $SO(3)$ *(Falorsi et al., 2019)*), required transformation labels for selecting point pairs when training *(Connor and Rozell, 2020)*, or randomly selected pairs of points from the same class *(Connor et al., 2021)*.",
+          "explanation": "The claim that Connor and Rozell (2020) requires transformation labels is incorrect. The original MAE learns operators unsupervised using reconstruction loss and latent distances. Stating otherwise misrepresents the baseline. Change the description to reflect that the baseline learns from unlabeled data via reconstruction error.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Underspecified optimization for coefficient inference",
+          "quote": ">0$.\n\nObjective (2) is minimized via an alternating minimization scheme. Specifically, at each training iteration, points pairs $\\mathbf{x}_{0}$ and $\\mathbf{x}_{1}$ are selected in the input space and encoded into the latent space $\\mathbf{z}_{0}$ and $\\mathbf{z}_{1}$. Then, coefficients $\\mathbf{c}$ are inferred between the encoded latent vectors (by minimizing (2) with respect to $\\mathbf{c}$) to estimate the best path between $\\mathbf{z}_{0}$ and $\\mathbf{z}_{1}$. After inference, the coefficients are\n\n<!-- PAGE BREAK -->\n\nfixed and a gradient step is taken to minimize (2) with respect to tr",
+          "explanation": "The description omits the solver details for the coefficient subproblem. Minimizing (2) with respect to $\\mathbf{c}$ involves a non-smooth $\\ell_1$ penalty and a non-convex matrix exponential term. Specify the algorithm used (e.g., proximal gradient descent) and how the gradient of the matrix exponential is computed. Also clarify whether updates are batched or per-sample, as per-sample updates are known to destabilize global operator learning.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Missing loss weighting for fine-tuning objective",
+          "quote": "After fitting transport operators to the latent space of a fixed autoencoder network, there is a final fine-tuning training phase that updates the network weights and transport operators simultaneously using a joint objective that combines the autoencoder reconstruction loss with $\\mathcal{L}_{\\Psi}$.",
+          "explanation": "Combining the reconstruction loss with $\\mathcal{L}_{\\Psi}$ requires a weighting hyperparameter to balance manifold transport fidelity against latent reconstruction accuracy. The text does not specify this weight or a schedule for it. Add the explicit mathematical form of the joint loss, including the weighting coefficient, and explain how it is determined during fine-tuning.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Contradiction between regularization goal and KL formulation",
+          "quote": "Unfortunately, the consistency regularization objective can be trivially minimized by setting $\\mathbf{c}=0$, resulting in an identity transformation and the same classifier output. Therefore, we want to encourage the largest coefficient values possible while maintaining the identity of our initial data point. This motivates the addition of a KL-divergence regularizer that encourages the distribution $q_{\\phi}(\\mathbf{c}|\\mathbf{z})$ to be similar to a specified Laplace prior with a fixed scale $\\zeta$ like in (4).",
+          "explanation": "The stated motivation contradicts the mathematical effect of the proposed regularizer. Minimizing $D_{KL}(q_{\\phi}(\\mathbf{c}|\\mathbf{z})\\|p_{\\zeta}(\\mathbf{c}))$ pulls the learned distribution toward the fixed-scale Laplace prior, concentrating mass around zero. This penalizes large coefficients rather than encouraging them. Rephrase the justification to explain that the KL term acts as a constraint to prevent unbounded coefficient growth, or adjust the objective to explicitly penalize small coefficients.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Ambiguous classifier specification for evaluation",
+          "quote": "To quantify the identity preservation of each transformation, we input each generated image into a pretrained classifier and plot the prediction of the correct class.",
+          "explanation": "The paper introduces a ResNet-18 fine-tuned on CelebA attributes, but it is unclear if this same classifier is applied to MNIST and Fashion MNIST. Applying a CelebA-tuned model to these datasets would cause a severe domain mismatch. Explicitly define the classifier architecture and training procedure used for the MNIST and Fashion MNIST evaluations to ensure reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Implausible geometric transformation claim",
+          "quote": "For instance, operator 3 in Fig. 5b increases the curve at the bottom of digits. This is a natural transformation for classes 3, 5, and 6 which all have higher coefficient scale weights for this operator, but when this is applied to a 1, that makes it look like an 8.",
+          "explanation": "The described transformation cannot plausibly produce the stated visual result. An MNIST '1' consists of a vertical stroke; adding a bottom curve would yield a hook or '7'-like shape, not an '8', which requires two closed loops. This indicates a misidentification of the digit in the figure or a textual error. Verify the visual evidence in Fig. 5b and correct the description to match the actual transformation.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Unsubstantiated robustness claims in conclusion",
+          "quote": "This work presents a promising technique for learning representations of natural data variations that can improve model robustness.",
+          "explanation": "The conclusion claims robustness improvements, but the evaluation stops at qualitative paths and classifier accuracy along those paths. No downstream training experiments or adversarial tests verify generalization gains. Revise the statement to reflect that robustness benefits are hypothesized and require future empirical validation.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Structural mismatch between contributions and formal results",
+          "quote": "We do this by introducing a perceptual point pair selection strategy for training operators and by developing a method that uses a pretrained classifier to learn local regions where operators are likely to be used while preserving the identity of transformed samples.",
+          "explanation": "The conclusion claims these strategies as core contributions, yet the formal results section only details the MAE architecture and transport operator objective. The point pair selection and classifier localization lack formal definitions or theoretical analysis in the main text. Align the conclusion with the methods actually presented and formally analyzed in Section 3.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Unjustified geometric interpretation of latent operators",
+          "quote": "Transport operators $\\bm{\\Psi}$ are incorporated into the latent space to learn manifold-based transformations. Before learning the transport operators, the autoencoder is pretrained to extract a latent representation of the data using the traditional autoencoder reconstruction objective.",
+          "explanation": "The formulation treats the latent space as Euclidean, where linear operators generate paths via the matrix exponential. This equivalence to manifold geodesics only holds if the latent space is constrained to a Lie group structure or if the operators are restricted to a specific Lie algebra. Without such constraints, the transformation acts as an arbitrary linear map. Add a mathematical justification or constraint on $\\bm{\\Psi}_m$ to clarify how these operators approximate manifold geodesics.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Imprecise description of CAE objective",
+          "quote": "The contractive autoencoder (CAE) estimates manifold tangents by minimizing the the Jacobian of the encoder network, encouraging invariance of latent vectors to image space perturbations *(Rifai et al., 2011c, b, a; Kumar et al., 2017)*.",
+          "explanation": "\"Minimizing the Jacobian\" is imprecise since a Jacobian is a matrix. The CAE objective minimizes the Frobenius norm of the Jacobian to enforce contractivity. Update the phrasing to specify the norm and clarify that this enforces invariance rather than directly estimating tangents.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Conflated definitions of Lie group and Lie algebra",
+          "quote": "ie group is a group of continuous transformations which also defines a manifold by representing infinitesimal transformations that can be applied to input data *(Hoffman,\n\n<!-- PAGE BREAK -->\n\n1966; Dodwell, 1983)*.",
+          "explanation": "This sentence conflates the Lie group, its underlying manifold, and the Lie algebra. A Lie group is a smooth manifold with a compatible group structure; infinitesimal transformations belong to the Lie algebra. Rewrite the definition to correctly distinguish these mathematical objects while preserving the context for neural network applications.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Incorrect parameterization terminology",
+          "quote": "In these models, each operator $\\bm{\\Psi}_{m}$, called a *transport operator*, describes a single direction along the manifold and is parameterized by a single coefficient $c_{m}$.",
+          "explanation": "The transport operator $\\bm{\\Psi}_m$ is a fixed generator matrix, not a function of $c_m$. The coefficient $c_m$ is a scalar weight sampled during generation. Change \"parameterized by\" to \"scaled by\" to accurately reflect that $c_m$ acts as a random multiplier while $\\bm{\\Psi}_m$ remains fixed.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Overstated advantages over disentanglement methods",
+          "quote": "Our approach is advantageous because it can faithfully represent longer transformation paths, learn variations while maintaining image reconstruction, and change the number of learned variations by increasing or decreasing the number of learned operators.",
+          "explanation": "These advantages are not unique to your framework. Standard disentanglement models like $\\beta$-VAE also maintain reconstruction and allow control over learned variations via latent dimensionality. Clarify the specific technical bottleneck in existing disentanglement literature that your method overcomes, rather than listing generic capabilities.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Misapplied citation for feature retrieval",
+          "quote": "It has been shown that high-level features in such classifier networks correspond to semantic characteristics of the data and finding points nearby in this feature space can result in image pairs that are perceptually similar without being exactly the same *(Johnson et al., 2016; Yosinski et al., 2015)*.",
+          "explanation": "Yosinski et al. (2015) focuses on feature transfer across datasets, not perceptual similarity from feature retrieval. Remove the Yosinski citation or replace it with a source that explicitly validates feature-space nearest-neighbor retrieval for perceptual similarity.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Conflation of perceptual loss and retrieval metric",
+          "quote": "In this approach, we select point pairs by setting $h(\\mathbf{x})$ from (3) equal to the penultimate layer of the classifier, similar to the previously proposed perceptual loss *(Johnson et al., 2016)*.",
+          "explanation": "Johnson et al. (2016) uses perceptual loss as a training objective to minimize feature distance during optimization. Your method uses classifier features as a static metric to retrieve nearest neighbors. These serve different algorithmic roles. Clarify that the features function as a retrieval metric, distinct from the perceptual loss objective.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Incorrect attribution of convergence slowdown",
+          "quote": "The $\\ell_{1}$ norm term is non-smooth, leading to slower convergence when using subgradients found via automatic differentiation *(Boyd and Vandenberghe, 2004)*.",
+          "explanation": "Automatic differentiation is just a computational tool and does not dictate convergence rates. The slowdown stems from the non-smooth $\\ell_1$ penalty paired with standard subgradient updates. Attribute the reduced convergence speed to the non-smooth penalty itself and remove the reference to automatic differentiation as the cause.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Inaccurate description of forward-backward splitting",
+          "quote": "In this work we employ a forward-backward splitting scheme *(Beck and Teboulle, 2009)* that alternates between automatic differentiation of the matrix exponential term, and proximal gradients for the $\\ell_{1}$ norm *(Parikh and Boyd, 2014)*.",
+          "explanation": "Forward-backward splitting executes a single gradient step on the smooth component followed immediately by a proximal operator application within each iteration. Describing it as \"alternating\" implies an alternating direction method. Clarify that the algorithm integrates a gradient update and a proximal mapping in every optimization step.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_17",
+          "title": "Conflation of distance metric and path generation",
+          "quote": "For all other methods, Euclidean distance between features is used for both interpolation and extrapolation.",
+          "explanation": "Distance is a scalar metric and cannot generate a trajectory. You likely mean linear interpolation in the latent space. Rewrite the sentence to specify that linear interpolation is used for path generation, rather than conflating a distance metric with a trajectory method.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_18",
+          "title": "Ambiguity in point-pair selection constraints",
+          "quote": "We select training point pairs that are nearest neighbors in the feature space of the final, pre-logit layer of a ResNet-18 *(He et al., 2015)* classifier pretrained on ImageNet *(Russakovsky et al., 2015)*.",
+          "explanation": "The text does not state whether nearest neighbors are constrained to the same class or allowed to cross classes. Since the method learns identity-preserving transformations, clarify whether the search is restricted to same-class instances or operates globally across the dataset.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_19",
+          "title": "Vague mathematical description of CAE paths",
+          "quote": "The CAE-generated paths are the directions of motion on the tangent planes estimated at individual points.",
+          "explanation": "This description is mathematically vague. Specify how tangent plane directions are computed and integrated to form paths. Providing the exact mathematical formulation for the CAE baseline will help readers understand how it differs fundamentally from your Lie group operator approach.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_20",
+          "title": "Missing clarification on fine-tuning mechanics",
+          "quote": "The fine-tuning phase adapts the autoencoder latent space to fit the learned transformations in the event that that pretrained latent space does not match the desired data manifold.",
+          "explanation": "The description omits which parameters are updated. Specify whether the encoder/decoder weights, transport operators, or both are modified during this phase, and state the objective function driving the adaptation.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_21",
+          "title": "Misattribution of results to baseline architecture",
+          "quote": "We demonstrate the efficacy of our approach in learning natural dataset variations with the MAE.",
+          "explanation": "The conclusion attributes the results to \"the MAE\" without specifying the coefficient encoder. Since the coefficient encoder is the core contribution, explicitly distinguish between the baseline MAE and your modified architecture to prevent readers from assuming the standard model already achieves these capabilities.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 22
+        }
+      ],
+      "cost_usd": 0.4187,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper tackles an important problem\u2014learning identity-preserving transformations without labels\u2014and proposes two concrete innovations: a perceptual point-pair selection strategy and a coefficient encoder for local operator statistics. The experiments on MNIST, Fashion MNIST, and CelebA demonstrate qualitative and some quantitative benefits over CAE and \u03b2-VAE baselines. However, several fundamental issues weaken the contribution, particularly around the definition of identity, the reliance on a pretrained classifier for unsupervised learning, and the lack of rigorous evaluation of identity preservation.\n\nOverview issues:\n\n- Identity preservation is defined circularly via a pretrained classifier, undermining the claim of unsupervised learning: The paper claims to learn identity-preserving transformations without labels, but the core mechanism for ensuring identity preservation (Section 3.2) relies on a pretrained classifier that outputs class labels. The coefficient encoder is trained to maximize consistency of classifier outputs under transformations. This means 'identity' is effectively defined as 'whatever the pretrained classifier considers the same class.' The method is therefore not unsupervised in a strict sense\u2014it requires a labeled classifier trained on a large-scale dataset (ImageNet) with similar statistics. The authors acknowledge using a 'pretrained classifier' but do not discuss how this dependence limits the generality of the approach. For datasets where a suitable pretrained classifier is not available (e.g., medical images, scientific data), the method cannot be applied. The paper should clarify the extent to which the method is truly unsupervised and discuss scenarios where a pretrained classifier may not be available or appropriate.\n\n- The perceptual point-pair selection strategy inherits biases from the pretrained classifier: Section 3.1 proposes selecting training point pairs as nearest neighbors in the penultimate layer of a pretrained classifier (e.g., ResNet-18 on ImageNet). The rationale is that high-level features correspond to semantic similarity. However, this introduces a strong inductive bias: the learned transformations will reflect the invariances and biases of the pretrained classifier. For example, if the classifier is invariant to color but sensitive to texture, the method will learn transformations that preserve texture but may change color. The paper does not analyze or discuss these biases. Moreover, the choice of classifier architecture and training dataset (ImageNet) is arbitrary; different classifiers would yield different point pairs and thus different transformations. The paper should include an ablation study varying the pretrained classifier (e.g., different architectures, different training datasets) to assess the sensitivity of the learned transformations to this choice.\n\n- The evaluation of identity preservation is circular and insufficient: The paper evaluates identity preservation by measuring the accuracy of a pretrained classifier on transformed images (Figure 4). This is circular because the coefficient encoder was trained to maximize consistency with that same classifier. It is unsurprising that the method achieves high classifier accuracy on transformed samples. A proper evaluation would require either (a) human evaluation of whether transformed images preserve identity, (b) a downstream task that requires identity preservation (e.g., face verification), or (c) comparison against a held-out classifier not used during training. The paper does not provide any of these. Additionally, the baselines (CAE, \u03b2-VAE) are not trained with any identity-preservation objective, so the comparison is unfair. The paper should include a human evaluation or a downstream task to demonstrate that the learned transformations genuinely preserve identity in a way that is not an artifact of the training objective.\n\n- The method's reliance on a pretrained classifier for both point-pair selection and identity preservation creates a conflated training pipeline: The same pretrained classifier is used for two distinct purposes: (1) selecting point pairs for training transport operators (Section 3.1) and (2) training the coefficient encoder to preserve identity (Section 3.2). This conflation means that the transport operators are learned using point pairs that are already biased toward the classifier's notion of similarity, and then the coefficient encoder is trained to further align with the classifier's outputs. The paper does not disentangle the contributions of these two components. It is unclear whether the coefficient encoder alone would suffice if point pairs were selected differently, or whether the perceptual point-pair selection alone would yield identity-preserving transformations without the coefficient encoder. An ablation study that varies one component while holding the other fixed is necessary to understand the individual contributions.\n\n- The computational complexity reduction claim is not empirically validated: Section 3.3 claims that the forward-backward splitting scheme 'significantly speeds up the training process' and 'allows for scaling up to complex datasets like CelebA.' However, the paper provides no quantitative runtime comparison against previous approaches (e.g., subgradient methods, analytic gradients). There are no wall-clock time measurements, no convergence plots, and no comparison of the number of iterations required. Given that computational efficiency is a claimed contribution, the absence of any empirical validation is a significant omission. The paper should include a table or figure comparing the time per iteration, total training time, and convergence behavior of the proposed method versus alternatives.\n\n- The local transport operator statistics method may not generalize to datasets with many classes or complex manifolds: The coefficient encoder learns a single set of scale parameters per point in the latent space. On datasets with many classes (e.g., CIFAR-100, ImageNet) or with complex, multimodal manifolds, the latent space may be high-dimensional and the manifold structure may be highly non-uniform. The paper only demonstrates the method on datasets with 10 classes (MNIST, Fashion MNIST) and one dataset with 40 binary attributes (CelebA). It is unclear whether the coefficient encoder can effectively capture local statistics in more complex settings. The paper should discuss the scalability of the approach and ideally provide experiments on a dataset with more classes or higher-dimensional latent spaces.\n\n- The paper lacks a quantitative comparison of transformation quality against baselines: The qualitative results in Figures 1-3 show that the MAE can generate visually plausible transformations. However, there is no quantitative metric to compare the quality of the learned transformations against CAE or \u03b2-VAE. Metrics such as Frechet Inception Distance (FID) for generated images, disentanglement scores (e.g., DCI, MIG), or downstream task performance (e.g., classification accuracy on augmented data) would provide a more rigorous comparison. The paper only reports classifier accuracy on extrapolated paths (Figure 4), which, as noted, is circular. The paper should include standard quantitative metrics for evaluating learned transformations and disentanglement.\n\n- The assumption that transformations correspond to Lie group operators may not hold for all natural variations: The paper assumes that identity-preserving transformations can be modeled as Lie group operators (Section 2). While this is a reasonable assumption for continuous transformations like rotation, translation, and scaling, many natural variations (e.g., changes in facial expression, object deformation) may not form a group structure. For example, applying a 'smile' operator twice may not yield a meaningful transformation. The paper does not discuss the limitations of the Lie group assumption or provide evidence that the learned operators satisfy group properties (e.g., closure, invertibility). The paper should acknowledge this limitation and ideally test whether the learned operators approximately satisfy group axioms.\n\n- No quantitative comparison of transformation quality: The paper shows qualitative examples of learned transformations and reports classifier accuracy on extrapolated paths, but it never compares the quality of the learned transformations against baselines (CAE, \u03b2-VAE) using standard quantitative metrics. Metrics such as Frechet Inception Distance (FID) for generated images, disentanglement scores (e.g., DCI, MIG), or downstream task performance (e.g., classification accuracy on augmented data) would provide a more rigorous comparison. The paper should include at least one such metric to demonstrate that the learned transformations are not just visually plausible but also quantitatively superior or competitive.\n\n- No ablation study isolating the two proposed components: The paper introduces two main contributions: a perceptual point-pair selection strategy (Section 3.1) and a coefficient encoder for local operator statistics (Section 3.2). However, it never disentangles their individual effects. It is unclear whether the coefficient encoder alone would suffice if point pairs were selected differently, or whether the perceptual point-pair selection alone would yield identity-preserving transformations without the coefficient encoder. An ablation study that varies one component while holding the other fixed is necessary to understand the individual contributions and to justify the complexity of the full pipeline.\n\n- No validation of the computational complexity reduction claim: Section 3.3 claims that the forward-backward splitting scheme 'significantly speeds up the training process' and 'allows for scaling up to complex datasets like CelebA.' However, the paper provides no quantitative runtime comparison against previous approaches (e.g., subgradient methods, analytic gradients). There are no wall-clock time measurements, no convergence plots, and no comparison of the number of iterations required. Given that computational efficiency is a claimed contribution, the absence of any empirical validation is a significant omission. The paper should include a table or figure comparing the time per iteration, total training time, and convergence behavior of the proposed method versus alternatives.\n\n- No discussion of how to estimate the coefficient encoder in practice: The paper derives the coefficient encoder objective (Equation 5) but provides no practical guidance on how to train it\u2014e.g., how to sample coefficients during training, how to handle the non-differentiability of the sampling step, or how to set hyperparameters like the scale \u03b6. The method involves sampling from a Laplace distribution whose parameters are output by a neural network, which typically requires a reparameterization trick, but the paper does not discuss this. A paper that claims practical relevance should include implementation details or at least acknowledge the training challenges.\n\nRecommendation: Major revision. The paper addresses an interesting problem and proposes reasonable components, but the evaluation is circular, the reliance on a pretrained classifier undermines the unsupervised claim, and key claims (computational speedup, identity preservation) are not properly validated. The paper needs substantial additional experiments and a clearer articulation of what is truly unsupervised versus what relies on labeled data.\n\nRevision targets:\n\n- Add an ablation study that separates the contributions of the perceptual point-pair selection and the coefficient encoder, varying one component while holding the other fixed.\n\n- Include a quantitative evaluation of identity preservation that is not circular, such as human evaluation or a downstream task (e.g., face verification on CelebA) using a held-out classifier not used during training.\n\n- Provide a quantitative comparison of transformation quality using standard metrics (e.g., FID, disentanglement scores) against CAE and \u03b2-VAE.\n\n- Include a runtime comparison (wall-clock time, convergence plots) validating the claimed computational speedup of the forward-backward splitting scheme.\n\n- Discuss the limitations of the Lie group assumption and, if possible, test whether the learned operators approximately satisfy group properties.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Circular evaluation of identity preservation",
+          "quote": "To quantify the identity preservation of each transformation, we input each generated image into a pretrained classifier and plot the prediction of the correct class.",
+          "explanation": "The evaluation is circular because the coefficient encoder was trained to maximize consistency with the same type of pretrained classifier. This does not provide independent evidence of identity preservation. The paper should either use a held-out classifier not involved in training, human evaluation, or a downstream task (e.g., face verification) to break the circularity. Without such a check, the reported accuracy may simply reflect that the model has learned to fool the classifier, not that it preserves identity in a meaningful sense.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Sparse coefficients sampled from Laplace distribution contradicts later learning of coefficients",
+          "quote": "Given an initial data point $\\mathbf{z}$, the transport operators define a generative model where transformations can be derived from sampling sparse coefficients $c_{m}\\sim\\mathrm{Laplace}\\left(0,\\zeta\\right)$:",
+          "explanation": "The text states that coefficients $c_m$ are sampled from a Laplace distribution, implying they are random variables drawn independently of the data. However, the paper's main contribution (Section 3.2) is a coefficient encoder that learns to predict coefficients $c_m$ from the data point $\\mathbf{z}$ itself. This is a fundamental inconsistency: the generative model treats coefficients as random draws from a fixed prior, but the learning method treats them as deterministic functions of the input. The paper never reconciles these two views. The authors should clarify whether Equation (1) is a generative model with random coefficients or a deterministic transformation with learned coefficients, and adjust the text accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Objective may encourage trivial solution despite regularizer",
+          "quote": "Unfortunately, the consistency regularization objective can be trivially minimized by setting $\\mathbf{c}=0$, resulting in an identity transformation and the same classifier output. Therefore, we want to encourage the largest coefficient values possible while maintaining the identity of our initial data point. This motivates the addition of a KL-divergence regularizer that encourages the distribution $q_{\\phi}(\\mathbf{c}|\\mathbf{z})$ to be similar to a specified Laplace prior with a fixed scale $\\zeta$ like in (4).",
+          "explanation": "The paper claims the KL regularizer encourages large coefficient values, but the Laplace prior $p_\\zeta(\\mathbf{c})$ has its mode at $\\mathbf{c}=0$ and decays exponentially with $|c_m|$. Minimizing $D_{KL}(q_\\phi\\|p_\\zeta)$ will push $q_\\phi$ toward the prior, which concentrates mass near zero\u2014the opposite of encouraging large coefficients. The regularizer actually discourages large coefficients, creating a tension with the stated goal. The paper should reconcile this: either the regularizer is meant to prevent unbounded growth (acting as a penalty on large coefficients) or the prior should be modified (e.g., a uniform or heavy-tailed distribution). Add a clarification: 'The KL regularizer penalizes deviations from the Laplace prior, which has a peak at zero, thus preventing the coefficients from growing arbitrarily large and maintaining a sparse representation.'",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Unfair comparison with baselines lacking identity-preservation objective",
+          "quote": "To quantify the identity preservation of each transformation, we input each generated image into a pretrained classifier and plot the prediction of the correct class. All four methods perform interpolation effectively but our trained model estimates the extrapolated paths more accurately.",
+          "explanation": "The baselines (CAE, \u03b2-VAE, traditional autoencoder) are not trained with any identity-preservation objective, so comparing their classifier accuracy on extrapolated paths is inherently unfair. The MAE is explicitly optimized to maintain classifier consistency, while the baselines are not. A meaningful comparison would require either (a) training the baselines with a similar identity-preservation loss, or (b) using an evaluation metric that is not directly aligned with the MAE's training objective (e.g., human evaluation, FID, or a downstream task). The current comparison does not demonstrate that the MAE's transformations are superior in a general sense\u2014only that they better match the classifier's preferences.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "No ablation study isolating the two proposed components",
+          "quote": "First, we show how well the perceptual point pair selection strategy described in Section 3.1 enables the MAE model to learn natural data variations in datasets and we highlight the usefulness of a nonlinear manifold model for generating latent space paths.",
+          "explanation": "The paper introduces two main contributions: a perceptual point-pair selection strategy (Section 3.1) and a coefficient encoder for local operator statistics (Section 3.2). However, it never disentangles their individual effects. It is unclear whether the coefficient encoder alone would suffice if point pairs were selected differently, or whether the perceptual point-pair selection alone would yield identity-preserving transformations without the coefficient encoder. An ablation study that varies one component while holding the other fixed is necessary to understand the individual contributions and to justify the complexity of the full pipeline.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "No quantitative comparison of transformation quality against baselines",
+          "quote": "In Fig. 1 we compare transport operator paths to those generated by the CAE and the $\\beta$-VAE. The CAE-generated paths are the directions of motion on the tangent planes estimated at individual points. The $\\beta$-VAE paths are generated by varying the value of one latent dimension while the others remain fixed. While our method and the $\\beta$-VAE learn several qualitatively similar transformations, our method is capable of doing so without significantly sacrificing reconstruction performance.",
+          "explanation": "The paper claims that the MAE achieves similar transformations to \u03b2-VAE 'without significantly sacrificing reconstruction performance,' but no quantitative reconstruction error (e.g., MSE, SSIM) is reported for any method. The comparison is purely qualitative, relying on visual inspection of a few examples. Without quantitative metrics, the claim is unsubstantiated. The paper should report reconstruction error (and possibly other metrics like FID or disentanglement scores) for all methods to support this claim.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Unsupported claim about longer transformation paths",
+          "quote": "Our approach is advantageous because it can faithfully represent longer transformation paths, learn variations while maintaining image reconstruction, and change the number of learned variations by increasing or decreasing the number of learned operators.",
+          "explanation": "The claim that the approach 'can faithfully represent longer transformation paths' is presented without any evidence or comparison to disentanglement methods. The paper does not define what constitutes a 'longer' transformation path, nor does it provide experiments showing that the learned operators can extrapolate further than those from disentanglement models. Additionally, the claim about 'maintaining image reconstruction' is misleading because disentanglement methods like \u03b2-VAE also reconstruct images; the paper does not show that its reconstructions are superior. The third claim about changing the number of learned operators is trivial\u2014any method with a tunable latent dimension can do this. These assertions should be supported by quantitative comparisons or removed.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Inconsistent use of 'non-linear operators'",
+          "quote": "we aim to learn non-linear operators that correspond to transformations on the data manifold",
+          "explanation": "The paper's model learns linear transport operators in the latent space (Section 3.2 describes linear operators T_\u03a8(c)), not non-linear operators. The non-linearity comes from the encoder/decoder mapping, but the operators themselves are linear in the latent representation. Describing them as 'non-linear operators' is inconsistent with the paper's own formulation and could confuse readers. The operators are linear in the latent space, and the overall transformation is non-linear only because the encoder/decoder are non-linear. This should be clarified to avoid misrepresenting the method.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Circular reliance on a pretrained classifier for unsupervised learning",
+          "quote": "ion.\n\nWe generalize transport operator training to incorporate an unsupervised learning strategy that can be applied to a wide array of datasets. In particular, we assume access to a classifier pretrained on a large-scale dataset (likely taken from a model zoo) with similar statistics as our training dataset of interest",
+          "explanation": "The method is described as 'unsupervised' but relies on a classifier pretrained with labeled data. This is a valid concern: the term 'unsupervised' is misleading because the approach uses a supervised model to define semantic similarity. The paper should clarify that the method is unsupervised only with respect to transformation labels, not fully label-free. Rewrite the quoted text to explicitly state that the method requires a pretrained classifier (trained with labels) and is unsupervised only in that it does not need transformation labels.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Unjustified assumption that classifier features capture all semantic transformations",
+          "quote": "*. It has been shown that high-level features in such classifier networks correspond to semantic characteristics of the data and finding points nearby in this feature space can result in image pairs that are perceptually similar without being exactly the same",
+          "explanation": "The paper assumes that the penultimate layer of a pretrained classifier captures all semantically meaningful transformations, but this is not proven. The classifier's invariances (e.g., to color or texture) may bias the learned transformations. The claim that the metric 'leads to learned operators that correspond to semantically identifiable transformations' is circular because the classifier defines what is 'semantic.' The paper should include an ablation study varying the pretrained classifier or provide evidence that the learned transformations are not artifacts of the classifier's biases. Add a discussion of potential biases and an empirical comparison using different classifiers.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Dependence on pretrained classifier limits unsupervised claim",
+          "quote": "To address this limitation, we introduce a coefficient encoder network which maps latent vectors to scale parameters that specify the Laplace distribution on the coefficients at those latent points. The goal of this network is to estimate local coefficient distributions that maximize the identity-preservation of points (as measured by a pretrained classifier) transformed with operators characterized by sampled coefficients as in (1).",
+          "explanation": "The method defines 'identity preservation' via a pretrained classifier's output, meaning the learned transformations preserve whatever the classifier considers the same class. This is not unsupervised in the strict sense\u2014it requires a labeled classifier trained on a large-scale dataset. The paper should clarify that the approach is semi-supervised or supervised in terms of the classifier, and discuss limitations when a suitable pretrained classifier is unavailable (e.g., medical imaging, scientific data). Add a paragraph in Section 3.2 or the conclusion acknowledging this dependence and suggesting potential alternatives (e.g., self-supervised features) for domains without pretrained classifiers.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "No quantitative comparison of point-pair selection strategies",
+          "quote": "There are many possible strategies for selecting training point pairs for a Lie group operator model and the choice of a strategy can dictate the types of learned transformations. Point pairs may be selected as random samples from the dataset or from within the same class.",
+          "explanation": "The paper discusses several point-pair selection strategies but provides no quantitative comparison of their impact on transformation quality. The claim that the proposed perceptual feature space is superior is not empirically validated. The paper should include a table or figure comparing the learned transformations (e.g., via FID, classifier accuracy on transformed samples, or human evaluation) for each strategy to justify the choice.",
+          "comment_type": "technical",
+          "paragraph_index": 17,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Missing justification for path generation formula",
+          "quote": "AE, the paths are estimated by inferring coefficients  $\\mathbf{c}^*$  between two latent points  $\\mathbf{z}_0$  and  $\\mathbf{z}_1$  and then generating the path:  $\\mathbf{z}_t = \\mathrm{expm}\\left(\\sum_{m=1}^{M} \\Psi_m c_m^* t\\right) \\mathbf{z}_0$ . Whe",
+          "explanation": "The paper does not explain how the coefficients $\\mathbf{c}^*$ are inferred from $\\mathbf{z}_0$ and $\\mathbf{z}_1$. The formula $\\mathbf{z}_t = \\mathrm{expm}(\\sum \\Psi_m c_m^* t) \\mathbf{z}_0$ assumes that the path is a geodesic on the manifold under the learned metric, but no justification is given that this is the case. The authors should clarify the inference procedure for $\\mathbf{c}^*$ and justify why this formula yields a meaningful path on the data manifold.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "KL-divergence notation and direction ambiguity",
+          "quote": "We specifically minimize the KL-divegence between the classifier output $r(\\mathbf{z})$ and the estimated probability of the transformed output $r(\\widehat{\\mathbf{z}})$.",
+          "explanation": "The first term in Equation (5) uses $D_{KL}(r(\\mathbf{z})\\|r(\\widehat{\\mathbf{z}}))$ without specifying which distribution is the reference. In consistency regularization, the typical choice is to treat $r(\\mathbf{z})$ as the reference (i.e., minimize $D_{KL}(r(\\mathbf{z})\\|r(\\widehat{\\mathbf{z}}))$), but the paper does not state this explicitly. Since KL-divergence is asymmetric, the choice matters for training behavior. The paper should clarify the intended direction and justify it. Additionally, the typo 'KL-divegence' should be corrected to 'KL-divergence.'",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Reverse KL direction in regularizer not justified",
+          "quote": "Our final objective for training the coefficient encoder network is: (a more detailed derivation can be found in Appendix A)\n\n$E=D_{KL}(r(\\mathbf{z})\\|r(\\widehat{\\mathbf{z}}))+D_{KL}\\left(q_{\\phi}(\\mathbf{c}|\\mathbf{z})\\|p_{\\zeta}(\\mathbf{c})\\right).$",
+          "explanation": "The second term uses $D_{KL}(q_\\phi\\|p_\\zeta)$, which is the reverse KL direction relative to the typical variational inference objective (which uses $D_{KL}(q\\|p)$ as well, but in a different context). The paper states this regularizer encourages $q_\\phi$ to be similar to $p_\\zeta$, but the reverse KL tends to produce mode-seeking behavior (concentrating mass on a single mode of $p_\\zeta$), whereas the forward KL $D_{KL}(p_\\zeta\\|q_\\phi)$ would encourage mode-covering behavior. The choice of direction affects the learned coefficient distributions and should be justified. Add a sentence after Equation (5) explaining: 'We use the reverse KL divergence $D_{KL}(q_\\phi\\|p_\\zeta)$ because it encourages the learned distribution to concentrate mass on a sparse set of coefficients, aligning with the goal of sparse transformations.'",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Equation (1) uses matrix exponential on a sum of operators without specifying dimensions",
+          "quote": "$\\widehat{\\mathbf{z}}=\\mathrm{expm}\\left(\\sum_{m=1}^{M}\\bm{\\Psi}_{m}c_{m}\\right)\\mathbf{z}+\\epsilon,$ (1)\n\nwhere $\\epsilon\\sim\\mathcal{N}(0,\\sigma_{\\epsilon}^{2}\\mathbf{I})$.",
+          "explanation": "The equation applies the matrix exponential to a linear combination of transport operators $\\bm{\\Psi}_m$ with scalar coefficients $c_m$. For this to be well-defined, each $\\bm{\\Psi}_m$ must be a square matrix (say $d \\times d$) so that the sum $\\sum_m \\bm{\\Psi}_m c_m$ is also $d \\times d$, and $\\mathbf{z}$ must be a $d$-dimensional vector. The paper never states the dimensionality of $\\mathbf{z}$ or the operators. If $\\mathbf{z}$ is a latent vector (as implied by the MAE context), then the operators should be $d \\times d$ matrices. However, the paper later discusses learning a dictionary of operators without specifying their size relative to the latent dimension. This omission makes the equation ambiguous. The authors should explicitly state the dimensions of $\\bm{\\Psi}_m$ and $\\mathbf{z}$ and confirm that the matrix exponential is applied to a square matrix.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Noise term epsilon is additive after matrix exponential, which is non-standard",
+          "quote": "$\\widehat{\\mathbf{z}}=\\mathrm{expm}\\left(\\sum_{m=1}^{M}\\bm{\\Psi}_{m}c_{m}\\right)\\mathbf{z}+\\epsilon,$ (1)\n\nwhere $\\epsilon\\sim\\mathcal{N}(0,\\sigma_{\\epsilon}^{2}\\mathbf{I})$.",
+          "explanation": "The noise term $\\epsilon$ is added after applying the matrix exponential and multiplying by $\\mathbf{z}$. In typical generative models with Lie group operators (e.g., Rao and Ruderman, 1999; Connor and Rozell, 2020), the noise is added before the transformation or is part of the observation model. Adding noise after a deterministic transformation implies that the transformation itself is noiseless, which is plausible but conflicts with the probabilistic interpretation of the coefficients. More importantly, if $\\mathbf{z}$ is a latent code and $\\widehat{\\mathbf{z}}$ is also a latent code (as in the MAE), then adding Gaussian noise in latent space is unusual and may not correspond to any meaningful noise process. The authors should justify why additive noise in latent space is appropriate and how it relates to the data-level noise.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_17",
+          "title": "Mischaracterization of disentanglement methods",
+          "quote": "The goal of our work is distinct from disentanglement work because, rather than identifying independently varying factors of variation, we aim to learn non-linear operators that correspond to transformations on the data manifold (which may not vary independently).",
+          "explanation": "This statement misrepresents disentanglement methods. Many disentanglement approaches (e.g., \u03b2-VAE, InfoGAN) do not assume factors vary independently in the data; they learn representations where latent dimensions are statistically independent, but the underlying factors of variation may still be correlated. The paper's claim that disentanglement methods identify 'independently varying factors' conflates the goal of learning independent latent codes with the assumption that the true factors are independent. This distinction is important because the paper's own operators may produce correlated transformations, but so can disentangled representations. The contrast should be drawn more carefully: the key difference is that the paper learns explicit transformation operators on the manifold rather than a factorized latent representation.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_18",
+          "title": "Missing citation for CAE tangent estimation claim",
+          "quote": "The contractive autoencoder (CAE) estimates manifold tangents by minimizing the the Jacobian of the encoder network, encouraging invariance of latent vectors to image space perturbations",
+          "explanation": "The sentence contains a duplicated word 'the the' which is a typographical error. More substantively, the claim that CAE estimates manifold tangents is imprecise: CAE penalizes the Frobenius norm of the encoder Jacobian to promote local invariance, but it does not explicitly estimate tangent directions or a tangent basis. The cited works (Rifai et al., 2011a,b,c) discuss contractive autoencoders and their relationship to the tangent bundle of the data manifold, but the phrasing 'estimates manifold tangents' overstates what CAE does. Rewrite as 'The contractive autoencoder (CAE) encourages the encoder to be locally constant by penalizing the Frobenius norm of its Jacobian, which has been interpreted as promoting alignment with the manifold tangent space (Rifai et al., 2011a,b,c; Kumar et al., 2017).'",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_19",
+          "title": "Qualitative claim needs quantitative support",
+          "quote": "While both strategies generate some realistic variations of the data, using the encoded scale weights improves identity-preservation of the transformed output. The augmentations with the encoded scale weights are better at maintaining the identity of the sampled points.",
+          "explanation": "The claim that encoded scale weights improve identity preservation is supported only by visual inspection of Figure 6. No quantitative metric (e.g., classifier accuracy on a held-out classifier, FID, or human evaluation) is provided. Because the coefficient encoder was trained to maximize consistency with the same pretrained classifier used for point-pair selection, the apparent improvement may be an artifact of the training objective. The paper should include a quantitative evaluation using a held-out classifier or a downstream task to substantiate this claim.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_20",
+          "title": "Clarify scope of classifier invariance claim",
+          "quote": "Because the coefficient encoder uses a pretrained classifier to determine the coefficient distributions in the latent space, the resulting encoded scale weights can inform about the types of manifold transformations the classifier is invariant to.",
+          "explanation": "The claim that scale weights inform about classifier invariance is too broad. The coefficient encoder is trained to maximize classifier output consistency under the specific learned transport operators. Large scale weights indicate that the classifier tolerates those particular transformations, but this does not imply general invariance to all transformations of that type. The classifier could still be sensitive to other aspects not captured by the operator. The paper should clarify that the scale weights reflect tolerance to the learned transformations, not general invariance. Rewrite the quoted sentence as: '...the resulting encoded scale weights can inform about the types of manifold transformations the classifier tolerates under the learned operators.'",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_21",
+          "title": "Mischaracterization of the method's reliance on labels",
+          "quote": "We do this by introducing a perceptual point pair selection strategy for training operators and by developing a method that uses a pretrained classifier to learn local regions where operators are likely to be used while preserving the identity of transformed samples.",
+          "explanation": "The conclusion states the method 'uses a pretrained classifier' to learn local regions and preserve identity, but this understates the extent to which the entire pipeline depends on a labeled classifier. The point-pair selection (Section 3.1) and the identity-preservation objective (Section 3.2) both rely on the same pretrained classifier, which was trained on ImageNet with class labels. The paper's abstract and introduction claim the method addresses limitations of prior work that 'require transformation labels,' yet the proposed approach requires a labeled classifier trained on a large-scale supervised dataset. This is a factual misrepresentation of the method's dependence on labeled data. The conclusion should explicitly acknowledge that the method is not fully unsupervised and that the pretrained classifier provides a form of supervision. Rewrite the quoted text as: 'We do this by introducing a perceptual point-pair selection strategy for training operators and by developing a method that uses a pretrained classifier (trained with class labels on a large-scale dataset) to learn local regions where operators are likely to be used while preserving the identity of transformed samples. This reliance on a pretrained classifier means the method is not fully unsupervised; it inherits the classifier's biases and requires a suitable pretrained model.'",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_22",
+          "title": "Overclaiming the method's generality without addressing limitations",
+          "quote": "We demonstrate the efficacy of our approach in learning natural dataset variations with the MAE. While this is a powerful model, users should be mindful of the biases that are introduced through training with specific supervision methods when drawing conclusions about learned data transformations.",
+          "explanation": "The conclusion acknowledges biases 'introduced through training with specific supervision methods' but does not specify what those biases are or how they affect the learned transformations. Given the paper's reliance on a pretrained classifier for both point-pair selection and identity preservation, the biases are substantial and should be explicitly discussed. The conclusion should state that the method inherits the invariances and sensitivities of the pretrained classifier (e.g., invariance to color, sensitivity to texture), and that different classifiers would yield different transformations. Add after the quoted text: 'Specifically, the pretrained classifier used for point-pair selection and identity preservation introduces biases from its training data and architecture. For example, a classifier trained on ImageNet may be invariant to color but sensitive to texture, leading the model to learn transformations that preserve texture but not color. Users should consider these biases when applying the method to new domains.'",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 23
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_23",
+          "title": "Unsupported claim about improving model robustness",
+          "quote": "This work presents a promising technique for learning representations of natural data variations that can improve model robustness.",
+          "explanation": "The conclusion claims the method can 'improve model robustness,' but the paper provides no experiments demonstrating improved robustness (e.g., to adversarial perturbations, distribution shift, or corrupted inputs). The only quantitative evaluation is classifier accuracy on extrapolated paths (Figure 4), which is circular because the classifier was used during training. Without any direct robustness evaluation, this claim is unsupported. Remove the phrase 'that can improve model robustness' or add a citation to a robustness experiment. If the authors intend to make this claim, they should include an experiment (e.g., training a classifier on augmented data from the learned transformations and measuring test accuracy on corrupted versions of the dataset).",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 24
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_24",
+          "title": "Vague future work direction without concrete proposal",
+          "quote": "In future work we can address some limitations by expanding this work to consider methods for localizing manifold structure with limited or no class labels and improving the reconstruction fidelity by applying the model within more complex generative model embeddings.",
+          "explanation": "The future work section mentions 'localizing manifold structure with limited or no class labels,' but the paper already uses a pretrained classifier that provides class labels indirectly. It is unclear what 'limited or no class labels' means in this context\u2014whether the authors propose to use fewer labeled examples, use weak supervision, or develop a fully unsupervised alternative. Additionally, 'improving the reconstruction fidelity by applying the model within more complex generative model embeddings' is vague; the paper does not specify what 'more complex generative model embeddings' refers to (e.g., VAEs, GANs, normalizing flows). The future work should be more specific to guide readers. Replace the quoted text with: 'In future work, we aim to reduce the reliance on pretrained classifiers by developing methods that learn local manifold structure with weaker supervision, such as using self-supervised features or few labeled examples. Additionally, we plan to improve reconstruction fidelity by integrating the proposed operator learning framework with more expressive generative models, such as variational autoencoders or generative adversarial networks.'",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 25
+        }
+      ],
+      "cost_usd": 0.0497,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a novel approach to learning identity-preserving transformations on data manifolds without explicit labels by leveraging perceptual similarity in classifier feature spaces and consistency regularization. While the methodology is technically sound and addresses a clear gap in unsupervised manifold learning, the paper is incomplete for publication. It relies heavily on external classifiers (ResNet-18) to define both the point pair selection strategy and the identity preservation metric, effectively outsourcing the definition of 'natural transformations' to a pre-trained model. The experiments demonstrate qualitative success but lack rigorous quantitative benchmarks for disentanglement, operator interpretability, and the benefits of the proposed local coefficient encoder over simpler baselines. Furthermore, the extrapolation results, while promising, are not statistically robust.\n\nThe paper makes a valuable contribution by combining perceptual loss for point pair selection with a novel consistency regularization objective for local operator usage. The results are visually compelling and suggest that the method can discover semantically meaningful transformations on complex datasets like CelebA. However, the contribution is somewhat derivative of existing techniques (e.g., perceptual loss, consistency regularization) and the experimental evaluation is insufficient. The paper demonstrates that the proposed methods work, but it does not rigorously show that they are better than or fundamentally different from simply using a pre-trained feature space to drive a standard Lie group operator model. The reliance on a fixed classifier for both supervision and evaluation is a significant limitation.\n\nOverview issues:\n\n- External Classifier Dependency Undermines Unsupervised Claims: The paper's core claim is learning 'natural transformations without requiring transformation labels.' However, the methodology is fundamentally dependent on a pre-trained classifier (ResNet-18). This classifier is used for two critical purposes: (1) defining the point pair selection strategy via its feature space (Section 3.1), and (2) defining the identity preservation metric and training the coefficient encoder (Section 3.2). This effectively outsources the definition of 'natural' and 'identity' to the classifier's learned biases. A truly unsupervised approach would need to define these concepts from the data structure itself, e.g., through intrinsic manifold geometry or perceptual similarity measures not tied to a specific semantic classifier. The paper acknowledges this in the conclusion but does not address it as a fundamental limitation of the proposed method's independence from external supervision.\n\n- Missing Quantitative Evaluation of Disentanglement and Operator Quality: The paper provides qualitative visualizations of learned operators and paths (Figures 1-3) and some quantitative results on classifier accuracy for extrapolation (Figure 4). However, it lacks a rigorous quantitative evaluation of the core claims: that the learned operators are semantically meaningful and that the method provides a better representation of the data manifold than existing baselines. Key missing analyses include: (a) quantitative disentanglement metrics (e.g., Mutual Information Gap, MIG) to compare with $\beta$-VAE and CAE; (b) a more systematic study of operator interpretability, perhaps by correlating operator coefficients with known dataset attributes in a more controlled setting; (c) ablation studies to isolate the contribution of the perceptual point pair selection strategy versus the coefficient encoder. Without these, the 'semantic meaningfulness' of the operators remains an unverified claim.\n\n- Coefficient Encoder Objective is Trivially Solved by Identity Mapping: The objective for the coefficient encoder network, given in Equation (5), is $E=D_{KL}(r(\textbf{z})\text{||}r(\textbf{\textasciicircum}\textbf{z}))+D_{KL}(q_{\text{phi}}(\textbf{c}|\textbf{z})\text{||}p_{\text{zeta}}(\textbf{c}))$. The first term, $D_{KL}(r(\textbf{z})\text{||}r(\textbf{\textasciicircum}\textbf{z}))$, is minimized by setting $\textbf{c} = \textbf{0}$, which results in $\textbf{\textasciicircum}\textbf{z} = \textbf{z}$ and thus $r(\textbf{\textasciicircum}\textbf{z}) = r(\textbf{z})$. This makes the first term zero. The second term, the KL divergence between $q_{\text{phi}}(\textbf{c}|\textbf{z})$ and the Laplace prior $p_{\text{zeta}}(\textbf{c})$, is minimized by setting $q_{\text{phi}}(\textbf{c}|\textbf{z}) = p_{\text{zeta}}(\textbf{c})$. The optimal solution to this combined objective is for the network to learn to output the Laplace prior at every point $\textbf{z}$. This is a trivial solution that provides no useful information about the local structure of the manifold. The paper's motivation to 'encourage the largest coefficient values possible while maintaining the identity' is not captured by this objective. The objective needs to be modified to explicitly penalize small coefficient magnitudes, e.g., by adding a regularization term like $\text{tr}(q_{\text{phi}}(\textbf{c}|\textbf{z}))$ or $\text{E}[\text{||}\textbf{c}\text{||}_1]$.\n\n- Extrapolation Results Lack Statistical Significance: Figure 4 shows the classifier accuracy for extrapolated paths for 4000 samples. While the MAE's performance is depicted as better than the baselines, the figure is qualitative and does not provide error bars or statistical significance tests. The claim that 'MAE is better at generating extrapolated outputs that maintain class identity' is not substantiated. A simple random baseline or a naive Euclidean extrapolation in the latent space could also achieve similar results. The paper should include confidence intervals or hypothesis tests to demonstrate that the observed differences are statistically significant and not due to random chance or the specific choice of test samples. This is crucial for validating the paper's main contribution.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Modify the coefficient encoder objective to explicitly encourage non-zero coefficients, e.g., by adding a regularization term that penalizes the expected magnitude of the coefficients.\n\n- Add quantitative disentanglement metrics (e.g., MIG) to compare the learned representations with $\beta$-VAE and CAE.\n\n- Perform ablation studies to isolate the contribution of the perceptual point pair selection strategy.\n\n- Provide statistical significance tests or confidence intervals for the extrapolation results in Figure 4.\n\n- Address the fundamental dependency on the external classifier by discussing its implications more deeply or exploring methods that define 'identity' and 'natural transformations' more intrinsically.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Ambiguous definition of 'identity' in motivation",
+          "quote": "For example, data in the pixel space suffers from the curse of dimensionality and cannot be smoothly interpolated while maintaining identity *(Bengio et al., 2005)*.",
+          "explanation": "The sentence 'cannot be smoothly interpolated while maintaining identity' uses the term 'identity' without defining it. Does this refer to semantic identity, perceptual similarity, or manifold structure? This ambiguity weakens the motivation for learning a latent space.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Misattribution of mechanism in conclusion",
+          "quote": "We do this by introducing a perceptual point pair selection strategy for training operators and by developing a method that uses a pretrained classifier to learn local regions where operators are likely to be used while preserving the identity of transformed samples.",
+          "explanation": "The conclusion states that the method 'uses a pretrained classifier to learn local regions where operators are likely to be used.' This phrasing is misleading. The classifier is a fixed feature extractor used for the metric; the actual learning of local regions is performed by the coefficient encoder network $q_{\text{phi}}(\textbf{c}|\textbf{z})$. Clarifying this distinction is important for understanding the model's architecture.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        }
+      ],
+      "cost_usd": 0.1109,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

@@ -1,0 +1,1284 @@
+{
+  "slug": "iclr2021--NEXDKk8-improved-denoising-diffusion-probabilistic-models",
+  "title": "IMPROVED DENOISING DIFFUSION PROBABILISTIC MODELS [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## IMPROVED DENOISING DIFFUSION PROBABILISTIC MODELS"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nWe explore denoising diffusion probabilistic models, a class of generative models which have recently been shown to produce excellent samples in the image and audio domains. While these models produce excellent samples, it has yet to be shown that they can achieve competitive log-likelihoods. We show that, with several small modifications, diffusion models can achieve competitive log-likelihoods in the image domain while maintaining high sample quality. Additionally, our models allow for sampling with an order of magnitude fewer diffusion steps with only a modest difference in sample quality. Finally, we explore how sample quality and log-likelihood scale with the number of diffusion steps and the amount of model capacity. We conclude that denoising diffusion probabilistic models are a promising class of generative models with excellent scaling properties and sample quality."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nSohl-Dickstein et al. (2015) introduced diffusion probabilistic models (\"diffusion models\" for brevity), a class of generative models which match a data distribution by learning to reverse a gradual, multi-step noising process. More recently, Ho et al. (2020) showed an equivalence between these models and score based generative models (Song & Ermon, 2019; 2020), which learn a gradient of the log-density of the data distribution using denoising score matching (Hyv\u00e4rinen, 2005). It has recently been shown that this class of models can produce high-quality images (Ho et al., 2020; Song & Ermon, 2020; Jolicoeur-Martineau et al., 2020) and audio (Chen et al., 2020b; Kong et al., 2020), but it has yet to be shown that diffusion models can achieve competitive log-likelihoods. Furthermore, while Ho et al. (2020) showed extremely good results on the CIFAR-10 (Krizhevsky, 2009) and LSUN (Yu et al., 2015) datasets, it is unclear how well diffusion models scale to datasets with higher diversity such as ImageNet. Finally, while Chen et al. (2020b) found that diffusion models can efficiently generate audio using a small number of sampling steps, it has yet to be shown that the same is true for images."
+    },
+    {
+      "index": 3,
+      "text": "In this paper, we show that diffusion models can achieve competitive log-likelihoods while maintaining good sample quality, even on high-diversity datasets like ImageNet. Additionally, we show that our improved models can produce competitive samples an order of magnitude faster than those from Ho et al. (2020). We achieve these results by combining a simple reparameterization of the reverse process variance, a hybrid learning objective that combines the variational lower-bound with the simplified objective from Ho et al. (2020), and a novel noise schedule which allows the model to better leverage the entire diffusion process."
+    },
+    {
+      "index": 4,
+      "text": "We find surprisingly that, with our hybrid objective, our models obtain better log-likelihoods than those obtained by optimizing the log-likelihood directly, and discover that the latter objective has much more gradient noise during training. We show that a simple importance sampling technique reduces this noise and allows us to achieve better log-likelihoods than with the hybrid objective. Using our trained models, we study how sample quality and log-likelihood change as we adjust the number of diffusion steps used at sampling time. We demonstrate that our improved models allow us to use an order of magnitude fewer steps at test time with only a modest change in sample quality and log-likelihood, thus speeding up sampling for use in practical applications."
+    },
+    {
+      "index": 5,
+      "text": "Finally, we evaluate the performance of these models as we increase model size, and observe trends that suggest predictable improvements in performance as we increase training compute."
+    },
+    {
+      "index": 6,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2021\n\n## 2 DENOISING DIFFUSION PROBABILISTIC MODELS\n\nWe briefly review the formulation of diffusion models from Ho et al. (2020). This formulation makes various simplifying assumptions, such as a fixed noising process _q_ which adds diagonal Gaussian noise at each timestep. For a more general derivation, see Sohl-Dickstein et al. (2015)."
+    },
+    {
+      "index": 7,
+      "text": "## 2.1 DEFINITIONS\n\nGiven a data distribution _x_ 0 _\u223c q_ ( _x_ 0), we define a forward noising process _q_ which produces latents _x_ 1 through _xT_ by adding Gaussian noise at time _t_ with variance _\u03b2t \u2208_ (0 _,_ 1) as follows:"
+    },
+    {
+      "index": 8,
+      "text": "Given sufficiently large _T_ and a well behaved schedule of _\u03b2t_ , the latent _xT_ is nearly an isotropic Gaussian distribution. Thus, if we know the exact reverse distribution _q_ ( _xt\u2212_ 1 _|xt_ ), we can sample _xT \u223cN_ (0 _,_ **I** ) and run the process in reverse to get a sample from _q_ ( _x_ 0). However, since _q_ ( _xt\u2212_ 1 _|xt_ ) depends on the entire data distribution, we approximate it using a neural network:"
+    },
+    {
+      "index": 9,
+      "text": "The combination of _q_ and _p_ is a variational auto-encoder (Kingma & Welling, 2013), and we can write the variational lower bound (VLB) as follows:"
+    },
+    {
+      "index": 10,
+      "text": "Aside from _L_ 0, each term of Equation 4 is a _KL_ divergence between two Gaussian distributions, and can thus be evaluated in closed form. To evaluate _L_ 0 for images, we assume that each color component is divided into 256 bins, and we compute the probability of _p\u03b8_ ( _x_ 0 _|x_ 1) landing in the correct bin (which is tractable using the CDF of the Gaussian distribution). Also note that while _LT_ does not depend on _\u03b8_ , it will be close to zero if the forward noising process adequately destroys the data distribution so that _q_ ( _xT |x_ 0) _\u2248N_ (0 _,_ **I** )."
+    },
+    {
+      "index": 11,
+      "text": "It is useful to define and derive several other quantities which are relevant to the forward noising process, so we repeat them here from Ho et al. (2020):"
+    },
+    {
+      "index": 12,
+      "text": "## 2.2 TRAINING IN PRACTICE\n\nEquation 12 provides an efficient way to jump directly to an arbitrary step of the forward noising process. This makes it possible to randomly sample _t_ during training. Ho et al. (2020) uniformly sample _t_ for each image in each mini-batch."
+    },
+    {
+      "index": 13,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\nThere are many different ways to parameterize _\u00b5\u03b8_ ( _xt, t_ ). The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via"
+    },
+    {
+      "index": 14,
+      "text": "Ho et al. (2020) found that predicting _\u03f5_ worked best, especially when combined with a reweighted loss function:"
+    },
+    {
+      "index": 15,
+      "text": "This objective can be seen as a reweighted form of _L_ vlb (without the terms affecting \u03a3 _\u03b8_ ). The authors found that optimizing this reweighted objective resulted in much better sample quality than optimizing _L_ vlb directly, and explain this by drawing a connection to generative score matching (Song & Ermon, 2019; 2020)."
+    },
+    {
+      "index": 16,
+      "text": "One subtlety is that _L_ simple provides no learning signal for \u03a3 _\u03b8_ ( _xt, t_ ). This is irrelevant, however, since Ho et al. (2020) achieved their best results by fixing the variance to _\u03c3t_[2] **[I]**[ rather than learning] it. They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively."
+    },
+    {
+      "index": 17,
+      "text": "## 3 IMPROVING THE LOG-LIKELIHOOD\n\nWhile Ho et al. (2020) found that diffusion models can generate high-fidelity samples according to FID (Heusel et al., 2017) and Inception Score (Salimans et al., 2016), they were unable to achieve competitive log-likelihoods with these models. Log-likelihood is a widely used metric in generative modeling, and it is generally believed that optimizing log-likelihood forces generative models to capture all of the modes of the data distribution (Razavi et al., 2019). Additionally, recent work (Henighan et al., 2020) has shown that small improvements in log-likelihood can have a dramatic impact on sample quality and learnt feature representations. Thus, it is important to explore why diffusion models seem to perform poorly on this metric, since this may suggest a fundamental shortcoming such as bad mode coverage. This section explores several modifications to the algorithm described in Section 2 that, when combined, allow diffusion models to achieve much better log-likelihoods on image datasets, suggesting that these models enjoy the same benefits as other likelihood-based generative models."
+    },
+    {
+      "index": 18,
+      "text": "To study the effects of different modifications, we train fixed model architectures with fixed hyperparameters (Appendix A) on the ImageNet 64 _\u00d7_ 64 (van den Oord et al., 2016a) and CIFAR-10 (Krizhevsky, 2009) datasets. While CIFAR-10 has seen more usage for this class of models, we chose to study ImageNet 64 _\u00d7_ 64 as well because it provides a good trade-off between diversity and resolution, allowing us to train models quickly without worrying about overfitting. Additionally, ImageNet 64 _\u00d7_ 64 has been studied extensively in the context of generative modeling (van den Oord et al., 2016b; Menick & Kalchbrenner, 2018; Child et al., 2019; Roy et al., 2020), allowing us to compare diffusion models directly to many other generative models."
+    },
+    {
+      "index": 19,
+      "text": "The setup from Ho et al. (2020) (optimizing _L_ simple while setting _\u03c3t_[2][=] _[\u03b2][t]_[and] _[ T]_[=][1000][) achieves] a log-likelihood of **3.99 bits/dim** on ImageNet 64 _\u00d7_ 64 after 200K training iterations. We found in early experiments that we could get a boost in log-likelihood by increasing _T_ from 1000 to 4000; with this change, the log-likelihood improves to **3.77 bits/dim** . For the remainder of this section, we use _T_ = 4000, but we explore this choice in Section 4."
+    },
+    {
+      "index": 20,
+      "text": "## 3.1 LEARNING \u03a3 _\u03b8_ ( _xt, t_ )\n\nIn Ho et al. (2020), the authors set \u03a3 _\u03b8_ ( _xt, t_ ) = _\u03c3t_[2] **[I]**[, where] _[ \u03c3][t]_[is not learned.][Oddly, they found that] fixing\u02dc _\u03c3t_[2][to] _[ \u03b2][t]_[yielded roughly the same sample quality as fixing it to] _[\u03b2]_[\u02dc] _[t]_[.][Considering that] _[ \u03b2][t]_[and] _\u03b2t_ represent two opposite extremes, it is reasonable to ask why this choice doesn\u2019t affect samples. One clue is given by Figure 1a, which shows that _\u03b2t_ and _\u03b2_[\u02dc] _t_ are almost equal except near _t_ = 0, i.e. where the model is dealing with imperceptible details. Furthermore, as we increase the number of diffusion steps, _\u03b2t_ and _\u03b2_[\u02dc] _t_ seem to remain close to one another for more of the diffusion process."
+    },
+    {
+      "index": 21,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n10 [0] 10 [0]\n10 [\u22121]\n10 [\u22122]\n6 \u00d7 10 [\u22121]\n10 [\u22123]\n10 [\u22124]\n4 \u00d7 10 [\u22121]\n10 [\u22125]\n3 \u00d7 10 [\u22121] 100 steps 10 [\u22126]\n1000 steps\n10000 steps 10 [\u22127]\n0.0 0.2 0.4 0.6 0.8 1.0\ndiffusion step (scaled) 0 500 1000 1500 2000 2500 3000 3500 4000\ndiffusion step\n\u03b2\u03b2\u0303tt\nloss term (bits)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 22,
+      "text": "Figure 1a: The ratio _\u03b2_[\u02dc] _t/\u03b2t_ for every diffusion step for diffusion processes of different lengths."
+    },
+    {
+      "index": 23,
+      "text": "Figure 1b: Terms of the VLB vs diffusion step.\n\nFigure 2: Latent samples from linear (top) and cosine (bottom) schedules respectively at linearly spaced values of _t_ from 0 to _T_ . The latents in the last quarter of the linear schedule are almost purely noise, whereas the cosine schedule adds noise more slowly"
+    },
+    {
+      "index": 24,
+      "text": "This suggests that, in the limit of infinite diffusion steps, the choice of _\u03c3t_ might not matter at all for sample quality. In other words, as we add more diffusion steps, the model mean _\u00b5\u03b8_ ( _xt, t_ ) determines the distribution much more than \u03a3 _\u03b8_ ( _xt, t_ )."
+    },
+    {
+      "index": 25,
+      "text": "While the above argument suggests that fixing _\u03c3t_ is a reasonable choice for the sake of sample quality, it says nothing about log-likelihood. In fact, Figure 1b shows that the first few steps of the diffusion process contribute the most to the variational lower bound. Thus, it seems likely that we could improve log-likelihood by using a better choice of \u03a3 _\u03b8_ ( _xt, t_ ). To achieve this, we must learn \u03a3 _\u03b8_ ( _xt, t_ ) without the instabilities encountered by Ho et al. (2020)."
+    },
+    {
+      "index": 26,
+      "text": "Since Figure 1a shows that the reasonable range for \u03a3 _\u03b8_ ( _xt, t_ ) is very small, it would be hard for a neural network to predict \u03a3 _\u03b8_ ( _xt, t_ ) directly, even in the log domain, as observed by Ho et al. (2020). Instead, we found it better to parameterize the variance as an interpolation between _\u03b2t_ and _\u03b2_[\u02dc] _t_ in the log domain. In particular, our model outputs a vector _v_ containing one component per dimension, and we turn this output into variances as follows:"
+    },
+    {
+      "index": 27,
+      "text": "We did not apply any constraints on _v_ , theoretically allowing the model to predict variances outside of the interpolated range. However, we did not observe the network doing this in practice, suggesting that the bounds for \u03a3 _\u03b8_ ( _xt, t_ ) are indeed expressive enough."
+    },
+    {
+      "index": 28,
+      "text": "Since _L_ simple doesn\u2019t depend on \u03a3 _\u03b8_ ( _xt, t_ ), we define a new hybrid objective:\n\nFor our experiments, we set _\u03bb_ = 0 _._ 001 to prevent _L_ vlb from overwhelming _L_ simple. Along this same line of reasoning, we also apply a stop-gradient to the _\u00b5\u03b8_ ( _xt, t_ ) output for the _L_ vlb term. This way, _L_ vlb can guide \u03a3 _\u03b8_ ( _xt, t_ ) while _L_ simple is still the main source of influence over _\u00b5\u03b8_ ( _xt, t_ )."
+    },
+    {
+      "index": 29,
+      "text": "## 3.2 IMPROVING THE NOISE SCHEDULE\n\nWe found that the noise schedule used in Ho et al. (2020) was sub-optimal for ImageNet 64 _\u00d7_ 64. In particular, the end of the forward noising process is too noisy, and so doesn\u2019t contribute very"
+    },
+    {
+      "index": 30,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nlinear schedule 1.0 line\u0304r\n60 cosine schedule cosine\n0.8\n50\n0.6\n40\n0.4\n30\n0.2\n20\n0.0\n0.0 0.1 0.2 0.3 0.4 0.5 0.0 0.2 0.4 0.6 0.8 1.0\nfraction of reverse diffusion process skipped diffusion step (t)\nFigure 3a: FID when skipping a prefix of the Figure 3b: \u03b1 \u00af t throughout diffusion in the linear\nreverse diffusion process on ImageNet 64  \u00d7  64. schedule and our proposed cosine schedule.\n5.00\nLvlb\n4.75 Lhybrid 10 [5]\nLvlb (resampled)\n4.50 10 [4]\n4.25\n10 [3]\n4.00\n10 [2]\n3.75\n3.50 10 [1]\n3.25 10 [0] Lvlb\n3.00 Lhybrid\n0 50 100 150 200 250 10 [\u22121]\ntraining iterations (1e3) 0 25 50 75 100 125 150 175 200\ntraining step (1e3)\nFID \u03b1t\ntraining log loss (bits/dim) gradient noise scale\n**----- End of picture text -----**"
+    },
+    {
+      "index": 31,
+      "text": "Figure 4a: Learning curves comparing the loglikelihoods achieved by different objectives on ImageNet 64 _\u00d7_ 64."
+    },
+    {
+      "index": 32,
+      "text": "Figure 4b: Gradient noise scales for the _L_ vlb and _L_ hybrid objectives on ImageNet 64 _\u00d7_ 64.\n\nmuch to sample quality. This can be seen visually in Figure 2. The result of this effect is studied in Figure 3a, where we see that a model trained with the linear schedule does not get much worse (as measured by FID) when we skip up to 20% of the reverse diffusion process."
+    },
+    {
+      "index": 33,
+      "text": "To address this problem, we construct a different noise schedule in terms of _\u03b1_ \u00af _t_ :\n\nTo go from this definition to variances _\u03b2t_ , we note that _\u03b2t_ = 1 _\u2212 \u03b1_ \u00af _\u03b1t_ \u00af _\u2212t_ 1[.][In practice, we clip] _[ \u03b2][t]_[to be] no larger than 0.999 to prevent singularities at the end of the diffusion process near _t_ = _T_ ."
+    },
+    {
+      "index": 34,
+      "text": "Our cosine schedule is designed to have a linear drop-off of _\u03b1_ \u00af _t_ in the middle of the process, while changing very little near the extremes of _t_ = 0 and _t_ = _T_ to prevent abrupt changes in noise level. Figure 3b shows how _\u03b1_ \u00af _t_ progresses for both schedules. We can see that the linear schedule from Ho et al. (2020) falls towards zero much faster, destroying information more quickly than necessary."
+    },
+    {
+      "index": 35,
+      "text": "The small offset _s_ in our schedule prevents _\u03b2t_ from being too small near _t_ = 0, since we found that having tiny amounts of noise at the beginning of the process made it hard for the network to predict _\u03f5_ accurately enough. In particular, we selected _s_ such that _[\u221a] \u03b2_ 0 was slightly smaller than the pixel bin size, 1 _/_ 127 _._ 5. We chose to use _cos_[2] in particular because it is a common mathematical function with the shape we were looking for. This choice was arbitrary, and we expect that many other functions with similar shapes would work as well."
+    },
+    {
+      "index": 36,
+      "text": "## 3.3 REDUCING GRADIENT NOISE\n\nWe expected to achieve the best log-likelihoods by optimizing _L_ vlb directly, rather than by optimizing _L_ hybrid. However, we were surprised to find that _L_ vlb was actually quite difficult to optimize in practice, at least on the diverse ImageNet 64 _\u00d7_ 64 dataset. Figure 4a shows the learning curves for both _L_ vlb and _L_ hybrid. Both curves are noisy, but the hybrid objective clearly achieves better log-likelihoods on the training set given the same amount of training time."
+    },
+    {
+      "index": 37,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2021\n\n|**MODEL**|**TRAIN ITERS.**|**_T_**|**SCHEDULE**|**OBJECTIVE**|**NLL(bits/dim)**|**FID**|\n|---|---|---|---|---|---|---|\n|Baseline|200K\n200K|1K\n4K|linear\nlinear|_L_simple\n_L_simple|3.99\n3.77|31.0\n29.7|\n||200K|4K|linear|_L_hybrid|3.66|30.4|\n|Improved|200K|4K|cosine|_L_simple|3.68|**25.6**|\n||200K|4K|cosine|_L_hybrid|3.62|26.6|\n||200K|4K|cosine|_L_vlb|**3.57**|54.7|\n|Improved|1.5M\n1.5M|4K\n4K|cosine\ncosine|_L_hybrid\n_L_vlb|3.57\n**3.53**|**18.3**\n38.3|"
+    },
+    {
+      "index": 38,
+      "text": "Table 1: Comparison of NLL and FID for different diffusion models on ImageNet 64 _\u00d7_ 64. _L_ vlb and _L_ hybrid were trained with learned sigmas using the parameterization from Section 3.1. For _L_ vlb, we used the resampling scheme from Section 3.3. Using our cosine schedule and _L_ hybrid improves both log-likelihood and FID over the baseline from Ho et al. (2020). Optimizing _L_ vlb further improves log-likelihood at the cost of a higher FID."
+    },
+    {
+      "index": 39,
+      "text": "|**MODEL**|**TRAIN ITERS.**|**_T_**|**SCHEDULE**|**OBJECTIVE**|**NLL(bits/dim)**|**FID**|\n|---|---|---|---|---|---|---|\n|Baseline|500K\n500K|1K\n4K|linear\nlinear|_L_simple\n_L_simple|3.73\n3.37|3.29\n**2.90**|\n||500K|4K|linear|_L_hybrid|3.26|3.07|\n|Improved|500K|4K|cosine|_L_simple|3.26|3.05|\n||500K|4K|cosine|_L_hybrid|3.17|3.19|\n||500K|4K|cosine|_L_vlb|**2.94**|11.47|"
+    },
+    {
+      "index": 40,
+      "text": "Table 2: Comparison of NLL and FID for different diffusion models on CIFAR-10. Using our cosine schedule and _L_ hybrid improves log-likelihood with a marginal impact on FID. Optimizing _L_ vlb further improves log-likelihood at the cost of a significantly higher FID."
+    },
+    {
+      "index": 41,
+      "text": "We hypothesized that the gradient of _L_ vlb was much noisier than that of _L_ hybrid. We confirmed this by evaluating the gradient noise scales (McCandlish et al., 2018) for models trained with both objectives, as shown in Figure 4b. Thus, we sought out a way to reduce the variance of _L_ vlb in order to optimize directly for log-likelihood."
+    },
+    {
+      "index": 42,
+      "text": "Noting that different terms of _L_ vlb have greatly different magnitudes (Figure 1b), we hypothesized that sampling _t_ uniformly causes unnecessary noise in the _L_ vlb objective. To address this, we employ importance sampling:"
+    },
+    {
+      "index": 43,
+      "text": "Since _E_ [ _L_[2] _t_[]][is][unknown][beforehand][and][may][change][throughout][training,][we][maintain][a][history] of the previous 10 values for each loss term, and update this dynamically during training. At the beginning of training, we sample _t_ uniformly until we draw 10 samples for every _t \u2208_ [0 _, T \u2212_ 1]. With this importance sampled objective, we are able to achieve our best log-likelihoods by optimizing _L_ vlb.[1] This can be seen in Figure 4a as the \" _Lvlb_ (resampled)\" curve. The figure also shows that the importance sampled objective is considerably less noisy than the original, uniformly sampled objective."
+    },
+    {
+      "index": 44,
+      "text": "## 3.4 RESULTS AND ABLATIONS\n\nIn this section, we ablate the changes we have made to achieve better log-likelihoods. Table 1 summarizes the results of our ablations on ImageNet 64 _\u00d7_ 64, and Table 2 shows them for CIFAR10. We also trained our best ImageNet 64 _\u00d7_ 64 models for 1.5M iterations, and report these results as well. Based on the results, we recommend always using the cosine schedule, and the _L_ hybrid objective in most cases. If one is only optimizing for likelihood and not sample quality, the importance sampled _L_ vlb is the best objective to use."
+    },
+    {
+      "index": 45,
+      "text": "> 1We found that the importance sampling technique was not helpful when optimizing _L_ hybrid directly."
+    },
+    {
+      "index": 46,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2021\n\n|**MODEL**|**ImageNet**64_\u00d7_64\nNLL(bits/dim)|**CIFAR-10**\nNLL(bits/dim)|\n|---|---|---|\n|Glow (Kingma & Dhariwal, 2018)\nFlow++ (Ho et al., 2019)\nPixelCNN (van den Oord et al., 2016b)\nPixelSNAIL (Chen et al., 2018)\nSPN (Menick & Kalchbrenner, 2018)\nImage Transformer (Parmar et al., 2018)\nSparse Transformer (Child et al., 2019)\nRoutingTransformer(Royet al.,2020)|3.81\n3.69\n3.57\n3.52\n3.52\n3.48\n3.44\n**3.43**|3.35\n3.08\n3.14\n2.85\n-\n2.90\n**2.80**\n-|\n|Diffusion (Ho et al., 2020)\nImproved Diffusion (ours)|3.77\n**3.53**|3.70\n**2.94**|"
+    },
+    {
+      "index": 47,
+      "text": "Table 3: Comparison of diffusion models to other likelihood-based models on CIFAR-10 and Unconditional ImageNet 64 _\u00d7_ 64. On ImageNet 64 _\u00d7_ 64, our model is competitive with the best conventional models, but is worse than fully transformer-based architectures."
+    },
+    {
+      "index": 48,
+      "text": "## 4 IMPROVING SAMPLING SPEED\n\nAll of our models were trained with 4000 diffusion steps, and thus producing a single sample takes several minutes on a modern GPU. In this section, we explore how performance scales if we reduce the steps used during sampling, and find that our pre-trained models can produce high-quality samples with many fewer diffusion steps than they were trained with without any fine-tuning. Reducing the steps in this way makes it possible to sample from our models in a number of seconds rather than minutes, and greatly improves the practical applicability of image diffusion models."
+    },
+    {
+      "index": 49,
+      "text": "For a model trained with _T_ diffusion steps, we would typically sample using the same set of _t_ values (1 _,_ 2 _, ..., T_ ) as used during training. However, it is also possible to sample using an arbitrary set of _t_ values. We define a sequence _S_ of _t_ values to use for sampling, such as a strided schedule like \u00af _S_ schedule= (1 _,_ 3 _\u03b1_ \u00af _,S_ 5 _t, ..., T_ , which can be used to obtain corresponding sampling variances _\u2212_ 1). Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise"
+    },
+    {
+      "index": 50,
+      "text": "We can compute _p_ ( _xSt\u2212_ 1 _|xSt_ ) as _N_ ( _\u00b5\u03b8_ ( _xSt, St_ ) _,_ \u03a3 _\u03b8_ ( _xSt, St_ )). Note that \u03a3 _\u03b8_ ( _xSt, St_ ) is parameterized as a range between _\u03b2St_ and _\u03b2_[\u02dc] _St_ so it will automatically be rescaled for the shorter diffusion process."
+    },
+    {
+      "index": 51,
+      "text": "To evaluate sample quality for reduced numbers of sampling steps, we use a stride _K_ over timesteps to reduce the total number of sampling steps from _T_ to _T/K_ . In Figures 5a and 5c, we evaluate FIDs for an _L_ hybrid model and an _L_ simple model that were trained with 4000 diffusion steps, using 30, 50, 100, 150, 200, 400, and 4000 sampling steps. We do this for multiple checkpoints throughout training. We find that the _L_ simple model suffers much more in sample quality when using a reduced number of sampling steps, whereas our _L_ hybrid model maintains sample quality. Furthermore, we find that using more sampling steps becomes increasingly beneficial throughout training. However, 100 sampling steps is still sufficient to achieve near-optimal FIDs for our fully trained models."
+    },
+    {
+      "index": 52,
+      "text": "In initial experiments, we found that although constant striding did not significantly affect FID, it drastically reduced log-likelihood. To address this, we use a strided subset of timesteps as for FID (with stride _K_ ), but we also include every _t_ from 1 to _T/K_ . This requires _T/K_ extra evaluation steps, but greatly improves log-likelihood compared to the uniformly strided schedule. In Figures 5b and 5d we present log-likelihoods with this modified strided schedule."
+    },
+    {
+      "index": 53,
+      "text": "## 5 SCALING MODEL SIZE\n\nIn the previous sections, we showed algorithmic changes that improved log-likelihood and FID without changing the amount of training compute. However, a trend in modern machine learning is that larger models and more training time tend to improve model performance (Kaplan et al., 2020;"
+    },
+    {
+      "index": 54,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nLsimple (\u03c3large, 200K iters) Lsimple (\u03c3small, 200K iters) Lhybrid (200K iters)\nLsimple (\u03c3large, 500K iters) Lsimple (\u03c3small, 500K iters) Lhybrid (500K iters)\nLsimple (\u03c3large, 1500K iters) Lsimple (\u03c3small, 1500K iters) Lhybrid (1500K iters)\n40\n4.2\n35\n4.1\n4.0\n30\n3.9\n25 3.8\n3.7\n20\n3.6\n15\n10 [2] 10 [3] 10 [2] 10 [3]\nsampling steps evaluation steps\nFigure 5a: FID versus sampling steps on Ima- Figure 5b: NLL versus evaluation steps on Ima-\ngeNet 64  \u00d7  64. geNet 64  \u00d7  64.\n20.0 4.0\n17.5\n3.8\n15.0\n12.5 3.6\n10.0\n7.5 3.4\n5.0\n3.2\n2.5\n0.0 3.0\n10 [2] 10 [3] 10 [3]\nsampling steps sampling steps\nFigure 5c: FID versus sampling steps on CIFAR- Figure 5d: NLL versus evaluation steps on\n10. CIFAR-10.\nFID\nNLL (bits/dim)\nFID\nNLL (bits/dim)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 55,
+      "text": "Figure 5: NLL and FID versus number of evaluation/sampling steps, for models trained on ImageNet 64 _\u00d7_ 64 and CIFAR-10. All models were trained with 4000 diffusion steps. Models that learn sigmas using our reparametrization and _L_ hybrid objective (Section 3.1) increase marginally in NLL and FID as we reduce evaluation/sampling steps, while using fixed sigmas as in Ho et al. (2020) results in a larger increase."
+    },
+    {
+      "index": 56,
+      "text": "Chen et al., 2020a; Brown et al., 2020). Given this observation, we investigate how FID and NLL scale as a function of model size. Our results suggest that diffusion models can achieve better and better performance as training compute increases."
+    },
+    {
+      "index": 57,
+      "text": "To measure how performance scales with compute, we train four different models on ImageNet 64 _\u00d7_ 64 with the _L_ hybrid objective described in Section 3.1. To change model capacity, we apply a depth multiplier across all layers, such that the first layer has either 64, 96, 128, or 192 channels. Note that our previous experiments used 128 channels in the first layer. Since the depth of each layer affects the scale of the initial weights, we scale the Adam learning rate for each model by 1 _/[\u221a]_ channel multiplier, such that the 128 channel model has a learning rate of 0.0001 (as in our other experiments)."
+    },
+    {
+      "index": 58,
+      "text": "Figure 6a and 6b show how FID and NLL improve relative to compute. These plots reveal that, to achieve optimal performance for a given amount of compute, it often makes sense to train a larger model for fewer iterations, rather than training a smaller model to convergence. We note that these models do not achieve optimal log-likelihoods because they were trained with our _L_ hybrid objective and not directly with _L_ vlb to keep both good log-likelihoods and sample quality. The x-axis in both figures is the theoretical amount of training compute, assuming full hardware utilization."
+    },
+    {
+      "index": 59,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n60 64 ch (30M params)96 ch (68M params) 3.80 64 ch (30M params)96 ch (68M params)\n128 ch (120M params) 128 ch (120M params)\n192 ch (270M params) 3.75 192 ch (270M params)\n50\n3.70\n40\n3.65\n30\n3.60\n20\n3.55\n10 [18] 10 [19] 10 [18] 10 [19]\ncompute (FLOPs) compute (FLOPs)\nFID\nNLL (bits/dim)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 60,
+      "text": "Figure 6a: FID throughout training on ImageNet 64 _\u00d7_ 64 for different model sizes.\n\nFigure 6b: NLL throughout training on ImageNet 64 _\u00d7_ 64 for different model sizes."
+    },
+    {
+      "index": 61,
+      "text": "## 6 RELATED WORK\n\nChen et al. (2020b) and Kong et al. (2020) are two recent works that use diffusion models to produce high fidelity audio conditioned on mel-spectrograms. Concurrent to our work, Chen et al. (2020b) use a combination of improved schedule and _L_ 1 loss to allow sampling with fewer steps with very little reduction in sample quality. However, compared to our unconditional image generation task, their generative task has a strong input conditioning signal provided by the mel-spectrograms, and we hypothesize that this makes it easier to sample with fewer diffusion steps."
+    },
+    {
+      "index": 62,
+      "text": "Jolicoeur-Martineau et al. (2020) explored score matching in the image domain, and constructed an adversarial training objective to produce better _x_ 0 predictions. However, they found that choosing a better network architecture removed the need for this adversarial objective, suggesting that the adversarial objective is not necessary for powerful generative modeling."
+    },
+    {
+      "index": 63,
+      "text": "## 7 CONCLUSION\n\nWe have shown that, with a few modifications, diffusion models can sample much faster and achieve better log-likelihoods with little impact on sample quality. Here we summarize our main findings:"
+    },
+    {
+      "index": 64,
+      "text": "- Our cosine noise schedule improves NLL (and sometimes FID) compared to the linear schedule from Ho et al. (2020)."
+    },
+    {
+      "index": 65,
+      "text": "- Learning \u03a3 _\u03b8_ using our parameterization and _L_ hybrid objective provides a good trade-off between NLL and FID. More importantly, it allows sampling with many fewer steps without decreased sample quality."
+    },
+    {
+      "index": 66,
+      "text": "- One can optimize _L_ vlb directly using our importance sampling technique to achieve the best possible NLL at the expense of sample quality."
+    },
+    {
+      "index": 67,
+      "text": "The combination of these results makes diffusion models an attractive choice for generative modeling, since they combine good log-likelihoods, high-quality samples, and fast sampling with a wellgrounded, stationary training objective. Furthermore, we have investigated how diffusion models scale with the amount of available training compute, and found that more training compute trivially leads to better sample quality and log-likelihood. These results indicate that diffusion models are a promising direction for future research, especially as the affordability of compute increases over time."
+    },
+    {
+      "index": 68,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are few-shot learners, 2020."
+    },
+    {
+      "index": 69,
+      "text": "- Mark Chen, Alec Radford, Rewon Child, Jeff Wu, Heewoo Jun, Prafulla Dhariwal, David Luan, and Ilya Sutskever. Generative pretraining from pixels, 2020a. URL https://cdn.openai. com/papers/Generative_Pretraining_from_Pixels_V2.pdf."
+    },
+    {
+      "index": 70,
+      "text": "- Nanxin Chen, Yu Zhang, Heiga Zen, Ron J. Weiss, Mohammad Norouzi, and William Chan. Wavegrad: Estimating gradients for waveform generation, 2020b."
+    },
+    {
+      "index": 71,
+      "text": "- Xi Chen, Nikhil Mishra, Mostafa Rohaninejad, and Pieter Abbeel. Pixelsnail: An improved autoregressive generative model. In _International Conference on Machine Learning_ , pp. 864\u2013872. PMLR, 2018."
+    },
+    {
+      "index": 72,
+      "text": "- Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. Generating long sequences with sparse transformers, 2019."
+    },
+    {
+      "index": 73,
+      "text": "- Terrance DeVries, Michal Drozdzal, and Graham W Taylor. Instance selection for gans. _arXiv preprint arXiv:2007.15255_ , 2020."
+    },
+    {
+      "index": 74,
+      "text": "- Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition, 2015."
+    },
+    {
+      "index": 75,
+      "text": "- Tom Henighan, Jared Kaplan, Mor Katz, Mark Chen, Christopher Hesse, Jacob Jackson, Heewoo Jun, Tom B. Brown, Prafulla Dhariwal, Scott Gray, Chris Hallacy, Benjamin Mann, Alec Radford, Aditya Ramesh, Nick Ryder, Daniel M. Ziegler, John Schulman, Dario Amodei, and Sam McCandlish. Scaling laws for autoregressive generative modeling, 2020."
+    },
+    {
+      "index": 76,
+      "text": "- Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. Gans trained by a two time-scale update rule converge to a local nash equilibrium. Advances in Neural Information Processing Systems 30 (NIPS 2017), 2017."
+    },
+    {
+      "index": 77,
+      "text": "- Jonathan Ho, Xi Chen, Aravind Srinivas, Yan Duan, and Pieter Abbeel. Flow++: Improving flowbased generative models with variational dequantization and architecture design. _arXiv preprint arXiv:1902.00275_ , 2019."
+    },
+    {
+      "index": 78,
+      "text": "- Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models, 2020.\n\n- Aapo Hyv\u00e4rinen. Estimation of non-normalized statistical models by score matching. _Journal of Machine Learning Research_ , 6(Apr):695\u2013709, 2005."
+    },
+    {
+      "index": 79,
+      "text": "- Alexia Jolicoeur-Martineau, R\u00e9mi Pich\u00e9-Taillefer, R\u00e9mi Tachet des Combes, and Ioannis Mitliagkas. Adversarial score matching and improved sampling for image generation, 2020."
+    },
+    {
+      "index": 80,
+      "text": "- Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models, 2020."
+    },
+    {
+      "index": 81,
+      "text": "- Diederik P. Kingma and Jimmy Ba. Adam: A method for stochastic optimization, 2014.\n\nDiederik P Kingma and Max Welling. Auto-encoding variational bayes, 2013."
+    },
+    {
+      "index": 82,
+      "text": "- Durk P Kingma and Prafulla Dhariwal. Glow: Generative flow with invertible 1x1 convolutions. In _Advances in neural information processing systems_ , pp. 10215\u201310224, 2018."
+    },
+    {
+      "index": 83,
+      "text": "- Zhifeng Kong, Wei Ping, Jiaji Huang, Kexin Zhao, and Bryan Catanzaro. Diffwave: A versatile diffusion model for audio synthesis, 2020.\n\n10"
+    },
+    {
+      "index": 84,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__gemini-3-flash-preview": {
+      "label": "Progressive (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "This paper presents a significant and timely contribution to the field of generative modeling by addressing three primary limitations of Denoising Diffusion Probabilistic Models (DDPMs): poor log-likelihood performance, slow sampling speeds, and unclear scalability. The writing is exceptionally clear, and the authors demonstrate a sophisticated understanding of the trade-offs between the qualitative metrics (e.g., FID) favored by previous work and the rigorous density estimation (VLB) required for competitive likelihoods. The most significant contribution is the hybrid objective function and the reparameterization of the reverse process variance, which elegantly bridges the gap between the simplified \"noise prediction\" objective and the formal variational lower bound. While the paper identifies a noise issue in direct log-likelihood optimization, it effectively mitigates this through importance sampling. Overall, this is a high-quality manuscript with strong empirical grounding; the results suggest that diffusion models are not just high-quality sample generators but are also robust density estimators capable of rivaling autoregressive models and VAEs, provided the noise schedules and variance parameterizations are tuned correctly.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3-flash-preview_0",
+          "title": "Substantial OCR corruption in parameterization description",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "In Section 2.2, the description of the different parameterizations for the reverse process mean is severely garbled by OCR. While the intent is to contrast predicting the mean $\\mu_\\theta$, the posterior mean $\\tilde{\\mu}$, and the noise $\\epsilon$, the text as written is syntactically broken (e.g., 'predict _\u00b5_ could then be fed through', 'noise _x \u03f5_ added to0'). Crucially, the final formula for predicting $x_0$ via noise is missing entirely from the text. While a practitioner in the field can guess the intended meaning based on Ho et al. (2020), this passage is essentially unreadable for someone using this paper as a primary reference for the model's implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_1",
+          "title": "Mathematical notation breakdown in Sigma parameterization",
+          "quote": "One subtlety is that _L_ simple provides no learning signal for \u03a3 _\u03b8_ ( _xt, t_ ). This is irrelevant, however, since Ho et al. (2020) achieved their best results by fixing the variance to _\u03c3t_[2] **[I]**[ rather than learning] it. They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively.",
+          "explanation": "The text describing the variance bounds contains significant notation errors likely introduced during OCR/extraction. Specifically, the definitions of the two 'extreme' variances are presented with confusing bracketed notation like _\u03c3t_[2][=] _[\u03b2][t]_. More importantly, the explanation that these extremes correspond to $q(x_0)$ being either 'isotropic Gaussian noise or a delta function' is slightly imprecise without its original context; usually, these bounds are derived based on whether the data distribution is a single point (delta) or the variance of the reverse posterior. While the logic holds for experts, the notation $[ \\sigma] t_[2][=] _[\u03b2]_[\u02dc] _[t]_ is a poor representation of $\\sigma_t^2 = \\tilde{\\beta}_t$.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_2",
+          "title": "Conflicting claims regarding importance sampling",
+          "quote": "With this importance sampled objective, we are able to achieve our best log-likelihoods by optimizing _L_ vlb.[1] ... 1We found that the importance sampling technique was not helpful when optimizing _L_ hybrid directly.",
+          "explanation": "The authors state in Section 3.3 that importance sampling is necessary to optimize $L_{vlb}$ effectively due to gradient noise. However, they then state in a footnote that importance sampling was 'not helpful' for $L_{hybrid}$. This is logically curious because $L_{hybrid}$ is defined in Equation 14 as $L_{simple} + \\lambda L_{vlb}$. Since $L_{simple}$ also involves a summation over timesteps $t$, one would expect it to also benefit from variance reduction, or at least that the $L_{vlb}$ component within $L_{hybrid}$ would benefit. If importance sampling makes $L_{vlb}$ better than $L_{hybrid}$ (as shown in Figure 4a and Tables 1/2), but isn't useful for $L_{hybrid}$, it suggests a complex interaction between the reweighted gradients of $L_{simple}$ and the VLB terms that is not fully explained.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_3",
+          "title": "Missing interpolation equation for learned variance",
+          "quote": "In particular, our model outputs a vector v containing one component per dimension, and we turn this output into variances as follows:",
+          "explanation": "The text explicitly introduces the parameterization of the learned variance as an interpolation between $\\beta_t$ and $\\tilde{\\beta}_t$ in the log domain, but the actual mathematical formula is missing from the passage. While the surrounding prose explains that the model outputs a vector $v$, it doesn't specify the weighting function (e.g., $\\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t)$). For a reader to reproduce the 'Improved' results or understand how $v$ is bounded, the exact interpolation formula is necessary.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_4",
+          "title": "Missing definition of cosine schedule alpha-bar",
+          "quote": "To address this problem, we construct a different noise schedule in terms of $\\alpha$ \u00af $t$ :",
+          "explanation": "The text introduces the concept of the cosine noise schedule to replace the linear one, but the actual functional form for $\\bar{\\alpha}_t$ (the most critical part of the 'Improved' method) is missing from the excerpt. Based on the description of 'cosine squared' and the offset $s$, a reader can infer the shape, but the specific equation needed to implement the schedule is absent. Given that Figure 3b and Table 1 rely on this specific math, its omission is a significant gap in the methodology description.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_5",
+          "title": "Missing importance sampling weights equation",
+          "quote": "To address this, we employ importance sampling:",
+          "explanation": "The paper identifies gradient noise in $L_{vlb}$ and proposes importance sampling as a solution. However, the equation defining the sampling distribution $p_t$ (usually proportional to the square root of the expected loss terms $\\sqrt{E[L_t^2]}$) is missing. Since the text notes that importance sampling was key to achieving the best NLL results in Figure 4a and Table 1, the absence of the formula used to calculate these probabilities makes this part of the method non-reproducible.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_6",
+          "title": "Inconsistency in fixing variance vs learning it",
+          "quote": "In Ho et al. (2020), the authors set \u03a3 \u03b8 ( xt, t ) = \u03c3t[2] [I], where [ \u03c3][t] is not learned. Oddly, they found that fixing\u02dc \u03c3t[2] to [ \u03b2][t] yielded roughly the same sample quality as fixing it to [\u03b2][\u02dc] [t].",
+          "explanation": "There appears to be a notation error or OCR misread involving several symbols. The text says they fixed 'fixing\u02dc $\\sigma_t^2$ to $\\beta_t$'. Based on the notation summary, $\\beta_t$ and $\\tilde{\\beta}_t$ are the two extremes. The summary defines $\\tilde{\beta}_t$ as the posterior variance. The use of 'fixing\u02dc $\\sigma_t^2$' suggests a confusion between the variable name $\\sigma^2$ and the value $\\tilde{\\beta}$. Further, the OCR text 'fixing\u02dc $\\sigma_t^2$ to $[\\beta][t]$ yielded... same... as fixing it to $[\\beta][\\tilde{}][t]$' is slightly garbled. While a reader can infer the authors mean 'fixing the variance to either the upper or lower bound', the specific symbol string is confusing and potentially masks the intended relationship between $\\beta_t$ (the forward variance) and $\\tilde{\\beta}_t$ (the posterior variance).",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_7",
+          "title": "Confusing notation for strided sampling noise schedule",
+          "quote": "We define a sequence _S_ of _t_ values to use for sampling, such as a strided schedule like \u00af _S_ schedule= (1 _,_ 3 _\u03b1_ \u00af _,S_ 5 _t, ..., T_ , which can be used to obtain corresponding sampling variances _\u2212_ 1). Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise",
+          "explanation": "In Section 4, the notation for the strided sampling schedule is significantly garbled. The text reads '_S_ schedule= (1 _,_ 3 _\u03b1_ \u00af _,S_ 5 _t, ..., T_', which appears to be an OCR error or a combination of the sequence definition and terms for the variance schedule. Earlier, $\\bar{\\alpha}$ was defined as the cumulative product of $\\alpha_t$. In this context, the authors are trying to explain how to define a new noise schedule for a jump-step process. While a reader familiar with DDIM (Song et al. 2020) might infer that they are redefining $\\bar{\\alpha}_{S_t}$ based on the original schedule to maintain the marginal distribution $q(x_{S_t}|x_0)$, the passage as it stands is mathematically incoherent and obscures the actual formula used to rescale the variances for fewer steps.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_8",
+          "title": "Potential contradiction in importance sampling justification",
+          "quote": "Noting that different terms of _L_ vlb have greatly different magnitudes (Figure 1b), we hypothesized that sampling _t_ uniformly causes unnecessary noise in the _L_ vlb objective.",
+          "explanation": "The authors argue that high-magnitude terms in the VLB lead to high gradient noise, which they address with importance sampling. However, Figure 1b shows that the terms with the highest magnitude are at $t=0$ ($L_0$) and $t=1$. In a standard VLB for diffusion, $L_0$ and $L_T$ are often handled separately, and the summation for $L_{1 \\dots T-1}$ is what is sampled. If the noise is dominated by the very first steps, importance sampling across all $T$ steps might not be as effective as simply high-frequency sampling of the early steps or using a different parameterization. While the method works, the logical link between 'magnitude' in Figure 1b and 'gradient noise' is a bit loose without explaining that the variance of these estimators typically scales with the magnitude of the terms themselves.",
+          "comment_type": "logical",
+          "paragraph_index": 42,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_9",
+          "title": "Ambiguity in 'linear drop-off' description for cosine schedule",
+          "quote": "Our cosine schedule is designed to have a linear drop-off of _\u03b1_ \u00af _t_ in the middle of the process",
+          "explanation": "The text describes the cosine schedule as having a 'linear drop-off' of $\\bar{\\alpha}_t$ in the middle. Looking at the formula provided in the summary $f(t) = \\cos(\\dots)^2$, the derivative is a sine function, meaning the rate of change is highest in the middle. While the *slope* is relatively constant (linear) in the center of a cosine-squared curve, the resulting schedule for $\\bar{\\alpha}_t$ is distinctly non-linear compared to the 'linear schedule' (which refers to the schedule of $\\beta_t$, not $\\bar{\\alpha}_t$). This terminology is slightly confusing because a 'linear schedule' in literature usually means $\\beta_t$ is linear, which results in an exponential-like decay of $\\bar{\\alpha}_t$. The authors mean the *decay* of information is more linear in time personally, but the prose could lead a reader to think $\\bar{\\alpha}_t$ itself is a linear function of $t$.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.072,
+      "prompt_tokens": 71445,
+      "completion_tokens": 12091
+    },
+    "progressive_original__gemini-3-flash-preview": {
+      "label": "Progressive Original (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "This paper presents a significant and timely contribution to the field of generative modeling by addressing three primary limitations of Denoising Diffusion Probabilistic Models (DDPMs): poor log-likelihood performance, slow sampling speeds, and unclear scalability. The writing is exceptionally clear, and the authors demonstrate a sophisticated understanding of the trade-offs between the qualitative metrics (e.g., FID) favored by previous work and the rigorous density estimation (VLB) required for competitive likelihoods. The most significant contribution is the hybrid objective function and the reparameterization of the reverse process variance, which elegantly bridges the gap between the simplified \"noise prediction\" objective and the formal variational lower bound. While the paper identifies a noise issue in direct log-likelihood optimization, it effectively mitigates this through importance sampling. Overall, this is a high-quality manuscript with strong empirical grounding; the results suggest that diffusion models are not just high-quality sample generators but are also robust density estimators capable of rivaling autoregressive models and VAEs, provided the noise schedules and variance parameterizations are tuned correctly.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3-flash-preview_0",
+          "title": "Substantial OCR corruption in parameterization description",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "In Section 2.2, the description of the different parameterizations for the reverse process mean is severely garbled by OCR. While the intent is to contrast predicting the mean $\\mu_\\theta$, the posterior mean $\\tilde{\\mu}$, and the noise $\\epsilon$, the text as written is syntactically broken (e.g., 'predict _\u00b5_ could then be fed through', 'noise _x \u03f5_ added to0'). Crucially, the final formula for predicting $x_0$ via noise is missing entirely from the text. While a practitioner in the field can guess the intended meaning based on Ho et al. (2020), this passage is essentially unreadable for someone using this paper as a primary reference for the model's implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_1",
+          "title": "Mathematical notation breakdown in Sigma parameterization",
+          "quote": "One subtlety is that _L_ simple provides no learning signal for \u03a3 _\u03b8_ ( _xt, t_ ). This is irrelevant, however, since Ho et al. (2020) achieved their best results by fixing the variance to _\u03c3t_[2] **[I]**[ rather than learning] it. They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively.",
+          "explanation": "The text describing the variance bounds contains significant notation errors likely introduced during OCR/extraction. Specifically, the definitions of the two 'extreme' variances are presented with confusing bracketed notation like _\u03c3t_[2][=] _[\u03b2][t]_. More importantly, the explanation that these extremes correspond to $q(x_0)$ being either 'isotropic Gaussian noise or a delta function' is slightly imprecise without its original context; usually, these bounds are derived based on whether the data distribution is a single point (delta) or the variance of the reverse posterior. While the logic holds for experts, the notation $[ \\sigma] t_[2][=] _[\u03b2]_[\u02dc] _[t]_ is a poor representation of $\\sigma_t^2 = \\tilde{\\beta}_t$.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_2",
+          "title": "Conflicting claims regarding importance sampling",
+          "quote": "With this importance sampled objective, we are able to achieve our best log-likelihoods by optimizing _L_ vlb.[1] ... 1We found that the importance sampling technique was not helpful when optimizing _L_ hybrid directly.",
+          "explanation": "The authors state in Section 3.3 that importance sampling is necessary to optimize $L_{vlb}$ effectively due to gradient noise. However, they then state in a footnote that importance sampling was 'not helpful' for $L_{hybrid}$. This is logically curious because $L_{hybrid}$ is defined in Equation 14 as $L_{simple} + \\lambda L_{vlb}$. Since $L_{simple}$ also involves a summation over timesteps $t$, one would expect it to also benefit from variance reduction, or at least that the $L_{vlb}$ component within $L_{hybrid}$ would benefit. If importance sampling makes $L_{vlb}$ better than $L_{hybrid}$ (as shown in Figure 4a and Tables 1/2), but isn't useful for $L_{hybrid}$, it suggests a complex interaction between the reweighted gradients of $L_{simple}$ and the VLB terms that is not fully explained.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_3",
+          "title": "Missing interpolation equation for learned variance",
+          "quote": "In particular, our model outputs a vector v containing one component per dimension, and we turn this output into variances as follows:",
+          "explanation": "The text explicitly introduces the parameterization of the learned variance as an interpolation between $\\beta_t$ and $\\tilde{\\beta}_t$ in the log domain, but the actual mathematical formula is missing from the passage. While the surrounding prose explains that the model outputs a vector $v$, it doesn't specify the weighting function (e.g., $\\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t)$). For a reader to reproduce the 'Improved' results or understand how $v$ is bounded, the exact interpolation formula is necessary.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_4",
+          "title": "Missing definition of cosine schedule alpha-bar",
+          "quote": "To address this problem, we construct a different noise schedule in terms of $\\alpha$ \u00af $t$ :",
+          "explanation": "The text introduces the concept of the cosine noise schedule to replace the linear one, but the actual functional form for $\\bar{\\alpha}_t$ (the most critical part of the 'Improved' method) is missing from the excerpt. Based on the description of 'cosine squared' and the offset $s$, a reader can infer the shape, but the specific equation needed to implement the schedule is absent. Given that Figure 3b and Table 1 rely on this specific math, its omission is a significant gap in the methodology description.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_5",
+          "title": "Missing importance sampling weights equation",
+          "quote": "To address this, we employ importance sampling:",
+          "explanation": "The paper identifies gradient noise in $L_{vlb}$ and proposes importance sampling as a solution. However, the equation defining the sampling distribution $p_t$ (usually proportional to the square root of the expected loss terms $\\sqrt{E[L_t^2]}$) is missing. Since the text notes that importance sampling was key to achieving the best NLL results in Figure 4a and Table 1, the absence of the formula used to calculate these probabilities makes this part of the method non-reproducible.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_6",
+          "title": "Inconsistency in fixing variance vs learning it",
+          "quote": "In Ho et al. (2020), the authors set \u03a3 \u03b8 ( xt, t ) = \u03c3t[2] [I], where [ \u03c3][t] is not learned. Oddly, they found that fixing\u02dc \u03c3t[2] to [ \u03b2][t] yielded roughly the same sample quality as fixing it to [\u03b2][\u02dc] [t].",
+          "explanation": "There appears to be a notation error or OCR misread involving several symbols. The text says they fixed 'fixing\u02dc $\\sigma_t^2$ to $\\beta_t$'. Based on the notation summary, $\\beta_t$ and $\\tilde{\\beta}_t$ are the two extremes. The summary defines $\\tilde{\beta}_t$ as the posterior variance. The use of 'fixing\u02dc $\\sigma_t^2$' suggests a confusion between the variable name $\\sigma^2$ and the value $\\tilde{\\beta}$. Further, the OCR text 'fixing\u02dc $\\sigma_t^2$ to $[\\beta][t]$ yielded... same... as fixing it to $[\\beta][\\tilde{}][t]$' is slightly garbled. While a reader can infer the authors mean 'fixing the variance to either the upper or lower bound', the specific symbol string is confusing and potentially masks the intended relationship between $\\beta_t$ (the forward variance) and $\\tilde{\\beta}_t$ (the posterior variance).",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_7",
+          "title": "Confusing notation for strided sampling noise schedule",
+          "quote": "We define a sequence _S_ of _t_ values to use for sampling, such as a strided schedule like \u00af _S_ schedule= (1 _,_ 3 _\u03b1_ \u00af _,S_ 5 _t, ..., T_ , which can be used to obtain corresponding sampling variances _\u2212_ 1). Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise",
+          "explanation": "In Section 4, the notation for the strided sampling schedule is significantly garbled. The text reads '_S_ schedule= (1 _,_ 3 _\u03b1_ \u00af _,S_ 5 _t, ..., T_', which appears to be an OCR error or a combination of the sequence definition and terms for the variance schedule. Earlier, $\\bar{\\alpha}$ was defined as the cumulative product of $\\alpha_t$. In this context, the authors are trying to explain how to define a new noise schedule for a jump-step process. While a reader familiar with DDIM (Song et al. 2020) might infer that they are redefining $\\bar{\\alpha}_{S_t}$ based on the original schedule to maintain the marginal distribution $q(x_{S_t}|x_0)$, the passage as it stands is mathematically incoherent and obscures the actual formula used to rescale the variances for fewer steps.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_8",
+          "title": "Potential contradiction in importance sampling justification",
+          "quote": "Noting that different terms of _L_ vlb have greatly different magnitudes (Figure 1b), we hypothesized that sampling _t_ uniformly causes unnecessary noise in the _L_ vlb objective.",
+          "explanation": "The authors argue that high-magnitude terms in the VLB lead to high gradient noise, which they address with importance sampling. However, Figure 1b shows that the terms with the highest magnitude are at $t=0$ ($L_0$) and $t=1$. In a standard VLB for diffusion, $L_0$ and $L_T$ are often handled separately, and the summation for $L_{1 \\dots T-1}$ is what is sampled. If the noise is dominated by the very first steps, importance sampling across all $T$ steps might not be as effective as simply high-frequency sampling of the early steps or using a different parameterization. While the method works, the logical link between 'magnitude' in Figure 1b and 'gradient noise' is a bit loose without explaining that the variance of these estimators typically scales with the magnitude of the terms themselves.",
+          "comment_type": "logical",
+          "paragraph_index": 42,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_9",
+          "title": "Ambiguity in 'linear drop-off' description for cosine schedule",
+          "quote": "Our cosine schedule is designed to have a linear drop-off of _\u03b1_ \u00af _t_ in the middle of the process",
+          "explanation": "The text describes the cosine schedule as having a 'linear drop-off' of $\\bar{\\alpha}_t$ in the middle. Looking at the formula provided in the summary $f(t) = \\cos(\\dots)^2$, the derivative is a sine function, meaning the rate of change is highest in the middle. While the *slope* is relatively constant (linear) in the center of a cosine-squared curve, the resulting schedule for $\\bar{\\alpha}_t$ is distinctly non-linear compared to the 'linear schedule' (which refers to the schedule of $\\beta_t$, not $\\bar{\\alpha}_t$). This terminology is slightly confusing because a 'linear schedule' in literature usually means $\\beta_t$ is linear, which results in an exponential-like decay of $\\bar{\\alpha}_t$. The authors mean the *decay* of information is more linear in time personally, but the prose could lead a reader to think $\\bar{\\alpha}_t$ itself is a linear function of $t$.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.072,
+      "prompt_tokens": 71445,
+      "completion_tokens": 12091
+    },
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is a highly impactful and well-structured piece of research that effectively addresses a significant gap in the literature: the trade-off between sample quality and log-likelihood in diffusion probabilistic models. The writing is clear, technically rigorous, and appropriately grounded in a strong contextual review of previous work (Ho et al., 2020; Sohl-Dickstein et al., 2015). The authors\u2019 motivation for improving diffusion models\u2014specifically targeting log-likelihood optimization and sampling speed\u2014is compelling, and the proposed innovations (such as the hybrid objective and noise schedule) are described with enough analytical clarity to justify their necessity. However, a potential area of concern is the paper\u2019s heavy reliance on the specific mathematical setup of Ho et al. (2020); while the notation is consistent, the paper would benefit from a more explicit explanation of how their specific \"noise schedule\" and \"reparameterization\" interact to prevent the common pitfalls (e.g., instability during the training of the reverse variance). Overall, the work follows a logical trajectory, moving from clear problem identification to systematic technical contributions, which promises to significantly advance the state-of-the-art in generative modeling.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "OCR corruption and nonsensical sentence structure in parameterization descriptions",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u00b8_ ( _xt, t_ ) directly with a neural network... [plus other listed OCR errors]",
+          "explanation": "Multiple sections of the paper contain OCR-corrupted text that obscures critical technical explanations, including the parameterization of the network (paragraph 13) and the construction of the strided schedule (paragraph 49). These passages are grammatically and mathematically nonsensical, forcing the reader to guess the authors' intent.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Missing definition of the simplified objective L_simple",
+          "quote": "This objective can be seen as a reweighted form of _L_ vlb (without the terms affecting \u03a3 _\u00b8_ ).",
+          "explanation": "The text references 'L_simple' throughout the methodology as a core component of the Improved DDPM framework but fails to provide a formal definition or equation. Given that this is a defining feature of the paper, this omission hinders verification of the authors' claims regarding reweighting.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Incorrect and ambiguous variance parameterization logic",
+          "quote": "Specifically, our model outputs a vector v containing one component per dimension, and we turn this output into variances as follows: ... \\Sigma_\\theta(x_t, t) = \\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t)",
+          "explanation": "The formula provided for variance interpolation is algebraically ambiguous: it treats the network output 'v' as both a vector and a scalar while failing to specify broadcasting rules for the diagonal variance matrix. Furthermore, there is no bounding (e.g., sigmoid) on 'v', risking numerical instability if the interpolation is driven outside the intended [beta_tilde, beta] range, contradicting the claim of stability.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_3",
+          "title": "OCR error in variance update relation",
+          "quote": "To go from this definition to variances $\\beta_t$, we note that $\\beta_t = 1 - \\bar{\\alpha} \\bar{\\alpha}_t - 1$",
+          "explanation": "The formula provided for the variance update is an OCR-corrupted version of the correct ratio. While domain experts can identify the intended formula, this is a central methodology equation that remains technically incorrect in the text as written.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_4",
+          "title": "Lack of clarity in importance sampling implementation and index bounds",
+          "quote": "At the beginning of training, we sample t uniformly until we draw 10 samples for every t in [0, T-1]...",
+          "explanation": "The description of importance sampling is underspecified. There is an index mismatch regarding whether the diffusion process covers [0, T-1] or [1, T]. Furthermore, the authors do not explain why importance sampling benefits L_vlb but purportedly provides no benefit when used in the L_hybrid objective, leaving a conceptual gap in the training methodology.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_5",
+          "title": "Ambiguous variance rescaling for strided sampling",
+          "quote": "Note that $\\Sigma_\\theta(x_{St}, S_t)$ is parameterized as a range between $\\beta_{St}$ and $\\tilde{\\beta}_{St}$ so it will automatically be rescaled...",
+          "explanation": "The authors claim variance rescales 'automatically' for strided subsets, but provide no mathematical justification. The term 'parameterized as a range' is also technically imprecise compared to the interpolation defined in Section 3.1. It is unclear if the network interpolates naturally or if the schedule change requires specific re-mapping to maintain the validity of the KL divergence.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguity in loss weighting reduction",
+          "quote": "For our experiments, we set \\lambda = 0.001 to prevent L_{vlb} from overwhelming L_{simple}.",
+          "explanation": "The use of an arbitrary constant \\lambda without defining the reduction method (e.g., whether loss terms are summed or mean-reduced) renders the hyperparameter choice non-reproducible, as the scale of these objectives likely differs by orders of magnitude.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_7",
+          "title": "Subjective description of sampling quality trade-offs",
+          "quote": "However, 100 sampling steps is still sufficient to achieve near-optimal FIDs for our fully trained models.",
+          "explanation": "The authors claim that 100 steps yield 'near-optimal' FIDs, yet the provided figures show a non-negligible performance gap compared to the 4000-step training baseline. This qualitative descriptor risks misleading readers about the magnitude of the performance trade-off.",
+          "comment_type": "logical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0312,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 70461,
+      "completion_tokens": 9086
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is a highly impactful and well-structured piece of research that effectively addresses a significant gap in the literature: the trade-off between sample quality and log-likelihood in diffusion probabilistic models. The writing is clear, technically rigorous, and appropriately grounded in a strong contextual review of previous work (Ho et al., 2020; Sohl-Dickstein et al., 2015). The authors\u2019 motivation for improving diffusion models\u2014specifically targeting log-likelihood optimization and sampling speed\u2014is compelling, and the proposed innovations (such as the hybrid objective and noise schedule) are described with enough analytical clarity to justify their necessity. However, a potential area of concern is the paper\u2019s heavy reliance on the specific mathematical setup of Ho et al. (2020); while the notation is consistent, the paper would benefit from a more explicit explanation of how their specific \"noise schedule\" and \"reparameterization\" interact to prevent the common pitfalls (e.g., instability during the training of the reverse variance). Overall, the work follows a logical trajectory, moving from clear problem identification to systematic technical contributions, which promises to significantly advance the state-of-the-art in generative modeling.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Broken sentence construction in parameterization description",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "The text describing the parameterization of the network appears to have undergone significant OCR corruption. While the intent is clear to a domain expert (predicting the mean, predicting the posterior mean, or predicting the added noise epsilon), the sentence is grammatically nonsensical and misses the concluding parts of the sentences (such as the specific functional mapping for predicting x_0). This level of corruption makes the technical explanation difficult to follow for a graduate reader new to this architecture.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguous/Incomplete definition of the simplified objective",
+          "quote": "This objective can be seen as a reweighted form of _L_ vlb (without the terms affecting \u03a3 _\u03b8_ ).",
+          "explanation": "The authors refer to 'Equation 5' or similar in the original paper (implied by context), but in the provided text, the objective is referred to as 'L_simple' and described in the prose without being explicitly defined by an equation. While the context identifies it as the objective from Ho et al. (2020), the absence of this core reweighted objective equation in the text makes it impossible to verify the claim that it is a 'reweighted form of L_vlb'. This is a minor issue as it is common to reference prior work, but given this is the 'Improved' paper, the definition of the baseline objective being improved upon is essential.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "OCR-corrupted definition of the variance update relation",
+          "quote": "To go from this definition to variances $\\beta_t$, we note that $\\beta_t = 1 - \\bar{\\alpha} \\bar{\\alpha}_t - 1$",
+          "explanation": "The text reads '$\\beta_t = 1 - \\bar{\\alpha} \\bar{\\alpha}_t - 1$'. Based on the standard DDPM definition provided in the summary ($\\bar{\\alpha}_t = \\alpha_t \\bar{\\alpha}_{t-1}$), the correct relation for calculating $\\beta_t$ from $\\bar{\\alpha}_t$ is $\\beta_t = 1 - \\frac{\\bar{\\alpha}_t}{\\bar{\\alpha}_{t-1}}$. The current formula is clearly an OCR corruption of the fractional form. While a reader familiar with diffusion models can infer the correct equation, this is a technical error in the paper's central methodology section.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Implicitly defined skip-step variance re-scaling",
+          "quote": "Note that $\\Sigma_\\theta(x_{St}, S_t)$ is parameterized as a range between $\\beta_{St}$ and $\\tilde{\\beta}_{St}$ so it will automatically be rescaled for the shorter diffusion process.",
+          "explanation": "The authors claim that parameterizing the variance as an interpolation between $\\beta_t$ and $\\tilde{\\beta}_t$ allows it to 'automatically' rescale when using a strided subset of timesteps ($S_t$). However, $\\beta_t$ and $\\tilde{\\beta}_t$ are fixed values associated with the original schedule. If one selects a subset of timesteps, the transition probabilities change, and the corresponding variances for the reverse process should technically be recalculated relative to the new schedule. It is unclear if the network interpolation naturally adapts or if a specific re-mapping logic is required to maintain the validity of the KL divergence calculations under the new schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistent Stride notation",
+          "quote": "like a strided schedule like \u00af S schedule= (1 , 3 \u03b1 \u00af ,S 5 t, ..., T , which can be used to obtain corresponding sampling variances \u2212 1)",
+          "explanation": "The text describing the construction of the strided schedule $S$ is garbled likely due to OCR errors or formatting issues. It interleaves definition elements like '$\\bar{\\alpha}$' and 'S' in a way that obscures the actual logic of the sequence construction. While a reader can infer that the authors mean a strided subset of the set $\\{1, \\dots, T\\}$, the text as written is mathematically nonsensical and potentially misleading regarding the precise specification of the sampling procedure.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Ambiguous definition of variance interpolation",
+          "quote": "\u03a3 \u03b8 ( x St, St ) is parameterized as a range between \u03b2 St and \u03b2 \u02dc St",
+          "explanation": "The paragraph states that the variance is 'parameterized as a range between $\\beta_{St}$ and $\\tilde{\\beta}_{St}$', but Section 3.1 defined the parameterization as an interpolation in the log domain using an output vector $v$. Stating it is a 'range' is technically imprecise compared to the formal definition (Equation 15 context). While a reader checking Section 3.1 will resolve this, the framing here is imprecise and could lead a reader to believe there is a hard constraint or interval-based optimization, rather than the defined functional output.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguous/Inconsistent Variance Parameterization",
+          "quote": "Specifically, our model outputs a vector v containing one component per dimension, and we turn this output into variances as follows: ... \\Sigma_\\theta(x_t, t) = \\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t)",
+          "explanation": "The formula for variance parameterization in the text leads to a potential inconsistency with the definition of v. In Section 2, the variable v is described as a 'model output vector' used to parameterize the variance. In Equation 14 (referenced in text), this is shown as an interpolation. However, the vector v is not bounded (e.g., via sigmoid). If v is an unconstrained vector, the interpolated variance can easily become negative if a component of v is outside [0, 1]. While the text later mentions, 'We did not apply any constraints on v', it implies the model implicitly learns the interpolation range. If the network outputs extreme values for v, the expression exp(v log beta + (1-v) log beta_tilde) could yield values far outside the meaningful range [beta_tilde, beta], potentially leading to numerical instability during training which contradicts the claim that the current formulation is stable.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_7",
+          "title": "Potential contradiction in importance sampling justification",
+          "quote": "Noting that different terms of L_vlb have greatly different magnitudes (Figure 1b), we hypothesized that sampling t uniformly causes unnecessary noise in the L_vlb objective. ... At the beginning of training, we sample t uniformly... With this importance sampled objective, we are able to achieve our best log-likelihoods by optimizing L_vlb.",
+          "explanation": "The authors perform importance sampling for the summation terms in L_vlb (the KL divergences for each step t) to handle magnitude differences. However, the text says: 'At the beginning of training, we sample t uniformly until we draw 10 samples for every t in [0, T-1]'. The definition of the KL divergence terms for diffusion models usually implies that t ranges from 1 to T or 0 to T-1. An index mismatch exists here: the forward process defines x_1 through x_T, and the reverse process involves T steps. If the index t starts at 0, that implies T+1 steps or a different indexing system than the standard formulation noted in the paper's own introduction (which references x_1...x_T). This ambiguity in index bounds makes the 'importance sampling' implementation slightly underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_8",
+          "title": "Overclaim on sampling speed benefit",
+          "quote": "We find that using more sampling steps becomes increasingly beneficial throughout training. However, 100 sampling steps is still sufficient to achieve near-optimal FIDs for our fully trained models.",
+          "explanation": "The authors claim 100 steps is sufficient for 'near-optimal' FIDs. Looking at the plots in Figure 5a (ImageNet) and 5c (CIFAR-10), the FID curves do indeed flatten, but there is still a clear vertical gap between 100 steps and 4000 steps (the training baseline). Describing this as 'near-optimal' is a subjective qualitative descriptor that risks misrepresenting the non-negligible gap in absolute FID scores seen in the plots. While the speed-up is real, the implication that quality is largely recovered might mislead a reader regarding the trade-off magnitude.",
+          "comment_type": "logical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_9",
+          "title": "Mathematical inconsistency in variance parameterization description",
+          "quote": "In particular, our model outputs a vector v containing one component per dimension, and we turn this output into variances as follows: \\Sigma_\\theta(x_t, t) = \\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t)",
+          "explanation": "In Section 2, the variable 'v' was defined in the summary as a network output, and the formula given in Section 2.1 (Equation 15 implied) is \\Sigma_\\theta(x_t, t) = \\exp(v \\log \\beta_t + (1-v) \\log \\tilde{\\beta}_t). While the text describes v as a vector, the math uses it as a scalar weight for the interpolation. Given that the network output is typically a vector of the same dimension as the latent space x to allow for dimension-wise variance prediction, the expression 'v log \\beta_t' is algebraically ambiguous: if v is a vector and \\beta_t is a scalar, the dimensions don't align for an interpolation of the variance matrix (which is usually diagonal). The lack of explicit broadcasting or index notation for the dimensions makes the implementation of the suggested 'vector v' ambiguous.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_10",
+          "title": "Ambiguity in loss weight parameterization",
+          "quote": "For our experiments, we set \\lambda = 0.001 to prevent L_{vlb} from overwhelming L_{simple}.",
+          "explanation": "The hybrid objective is defined as L_{hybrid} = L_{vlb} + \\lambda L_{simple}. Depending on the units of the loss (e.g., whether they are averaged over pixels or summed), the magnitude of these terms can differ by orders of magnitude. Providing a specific constant like 0.001 without clarifying the reduction method (mean vs. sum) for L_{vlb} vs L_{simple} makes reproducibility difficult, as the relative impact of the weight depends heavily on this choice.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_11",
+          "title": "Potential contradiction in importance sampling strategy",
+          "quote": "At the beginning of training, we sample t uniformly until we draw 10 samples for every t \\in [0, T - 1]. With this importance sampled objective, we are able to achieve our best log-likelihoods by optimizing L_{vlb}.",
+          "explanation": "The authors perform importance sampling for L_{vlb}, but footnote 1 states: 'We found that the importance sampling technique was not helpful when optimizing L_{hybrid} directly.' This creates a potential conceptual gap. If L_{hybrid} includes L_{vlb}, and L_{vlb} suffers from high variance (the motivation for importance sampling), why would the combined objective 'Hybrid'\u2014which incorporates L_{vlb}\u2014not benefit from the same variance reduction? The lack of explanation suggests the interaction between the two objectives within the 'Hybrid' formulation (specifically the stop-gradient on the mean) may be doing more to stabilize training than the authors explicitly attribute to it.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0312,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 70461,
+      "completion_tokens": 9086
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript addresses a fundamental limitation of denoising diffusion probabilistic models by demonstrating that competitive log-likelihoods can be achieved alongside high sample quality, a gap identified in prior work. The authors propose a set of modifications, including a hybrid learning objective, a novel noise schedule, and a variance reparameterization, which collectively enable faster sampling with an order-of-magnitude reduction in steps while improving log-likelihood performance on high-diversity datasets. The writing is generally clear and the motivation is well-articulated",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Conceptually incorrect reference to distribution extremes in Sec 2.2",
+          "quote": "They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively.",
+          "explanation": "Initially, the phrase 'given by q(x_0) being either isotropic Gaussian noise or a delta function' caught my eye because $q(x_0)$ denotes the fixed data distribution, which is neither isotropic Gaussian nor a delta function. I checked the surrounding context and the standard DDPM derivation to see if this was a typo for $q(x_T|x_0)$ or the posterior $q(x_{t-1}|x_t, x_0)$. Even assuming the most plausible intended symbol (e.g., $q(x_T|x_0)$ or the reverse process variance), the statement remains conceptually confused: $\beta_t$ and $\tilde{\beta}_t$ are schedule-derived variance scalars for the forward and posterior steps, respectively. They are not extremes of a conditional data distribution. The authors likely meant these are two extremes for the variance of the approximate reverse process $p_\theta(x_{t-1}|x_t)$ at the final step, or they were misquoting a relation about the prior/posterior. This misstatement could mislead readers about why fixing the variance to these constants is justified for sample quality.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Underspecified importance sampling update rule in Sec 3.3",
+          "quote": "Since _E_ [ _L_[2] _t_[]][is][unknown][beforehand][and][may][change][throughout][training,][we][maintain][a][history] of the previous 10 values for each loss term, and update this dynamically during training. At the beginning of training, we sample _t_ uniformly until we draw 10 samples for every _t \u2208_ [0 _,_ T \u2212_ 1].",
+          "explanation": "The authors describe using importance sampling to reduce gradient noise by weighting timestep sampling probabilities based on $\\mathbb{E}[L_t^2]$. However, the update mechanism for these probabilities is underspecified. 'Maintaining a history of the previous 10 values' is ambiguous: is this a strict FIFO buffer of size 10, an exponential moving average with a window of 10 steps, or something else? Furthermore, the text does not explain how these 10 stored values are aggregated (e.g., mean, median, max) to compute the importance weights, nor how the weights are normalized or updated after each training step. Without this detail, a practitioner cannot faithfully reproduce the reported log-likelihood improvements. The uniform warmup phase is clear, but the ongoing dynamic update is missing.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Ambiguous indexing of the sparse sampling schedule in Sec 4",
+          "quote": "We can compute _p_ ( _xSt\u2212_ 1 _|xSt_ ) as _N_ ( _\u00b5\u03b8_ ( _xSt, St_ ) _,_ \u03a3 _\u03b8_ ( _xSt, St_ )).",
+          "explanation": "The paper defines a sequence $S$ of timesteps for faster sampling, but then switches notation to $S_t$ and $S_{t-1}$ in the reverse distribution formula. It is unclear whether $S_t$ refers to the $t$-th element of the schedule array $S$ (e.g., $S_0=1, S_1=3, \\dots$), or if it denotes a continuously interpolated timestep value scaled to the original $T$-step process. In optimization literature, $S_t$ often implies a continuous variable or a fixed mapping, while here it seems to index an array. This notational clash could lead readers to incorrectly implement the sampling step or miscalculate the corresponding noise schedule values ($\\bar{\\alpha}_{S_t}$) when computing $\\mu_\\theta$ and $\\Sigma_\\theta$. Clarifying whether $S$ is 0-indexed, how many steps are skipped, and how the network's time embedding $t$ is normalized would resolve this.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Severe OCR degradation obscures key mathematical descriptions in Sec 2.2 and Sec 4",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "While I recognize this passage is heavily corrupted by PDF-to-OCR extraction, the resulting text is so degraded that it obscures the three standard parameterization options for diffusion models (predicting $\\mu_\\theta$, $\\tilde{\\mu}_\\theta$, or $\\epsilon$). The mangled phrasing ('predict _\u00b5_ could then be fed through _\u03b8_... predict the noise _x \u03f5_ added to0') makes it difficult for a careful reader to parse the authors' intent without external knowledge of the DDPM paper. Although forward references and overview sections are granted leniency, this specific paragraph introduces the core modeling choices that justify the rest of the improvements. If a reader relies solely on this text, they may misinterpret how the network output is mapped to the latent variable, which could cascade into confusion when reading the variance parameterization and loss weighting discussions that follow.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Underspecified importance sampling procedure",
+          "quote": "Since E[L_t^2] is unknown beforehand and may change throughout training, we maintain a history of the previous 10 values for each loss term, and update this dynamically during training.",
+          "explanation": "The authors correctly identify that uniform sampling introduces unnecessary gradient noise due to the varying magnitudes of VLB terms across timesteps, and they propose importance sampling to address this. However, the description of how the sampling distribution p(t) is constructed is incomplete. The text mentions maintaining a 'history of the previous 10 values' but omits critical reproducibility details: how these values are aggregated (e.g., simple average vs. exponential moving average), what the exact weighting function is (standard practice uses p(t) \u221d \u221aE[L_t^2] rather than raw E[L_t^2]), and how the distribution is normalized over t \u2208 [0, T]. Without these specifications, a careful reader cannot accurately reproduce the sampling schedule or understand why a history length of exactly 10 was chosen. This is a moderate gap that directly impacts the reproducibility of the log-likelihood results.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Contradictory phrasing regarding unconstrained variance interpolation",
+          "quote": "We did not apply any constraints on v, theoretically allowing the model to predict variances outside of the interpolated range. However, we did not observe the network doing this in practice, suggesting that the bounds for \u03a3_\u03b8(x_t, t) are indeed expressive enough.",
+          "explanation": "The authors correctly and cleverly propose parameterizing the reverse variance as an interpolation between \u03b2_t and \u03b2\u0303_t in the log domain, controlled by a vector v. They note that v is left unconstrained, which theoretically allows the network to predict variances outside the [\u03b2_t, \u03b2\u0303_t] range. However, their conclusion that this empirical behavior suggests the 'bounds' are 'expressive enough' is logically inconsistent. If v is unconstrained, there are no mathematical bounds to be expressive or restrictive; the parameterization is theoretically unbounded. What they likely mean is that the interpolation range itself is sufficiently expressive to cover the optimal variance, so the network naturally stays within it. This slight non-sequitur could mislead a reader into thinking the parameterization implicitly enforces bounds, when in fact it does not. It is a minor framing issue that does not undermine the method but warrants clearer phrasing.",
+          "comment_type": "logical",
+          "paragraph_index": 27,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_6",
+          "title": "Confusion between stride index and step count in timestep range description",
+          "quote": "To address this, we use a strided subset of timesteps as for FID (with stride _K_ ), but we also include every _t_ from 1 to _T/K_ . This requires _T/K_ extra evaluation steps, but greatly improves log-likelihood compared to the uniformly strided schedule.",
+          "explanation": "The authors correctly identify that uniformly striding the diffusion schedule harms log-likelihood because it discards critical early timesteps, which contribute disproportionately to the variational lower bound (as shown in Fig. 1b and standard diffusion literature). Their intent to recover these early steps is sound and aligns with the claim that the hybrid objective helps maintain quality at low step counts. However, the mathematical description of the timestep range contains a notational slip. A stride $K$ means the step size is $K$, so the strided schedule selects $t \\in \\{T, T-K, T-2K, \\dots\\}$, making the earliest sampled timestep approximately $K$ (or $T \\bmod K$). The text states they add timesteps \"from 1 to $T/K$\". Since $T/K$ is the *number* of strided steps, not the *timestep index*, this bound incorrectly extends past the earliest strided step. For example, with $T=4000$ and $K=40$, the strided schedule starts at $t=40$, but the text suggests adding $t \\in [1, 100]$ ($T/K$), which redundantly covers $t \\in [41, 100]$ and mischaracterizes the missing range. The intended bound is almost certainly $t \\in [1, K]$ (or $t \\in [1, \\text{stride}]$). This inconsistency is internal to the paragraph (they note it requires $T/K$ extra steps, matching the bound they wrote), but it mixes step count with timestep indexing, which could mislead reproducers into adding too many redundant steps or misunderstanding which timesteps drive the likelihood improvement. The fix is straightforward: replace $T/K$ with $K$ (or explicitly state the stride value) in the timestep bound.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_7",
+          "title": "Typographical error in author name for Glow citation",
+          "quote": "Durk P Kingma and Prafullar Dhariwal. Glow: Generative flow with invertible 1x1 convolutions. In _Advances in neural information processing systems_ , pp. 10215\u201310224, 2018.",
+          "explanation": "Upon reviewing the bibliography, the first author of the Glow paper is listed as 'Prafullar Dhariwal'. The correct spelling is 'Prafulla Dhariwal'. This appears to be an OCR or typographical artifact. While it does not impact the methodology, equations, or ability to reproduce results, bibliographic accuracy is important for proper attribution and citation linking. This should be corrected to match the published literature.",
+          "comment_type": "technical",
+          "paragraph_index": 82,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_8",
+          "title": "Potential title mismatch for Jolicoeur-Martineau et al. (2020)",
+          "quote": "Alexia Jolicoeur-Martineau, R\u00e9mi Pich\u00e9-Taillefer, R\u00e9mi Tachet des Combes, and Ioannis Mitliagkas. Adversarial score matching and improved sampling for image generation, 2020.",
+          "explanation": "The reference title listed here differs from the widely known published version of this work, which is 'Relaxed adversarial score matching' (ICLR 2021). It is possible this reflects an earlier preprint title, but as written, it may cause confusion or citation mismatches for readers searching the bibliography. I recommend verifying the final published title against the arXiv/ICLR record and updating accordingly to ensure accurate academic linkage.",
+          "comment_type": "technical",
+          "paragraph_index": 79,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1155,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 77644,
+      "completion_tokens": 69296
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript addresses a fundamental limitation of denoising diffusion probabilistic models by demonstrating that competitive log-likelihoods can be achieved alongside high sample quality, a gap identified in prior work. The authors propose a set of modifications, including a hybrid learning objective, a novel noise schedule, and a variance reparameterization, which collectively enable faster sampling with an order-of-magnitude reduction in steps while improving log-likelihood performance on high-diversity datasets. The writing is generally clear and the motivation is well-articulated",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Conceptually incorrect reference to distribution extremes in Sec 2.2",
+          "quote": "They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively.",
+          "explanation": "Initially, the phrase 'given by q(x_0) being either isotropic Gaussian noise or a delta function' caught my eye because $q(x_0)$ denotes the fixed data distribution, which is neither isotropic Gaussian nor a delta function. I checked the surrounding context and the standard DDPM derivation to see if this was a typo for $q(x_T|x_0)$ or the posterior $q(x_{t-1}|x_t, x_0)$. Even assuming the most plausible intended symbol (e.g., $q(x_T|x_0)$ or the reverse process variance), the statement remains conceptually confused: $\beta_t$ and $\tilde{\beta}_t$ are schedule-derived variance scalars for the forward and posterior steps, respectively. They are not extremes of a conditional data distribution. The authors likely meant these are two extremes for the variance of the approximate reverse process $p_\theta(x_{t-1}|x_t)$ at the final step, or they were misquoting a relation about the prior/posterior. This misstatement could mislead readers about why fixing the variance to these constants is justified for sample quality.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Underspecified importance sampling update rule in Sec 3.3",
+          "quote": "Since _E_ [ _L_[2] _t_[]][is][unknown][beforehand][and][may][change][throughout][training,][we][maintain][a][history] of the previous 10 values for each loss term, and update this dynamically during training. At the beginning of training, we sample _t_ uniformly until we draw 10 samples for every _t \u2208_ [0 _,_ T \u2212_ 1].",
+          "explanation": "The authors describe using importance sampling to reduce gradient noise by weighting timestep sampling probabilities based on $\\mathbb{E}[L_t^2]$. However, the update mechanism for these probabilities is underspecified. 'Maintaining a history of the previous 10 values' is ambiguous: is this a strict FIFO buffer of size 10, an exponential moving average with a window of 10 steps, or something else? Furthermore, the text does not explain how these 10 stored values are aggregated (e.g., mean, median, max) to compute the importance weights, nor how the weights are normalized or updated after each training step. Without this detail, a practitioner cannot faithfully reproduce the reported log-likelihood improvements. The uniform warmup phase is clear, but the ongoing dynamic update is missing.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Ambiguous indexing of the sparse sampling schedule in Sec 4",
+          "quote": "We can compute _p_ ( _xSt\u2212_ 1 _|xSt_ ) as _N_ ( _\u00b5\u03b8_ ( _xSt, St_ ) _,_ \u03a3 _\u03b8_ ( _xSt, St_ )).",
+          "explanation": "The paper defines a sequence $S$ of timesteps for faster sampling, but then switches notation to $S_t$ and $S_{t-1}$ in the reverse distribution formula. It is unclear whether $S_t$ refers to the $t$-th element of the schedule array $S$ (e.g., $S_0=1, S_1=3, \\dots$), or if it denotes a continuously interpolated timestep value scaled to the original $T$-step process. In optimization literature, $S_t$ often implies a continuous variable or a fixed mapping, while here it seems to index an array. This notational clash could lead readers to incorrectly implement the sampling step or miscalculate the corresponding noise schedule values ($\\bar{\\alpha}_{S_t}$) when computing $\\mu_\\theta$ and $\\Sigma_\\theta$. Clarifying whether $S$ is 0-indexed, how many steps are skipped, and how the network's time embedding $t$ is normalized would resolve this.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Severe OCR degradation obscures key mathematical descriptions in Sec 2.2 and Sec 4",
+          "quote": "The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "While I recognize this passage is heavily corrupted by PDF-to-OCR extraction, the resulting text is so degraded that it obscures the three standard parameterization options for diffusion models (predicting $\\mu_\\theta$, $\\tilde{\\mu}_\\theta$, or $\\epsilon$). The mangled phrasing ('predict _\u00b5_ could then be fed through _\u03b8_... predict the noise _x \u03f5_ added to0') makes it difficult for a careful reader to parse the authors' intent without external knowledge of the DDPM paper. Although forward references and overview sections are granted leniency, this specific paragraph introduces the core modeling choices that justify the rest of the improvements. If a reader relies solely on this text, they may misinterpret how the network output is mapped to the latent variable, which could cascade into confusion when reading the variance parameterization and loss weighting discussions that follow.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Underspecified importance sampling procedure",
+          "quote": "Since E[L_t^2] is unknown beforehand and may change throughout training, we maintain a history of the previous 10 values for each loss term, and update this dynamically during training.",
+          "explanation": "The authors correctly identify that uniform sampling introduces unnecessary gradient noise due to the varying magnitudes of VLB terms across timesteps, and they propose importance sampling to address this. However, the description of how the sampling distribution p(t) is constructed is incomplete. The text mentions maintaining a 'history of the previous 10 values' but omits critical reproducibility details: how these values are aggregated (e.g., simple average vs. exponential moving average), what the exact weighting function is (standard practice uses p(t) \u221d \u221aE[L_t^2] rather than raw E[L_t^2]), and how the distribution is normalized over t \u2208 [0, T]. Without these specifications, a careful reader cannot accurately reproduce the sampling schedule or understand why a history length of exactly 10 was chosen. This is a moderate gap that directly impacts the reproducibility of the log-likelihood results.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Contradictory phrasing regarding unconstrained variance interpolation",
+          "quote": "We did not apply any constraints on v, theoretically allowing the model to predict variances outside of the interpolated range. However, we did not observe the network doing this in practice, suggesting that the bounds for \u03a3_\u03b8(x_t, t) are indeed expressive enough.",
+          "explanation": "The authors correctly and cleverly propose parameterizing the reverse variance as an interpolation between \u03b2_t and \u03b2\u0303_t in the log domain, controlled by a vector v. They note that v is left unconstrained, which theoretically allows the network to predict variances outside the [\u03b2_t, \u03b2\u0303_t] range. However, their conclusion that this empirical behavior suggests the 'bounds' are 'expressive enough' is logically inconsistent. If v is unconstrained, there are no mathematical bounds to be expressive or restrictive; the parameterization is theoretically unbounded. What they likely mean is that the interpolation range itself is sufficiently expressive to cover the optimal variance, so the network naturally stays within it. This slight non-sequitur could mislead a reader into thinking the parameterization implicitly enforces bounds, when in fact it does not. It is a minor framing issue that does not undermine the method but warrants clearer phrasing.",
+          "comment_type": "logical",
+          "paragraph_index": 27,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Confusion between stride index and step count in timestep range description",
+          "quote": "To address this, we use a strided subset of timesteps as for FID (with stride _K_ ), but we also include every _t_ from 1 to _T/K_ . This requires _T/K_ extra evaluation steps, but greatly improves log-likelihood compared to the uniformly strided schedule.",
+          "explanation": "The authors correctly identify that uniformly striding the diffusion schedule harms log-likelihood because it discards critical early timesteps, which contribute disproportionately to the variational lower bound (as shown in Fig. 1b and standard diffusion literature). Their intent to recover these early steps is sound and aligns with the claim that the hybrid objective helps maintain quality at low step counts. However, the mathematical description of the timestep range contains a notational slip. A stride $K$ means the step size is $K$, so the strided schedule selects $t \\in \\{T, T-K, T-2K, \\dots\\}$, making the earliest sampled timestep approximately $K$ (or $T \\bmod K$). The text states they add timesteps \"from 1 to $T/K$\". Since $T/K$ is the *number* of strided steps, not the *timestep index*, this bound incorrectly extends past the earliest strided step. For example, with $T=4000$ and $K=40$, the strided schedule starts at $t=40$, but the text suggests adding $t \\in [1, 100]$ ($T/K$), which redundantly covers $t \\in [41, 100]$ and mischaracterizes the missing range. The intended bound is almost certainly $t \\in [1, K]$ (or $t \\in [1, \\text{stride}]$). This inconsistency is internal to the paragraph (they note it requires $T/K$ extra steps, matching the bound they wrote), but it mixes step count with timestep indexing, which could mislead reproducers into adding too many redundant steps or misunderstanding which timesteps drive the likelihood improvement. The fix is straightforward: replace $T/K$ with $K$ (or explicitly state the stride value) in the timestep bound.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_7",
+          "title": "Typographical error in author name for Glow citation",
+          "quote": "Durk P Kingma and Prafullar Dhariwal. Glow: Generative flow with invertible 1x1 convolutions. In _Advances in neural information processing systems_ , pp. 10215\u201310224, 2018.",
+          "explanation": "Upon reviewing the bibliography, the first author of the Glow paper is listed as 'Prafullar Dhariwal'. The correct spelling is 'Prafulla Dhariwal'. This appears to be an OCR or typographical artifact. While it does not impact the methodology, equations, or ability to reproduce results, bibliographic accuracy is important for proper attribution and citation linking. This should be corrected to match the published literature.",
+          "comment_type": "technical",
+          "paragraph_index": 82,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_8",
+          "title": "Potential title mismatch for Jolicoeur-Martineau et al. (2020)",
+          "quote": "Alexia Jolicoeur-Martineau, R\u00e9mi Pich\u00e9-Taillefer, R\u00e9mi Tachet des Combes, and Ioannis Mitliagkas. Adversarial score matching and improved sampling for image generation, 2020.",
+          "explanation": "The reference title listed here differs from the widely known published version of this work, which is 'Relaxed adversarial score matching' (ICLR 2021). It is possible this reflects an earlier preprint title, but as written, it may cause confusion or citation mismatches for readers searching the bibliography. I recommend verifying the final published title against the arXiv/ICLR record and updating accordingly to ensure accurate academic linkage.",
+          "comment_type": "technical",
+          "paragraph_index": 79,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1155,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 77644,
+      "completion_tokens": 69296
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a well-structured introduction to improvements in Denoising Diffusion Probabilistic Models (DDPM), successfully establishing the motivation for pursuing competitive log-likelihoods alongside high sample fidelity. The writing is clear, with standard academic prose and consistent mathematical notation for defining the forward/reverse processes and the Variational Lower Bound (VLB). However, the most significant issue is that the provided text is incomplete; the draft abruptly cuts off mid-sentence in the beginning of Section 3. As a result, it is impossible to evaluate the specific technical contributions (such as the proposed hybrid objective and noise schedule) or assess the claimed results regarding scaling and sampling efficiency. A full review cannot be conducted without the complete methodology and experimental sections.",
+      "comments": [
+        {
+          "id": "progressive__glm-4.7-flash_0",
+          "title": "Mathematical Inconsistency and Mischaracterization in Cosine Schedule",
+          "quote": "To address this, we construct a different noise schedule in terms of \\bar{\\alpha}_t: \\alpha_t = \\frac{\\sin((t+s)/(T+s)\\\\pi/2)^2}{\\sin((s+1)/(T+s)\\\\pi/2)^2}",
+          "explanation": "The provided equation for the cosine schedule implies that the coefficient \\alpha_t increases as t increases (since the numerator \\sin^2(...) goes from 0 to 1, while the denominator is constant), or if interpreted as \\bar{\\alpha}_t, implies it starts at 0 and ends at 1 (reconstruction schedule). Neither matches the standard diffusion process where noise should increase, which requires \\alpha_t (the fraction of original signal preserved) to decrease (i.e., go from ~1 to ~0). Additionally, the standard formulation ensures a 'linear drop-off' (in practice of \\bar{\\alpha}_t or \\alpha_t) in the middle. The equation in the text appears to be an OCR error or mathematical misstatement that contradicts the descriptive claim of a decay schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_1",
+          "title": "Contradictory Sampling Step Count Description",
+          "quote": "we use a stride K over timesteps to reduce the total number of sampling steps from T to T/K . This requires T/K extra evaluation steps",
+          "explanation": "The text claims to first reduce the total number of sampling steps to T/K and then add T/K extra steps, which mathematically implies a total of approximately 2*(T/K). However, the text immediately following states that 100 sampling steps is sufficient, creating a contradiction (e.g., if T=4000 and K=40, T/K=100, but the 'extra steps' description implies ~200). Furthermore, the description of the 'strided subset' used for this process is ambiguous regarding whether the set {1, ..., T/K} overlaps with the strided steps, which likely contributes to this calculation error and confusion for a reader attempting to reproduce the schedule.",
+          "comment_type": "logical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_2",
+          "title": "PixelSNAIL Reference Inaccuracies",
+          "quote": "Xi Chen... Pixelsnail... In _International Conference on Machine Learning_, pp. 864\u2013872. PMLR, 2018.",
+          "explanation": "The reference list contains two errors regarding the paper 'PixelSNAIL'. First, it cites the venue as 'International Conference on Machine Learning' in '2018', whereas the paper was actually published at 'International Conference on Learning Representations' (ICLR) in 2019. Second, the author list omits 'Yiding Jiang', who should be the final author.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_3",
+          "title": "Misattribution of Diffusion Efficiency Claim",
+          "quote": "Chen et al. (2020b) found that diffusion models can efficiently generate audio using a small number of sampling steps",
+          "explanation": "The paper cites 'Chen et al. (2020b)' [Wavegrad] to support the claim that diffusion models can efficiently generate audio. However, the finding of efficient sampling in diffusion models for audio is primarily associated with 'Diffwave' (by Zhifeng Kong et al.), while Wavegrad is a score-based generative model. The authors have misattributed this finding to the wrong paper.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "major"
+        }
+      ],
+      "cost_usd": 0.0464,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 71396,
+      "completion_tokens": 93658
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a well-structured introduction to improvements in Denoising Diffusion Probabilistic Models (DDPM), successfully establishing the motivation for pursuing competitive log-likelihoods alongside high sample fidelity. The writing is clear, with standard academic prose and consistent mathematical notation for defining the forward/reverse processes and the Variational Lower Bound (VLB). However, the most significant issue is that the provided text is incomplete; the draft abruptly cuts off mid-sentence in the beginning of Section 3. As a result, it is impossible to evaluate the specific technical contributions (such as the proposed hybrid objective and noise schedule) or assess the claimed results regarding scaling and sampling efficiency. A full review cannot be conducted without the complete methodology and experimental sections.",
+      "comments": [
+        {
+          "id": "progressive_original__glm-4.7-flash_0",
+          "title": "Cosine Schedule Formula Inconsistency",
+          "quote": "To address this, we construct a different noise schedule in terms of \\bar{\\alpha}_t: \\alpha_t = \\frac{\\sin((t+s)/(T+s)\\\\pi/2)^2}{\\sin((s+1)/(T+s)\\\\pi/2)^2}",
+          "explanation": "The provided equation for the cosine schedule implies that the coefficient \\alpha_t increases as t increases (since the numerator \\sin^2(...) goes from 0 to 1, while the denominator is constant), or if interpreted as \\bar{\\alpha}_t, implies it starts at 0 and ends at 1 (reconstruction schedule). Neither matches the standard diffusion process where noise should increase, which requires \\alpha_t (the fraction of original signal preserved) to decrease (i.e., go from ~1 to ~0). Additionally, the standard formulation ensures a 'linear drop-off' (in practice of \\bar{\\alpha}_t or \\alpha_t) in the middle. The equation in the text appears to be an OCR error or mathematical misstatement that contradicts the descriptive claim of a decay schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_1",
+          "title": "Approximation of Linear Drop-off",
+          "quote": "Our cosine schedule is designed to have a linear drop-off of \\bar{\\alpha}_t in the middle of the process...",
+          "explanation": "While it is true that \\bar{\\alpha}_t drops approximately linearly in the middle of the schedule, characterizing the behavior simply as a 'linear drop-off' may be slightly misleading to a rigorous reader who might expect a perfect linear function of t. The schedule is actually S-shaped (curved at the start and end). This is a minor phrasing issue.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_2",
+          "title": "Variable Definition in Schedule Formula",
+          "quote": "\\beta_t = 1 _\u2212 \u03b1_ \u00af _\u03b1t_ \u00af _\u2212t_ 1[.][In practice, we clip] _[ \u03b2][t]_[to be] no larger than 0.999 to prevent singularities",
+          "explanation": "The OCR extraction has garbled the fraction bar in the definition of \\beta_t. The intended formula is clearly \\beta_t = 1 - \\frac{\\bar{\\alpha}_t}{\\bar{\\alpha}_{t-1}}, which is the correct definition derived from the cumulative product relation. This is a technical error in the transcription, but the mathematical content is correct and immediately inferable from standard notation.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_3",
+          "title": "Inconsistency in the description of the sampling step count",
+          "quote": "we use a stride K over timesteps to reduce the total number of sampling steps from T to T/K . This requires T/K extra evaluation steps",
+          "explanation": "The text claims to first reduce the total number of sampling steps to T/K and then add T/K extra steps, which mathematically implies the total number of steps is approximately 2*(T/K). However, the text immediately following states, 'However, 100 sampling steps is still sufficient to achieve near-optimal FIDs.' Given that the models are trained with T=4000 steps, T/K would be 100 if K=40. This creates a contradiction: if the method requires 'T/K extra' steps, one would expect the total steps to be roughly 200, not 100. This makes it difficult to determine the exact sampling budget described by the text and contradicts the implication of the result.",
+          "comment_type": "logical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_4",
+          "title": "Ambiguous description of the 'strided subset' implementation",
+          "quote": "we use a strided subset of timesteps as for FID (with stride K), but we also include every t from 1 to T/K",
+          "explanation": "The description of the schedule is mathematically ambiguous. It is unclear if the 'strided subset' (used for FID) and the set {1, ..., T/K} overlap or are disjoint. If the stride K implies arithmetic steps (e.g., 1, 1+K, 1+2K...), the sets {1, ..., T/K} and the strided set would overlap significantly (e.g., if K=40 and T=4000, strided set contains 1, 41, 81..., and {1, ..., 100} contains 1, ..., 100). The statement 'This requires T/K extra evaluation steps' suggests the author assumes non-overlapping additions, but the text does not specify the exact composition of the 'strided subset' defined in the preceding (garbled) section, potentially causing confusion for a reader attempting to reproduce the schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_5",
+          "title": "Misattribution of diffusion model efficiency claim",
+          "quote": "Chen et al. (2020b) found that diffusion models can efficiently generate audio using a small number of sampling steps",
+          "explanation": "The Introduction (and the summary provided in the context) cites 'Chen et al. (2020b)' to support the claim that 'diffusion models can efficiently generate audio'. However, the reference list for (2020b) is 'Nanxin Chen, Yu Zhang... Wavegrad'. 'Wavegrad' is a score-based generative model (using Langevin dynamics/gradient estimation), not a denoising diffusion probabilistic model (which uses score matching with isotropic Gaussian noise). The diffusion model that demonstrates efficiency for audio is 'Zhifeng Kong... Diffwave'. The authors appear to have confused or misattributed the finding to the wrong paper.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_6",
+          "title": "Incorrect venue and year for PixelSNAIL reference",
+          "quote": "Xi Chen... Pixelsnail... In _International Conference on Machine Learning_, pp. 864\u2013872. PMLR, 2018.",
+          "explanation": "The reference lists the paper 'PixelSNAIL' as being published at the 'International Conference on Machine Learning' in '2018'. The actual paper 'PixelSNAIL' was published at the 'International Conference on Learning Representations' (ICLR) in 2019 (pp. 884\u2013892 in the actual proceedings). The OCR or author input incorrectly identifies the venue and year.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_7",
+          "title": "Missing author in PixelSNAIL reference",
+          "quote": "Xi Chen, Nikhil Mishra, Mostafa Rohaninejad, and Pieter Abbeel. Pixelsnail...",
+          "explanation": "The reference lists 'Xi Chen, Nikhil Mishra, Mostafa Rohaninejad, and Pieter Abbeel' as the authors of PixelSNAIL. The correct author list includes 'Yiding Jiang' as the final author. The omission of 'Yiding Jiang' results in an inaccurate bibliographic entry.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0464,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 71396,
+      "completion_tokens": 93658
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper is well-structured and clearly motivated, successfully identifying key limitations in prior diffusion models\u2014namely, suboptimal log-likelihoods, poor scaling to high-diversity datasets, and slow sampling\u2014and proposing a coherent set of modifications to address them. The writing is generally clear, though the exposition in Section 2 is rather dense and closely follows Ho et al. without providing much novel intuition or pedagogical value; a more concise or reorganized treatment would improve readability. The most significant issue at this stage is the lack of detail on the central methodological contributions\u2014the hybrid objective, the reparameterization of the reverse process variance, and the novel noise schedule\u2014which are only mentioned in passing. The surprising claim that optimizing the hybrid objective yields better log-likelihoods than direct likelihood optimization is stated without any supporting evidence or explanation in the excerpt, leaving the reader skeptical and demanding strong empirical validation. Additionally, the paper\u2019s assertion of \u201ccompetitive log-likelihoods\u201d is vague without explicit baselines or datasets; it should be clarified what is meant by \u201ccompetitive\u201d (e.g., relative to VAEs, autoregressive models, or GANs) and which specific metrics and datasets are intended. Overall, the introduction effectively frames the contributions, but the paper must flesh out the technical details and provide rigorous comparisons to substantiate its bold claims.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Undefined \u03b20 and possible off-by-one indexing error in cosine schedule",
+          "quote": "The small offset _s_ in our schedule prevents _\u03b2t_ from being too small near _t_ = 0, since we found that having tiny amounts of noise at the beginning of the process made it hard for the network to predict _\u03f5_ accurately enough. In particular, we selected _s_ such that _[\u221a] \u03b2_ 0 was slightly smaller than the pixel bin size, 1 _/_ 127 _._ 5.",
+          "explanation": "The forward process is formally defined for steps t = 1,...,T, with variance \u03b2_t. The cosine schedule defines \u03b1\u0304_t for t = 0,...,T, and \u03b2_t = 1 - \u03b1\u0304_t/\u03b1\u0304_{t-1} is defined only for t \u2265 1 (since \u03b1\u0304_{-1} is undefined). The authors refer to \u03b2_0, which is not defined in the notation summary and would correspond to an extrapolated value. The intended meaning is to adjust the first actual diffusion step (likely \u03b2_1), but the notation is formally incorrect and could confuse readers implementing the schedule. This is a minor notational inconsistency.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Ambiguous phrase 'order of magnitude fewer diffusion steps'",
+          "quote": "Additionally, our models allow for sampling with an order of magnitude fewer diffusion steps with only a modest difference in sample quality.",
+          "explanation": "The phrase \"order of magnitude fewer diffusion steps\" is ambiguous: does it mean exactly 10x fewer steps (e.g., from 1000 to 100), or roughly a factor of 10? The paper later (in Section 4) discusses reducing sampling steps but does not specify a precise factor in the abstract. In the results, Table 1 and the surrounding text use _T_ = 4000 for training, but Section 4's exploration of reducing steps claims \"a number of seconds rather than minutes\" without a specific ratio. The ambiguity could lead a reader to overestimate the speedup. Since the paper provides concrete numbers elsewhere (e.g., 100 steps in the discussion around Figure 3a), the claim is supported but not quantified in the abstract. This is a minor framing concern.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Potential overclaim: 'competitive log-likelihoods... even on high-diversity datasets like ImageNet'",
+          "quote": "In this paper, we show that diffusion models can achieve competitive log-likelihoods while maintaining good sample quality, even on high-diversity datasets like ImageNet.",
+          "explanation": "The claim asserts that the models achieve 'competitive log-likelihoods' on ImageNet. However, Table 3 later shows that while their model (3.53 bits/dim) improves over the baseline (3.77) and approaches some prior models, it still lags behind the best transformer-based models (e.g., Sparse Transformer at 3.44, RoutingTransformer at 3.43). 'Competitive' is somewhat subjective\u2014these results are close but not state-of-the-art. Given the abstract's more moderate language ('can achieve competitive log-likelihoods'), this is a mild overclaim in the introduction but is contextualized later in Table 3. I consider this a minor issue.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_3",
+          "title": "Unclear derivation of sampling noise schedule for reduced steps",
+          "quote": "Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise\n\nWe can compute _p_ ( _xSt\u2212_ 1 _|xSt_ ) as _N_ ( _\u00b5\u03b8_ ( _xSt, St_ ) _,_ \u03a3 _\u03b8_ ( _xSt, St_ )). Note that \u03a3 _\u03b8_ ( _xSt, St_ ) is parameterized as a range between _\u03b2St_ and _\u03b2_[\u02dc] _St_ so it will automatically be rescaled for the shorter diffusion process.",
+          "explanation": "The passage in Section 4 describes using a 'strided schedule' to sample with fewer steps, but the derivation of the corresponding sampling variances is incomplete. The text states 'Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise' but then cuts off before showing how. The next sentence jumps to computing _p_ ( _xSt\u22121|xSt_ ) using the same _\u00b5\u03b8_ and \u03a3 _\u03b8_ at step _St_ , but it's not explicit how the variance should be adjusted for the skipped steps (e.g., whether to use the cumulative variance over the gap). This is a non-trivial detail: in Ho et al. (2020), the variance for a sub-sequence requires careful handling of the process's Markov property. The paper later mentions that \u03a3 _\u03b8_ is 'automatically rescaled' because it's parameterized as a range, but this is vague\u2014how exactly does the interpolation between _\u03b2_ and _\u03b2\u0303_ scale? Without further specification, a reader attempting to reproduce the method would not have enough information. This is an underspecified method.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_4",
+          "title": "Importance sampling range excludes the final VLB term",
+          "quote": "we maintain a history of the previous 10 values for each loss term, and update this dynamically during training. At the beginning of training, we sample t uniformly until we draw 10 samples for every t \u2208 [0, T-1].",
+          "explanation": "The variational lower bound consists of terms L_0, L_1, ..., L_{T-1}, L_T. The text specifies importance sampling over t \u2208 [0, T-1], which would exclude L_T. While L_T is typically negligible (it does not depend on \u03b8 and is close to zero), the description does not justify its omission. Additionally, L_0 is a discretized likelihood term and might have a different functional form than the other KL divergences; the uniform initialization strategy treats it identically to the other terms. The oversight is minor because in practice L_T is very small and the uniform sampling initialization will eventually be overridden by the stored history, but a careful reader might wonder whether L_T is intentionally excluded and whether this choice affects the gradient noise reduction claims.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_5",
+          "title": "Pixel bin size calculation appears inconsistent with common data scaling",
+          "quote": "we selected _s_ such that _[\u221a] \u03b2_ 0 was slightly smaller than the pixel bin size, 1 _/_ 127 _._ 5.",
+          "explanation": "For image data with 256 intensity levels, a typical preprocessing is to scale pixel values to [-1,1], which gives a bin size of 2/256 = 1/128 \u2248 0.0078125. The paper states the bin size as 1/127.5 \u2248 0.007843, which is slightly larger. Unless the paper uses a different scaling (e.g., [0,1] or a different discretization), this value is inconsistent with the standard convention. The offset s is chosen to make \u221a\u03b2_0 slightly smaller than this bin size, so the discrepancy could affect the resulting schedule. The difference is small but suggests a possible arithmetic error or undefined preprocessing detail.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_6",
+          "title": "Ambiguity in strided schedule for log-likelihood evaluation",
+          "quote": "we use a strided subset of timesteps as for FID (with stride _K_ ), but we also include every _t_ from 1 to _T/K_ . This requires _T/K_ extra evaluation steps, but greatly improves log-likelihood compared to the uniformly strided schedule.",
+          "explanation": "The description is ambiguous. It says they use a strided subset of timesteps (as for FID) and also include every t from 1 to T/K. This leaves unclear whether the strided subset already includes some early steps, leading to possible overlap. The phrase 'as for FID' does not specify the starting point of the stride. Without additional details, a reader cannot precisely reproduce the evaluation schedule. While the intent is plausible, the method is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_7",
+          "title": "Potential handling of non-integer strides in sampling step reduction",
+          "quote": "we use a stride _K_ over timesteps to reduce the total number of sampling steps from _T_ to _T/K_ . In Figures 5a and 5c, we evaluate FIDs for an _L_ hybrid model and an _L_ simple model that were trained with 4000 diffusion steps, using 30, 50, 100, 150, 200, 400, and 4000 sampling steps.",
+          "explanation": "The text implies that the number of sampling steps is exactly T/K, which requires K to be a divisor of T. However, 4000/30 is not an integer, and similarly 4000/150 is not integer (26.67). The method for selecting exactly 30 or 150 steps from 4000 total steps using a constant stride is not explained. It could be that a slightly different stride or rounding is used, or that the steps are chosen as equally spaced indices rather than a fixed integer stride. This lack of clarity could hinder reproduction of the FID evaluations.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_8",
+          "title": "Inconsistent terminology: 'depth' instead of 'width' for channel multiplier",
+          "quote": "Since the depth of each layer affects the scale of the initial weights, we scale the Adam learning rate for each model by 1 _/[\u221a]_ channel multiplier",
+          "explanation": "The phrase 'depth of each layer' appears to be a misnomer. The preceding sentence explains that they vary model capacity by applying a multiplier such that the first layer has 64, 96, 128, or 192 channels, which is a change in layer width (number of channels), not depth (number of layers). The subsequent use of 'channel multiplier' clarifies the intent, but the initial wording could confuse a reader about whether they are modifying the number of layers or the channels per layer.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0188,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 69471,
+      "completion_tokens": 32556
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper is well-structured and clearly motivated, successfully identifying key limitations in prior diffusion models\u2014namely, suboptimal log-likelihoods, poor scaling to high-diversity datasets, and slow sampling\u2014and proposing a coherent set of modifications to address them. The writing is generally clear, though the exposition in Section 2 is rather dense and closely follows Ho et al. without providing much novel intuition or pedagogical value; a more concise or reorganized treatment would improve readability. The most significant issue at this stage is the lack of detail on the central methodological contributions\u2014the hybrid objective, the reparameterization of the reverse process variance, and the novel noise schedule\u2014which are only mentioned in passing. The surprising claim that optimizing the hybrid objective yields better log-likelihoods than direct likelihood optimization is stated without any supporting evidence or explanation in the excerpt, leaving the reader skeptical and demanding strong empirical validation. Additionally, the paper\u2019s assertion of \u201ccompetitive log-likelihoods\u201d is vague without explicit baselines or datasets; it should be clarified what is meant by \u201ccompetitive\u201d (e.g., relative to VAEs, autoregressive models, or GANs) and which specific metrics and datasets are intended. Overall, the introduction effectively frames the contributions, but the paper must flesh out the technical details and provide rigorous comparisons to substantiate its bold claims.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Missing equation numbers for key formulas in Section 2.1 and 2.2",
+          "quote": "Given a data distribution _x_ 0 _\u223c q_ ( _x_ 0), we define a forward noising process _q_ which produces latents _x_ 1 through _xT_ by adding Gaussian noise at time _t_ with variance _\u03b2t \u2208_ (0 _,_ 1) as follows:\n\nGiven sufficiently large _T_ and a well behaved schedule of _\u03b2t_ , the latent _xT_ is nearly an isotropic Gaussian distribution. Thus, if we know the exact reverse distribution _q_ ( _xt\u2212_ 1 _|xt_ ), we can sample _xT \u223cN_ (0 _,_ **I** ) and run the process in reverse to get a sample from _q_ ( _x_ 0). However, since _q_ ( _xt\u2212_ 1 _|xt_ ) depends on the entire data distribution, we approximate it using a neural network:\n\nThe combination of _q_ and _p_ is a variational auto-encoder (Kingma & Welling, 2013), and we can write the variational lower bound (VLB) as follows:\n\nAside from _L_ 0, each term of Equation 4 is a _KL_ divergence between two Gaussian distributions, and can thus be evaluated in closed form. To evaluate _L_ 0 for images, we assume that each color component is divided into 256 bins, and we compute the probability of _p\u03b8_ ( _x_ 0 _|x_ 1) landing in the correct bin (which is tractable using the CDF of the Gaussian distribution). Also note that while _LT_ does not depend on _\u03b8_ , it will be close to zero if the forward noising process adequately destroys the data distribution so that _q_ ( _xT |x_ 0) _\u2248N_ (0 _,_ **I** ).\n\nIt is useful to define and derive several other quantities which are relevant to the forward noising process, so we repeat them here from Ho et al. (2020):\n\nEquation 12 provides an efficient way to jump directly to an arbitrary step of the forward noising process.",
+          "explanation": "The text repeatedly references equations (e.g., \"Equation 4\", \"Equation 12\") and forward noise quantities (e.g., equations for _\u03b1t_, _\u03b1\u0304t_, _\u03b2\u0303t_) but none of these equations appear in the provided excerpt. This is almost certainly because the equations are defined in parts of the paper not included in the passage (e.g., the full Section 2.1 or later in Section 2.2). Given the instructions to be lenient with forward references and that the context is an OCR excerpt from a longer paper, this is not an actionable error. The authors presumably defined them elsewhere. No flag needed.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Incomplete parameterization description for \u00b5\u03b8",
+          "quote": "There are many different ways to parameterize _\u00b5\u03b8_ ( _xt, t_ ). The most obvious option is to predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly with a neural network; alternatively, the network could predict _\u00b5_ \u02dc( _xt, x_ 0); finally, the network could predict the noise _x \u03f5_ added to0, and this output _x_ 0, and this noise could be used to predict _x_ 0 via",
+          "explanation": "The sentence is garbled\u2014likely due to OCR corruption or incomplete text extraction. It reads: \"predict _\u00b5_ could then be fed through _\u03b8_ ( _xt, t_ ) directly\" and later \"predict the noise _x \u03f5_ added to0, and this output _x_ 0\". The intended meaning is clear from context (predicting the noise _\u03f5_ added to _x0_ as per the standard formulation), but the text as given is incoherent. Since the surrounding prose and the mention of \"predicting _\u03f5_ worked best\" clarify the intended content, and the paper elsewhere (e.g., Section 3.1) discusses variance parameterization, this is a localized OCR artifact. However, the incomplete sentence could confuse a reader trying to follow the derivation if they only have this excerpt. Flagging as minor because the broader paper resolves it but the passage itself is flawed.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Ambiguous phrase 'order of magnitude fewer diffusion steps'",
+          "quote": "Additionally, our models allow for sampling with an order of magnitude fewer diffusion steps with only a modest difference in sample quality.",
+          "explanation": "The phrase \"order of magnitude fewer diffusion steps\" is ambiguous: does it mean exactly 10x fewer steps (e.g., from 1000 to 100), or roughly a factor of 10? The paper later (in Section 4) discusses reducing sampling steps but does not specify a precise factor in the abstract. In the results, Table 1 and the surrounding text use _T_ = 4000 for training, but Section 4's exploration of reducing steps claims \"a number of seconds rather than minutes\" without a specific ratio. The ambiguity could lead a reader to overestimate the speedup. Since the paper provides concrete numbers elsewhere (e.g., 100 steps in the discussion around Figure 3a), the claim is supported but not quantified in the abstract. This is a minor framing concern.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Potential overclaim: 'competitive log-likelihoods... even on high-diversity datasets like ImageNet'",
+          "quote": "In this paper, we show that diffusion models can achieve competitive log-likelihoods while maintaining good sample quality, even on high-diversity datasets like ImageNet.",
+          "explanation": "The claim asserts that the models achieve 'competitive log-likelihoods' on ImageNet. However, Table 3 later shows that while their model (3.53 bits/dim) improves over the baseline (3.77) and approaches some prior models, it still lags behind the best transformer-based models (e.g., Sparse Transformer at 3.44, RoutingTransformer at 3.43). 'Competitive' is somewhat subjective\u2014these results are close but not state-of-the-art. Given the abstract's more moderate language ('can achieve competitive log-likelihoods'), this is a mild overclaim in the introduction but is contextualized later in Table 3. I consider this a minor issue.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_4",
+          "title": "Unclear derivation of sampling noise schedule for reduced steps",
+          "quote": "Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise\n\nWe can compute _p_ ( _xSt\u2212_ 1 _|xSt_ ) as _N_ ( _\u00b5\u03b8_ ( _xSt, St_ ) _,_ \u03a3 _\u03b8_ ( _xSt, St_ )). Note that \u03a3 _\u03b8_ ( _xSt, St_ ) is parameterized as a range between _\u03b2St_ and _\u03b2_[\u02dc] _St_ so it will automatically be rescaled for the shorter diffusion process.",
+          "explanation": "The passage in Section 4 describes using a 'strided schedule' to sample with fewer steps, but the derivation of the corresponding sampling variances is incomplete. The text states 'Given the training noise schedule _\u03b1t_ , we can obtain the sampling noise' but then cuts off before showing how. The next sentence jumps to computing _p_ ( _xSt\u22121|xSt_ ) using the same _\u00b5\u03b8_ and \u03a3 _\u03b8_ at step _St_ , but it's not explicit how the variance should be adjusted for the skipped steps (e.g., whether to use the cumulative variance over the gap). This is a non-trivial detail: in Ho et al. (2020), the variance for a sub-sequence requires careful handling of the process's Markov property. The paper later mentions that \u03a3 _\u03b8_ is 'automatically rescaled' because it's parameterized as a range, but this is vague\u2014how exactly does the interpolation between _\u03b2_ and _\u03b2\u0303_ scale? Without further specification, a reader attempting to reproduce the method would not have enough information. This is an underspecified method.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_5",
+          "title": "Missing implicit 'or' in variance parameterization option",
+          "quote": "They found that they achieve similar sample quality using either _\u03c3t_[2][=] _[\u03b2][t]_[or] _[ \u03c3] t_[2][=] _[\u03b2]_[\u02dc] _[t]_[, which are] two extremes given by _q_ ( _x_ 0) being either isotropic Gaussian noise or a delta function, respectively.",
+          "explanation": "This is a minor OCR artifact: 'or _\u03c3t_2 = _\u03b2\u0303t_' is rendered as '[or] [_\u03c3_] t[2][=] _[\u03b2]_[\u02dc] _[t]_'. The brackets and spacing are garbled, but the meaning is clear from context. Not a substantive issue.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_6",
+          "title": "Possible off-by-one indexing error for \u03b2\u2080 in cosine schedule description",
+          "quote": "In particular, we selected s such that \u221a\u03b2_0 was slightly smaller than the pixel bin size, 1/127.5.",
+          "explanation": "The cosine schedule is defined in terms of \u03b1\u0304_t for t = 0,...,T, and \u03b2_t = 1 - \u03b1\u0304_t/\u03b1\u0304_{t-1} is defined only for t \u2265 1 (since \u03b1\u0304_{-1} is undefined). The authors likely intend \u221a\u03b2_1 or \u221a\u03b2_t for the first diffusion step (t=1), not \u03b2_0. The text says 'near t=0' but then writes \u221a\u03b2_0. If \u03b2_0 were interpreted literally (e.g., variance at the initial data point), it would be zero and the condition would be trivially false. The intended meaning is clear from context\u2014adjusting s so that the first variance step is appropriately small\u2014but the notation is formally incorrect and could confuse a reader implementing the schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_7",
+          "title": "Importance sampling range excludes the final VLB term",
+          "quote": "we maintain a history of the previous 10 values for each loss term, and update this dynamically during training. At the beginning of training, we sample t uniformly until we draw 10 samples for every t \u2208 [0, T-1].",
+          "explanation": "The variational lower bound consists of terms L_0, L_1, ..., L_{T-1}, L_T. The text specifies importance sampling over t \u2208 [0, T-1], which would exclude L_T. While L_T is typically negligible (it does not depend on \u03b8 and is close to zero), the description does not justify its omission. Additionally, L_0 is a discretized likelihood term and might have a different functional form than the other KL divergences; the uniform initialization strategy treats it identically to the other terms. The oversight is minor because in practice L_T is very small and the uniform sampling initialization will eventually be overridden by the stored history, but a careful reader might wonder whether L_T is intentionally excluded and whether this choice affects the gradient noise reduction claims.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_8",
+          "title": "Notational inconsistency: \u03b2_0 outside defined range",
+          "quote": "The small offset _s_ in our schedule prevents _\u03b2t_ from being too small near _t_ = 0, since we found that having tiny amounts of noise at the beginning of the process made it hard for the network to predict _\u03f5_ accurately enough. In particular, we selected _s_ such that _[\u221a] \u03b2_ 0 was slightly smaller than the pixel bin size, 1 _/_ 127 _._ 5.",
+          "explanation": "The forward process is formally defined for steps t = 1,...,T, with variance \u03b2_t. Here the authors refer to \u03b2_0, which is not defined in the notation summary. While one can imagine an extended continuous index t \u2208 [0,T], the discrete schedule does not specify \u03b2_0, and it is ambiguous whether \u03b2_0 corresponds to \u03b2_1 or an extrapolated value. This can confuse readers trying to replicate the cosine schedule computation, as the clipping and scaling decisions depend on this value.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_9",
+          "title": "Pixel bin size calculation appears inconsistent with common data scaling",
+          "quote": "we selected _s_ such that _[\u221a] \u03b2_ 0 was slightly smaller than the pixel bin size, 1 _/_ 127 _._ 5.",
+          "explanation": "For image data with 256 intensity levels, a typical preprocessing is to scale pixel values to [-1,1], which gives a bin size of 2/256 = 1/128 \u2248 0.0078125. The paper states the bin size as 1/127.5 \u2248 0.007843, which is slightly larger. Unless the paper uses a different scaling (e.g., [0,1] or a different discretization), this value is inconsistent with the standard convention. The offset s is chosen to make \u221a\u03b2_0 slightly smaller than this bin size, so the discrepancy could affect the resulting schedule. The difference is small but suggests a possible arithmetic error or undefined preprocessing detail.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_10",
+          "title": "Ambiguity in strided schedule for log-likelihood evaluation",
+          "quote": "we use a strided subset of timesteps as for FID (with stride _K_ ), but we also include every _t_ from 1 to _T/K_ . This requires _T/K_ extra evaluation steps, but greatly improves log-likelihood compared to the uniformly strided schedule.",
+          "explanation": "The description is ambiguous. It says they use a strided subset of timesteps (as for FID) and also include every t from 1 to T/K. This leaves unclear whether the strided subset already includes some early steps, leading to possible overlap. The phrase 'as for FID' does not specify the starting point of the stride. Without additional details, a reader cannot precisely reproduce the evaluation schedule. While the intent is plausible, the method is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_11",
+          "title": "Potential handling of non-integer strides in sampling step reduction",
+          "quote": "we use a stride _K_ over timesteps to reduce the total number of sampling steps from _T_ to _T/K_ . In Figures 5a and 5c, we evaluate FIDs for an _L_ hybrid model and an _L_ simple model that were trained with 4000 diffusion steps, using 30, 50, 100, 150, 200, 400, and 4000 sampling steps.",
+          "explanation": "The text implies that the number of sampling steps is exactly T/K, which requires K to be a divisor of T. However, 4000/30 is not an integer, and similarly 4000/150 is not integer (26.67). The method for selecting exactly 30 or 150 steps from 4000 total steps using a constant stride is not explained. It could be that a slightly different stride or rounding is used, or that the steps are chosen as equally spaced indices rather than a fixed integer stride. This lack of clarity could hinder reproduction of the FID evaluations.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_12",
+          "title": "Inconsistent terminology: 'depth' instead of 'width' for channel multiplier",
+          "quote": "Since the depth of each layer affects the scale of the initial weights, we scale the Adam learning rate for each model by 1 _/[\u221a]_ channel multiplier",
+          "explanation": "The phrase 'depth of each layer' appears to be a misnomer. The preceding sentence explains that they vary model capacity by applying a multiplier such that the first layer has 64, 96, 128, or 192 channels, which is a change in layer width (number of channels), not depth (number of layers). The subsequent use of 'channel multiplier' clarifies the intent, but the initial wording could confuse a reader about whether they are modifying the number of layers or the channels per layer.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0188,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 69471,
+      "completion_tokens": 32556
+    }
+  }
+}

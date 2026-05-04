@@ -1,0 +1,535 @@
+{
+  "slug": "neurips2022-2uAaGwlP-dpm-solver-a-fast-ode-solver-for-diffusion-probabilistic-mod",
+  "title": "DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **DPM-Solver: A Fast ODE Solver for Diffusion Probabilistic Model Sampling in Around 10 Steps**\n\n**Cheng Lu** _[\u2020]_ **, Yuhao Zhou** _[\u2020]_ **, Fan Bao** _[\u2020]_ **, Jianfei Chen** _[\u2020\u2217]_ **, Chongxuan Li** _[\u2021]_ **, Jun Zhu** _[\u2020\u2217]_"
+    },
+    {
+      "index": 1,
+      "text": "> _\u2020_ Dept. of Comp. Sci. & Tech., Institute for AI, BNRist Center, THBI Lab\n\n> _\u2020_ Tsinghua-Bosch Joint ML Center, Tsinghua University, Beijing, 100084 China"
+    },
+    {
+      "index": 2,
+      "text": "> _\u2021_ Gaoling School of Artificial Intelligence, Renmin University of China,\n\n> _\u2021_ Beijing Key Laboratory of Big Data Management and Analysis Methods, Beijing, China `{lucheng.lc15, yuhaoz.cs}@gmail.com` ; `bf19@mails.tsinghua.edu.cn chongxuanli@ruc.edu.cn` ; `{jianfeic, dcszj}@tsinghua.edu.cn`"
+    },
+    {
+      "index": 3,
+      "text": "## **Abstract**\n\nDiffusion probabilistic models (DPMs) are emerging powerful generative models. Despite their high-quality generation performance, DPMs still suffer from their slow sampling as they generally need hundreds or thousands of sequential function evaluations (steps) of large neural networks to draw a sample. Sampling from DPMs can be viewed alternatively as solving the corresponding diffusion ordinary differential equations (ODEs). In this work, we propose an exact formulation of the solution of diffusion ODEs. The formulation analytically computes the linear part of the solution, rather than leaving all terms to black-box ODE solvers as adopted in previous works. By applying change-of-variable, the solution can be equivalently simplified to an exponentially weighted integral of the neural network. Based on our formulation, we propose _DPM-Solver_ , a fast dedicated high-order solver for diffusion ODEs with the convergence order guarantee. DPM-Solver is suitable for both discrete-time and continuous-time DPMs without any further training. Experimental results show that DPM-Solver can generate high-quality samples in only 10 to 20 function evaluations on various datasets. We achieve 4.70 FID in 10 function evaluations and 2.87 FID in 20 function evaluations on the CIFAR10 dataset, and a 4 _\u223c_ 16 _\u00d7_ speedup compared with previous state-of-the-art training-free samplers on various datasets.[2]"
+    },
+    {
+      "index": 4,
+      "text": "## **1 Introduction**\n\nDiffusion probabilistic models (DPMs) [1\u20133] are emerging powerful generative models with promising performance on many tasks, such as image generation [4, 5], video generation [6], text-to-image generation [7], speech synthesis [8, 9] and lossless compression [10]. DPMs are defined by discretetime random processes [1, 2] or continuous-time stochastic differential equations (SDEs) [3], which learn to gradually remove the noise added to the data points. Compared with the widely-used generative adversarial networks (GANs) [11] and variational auto-encoders (VAEs) [12], DPMs can not only compute exact likelihood [3], but also achieve even better sample quality for image generation [4]. However, to obtain high-quality samples, DPMs usually need hundreds or thousands of sequential steps of large neural network evaluations, thereby resulting in a much slower sampling speed than the single-step GANs or VAEs. Such inefficiency is becoming a critical bottleneck for the adoption of DPMs in downstream tasks, leading to an urgent request to design fast samplers for DPMs."
+    },
+    {
+      "index": 5,
+      "text": "- _\u2217_ Corresponding Author.\n\n> 2Code is available at `https://github.com/LuChengTHU/dpm-solver`\n\n36th Conference on Neural Information Processing Systems (NeurIPS 2022)."
+    },
+    {
+      "index": 6,
+      "text": "**----- Start of picture text -----**\n\nNFE = 10 NFE = 15 NFE = 20 NFE = 100 NFE = 10\n(a) DDIM [19] (b) DPM-Solver (ours)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 7,
+      "text": "Figure 1: Samples by DDIM [19] with 10, 15, 20, 100 number of function evaluations (NFE), and DPM-Solver (ours) with only 10 NFE, using the pre-trained DPMs on ImageNet 256 _\u00d7_ 256 with classifier guidance [4]."
+    },
+    {
+      "index": 8,
+      "text": "Existing fast samplers for DPMs can be divided into two categories. The first category includes knowledge distillation [13, 14] and noise level or sample trajectory learning [15\u201318]. Such methods require a possibly expensive training stage before they can be used for efficient sampling. Furthermore, their applicability and flexibility might be limited. It might require nontrivial effort to adapt the method to different models, datasets, and number of sampling steps. The second category consists of training-free [19\u201321] samplers, which are suitable for all pre-trained DPMs in a simple plug-andplay manner. Training-free samplers include adopting implicit [19] or analytical [21] generation process, advanced differential equation (DE) solvers [3, 20, 22\u201324] and dynamic programming [18]. However, these methods still require _\u223c_ 50 function evaluations [21] to generate high-quality samples (comparable to those generated by plain samplers in about 1000 function evaluations), thereby are still time-consuming."
+    },
+    {
+      "index": 9,
+      "text": "In this work, we bring the efficiency of training-free samplers to a new level to produce high-quality samples in the \u201c _few-step sampling_ \u201d regime, where the sampling can be done within around 10 steps of sequential function evaluations. We tackle the alternative problem of sampling from DPMs as solving the corresponding diffusion ordinary differential equations (ODEs) of DPMs, and carefully examine the structure of diffusion ODEs. Diffusion ODEs have a semi-linear structure \u2014 they consist of a linear function of the data variable and a nonlinear function parameterized by neural networks. Such structure is omitted in previous training-free samplers [3, 20], which directly use black-box DE solvers. To utilize the semi-linear structure, we derive an exact formulation of the solutions of diffusion ODEs by analytically computing the linear part of the solutions, avoiding the corresponding discretization error. Furthermore, by applying change-of-variable, the solutions can be equivalently simplified to an exponentially weighted integral of the neural network. Such integral is very special and can be efficiently approximated by the numerical methods for exponential integrators [25]."
+    },
+    {
+      "index": 10,
+      "text": "Based on our formulation of solutions, we propose _DPM-Solver_ , a fast dedicated solver for diffusion ODEs by approximating the above integral. Specifically, we propose first-order, second-order and third-order versions of DPM-Solver with convergence order guarantees. We further propose an adaptive step size schedule for DPM-Solver. In general, DPM-Solver is applicable to both continuoustime and discrete-time DPMs, and also conditional sampling with classifier guidance [4]. Fig. 1 demonstrates the speedup performance of a Denoising Diffusion Implicit Models (DDIM) [19] baseline and DPM-Solver, which shows that DPM-Solver can generate high-quality samples with as few as 10 function evaluations and is much faster than DDIM on the ImageNet 256x256 dataset [26]. Our additional experimental results show that DPM-Solver can greatly improve the sampling speed of both discrete-time and continuous-time DPMs, and it can achieve excellent sample quality in around 10 function evaluations, which is much faster than all previous training-free samplers of DPMs."
+    },
+    {
+      "index": 11,
+      "text": "## **2 Diffusion Probabilistic Models**\n\nWe review diffusion probabilistic models and their associated differential equations in this section."
+    },
+    {
+      "index": 12,
+      "text": "2\n\n## **2.1 Forward Process and Diffusion SDEs**\n\nAssume that we have a _D_ -dimensional random variable _**x**_ 0 _\u2208_ R _[D]_ with an unknown distribution _q_ 0( _**x**_ 0). Diffusion Probabilistic Models (DPMs) [1\u20133, 10] define a _forward process {_ _**x** t}t\u2208_ [0 _,T_ ] with _T >_ 0 starting with _**x**_ 0, such that for any _t \u2208_ [0 _, T_ ], the distribution of _**x** t_ conditioned on _**x**_ 0 satisfies"
+    },
+    {
+      "index": 13,
+      "text": "where _\u03b1_ ( _t_ ) _, \u03c3_ ( _t_ ) _\u2208_ R[+] are differentiable functions of _t_ with bounded derivatives, and we denote them as _\u03b1t, \u03c3t_ for simplicity. The choice for _\u03b1t_ and _\u03c3t_ is referred to as the _noise schedule_ of a DPM. Let _qt_ ( _**x** t_ ) denote the marginal distribution of _**x** t_ , DPMs choose noise schedules to ensure that _qT_ ( _**x** T_ ) _\u2248N_ ( _**x** T |_ **0** _,_ \u02dc _\u03c3_[2] _**I**_ ) for some \u02dc _\u03c3 >_ 0, and the _signal-to-noise-ratio_ (SNR) _\u03b1t_[2] _[/\u03c3] t_[2][is strictly] decreasing w.r.t. _t_ [10]. Moreover, Kingma et al. [10] prove that the following stochastic differential equation (SDE) has the same transition distribution _q_ 0 _t_ ( _**x** t|_ _**x**_ 0) as in Eq. (2.1) for any _t \u2208_ [0 _, T_ ]:"
+    },
+    {
+      "index": 14,
+      "text": "where _**w** t \u2208_ R _[D]_ is the standard Wiener process, and\n\nUnder some regularity conditions, Song et al. [3] show that the forward process in Eq. (2.2) has an equivalent _reverse process_ from time _T_ to 0, starting with the marginal distribution _qT_ ( _**x** T_ ):"
+    },
+    {
+      "index": 15,
+      "text": "where _**w**_ \u00af _t_ is a standard Wiener process in the reverse time. The only unknown term in Eq. (2.4) is the _score function \u2207_ _**x**_ log _qt_ ( _**x** t_ ) at each time _t_ . In practice, DPMs use a neural network _**\u03f5** \u03b8_ ( _**x** t, t_ ) parameterized by _\u03b8_ to estimate the scaled score function: _\u2212\u03c3t\u2207_ _**x**_ log _qt_ ( _**x** t_ ). The parameter _\u03b8_ is optimized by minimizing the following objective [2, 3]:"
+    },
+    {
+      "index": 16,
+      "text": "where _\u03c9_ ( _t_ ) is a weighting function, _**\u03f5** \u223c q_ ( _**\u03f5**_ ) = _N_ ( _**\u03f5** |_ **0** _,_ _**I**_ ), _**x** t_ = _\u03b1t_ _**x**_ 0 + _\u03c3t_ _**\u03f5**_ , and _C_ is a constant independent of _\u03b8_ . As _**\u03f5** \u03b8_ ( _**x** t, t_ ) can also be regarded as predicting the Gaussian noise added to _**x** t_ , it is usually called the _noise prediction model_ . Since the ground truth of _**\u03f5** \u03b8_ ( _**x** t, t_ ) is _\u2212\u03c3t\u2207_ _**x**_ log _qt_ ( _**x** t_ ), DPMs replace the score function in Eq. (2.4) by _\u2212_ _**\u03f5** \u03b8_ ( _**x** t, t_ ) _/\u03c3t_ and define a parameterized reverse process ( _diffusion SDE_ ) from time _T_ to 0, starting with _**x** T \u223cN_ ( **0** _,_ \u02dc _\u03c3_[2] _**I**_ ):"
+    },
+    {
+      "index": 17,
+      "text": "Samples can be generated from DPMs by solving the diffusion SDE in Eq. (2.5) with numerical solvers, which discretize the SDE from _T_ to 0. Song et al. [3] proved that the traditional ancestral sampling method for DPMs [2] can be viewed as a first-order SDE solver for Eq. (2.5). However, these first-order methods usually need hundreds of or thousands of function evaluations to converge [3], leading to extremely slow sampling speed."
+    },
+    {
+      "index": 18,
+      "text": "## **2.2 Diffusion (Probability Flow) ODEs**\n\nWhen discretizing SDEs, the step size is limited by the randomness of the Wiener process [27, Chap. 11]. A large step size (small number of steps) often causes non-convergence, especially in high dimensional spaces. For faster sampling, one can consider the associated _probability flow ODE_ [3], which has the same marginal distribution at each time _t_ as that of the SDE. Specifically, for DPMs, Song et al. [3] proved that the probability flow ODE of Eq. (2.4) is"
+    },
+    {
+      "index": 19,
+      "text": "3\n\nwhere the marginal distribution of _**x** t_ is also _qt_ ( _**x** t_ ). By replacing the score function with the noise prediction model, Song et al. [3] defined the following parameterized ODE ( _diffusion ODE_ ):"
+    },
+    {
+      "index": 20,
+      "text": "Samples can be drawn by solving the ODE from _T_ to 0. Comparing with SDEs, ODEs can be solved with larger step sizes as they have no randomness. Furthermore, we can take advantage of efficient numerical ODE solvers to accelerate the sampling. Song et al. [3] used the RK45 ODE solver [28] for the diffusion ODEs, which generates samples in _\u223c_ 60 function evaluations to reach comparable quality with a 1000-step SDE solver for Eq. (2.5) on the CIFAR-10 dataset [29]. However, existing _\u223c_ general-purpose ODE solvers still cannot generate satisfactory samples in the few-step ( 10 steps) sampling regime. To the best of our knowledge, there is still a lack of training-free samplers for DPMs in the few-step sampling regime, and the sampling speed of DPMs is still a critical issue."
+    },
+    {
+      "index": 21,
+      "text": "## **3 Customized Fast Solvers for Diffusion ODEs**\n\nAs highlighted in Sec. 2.2, discretizing SDEs is generally difficult in high dimensions [27, Chap. 11] and it is hard to converge within few steps. In contrast, ODEs are easier to solve, yielding a potential for fast samplers. However, as mentioned in Sec. 2.2, the general black-box ODE solver used in previous work [3] empirically fails to converge in few steps. This motivates us to design a dedicated solver for diffusion ODEs to enable fast and high-quality few-step sampling. We start with a detailed investigation of the specific structure of diffusion ODEs."
+    },
+    {
+      "index": 22,
+      "text": "## **3.1 Simplified Formulation of Exact Solutions of Diffusion ODEs**\n\nThe key insight of this work is that given an initial value _**x** s_ at time _s >_ 0, the solution _**x** t_ at each time _t < s_ of diffusion ODEs in Eq. (2.7) can be simplified into a very special exact formulation which can be efficiently approximated."
+    },
+    {
+      "index": 23,
+      "text": "Our first key observation is that a part of the solution _**x** t_ can be exactly computed by considering the particular structure of diffusion ODEs. The r.h.s. of diffusion ODEs in Eq. (2.7) consists of two parts: the part _f_ ( _t_ ) _**x** t_ is a linear function of _**x** t_ , and the other part _[g]_ 2[2] _\u03c3_[(] _[t] t_[)] _**[\u03f5]**[\u03b8]_[(] _**[x]**[t][, t]_[)][ is generally a nonlinear] function of _**x** t_ because of the neural network _**\u03f5** \u03b8_ ( _**x** t, t_ ). This type of ODE is referred to as _semi-linear_ ODE. The black-box ODE solvers adopted by previous work [3] are ignorant of this semi-linear structure as they take the whole _**h** \u03b8_ ( _**x** t, t_ ) in Eq. (2.7) as the input, which causes discretization errors of both the linear and nonlinear term. We note that for semi-linear ODEs, the solution at time _t_ can be exactly formulated by the _\u201cvariation of constants\u201d_ formula [30]:"
+    },
+    {
+      "index": 24,
+      "text": "This formulation decouples the linear part and the nonlinear part. In contrast to black-box ODE solvers, the linear part is now exactly computed, which eliminates the approximation error of the linear term. However, the integral of the nonlinear part is still complicated because it couples the coefficients about the noise schedule (i.e., _f_ ( _\u03c4_ ) _, g_ ( _\u03c4_ ) _, \u03c3\u03c4_ ) and the complex neural network _**\u03f5** \u03b8_ , which is still hard to approximate."
+    },
+    {
+      "index": 25,
+      "text": "Our second key observation is that the integral of the nonlinear part can be greatly simplified by introducing a special variable. Let _\u03bbt_ := log( _\u03b1t/\u03c3t_ ) (one half of the log-SNR), then _\u03bbt_ is a strictly decreasing function of _t_ (due to the definition of DPMs as discussed in Sec. 2.1). We can rewrite _g_ ( _t_ ) in Eq. (2.3) as"
+    },
+    {
+      "index": 26,
+      "text": "Combining with _f_ ( _t_ ) = d log _\u03b1t/_ d _t_ in Eq. (2.3), we can rewrite Eq. (3.1) as\n\nAs _\u03bb_ ( _t_ ) = _\u03bbt_ is a strictly decreasing function of _t_ , it has an inverse function _t\u03bb_ \u02c6( _\u00b7_ ) satisfying _t_ _**\u03f5**_ \u02c6 _\u03b8_ =(\u02c6 _**x** t\u03bb\u03bb, \u03bb_ ( _\u03bb_ ) :=( _t_ )). _**\u03f5**_ We further change the subscripts of _\u03b8_ ( _**x** t\u03bb_ ( _\u03bb_ ) _, t\u03bb_ ( _\u03bb_ )). Rewrite Eq. (3.3) by _**x** \u201cchange-of-variable\u201d_ and _**\u03f5** \u03b8_ from _t_ to _\u03bb_ and denote for _\u03bb_ , then we have: _**x** \u03bb_ := _**x** t\u03bb_ ( _\u03bb_ ),"
+    },
+    {
+      "index": 27,
+      "text": "4\n\n**Proposition 3.1** (Exact solution of diffusion ODEs) **.** _Given an initial value_ _**x** s at time s >_ 0 _, the solution_ _**x** t at time t \u2208_ [0 _, s_ ] _of diffusion ODEs in Eq._ (2.7) _is:_"
+    },
+    {
+      "index": 28,
+      "text": "We call the integral \ufffd _e[\u2212][\u03bb]_ _**\u03f5**_ \u02c6 _\u03b8_ (\u02c6 _**x** \u03bb, \u03bb_ )d _\u03bb_ the _exponentially weighted integral_ of _**\u03f5**_ \u02c6 _\u03b8_ , which is very special and highly related to the _exponential integrators_ in the literature of ODE solvers [25]. To the best of our knowledge, such formulation has not been revealed in prior work of diffusion models."
+    },
+    {
+      "index": 29,
+      "text": "Eq. (3.4) provides a new perspective for approximating the solutions of diffusion ODEs. Specifically, given _**x** s_ at time _s_ , According to Eq. (3.4), approximating the solution at time _t_ is equivalent to directly approximating the exponentially weighted integral of _**\u03f5**_ \u02c6 _\u03b8_ from _\u03bbs_ to _\u03bbt_ , which avoids the error of the linear terms and is well-studied in the literature of exponential integrators [25, 31]. Based on this insight, we propose fast solvers for diffusion ODEs, as detailed in the following sections."
+    },
+    {
+      "index": 30,
+      "text": "## **3.2 High-Order Solvers for Diffusion ODEs**\n\nIn this section, we propose high-order solvers for diffusion ODEs with convergence order guarantee by leveraging our proposed solution formulation Eq. (3.4). The proposed solvers and analysis are highly motivated by the methods of exponential integrators [25, 31] in the ODE literature."
+    },
+    {
+      "index": 31,
+      "text": "Specifically, given an initial\u02dc value _**x** T_ at time _T_ and _M_ + 1 time steps _{ti}[M] i_ =0[decreasing][from] _t_ compute a sequencethe last iterate0 = _T_ to _tM_ = 0 _**x**_ \u02dc _tM_ . Letapproximates the true solution at time _{_ _**x**_ \u02dc _**x** tit}_ 0 _[M] i_ ==0 _**x**_[to approximate the true solutions at time steps] _T_ be the initial value. The proposed solvers use 0. _[ {] M[t][i][}]_ steps to iteratively _[M] i_ =0[.][In particular,]"
+    },
+    {
+      "index": 32,
+      "text": "In order to reduce the approximation error betweenreduce the approximation error for each _**x**_ \u02dc _ti_ at every step [ _**x**_ \u02dc _tM_ and the true solution at time30]. Starting with the previous value 0, we need to _**x**_ \u02dc _ti\u2212_ 1 at time _ti\u2212_ 1, according to Eq. (3.4), the exact solution _**x** ti\u2212_ 1 _\u2192ti_ at time _ti_ is given by"
+    },
+    {
+      "index": 33,
+      "text": "Therefore, to compute the value _**x**_ \u02dc _ti_ for approximating _**x** ti\u2212_ 1 _\u2192ti_ , we need to approximate the exponentially weighted integral ofd _[n]_ _**\u03f5**_ \u02c6 _\u03b8_ ( _**x**_ \u02c6 _\u03bb,\u03bb_ ) \u02c6 _**\u03f5** \u03b8_ from _\u03bbti\u2212_ 1 to\u02c6 _\u03bbti_ . Denote _hi_ := _\u03bbti \u2212\u03bbti\u2212_ 1 , and \u02c6 _**\u03f5**_[(] _\u03b8[n]_[)][(\u02c6] _**[x]**[\u03bb][, \u03bb]_[) :=] Taylor expansion ofd _\u03bb[n]_ as the _n_ -th order total derivative of _**\u03f5**_ \u02c6 _\u03b8_ (\u02c6 _**x** \u03bb, \u03bb_ ) w.r.t. _\u03bb_ at _\u03bbti\u2212_ 1 is _**\u03f5** \u03b8_ (\u02c6 _**x** \u03bb, \u03bb_ ) w.r.t. _\u03bb_ . For _k \u2265_ 1, the ( _k \u2212_ 1)-th order"
+    },
+    {
+      "index": 34,
+      "text": "Substituting the above Taylor expansion into Eq. (3.5) yields\n\n> [(] _[\u03bb][\u2212][\u03bb][ti][\u2212]_[1][)] _[n]_ where the integral \ufffd _e[\u2212][\u03bb] n_ ! d _\u03bb_ can be **analytically** computed by repeatedly applying _n_ times of integration-by-parts (see Appendix B.2). Therefore, to approximate _**x** ti\u2212_ 1 _\u2192ti_ , we only need to approximate the _n_ -th order total derivatives _**\u03f5**_ \u02c6[(] _\u03b8[n]_[)][(\u02c6] _**[x]**[\u03bb][, \u03bb]_[)][for] _[n][\u2264][k][\u2212]_[1][,][which][is][a][well-studied] problem in the ODE literature [31, 32]. By dropping the _O_ ( _hi[k]_[+1] ) error term and approximating the first ( _k \u2212_ 1)-th total derivatives with the \u201cstiff order conditions\u201d [31, 32], we can derive _k_ -th-order ODE solvers for diffusion ODEs. We name such solvers as _DPM-Solver_ overall, and _DPM-Solver-k_ for a specific order _k_ . Here we take _k_ = 1 for demonstration. In this case, Eq. (3.6) becomes"
+    },
+    {
+      "index": 35,
+      "text": "5\n\nBy dropping the high-order error term _O_ ( _h_[2] _i_[)][,][we can obtain an approximation for] _**[ x]**[t] i\u2212_ 1 _[\u2192][t] i_[.][As] _k_ = 1 here, we call this solver _DPM-Solver-1_ , and the detailed algorithm is as following."
+    },
+    {
+      "index": 36,
+      "text": "**DPM-Solver-1.** Given an initial value _**x** T_ and _M_ + 1 time steps _{ti}[M] i_ =0[decreasing from] _[ t]_[0][=] _[ T]_ \u02dc \u02dc to _tM_ = 0. Starting with _**x** t_ 0 = _**x** T_ , the sequence _{_ _**x** ti}[M] i_ =1[is computed iteratively as follows:]"
+    },
+    {
+      "index": 37,
+      "text": "For _k \u2265_ 2, approximating the first _k_ terms of the Taylor expansion needs additional intermediate points between _t_ and _s_ [31]. The derivation is more technical so we defer it to Appendix B. Below we propose algorithms for _k_ = 2 _,_ 3 and name them as _DPM-Solver-2_ and _DPM-Solver-3_ , respectively."
+    },
+    {
+      "index": 38,
+      "text": "## **Algorithm 1** DPM-Solver-2.\n\n**Require:** 1: _**x**_ \u02dc _t_ 0 _\u2190_ initial value _**x** T_ _**x** T_ , time steps _{ti}[M] i_ =0[, model] _**[ \u03f5]**[\u03b8]_ 2: **for** _i \u2190_ 1 to _M_ **do** _\u03bbti\u2212_ 1 + _\u03bbti_ 3: _si \u2190 t\u03bb_ 2 \ufffd \ufffd 4: _**u** i \u2190 \u03b1\u03b1tis\u2212i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][s][i]_ \ufffd _e h_ 2 _i \u2212_ 1\ufffd _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) 5: _**x**_ \u02dc _ti \u2190 \u03b1\u03b1tit\u2212i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][t][i]_ \ufffd _e[h][i] \u2212_ 1\ufffd _**\u03f5** \u03b8_ ( _**u** i, si_ ) 6: **end for** 7: **return** _**x**_ \u02dc _tM_"
+    },
+    {
+      "index": 39,
+      "text": "**Algorithm 2** DPM-Solver-3.\n\n**Require:** initial value _**x** T_ , time steps _{ti}[M] i_ =0[, model] _**[ \u03f5]**[\u03b8]_ 1: _**x**_ \u02dc _t_ 0 _\u2190_ _**x** T_ , _r_ 1 _\u2190_[1] 3[,] _[ r]_[2] _[\u2190]_[2] 3 2: **for** _i \u2190_ 1 to _M_ **do** 3: _s_ 2 _i\u2212_ 1 _\u2190 t\u03bb_ \ufffd _\u03bbti\u2212_ 1 + _r_ 1 _hi_ \ufffd _, s_ 2 _i \u2190 t\u03bb_ \ufffd _\u03bbti\u2212_ 1 + _r_ 2 _hi_ \ufffd 4: _**u**_ 2 _i\u2212_ 1 _\u2190 \u03b1\u03b1sti_ 2 _i\u2212\u2212_ 11 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][s]_[2] _[i][\u2212]_[1] \ufffd _e[r]_[1] _[h][i] \u2212_ 1\ufffd _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) 5: _**D**_ 2 _i\u2212_ 1 _\u2190_ _**\u03f5** \u03b8_ ( _**u**_ 2 _i\u2212_ 1 _, s_ 2 _i\u2212_ 1) _\u2212_ _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) 6: _**u**_ 2 _i \u2190 \u03b1\u03b1tis\u2212_ 2 _i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][s]_[2] _[i]_ \ufffd _e[r]_[2] _[h][i] \u2212_ 1\ufffd _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) _\u2212 \u03c3sr_ 21 _i r_ 2 \ufffd _e[r] r_[2] 2 _[hi] h\u2212i_ 1 _\u2212_ 1\ufffd _**D**_ 2 _i\u2212_ 1 7: _**D**_ 2 _i \u2190_ _**\u03f5** \u03b8_ ( _**u**_ 2 _i, s_ 2 _i_ ) _\u2212_ _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) 8: _**x**_ \u02dc _ti \u2190 \u03b1\u03b1tit\u2212i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][t][i]_ \ufffd _e[h][i] \u2212_ 1\ufffd _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) _\u2212 \u03c3rt_ 2 _i_ \ufffd _e[hi] h\u2212_ 1 _\u2212_ 1\ufffd _**D**_ 2 _i_ 9: **end for** 10: **return** _**x**_ \u02dc _tM_"
+    },
+    {
+      "index": 40,
+      "text": "Here, _t\u03bb_ ( _\u00b7_ ) is the inverse function of _\u03bb_ ( _t_ ), which has an analytical formulation for the practical noise schedule used in [2, 16], as shown in Appendix D. The chosen intermediate points are ( _si_ , _**u** i_ ) for DPM-Solver-2 and ( _s_ 2 _i\u2212_ 1 _,_ _**u**_ 2 _i\u2212_ 1) and ( _s_ 2 _i,_ _**u**_ 2 _i_ ) for DPM-Solver-3. As shown in the algorithm, DPM-Solver- _k_ requires _k_ function evaluations per step for _k_ = 1 _,_ 2 _,_ 3. Despite the more expensive steps, higher-order solvers ( _k_ = 2 _,_ 3) are usually more efficient since they require much fewer steps to converge, due to their higher convergence order. We show that DPM-Solver- _k_ is _k_ -th-order solver, as stated in the following theorem. The proof is in Appendix B."
+    },
+    {
+      "index": 41,
+      "text": "**Theorem 3.2** (DPM-Solver- _k_ as a _k_ -th-order solver) **.** _Assume_ _**\u03f5** \u03b8_ ( _**x** t, t_ ) _follows the regularity condiODEs, i.e., for the sequencetions detailed in Appendix B.1, then for {_ _**x**_ \u02dc _ti}[M] i_ =1 _[computed by DPM-Solver-] k_ = 1 _,_ 2 _,_ 3 _, DPM-Solver[k] k[, the approximation error at time] is a k-th order solver for diffusion_[ 0] \u02dc _satisfies_ _**x** tM \u2212_ _**x**_ 0 = _O_ ( _h[k]_ max[)] _[, where][ h][max]_[= max][1] _[\u2264][i][\u2264][M]_[(] _[\u03bb][t] i[\u2212][\u03bb][t] i\u2212_ 1[)] _[.]_"
+    },
+    {
+      "index": 42,
+      "text": "Finally, solvers with _k \u2265_ 4 need much more intermediate points as shown by previous work [31, 32] for exponential integrators. Therefore, we only consider _k_ from 1 to 3 in this work, while leaving the solvers with higher _k_ for future study."
+    },
+    {
+      "index": 43,
+      "text": "6\n\n## **3.3 Step Size Schedule**\n\nThe proposed solvers in Sec. 3.2 need to specify the time steps _{ti}[M] i_ =0[in advance.][We propose two] choices of the time step schedule. One choice is handcrafted, which is to uniformly split the interval [ _\u03bbT_ , _\u03bb_ 0], i.e. _\u03bbti_ = _\u03bbT_ + _Mi_[(] _[\u03bb]_[0] _[\u2212][\u03bb][T]_[ )][,] _[i]_[=][0] _[, . . . , M]_[.][Note that this is different from previous] work [2, 3] which chooses uniform steps for _ti_ . Empirically, DPM-Solver with uniform time steps _\u03bbti_ can already generate quite good samples in few steps, where results are listed in Appendix E. As the other choice, we propose an adaptive step size algorithm, which dynamically adjusts the step size by combining different orders of DPM-Solver. The adaptive algorithm is inspired by [20] and we defer its implementation details to Appendix C."
+    },
+    {
+      "index": 44,
+      "text": "For few-step sampling, we need to use up all the number of function evaluations (NFE). When the NFE is not divisible by 3, we firstly apply DPM-Solver-3 as much as possible, and then add a single step of DPM-Solver-1 or DPM-Solver-2 (dependent on the reminder of _K_ divided by 3), as detailed in Appendix D. In the subsequent experiments, we use such combination of solvers with the uniform step size schedule for NFE _\u2264_ 20, and otherwise the adaptive step size schedule."
+    },
+    {
+      "index": 45,
+      "text": "## **3.4 Sampling from Discrete-Time DPMs**\n\nDiscrete-time DPMs [2] train the noise prediction model at\u02dc _N_ fixed time steps _{tn}[N] n_ =1[,][and the] noise prediction model is parameterized by _**\u03f5** \u03b8_ ( _**x** n, n_ ) for _n_ = 0 _, . . . , N \u2212_ 1, where each _**x** n_ is corresponding to the value at time _tn_ +1. We can transform the discrete-time noise prediction model to \u02dc the continuous version by lettinginput time of _**\u03f5**_ \u02dc _\u03b8_ may not be integers, but we find that the noise prediction model can still work well, _**\u03f5** \u03b8_ ( _**x** , t_ ) := _**\u03f5** \u03b8_ ( _**x** ,_[(] _[N][\u2212] T_[1][)] _[t]_ ), for all _**x** \u2208_ R _[d] , t \u2208_ [0 _, T_ ]. Note that the and we hypothesize that it is because of the smooth time embeddings (e.g., position embeddings [2]). By such reparameterization, the noise prediction model can adopt the continuous-time steps as input, and thus we can also use DPM-Solver for fast sampling."
+    },
+    {
+      "index": 46,
+      "text": "## **4 Comparison with Existing Fast Sampling Methods**\n\nHere, we discuss the relationship and highlight the difference between DPM-Solver and existing ODE-based fast sampling methods for DPMs. We further briefly discuss the advantage of training-free samplers over those training-based ones."
+    },
+    {
+      "index": 47,
+      "text": "## **4.1 DDIM as DPM-Solver-1**\n\nDenoising Diffusion Implicit Models (DDIM) [19] design a deterministic method for fast sampling\u02dc from DPMs. For two adjacent time steps _ti\u2212_ 1 and _ti_ , assume that we have a solution _**x** ti\u2212_ 1 at time _ti\u2212_ 1, then a single step of DDIM from time _ti\u2212_ 1 to time _ti_ is"
+    },
+    {
+      "index": 48,
+      "text": "Although motivated by entirely different perspectives, we show that the updates of DPM-Solver-1 and Denoising Diffusion Implicit Models (DDIM) [19] are identical. By the definition of _\u03bb_ , we have _\u03b1\u03c3titi\u2212\u2212_ 11[=] _[ e][\u2212][\u03bb][ti][\u2212]_[1][and] _\u03b1\u03c3ttii_[=] _[ e][\u2212][\u03bb][ti]_[ .][Plugging these and] _[ h][i]_[=] _[ \u03bb][t][i][\u2212][\u03bb][t][i][\u2212]_[1][to Eq.][ (4.1)][ results in exactly] a step of DPM-Solver-1 in Eq. (3.7). However, the semi-linear ODE formulation of DPM-Solver allows for principled generalization to higher-order solvers and convergence order analysis."
+    },
+    {
+      "index": 49,
+      "text": "Recent work [13] also show that DDIM is a first-order discretization of diffusion ODEs by differentiating both sides of Eq. (4.1). However, they cannot explain the difference between DDIM and the first-order Euler discretization of diffusion ODEs. In contrast, by showing that DDIM is a special case of DPM-Solver, we reveal that DDIM makes full use of the semi-linearity of diffusion ODEs, which explains its superiority over traditional Euler methods."
+    },
+    {
+      "index": 50,
+      "text": "## **4.2 Comparison with Traditional Runge-Kutta Methods**\n\nOne can obtain a high-order solver by directly applying traditional explicit Runge-Kutta (RK) methods to the diffusion ODE in Eq. (2.7). Specifically, RK methods write the solution of Eq. (2.7) in the"
+    },
+    {
+      "index": 51,
+      "text": "7\n\nTable 1: FID _\u2193_ on CIFAR-10 for different orders of Runge-Kutta (RK) methods and DPM-Solvers, varying the number of function evaluations (NFE). For RK methods, we evaluate diffusion ODEs w.r.t. both _t_ (Eq. (2.7)) and _\u03bb_ (Eq. (E.1)). We use uniform step size in _t_ for RK ( _t_ ), and uniform step size in _\u03bb_ for RK ( _\u03bb_ ) and DPM-Solvers."
+    },
+    {
+      "index": 52,
+      "text": "|Sampling method_\\_NFE|12|18|24|30|36|42|48|\n|---|---|---|---|---|---|---|---|\n|RK2 (_t_)|16.40|7.25|3.90|3.63|3.58|3.59|3.54|\n|RK2 (_\u03bb_)|107.81|42.04|17.71|7.65|4.62|3.58|3.17|\n|DPM-Solver-2|**5.28**|**3.43**|**3.02**|**2.85**|**2.78**|**2.72**|**2.69**|\n|RK3 (_t_)|48.75|21.86|10.90|6.96|5.22|4.56|4.12|\n|RK3 (_\u03bb_)|34.29|4.90|3.50|3.03|2.85|2.74|2.69|\n|DPM-Solver-3|**6.03**|**2.90**|**2.75**|**2.70**|**2.67**|**2.65**|**2.65**|"
+    },
+    {
+      "index": 53,
+      "text": "following integral form:\n\nand use some intermediate time steps between [ _t, s_ ] and combine the evaluations of _**h** \u03b8_ at these time steps to approximate the whole integral. The approximation error of explicit RK methods depends on _**h** \u03b8_ , which consists of the error corresponding to both the linear term _f_ ( _\u03c4_ ) _**x** \u03c4_ and the nonlinear noise prediction model _**\u03f5** \u03b8_ . However, the error of the linear term may increase exponentially because the exact solution of the linear term has an exponential coefficient (as shown in Eq. (3.1)). There are many empirical evidence [25, 31] showing that directly using explicit RK methods for semi-linear ODEs may suffer from unstable numerical issues for large step size. We also demonstrate the empirical difference of the proposed DPM-Solver and the traditional explicit RK methods in Sec. 5.1, which shows that DPM-Solver have smaller discretization errors than the RK methods with the same order."
+    },
+    {
+      "index": 54,
+      "text": "## **4.3 Training-based Fast Sampling Methods for DPMs**\n\nSamplers that need extra training or optimization include knowledge distillation [13, 14], learning the noise level or variance [15, 16, 33], and learning the noise schedule or sample trajectory [17, 18]. Although the progressive distillation method [13] can obtain a fast sampler within 4 steps, it needs further training costs and loses part of the information in the original DPM (e.g., after distillation, the noise prediction model cannot predict the noise (score function) at every time step between [0 _, T_ ]). In contrast, training-free samplers can keep all the information of the original model, and thereby can be directly extended to the conditional sampling by combining the original model and an external classifier [4] (e.g. see Appendix D for the conditional sampling with classifier guidance)."
+    },
+    {
+      "index": 55,
+      "text": "Beyond directly designing fast samplers for DPMs, several works also propose novel types of DPMs which supports faster sampling. For instance, defining a low-dimensional latent variable for DPMs [34]; designing special diffusion processes with bounded score functions [35]; combining GANs with the reverse process of DPMs [36]. The proposed DPM-Solver may also be suitable for accelerating the sampling of these DPMs, and we leave them for future work."
+    },
+    {
+      "index": 56,
+      "text": "## **5 Experiments**\n\nIn this section, we show that as a training-free sampler, DPM-Solver can greatly speedup the sampling of existing pre-trained DPMs, including both continuous-time and discrete-time ones, with both linear noise schedule [2, 19] and cosine noise schedule [16]. We vary different number of function evaluations (NFE) which is the number of calls to the noise prediction model _**\u03f5** \u03b8_ ( _**x** t, t_ ), and compare the sample quality between DPM-Solver and other methods. For each experiment, We draw 50K samples and use the widely adopted FID score [37] to evaluate the sample quality, where lower FID usually implies better sample quality."
+    },
+    {
+      "index": 57,
+      "text": "Unless explicitly mentioned, we always use the solver combination with the uniform step size schedule in Sec. 3.3 if the NFE budget is less than 20, and otherwise the DPM-Solver-3 with the adaptive step size schedule in Sec. 3.3. We refer to Appendix D for other implementation details of DPM-Solver and Appendix E for detailed settings."
+    },
+    {
+      "index": 58,
+      "text": "8\n\n**----- Start of picture text -----**\n\n100 . 0\nODE (DPM-Solver) DPM-Solver DPM-Solver\nODE (RK45) DDPM DDPM\nSDESDE (Euler)(Adaptive) 100 Analytic-DDPMDDIM 100 Analytic-DDPMDDIM\nAnalytic-DDIM Analytic-DDIM\n30 PNDM 30 PNDM\n10 . 0 15 \u2020 GGDM 1510 FastDPMIt\u02c6o-Taylor\n54322 ..... 00050 76543 6543\n10 12 15 20 50 200 1000 10 12 15 20 50 200 1000 10 12 15 20 50 200 1000\nNFE NFE NFE\n(a) CIFAR-10 (continuous) (b) CIFAR-10 (discrete) (c) CelebA 64x64 (discrete)\nDPM-Solver\nDDPM\nDPM-Solver DPM-Solver 100 DDIM\nDDPM 100 DDPM\nAnalytic-DDPM DDIM 50\nDDIM 50\n100 Analytic-DDIM\n7060 \u2020 GGDM 10\n50 76\n40 10 4\n7 3\n25 54 2\n1917 3 10 12 15 20 50 100 250\n2 NFE\n10 12 15 20 50 200 1000 10 12 15 20 50 100 250\nNFE NFE (f) LSUN bedroom 256x256 (dis-\n(d) ImageNet 64x64 (discrete) (e) ImageNet 128x128 (discrete) crete)\nFID FID FID\nFID\nFID FID\n**----- End of picture text -----**"
+    },
+    {
+      "index": 59,
+      "text": "Figure 2: Sample quality measured by FID _\u2193_ of different sampling methods for DPMs on CIFAR-10 with both continuous-time and discrete-time models, CelebA 64x64, ImageNet 64x64, ImageNet 128x128 and LSUN bedroom 256x256 with discrete-time models, varying the number of function evaluations (NFE). The method _\u2020_ GGDM [18] needs extra training to optimize the sample trajectory, while other methods are training-free. To get the strongest baseline, we use the quadratic step size for DDIM on CelebA, which has a better FID than that of the uniform step size in the original paper [19]."
+    },
+    {
+      "index": 60,
+      "text": "## **5.1 Comparison with Continuous-Time Sampling Methods**\n\nWe firstly compare DPM-Solver with other continuous-time sampling methods for DPMs. The compared methods include the Euler-Maruyama discretization for diffusion SDEs [3], the adaptive step size solver for diffusion SDEs [20] and the RK methods for diffusion ODEs [3, 28] in Eq. (2.7). We compare these methods for sampling from a pre-trained continuous-time \u201cVP deep\u201d model [3] on the CIFAR-10 dataset [29] with the linear noise schedule."
+    },
+    {
+      "index": 61,
+      "text": "Fig. 2a shows the efficiency of compared solvers. We use uniform time steps with 50, 200, 1000 NFE for the diffusion SDE with Euler discretization, and vary the tolerance hyperparameter [3, 20] for the adaptive step size SDE solver [20] and RK45 ODE solver [28] to control the NFE. DPM-Solver can generate good sample quality within around 10 NFE, while other solvers have large discretization error even in 50 NFE, which shows that DPM-Solver can achieve _\u223c_ 5 speedup of the previous best solver. In particular, we achieve 4.70 FID with 10 NFE, 3.75 FID with 12 NFE, 3.24 FID with 15 NFE, and 2.87 FID with 20 NFE, which is the fastest sampler on CIFAR-10."
+    },
+    {
+      "index": 62,
+      "text": "As an ablation study, we also compare the second-order and third-order DPM-Solver and RK methods, as shown in Table 1. We compare RK methods for diffusion ODEs w.r.t. both time _t_ in Eq. (2.7) and half-log-SNR _\u03bb_ by applying change-of-variable (see detailed formulations in Appendix E.1). The results show that given the same NFE, the sample quality of DPM-Solver is consistently better than RK methods with the same order. The superior efficiency of DPM-Solver is particularly evident in the few-step regime under 15 NFE, where RK methods have rather large discretization errors. This is mainly because DPM-Solver analytically computes the linear term, avoiding the corresponding discretization error. Besides, the higher order DPM-Solver-3 converges faster than DPM-Solver-2, which matches the order analysis in Theorem 3.2."
+    },
+    {
+      "index": 63,
+      "text": "## **5.2 Comparison with Discrete-Time Sampling Methods**\n\nWe use the method in Sec. 3.4 for using DPM-Solver in discrete-time DPMs, and then compare DPM-Solver with other discrete-time training-free samplers, including DDPM [2], DDIM [19], Analytic-DDPM [21], Analytic-DDIM [21], PNDM [22], FastDPM [38] and It\u00f4-Taylor [24]. We also compare with GGDM [18], which uses the same pre-trained model but needs further training for the sampling trajectory. We compare the sample quality by varying NFE from 10 to 1000."
+    },
+    {
+      "index": 64,
+      "text": "9\n\nSpecifically, we use the discrete-time model trained by _L_ simple in [2] on the CIFAR-10 dataset with linear noise schedule; the discrete-time model in [19] on CelebA 64x64 [39] with linear noise schedule; the discrete-time model trained by _L_ hybrid in [16] on ImageNet 64x64 [26] with cosine noise schedule; the discrete-time model with classifier guidance in [4] on ImageNet 128x128 [26] with linear noise schedule; the discrete-time model in [4] on LSUN bedroom 256x256 [40] with linear noise schedule. For the models trained on ImageNet, we only use their \u201cmean\u201d model and omit the \u201cvariance\u201d model. As shown in Fig. 2, on all datasets, DPM-Solver can obtain reasonable samples within 12 steps (FID 4.65 on CIFAR-10, FID 3.71 on CelebA 64x64 and FID 19.97 on ImageNet 64x64, FID 4.08 on ImageNet 128x128), which is 4 _\u223c_ 16 _\u00d7_ faster than the previous fastest training-free sampler. DPM-Solver even outperforms GGDM, which requires additional training."
+    },
+    {
+      "index": 65,
+      "text": "## **6 Conclusions**\n\nWe tackle the problem of fast and training-free sampling from DPMs. We propose DPM-Solver, a fast dedicated training-free solver of diffusion ODEs for fast sampling of DPMs in around 10 steps of function evaluations. DPM-Solver leverages the semi-linearity of diffusion ODEs and it directly approximates a simplified formulation of exact solutions of diffusion ODEs, which consists of an exponentially weighted integral of the noise prediction model. Inspired by numerical methods for exponential integrators, we propose first-order, second-order and third-order DPMSolver to approximate the exponentially weighted integral of noise prediction models with theoretical convergence guarantee. We propose both handcrafted and adaptive step size schedule, and apply DPM-Solver for both continuous-time and discrete-time DPMs. Our experimental results show that DPM-Solver can generate high-quality samples in around 10 function evaluations on various datasets, and it can achieve 4 _\u223c_ 16 _\u00d7_ speedup compared with previous state-of-the-art training-free samplers."
+    },
+    {
+      "index": 66,
+      "text": "**Limitations and broader impact** Despite the promising speedup performance, DPM-Solver is designed for fast sampling, which may be not suitable for accelerating the likelihood evaluations of DPMs. Besides, compared to the commonly-used GANs, diffusion models with DPM-Solver are still not fast enough for real-time applications. In addition, like other deep generative models, DPMs may be used to generate adverse fake contents, and the proposed solver may further amplify the potential undesirable influence of deep generative models for malicious applications."
+    },
+    {
+      "index": 67,
+      "text": "## **Acknowledgements**\n\nThis work was supported by National Key Research and Development Project of China (No. 2021ZD0110502); NSF of China Projects (Nos. 62061136001, 61620106010, 62076145, U19B2034, U1811461, U19A2081, 6197222, 62106120); Beijing NSF Project (No. JQ19016); Beijing Outstanding Young Scientist Program NO. BJJWZYJH012019100020098; a grant from Tsinghua Institute for Guo Qiang; the NVIDIA NVAIL Program with GPU/DGX Acceleration; the High Performance Computing Center, Tsinghua University; the Fundamental Research Funds for the Central Universities, and the Research Funds of Renmin University of China (22XNKJ13). J.Z is also supported by the XPlorer Prize."
+    },
+    {
+      "index": 68,
+      "text": "## **References**\n\n- [1] J. Sohl-Dickstein, E. Weiss, N. Maheswaranathan, and S. Ganguli, \u201cDeep unsupervised learning using nonequilibrium thermodynamics,\u201d in _International Conference on Machine Learning_ . PMLR, 2015, pp. 2256\u20132265."
+    },
+    {
+      "index": 69,
+      "text": "- [2] J. Ho, A. Jain, and P. Abbeel, \u201cDenoising diffusion probabilistic models,\u201d in _Advances in Neural Information Processing Systems_ , vol. 33, 2020, pp. 6840\u20136851."
+    },
+    {
+      "index": 70,
+      "text": "- [3] Y. Song, J. Sohl-Dickstein, D. P. Kingma, A. Kumar, S. Ermon, and B. Poole, \u201cScore-based generative modeling through stochastic differential equations,\u201d in _International Conference on Learning Representations_ , 2021."
+    },
+    {
+      "index": 71,
+      "text": "- [4] P. Dhariwal and A. Q. Nichol, \u201cDiffusion models beat GANs on image synthesis,\u201d in _Advances in Neural Information Processing Systems_ , vol. 34, 2021, pp. 8780\u20138794.\n\n10"
+    },
+    {
+      "index": 72,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper provides a strong theoretical contribution by identifying the semi-linear structure of diffusion ODEs and proposing exact formulations using exponential integrators. The derivation of high-order solvers (DPM-Solver 1-3) is logically sound, and the experimental results demonstrate a significant speedup over existing training-free samplers like DDIM. However, there is a technical inconsistency in the notation between Figure 2 and the text regarding the types of models (continuous vs. discrete), and some derivation steps regarding the integration of the Taylor expansion are non-trivial and deferred to the appendix, which might hinder immediate clarity for some readers.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Labeling inconsistency between text and Figure 2 for CIFAR-10",
+          "quote": "Specifically, we use the discrete-time model trained by $L$ simple in [2] on the CIFAR-10 dataset...",
+          "explanation": "In Section 5.2, the text states a discrete-time model was used for CIFAR-10 experiments. However, Figure 2(a) is labeled 'CIFAR-10 (continuous)' and Figure 2(b) is labeled 'CIFAR-10 (discrete)'. The text describes obtaining a 4.65 FID for CIFAR-10 in 12 steps (Section 5.2), but the continuous results in 5.1 mention a 3.75 FID in 12 steps. This creates ambiguity about which specific FID values correspond to which model type for CIFAR-10, though the overall performance trend remains clear. A careful reader might be confused about whether the record-setting results (e.g., 2.87 FID) apply to the VPSDE continuous model or the discrete-time DDPM model.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Insufficient justification for the analytical computation of the Taylor integral",
+          "quote": "where the integral $\\int e^{-\\lambda} \\frac{(\\lambda - \\lambda_{t_{i-1}})^n}{n!} d\\lambda$ can be **analytically** computed by repeatedly applying $n$ times of integration-by-parts",
+          "explanation": "While it is technically true that this integral has a closed form, the transition from Eq. (3.6) to Algorithm 1 and 2 is non-trivial for $n > 0$. The authors skip the explicit resulting formula for these coefficients in the main text. While they acknowledge this and point to Appendix B.2, the jump to the algorithms (which involve complex looking coefficients like $\\frac{e^{r_2 h_i} - 1}{r_2 h_i}$) leaves the reader unable to verify the correctness of the algorithm implementation from the main text alone. Given this is the core of the 'DPM-Solver' contribution, a summary of the resulting coefficients' structure would improve the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Questionable claim of 'Exact Formulation' in the presence of discretization",
+          "quote": "In this work, we propose an exact formulation of the solution of diffusion ODEs. The formulation analytically computes the linear part of the solution, rather than leaving all terms to black-box ODE solvers...",
+          "explanation": "The authors claim an 'exact formulation' in the abstract and Section 3.1. While Proposition 3.1 is an exact representation of the integral, the implementation in DPM-Solver-k still relies on a Taylor approximation (Eq. 3.6) and numerical evaluations of the neural network at specific points. A reader might interpret 'exact' as the solver itself being error-free, whereas the 'exactness' only applies to the treatment of the linear drift term. The 'exactness' refers to the variation of constants formula, not the final sampling algorithm which remains a k-th order approximation.",
+          "comment_type": "logical",
+          "paragraph_index": 3,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_3",
+          "title": "OCR/Notation error in Proposition 3.1 proof context",
+          "quote": "As $\\lambda(t) = \\lambda_t$ is a strictly decreasing function of $t$, it has an inverse function $t_{\\lambda} (\\cdot)$ satisfying $t = t_{\\lambda}(\\lambda(t))$. Rewrite Eq. (3.3) by \"change-of-variable\" and denote $\\hat{\\epsilon}_\\theta(\\hat{\\mathbf{x}}_\\lambda, \\lambda) := \\epsilon_\\theta(\\mathbf{x}_{t_\\lambda}(\\lambda), t_\\lambda(\\lambda))$.",
+          "explanation": "There is a slight notation clutter in the text leading up to Proposition 3.1: '$\\hat{\\epsilon}_\\theta = (\\hat{\\mathbf{x}} t_{\\lambda\\lambda}, \\lambda(\\lambda) := (t))$'. This appears to be an OCR error where parts of the function definition were garbled. Specifically, the text '$\\hat{\\epsilon}_\\theta = (\\hat{\\mathbf{x}} t_{\\lambda\\lambda}, \\lambda(\\lambda) := (t))$' is mathematically nonsensical. However, because the subsequent Proposition 3.1 is cleanly stated and the change-of-variable logic is standard, a reader can easily infer the intended meaning (that the integral over $t$ is converted to an integral over $\\lambda$).",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0102,
+      "prompt_tokens": 12925,
+      "completion_tokens": 1235
+    },
+    "zero_shot__qwen3-235b-a22b-2507": {
+      "label": "Zero Shot (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a compelling and well-structured contribution to the fast sampling of diffusion probabilistic models (DPMs) by leveraging the semi-linear structure of diffusion ODEs. The derivation of the exact solution via variation of constants and change-of-variable to the log-SNR scale (\u03bb) is elegant and well-motivated. DPM-Solver is clearly described, with strong experimental validation across datasets and model types, showing significant speedups over existing training-free methods. The theoretical grounding via exponential integrators and convergence order guarantees adds rigor. However, there are minor to moderate issues around notation clarity, derivation completeness, and algorithmic implementation that slightly affect reproducibility and precision, though none fundamentally undermine the core claims.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_0",
+          "title": "Inconsistent use of \u03bb and t in derivative definitions",
+          "quote": "Denote _hi_ := _\u03bbti \u2212\u03bbti\u2212_ 1 , and \u02c6 _**\u03f5**_[(] _\u03b8[n]_[)][(\u02c6] _**[x]**[\u03bb][, \u03bb]_[) :=] Taylor expansion ofd _\u03bb[n]_ as the _n_ -th order total derivative of _**\u03f5**_ \u02c6 _\u03b8_ (\u02c6 _**x** \u03bb, \u03bb_ ) w.r.t. _\u03bb_ at _\u03bbti\u2212_ 1 is _**\u03f5** \u03b8_ (\u02c6 _**x** \u03bb, \u03bb_ ) w.r.t. _\u03bb_ . For _k \u2265_ 1, the ( _k \u2212_ 1)-th order",
+          "explanation": "This passage attempts to define the n-th order total derivative of _**\u03f5\u0302**_\u03b8 w.r.t. \u03bb, but the wording is garbled and circular. It says 'the n-th order total derivative ... is _**\u03f5**_\u03b8 ... w.r.t. \u03bb', which is not a derivative but the function itself. Looking at context, it seems the intent is to define _**\u03f5\u0302**_\u03b8^[n] as the n-th derivative of _**\u03f5**_\u03b8 w.r.t. \u03bb. However, the equation formatting is corrupted (e.g., 'd _\u03bb[n]_' likely meant 'd^n / d\u03bb^n'). This appears to be an OCR failure where subscripts/superscripts were misparsed. Assuming _**\u03f5\u0302**_\u03b8^[n] is meant to denote the n-th \u03bb-derivative, the usage later in Algorithm 2 (e.g., computing differences analogous to finite differences) supports this. While the core idea aligns with exponential integrator methods, the definition here lacks mathematical clarity. A clean equation like _**\u03f5\u0302**_\u03b8^[n] = d^n/d\u03bb^n _**\u03f5\u0302**_\u03b8(\u00b7, \u03bb) would resolve the ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_1",
+          "title": "Missing justification for change-of-variable in vector-valued ODE",
+          "quote": "We further change the subscripts of _**\u03f5**_ _\u03b8_ from _t_ to _\u03bb_ and denote _**x**_ _\u03bb_ := _**x**_ _t\u03bb_ ( _\u03bb_ ), _**\u03f5**_ \u02c6 _\u03b8_ (\u02c6 _**x**_ _\u03bb, \u03bb_ ) := _**\u03f5**_ _\u03b8_ ( _**x**_ _t\u03bb_ ( _\u03bb_ ) _, t\u03bb_ ( _\u03bb_ ))",
+          "explanation": "The paper asserts the change-of-variable from t to \u03bb (via the inverse function t\u03bb) but doesn't justify why this transformation preserves the ODE structure correctly, especially for vector-valued states. While it's standard in ODE theory that time reparameterization leads to chain-rule adjustments, the authors skip explaining how the expression remains valid under this transformation. Proposition 3.1 presents the final result in \u03bb, but the derivation from Eq. (3.3) to (3.4) via this substitution lacks intermediate steps. Given that \u03bb is a scalar function of t, and the transformation affects the integration measure, a brief mention of the chain rule for ODEs or reference to standard reparameterization would strengthen the argument. This is non-trivial because the neural network's input changes from (x_t, t) to (x_\u03bb, \u03bb), and readers might question whether higher-order derivatives are properly accounted for.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_2",
+          "title": "Ambiguity in Algorithm 1 regarding intermediate point computation",
+          "quote": "3: _si \u2190 t\u03bb_ 2   4: _**u** i \u2190 \u03b1\u03b1tis\u2212i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][s][i]_  _e h_ 2 _i \u2212_ 1 _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1)",
+          "explanation": "The computation of si in line 3 appears incomplete or garbled: 't\u03bb 2  ' likely should read 't\u03bb((\u03bb_{ti\u22121} + \u03bb_{ti}) / 2)' \u2014 that is, the midpoint in \u03bb-space mapped back via t\u03bb. This is consistent with second-order Runge-Kutta style methods and the surrounding context. However, as written, it is syntactically malformed. Similarly, in line 4, '\u03b1\u03b1tis\u2212i_1' likely means \u03b1_{si}/\u03b1_{ti\u22121}, and 'e h_2 i \u2212 1' likely means (e^{h_i/2} \u2212 1). These appear to be OCR errors in superscripts and formatting. Assuming the intended expressions are \u03b1_{si}/\u03b1_{ti\u22121} and (e^{h_i/2} \u2212 1), the algorithm matches DPM-Solver-2 as derived from the exponential integrator framework. However, without repair, the algorithm is not reproducible. Since the text mentions 'intermediate points' and the method is inspired by exponential integrators, experts may infer the correct form, but the presentation is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_3",
+          "title": "Incorrect sign in DPM-Solver-1 update formula",
+          "quote": "For _k_ = 1 here, we call this solver _DPM-Solver-1_ , and the detailed algorithm is as following. \n\n**DPM-Solver-1.** [...] \n\n_**x**_ \u02dc _ti \u2190 \u03b1\u03b1tit\u2212i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][t][i]_  _e[h][i] \u2212_ 1 _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1)",
+          "explanation": "The sign in the update appears questionable. From the exact solution in Proposition 3.1 and standard exponential integrator forms, the correction term should subtract the integral of the exponentially weighted noise prediction. Given that \u03c3(t) > 0 and (e^{h_i} \u2212 1) > 0 for h_i > 0 (which it is, since \u03bb decreases with t), and assuming _**\u03f5**_\u03b8 estimates the negative score, the minus sign is plausible. However, comparing to DDIM equivalence in Section 4.1, DDIM's update has a term proportional to (\u03c3_t \u2212 \u03c3_s) times noise prediction. From Eq. (4.1), the sign matches DPM-Solver-1 as written. Further, in Eq. (3.5), the term is \u2212\u222b_t^s e^{F(t,\u03c4)} g(\u03c4)\u03c3_\u03c4 \u03f5 d\u03c4, and since F involves negative exponents and integration direction is forward in \u03c4, the accumulated term is subtractive. Thus, despite initial concern, the sign in the algorithm is likely correct. Context resolves this as a non-error.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_4",
+          "title": "Mismatch between text and algorithm in DPM-Solver-3 intermediate step",
+          "quote": "5: _**D**_ 2 _i\u2212_ 1 _\u2190_ _**\u03f5** \u03b8_ ( _**u**_ 2 _i\u2212_ 1 _, s_ 2 _i\u2212_ 1) _\u2212_ _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) \n\n6: _**u**_ 2 _i \u2190 \u03b1\u03b1tis\u2212_ 2 _i_ 1 _**[x]**_[\u02dc] _[t][i][\u2212]_[1] _[\u2212][\u03c3][s]_[2] _[i]_  _e[r]_[2] _[h][i] \u2212_ 1 _**\u03f5** \u03b8_ (\u02dc _**x** ti\u2212_ 1 _, ti\u2212_ 1) _\u2212 \u03c3sr_ 21 _i r_ 2  _e[r] r_[2] 2 _[hi] h\u2212i_ 1 _\u2212_ 1 _**D**_ 2 _i\u2212_ 1",
+          "explanation": "The update for _**u**_2i includes a term with '\u03c3sr_21 _i r_2' \u2014 likely OCR corruption for \u03c3_{s_2i} / (r_1 r_2) or similar. Given r_1 = 1/3, r_2 = 2/3, and the structure resembling a two-stage Runge-Kutta, this likely corresponds to a scaled difference term. In exponential integrators, such terms arise from approximating higher-order derivatives using finite differences. The presence of _**D**_2i\u22121 as a difference of network outputs supports this. However, the coefficient ' _e[r] r_[2] 2 _[hi] h\u2212i_ 1 _\u2212_ 1' appears malformed \u2014 likely meant to be (e^{r_2 h_i} \u2212 1)/(r_2 h_i) or similar normalization. Without knowing the intended expression, it's hard to verify correctness. This is potentially serious, but given the algorithm's basis in established exponential integrator theory [25,31], and the fact that Theorem 3.2 holds, the authors likely have a valid derivation in the appendix. Still, the algorithm as presented is underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0012,
+      "prompt_tokens": 12966,
+      "completion_tokens": 2314
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper presents a technically sound and highly influential approach to accelerating diffusion model sampling by exploiting the semi-linear structure of diffusion ODEs. The authors provide original derivations for exponential integrators tailored to the diffusion task and support their claims with both theoretical convergence analysis and empirical evidence across diverse datasets. The presentation is generally clear, though certain derivations involving total derivatives and Taylor expansions for the high-order solvers are somewhat condensed, making it challenging to verify the exact coefficient choices without full reference to the supplementary material. Despite this, the core framework is well-motivated and provides a significant advancement over black-box ODE solvers.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Ambiguity in Total Derivative Notation",
+          "quote": "Denote $\\bar{\\boldsymbol{\\epsilon}}_{\\theta}^{(n)}(\\bar{\\boldsymbol{x}}_{\\lambda}, \\lambda) := \\frac{d^n}{d\\lambda^n} \\bar{\\boldsymbol{\\epsilon}}_{\\theta}(\\bar{\\boldsymbol{x}}_{\\lambda}, \\lambda)$ as the $n$-th order total derivative of $\\bar{\\boldsymbol{\\epsilon}}_{\\theta}(\\bar{\\boldsymbol{x}}_{\\lambda}, \\lambda)$ w.r.t. $\\lambda$.",
+          "explanation": "While the authors define the total derivative notation in prose, the expression $\\frac{d^n}{d\\lambda^n} \\bar{\\boldsymbol{\\epsilon}}_{\\theta}$ is non-trivial because $\\bar{\\boldsymbol{\\epsilon}}_{\\theta}$ depends on both $\\lambda$ and $\\bar{\\boldsymbol{x}}_{\\lambda}$, where $\\bar{\\boldsymbol{x}}_{\\lambda}$ itself depends on $\\lambda$. A careful reader might be confused about whether this is a partial derivative or a chain-rule defined total derivative (involving $\\frac{d\\bar{\\boldsymbol{x}}}{d\\lambda}$). Given the context of exponential integrators, the total derivative is the correct object, but the paper does not explicitly state the chain rule expansion required to compute these derivatives, leaving the implementation detail slightly underspecified for a reader attempting to reproduce the higher-order solvers from scratch.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Potential Index Inconsistency in Equation 3.6",
+          "quote": "[\\lambda - \\lambda_{ti-1}]^n / n! where the integral $\\int e^{-\\lambda} \\frac{(\\lambda - \\lambda_{ti-1})^n}{n!} d \\lambda$ can be analytically computed",
+          "explanation": "The equation appears to rely on a Taylor expansion of the noise prediction model around $\\lambda_{ti-1}$. The integral term involves an $e^{-\\lambda}$ factor from the variation of constants formula. While the authors state this integral is computed via integration-by-parts, the resulting analytic expression for the higher-order terms $n \\ge 1$ depends on the boundaries $\\lambda_{ti-1}$ and $\\lambda_{ti}$. Without explicitly writing the final analytic form used in the code, it is difficult to verify if the $O(h_i^{k+1})$ approximation order is strictly maintained for the $k=3$ case. However, given the success of the empirical results, this is treated as a minor clarity issue.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0044,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 12926,
+      "completion_tokens": 758
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a well-motivated and empirically strong contribution by adapting exponential integrator theory to diffusion ODEs, yielding significant sampling speedups. The core idea of analytically resolving the linear semi-linear structure is sound and effectively explained. However, the theoretical formulation in Proposition 3.1 appears to contain a missing scaling factor that contradicts the standard variation-of-constants derivation, which warrants clarification. Additionally, several OCR/extraction artifacts obscure critical equations (e.g., Eq. 2.3), and the labeling of Algorithm 1 creates a minor discontinuity in the methodological flow. These issues are largely fixable or clarifiable and do not fundamentally undermine the algorithmic contributions or experimental validity, but they should be addressed for rigorous reproducibility and theoretical precision.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Missing scaling factor in Proposition 3.1 / Eq. (3.4)",
+          "quote": "Given an initial value _**x** s at time s >_ 0 _, the solution_ _**x** t at time t \u2208_ [0 _, s_ ] _of diffusion ODEs in Eq._ (2.7) _is:_",
+          "explanation": "The paper derives the exact solution via the variation of constants formula for the semi-linear ODE $d\\mathbf{x}_t = f(t)\\mathbf{x}_t dt + g(t)^2 \\epsilon_\\theta dt$, which yields $\\mathbf{x}_t = \\frac{\\alpha_t}{\\alpha_s}\\mathbf{x}_s + \\int_s^t \\frac{\\alpha_t}{\\alpha_\\tau} g(\\tau)^2 \\epsilon_\\theta d\\tau$. Using the definition $\\lambda_t := \\log(\\alpha_t/\\sigma_t)$, we have $\\frac{\\alpha_t}{\\alpha_s} = e^{\\lambda_t - \\lambda_s} \\frac{\\sigma_t}{\\sigma_s}$. However, Eq. (3.4) states the homogeneous term as $\\mathbf{x}_s e^{\\lambda_t - \\lambda_s}$, omitting the $\\frac{\\sigma_t}{\\sigma_s}$ factor. This discrepancy suggests either a typo in the proposition, an implicit assumption that $\\sigma_t$ is constant (which is generally false for VP/VPSDE schedules), or a redefined variable not explicitly stated. Since the subsequent algorithms correctly use $\\alpha_t/\\alpha_{t-1}$, the derivation likely intended to include the ratio or assumes a specific schedule simplification not mentioned. This gap affects the theoretical foundation of the change-of-variable step.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Algorithm numbering disconnect and solver labeling",
+          "quote": "Algorithm 1 DPM-Solver-2.",
+          "explanation": "In Section 3.2, the authors first derive the first-order update (Eq. 3.7) and explicitly name it 'DPM-Solver-1'. They then state that derivations for $k \\geq 2$ are deferred to the appendix, followed by 'Below we propose algorithms for $k = 2, 3$ and name them as DPM-Solver-2 and DPM-Solver-3, respectively.' Immediately following this, Algorithm 1 is labeled 'DPM-Solver-2'. This creates a numbering disconnect: the reader derives Solver-1 but the first presented algorithm is labeled 2. While easily resolved by renumbering or adding a clarifying sentence, it disrupts the logical flow and could cause confusion when implementing the solver order.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "OCR omission of Eq. (2.3) breaking coefficient definitions",
+          "quote": "where _**w** t \u2208_ R _[D]_ is the standard Wiener process, and",
+          "explanation": "Due to PDF extraction/OCR, Eq. (2.3) is entirely missing from the text. This equation is critical as it defines the drift $f(t)$ and diffusion $g(t)$ coefficients used throughout the paper (e.g., $f(t) = \\dot{\\alpha}_t/\\alpha_t$ and $g(t)^2 = \\dot{\\sigma}_t^2 - \\tilde{\\sigma}^2 f(t)$). Its absence breaks the continuity of the SDE/ODE formulation and prevents a careful reader from verifying how the noise schedule parameters map to the ODE coefficients. While likely a formatting artifact, it should be restored for completeness.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0493,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 26084,
+      "completion_tokens": 21708
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a compelling approach for fast sampling in diffusion probabilistic models by exploiting the semi-linear structure of the associated ODEs. The core idea of reformulating the solution as an exponentially weighted integral is sound and well-motivated. However, the manuscript contains significant mathematical errors in the formal derivation (Proposition 3.1) and the analysis connecting the proposed method to existing baselines (Section 4.1), as well as a potential inconsistency in the definition of the diffusion coefficient. These errors undermine the theoretical rigor of the claims and would confuse a reader attempting to verify the derivations.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.7-flash_0",
+          "title": "Incorrect formula in Proposition 3.1",
+          "quote": "$\\mathbf{x}_t = e^{-\\lambda_t} \\alpha_t \\mathbf{x}_s + \\alpha_t \\int_{\\lambda_s}^{\\lambda_t} e^{-\\lambda_\\tau} \\mathbf{\\epsilon}_{\\hat{\\theta}}(\\hat{\\mathbf{x}}_\\tau, \\tau(\\lambda)) d\\lambda$",
+          "explanation": "In Proposition 3.1, the solution is derived from Eq. (3.1), which is the standard 'variation of constants' formula for a semi-linear ODE. Using the provided definition $f(t) = d\\log\\alpha_t / dt$, the coefficient for the linear term should be $e^{\\int_s^t f(\\tau)d\\tau} = \\alpha_t / \\alpha_s$. The formula in Proposition 3.1 states the coefficient is $e^{-\\lambda_t} \\alpha_t$. Given that $\\lambda_t = \\log(\\alpha_t/\\sigma_t)$, the term $e^{-\\lambda_t} \\alpha_t$ simplifies to $\\sigma_t$. Unless $\\sigma_t = \\alpha_t / \\alpha_s$ (which depends on the initial time $s$ and contradicts the definition of $\\sigma_t$), this formula is algebraically inconsistent with the derivation in Eq. (3.1). This constitutes a major mathematical error.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__glm-4.7-flash_1",
+          "title": "Mathematical inconsistency in Section 4.1",
+          "quote": "By the definition of $\\lambda$, we have $\\alpha_{t_i} \\alpha_{t_{i-1}}^{-1} = e^{-\\lambda_{t_{i-1}}}$ ... Plugging these ... results in exactly a step of DPM-Solver-1",
+          "explanation": "In Section 4.1, the authors attempt to show the equivalence between DDIM and DPM-Solver-1. They claim that by the definition of $\\lambda_t = \\log(\\alpha_t/\\sigma_t)$, the ratio $\\alpha_{t_i} / \\alpha_{t_{i-1}}$ equals $e^{-\\lambda_{t_{i-1}}}$. Performing the substitution: $e^{-\\lambda_{t_{i-1}}} = e^{-\\log(\\alpha_{t_{i-1}}/\\sigma_{t_{i-1}})} = \\sigma_{t_{i-1}} / \\alpha_{t_{i-1}}$. For this equality to hold, we must have $\\alpha_{t_i} = \\sigma_{t_{i-1}}$. This is not generally true for a noise schedule. Consequently, the claim that DDIM's update reduces exactly to DPM-Solver-1 based on this equation is mathematically incorrect. This undermines the theoretical justification for the connection.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__glm-4.7-flash_2",
+          "title": "Deviation in diffusion coefficient definition (Eq 3.2)",
+          "quote": "$g(t) = \\sigma_t \\sqrt{1 + \\alpha_t^2 \\left(\\frac{\\alpha_t'}{\\alpha_t}\\right)^2}$",
+          "explanation": "Equation (3.2) defines the diffusion coefficient $g(t)$. The text explicitly defines the drift $f(t) = d\\log\\alpha_t / dt = \\alpha_t' / \\alpha_t$. In standard derivations of probability flow ODEs from diffusion models (consistent with the semi-linear structure cited in the paper), the term multiplying the noise prediction model in the ODE should typically involve $1 + f(t)^2$ or similar structures derived from the SDE coefficients. The term inside the square root, $\\alpha_t^2 (\\alpha_t' / \\alpha_t)^2$, simplifies to $(\\alpha_t')^2$. Using $(\\alpha_t')^2$ instead of $(\\alpha_t' / \\alpha_t)^2 = f(t)^2$ represents a deviation from the expected semi-linear ODE formulation and likely introduces significant errors in the subsequent integral calculations (Equation 3.3 and 3.4).",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major"
+        }
+      ],
+      "cost_usd": 0.0205,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 37641,
+      "completion_tokens": 44440
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes a dedicated solver for diffusion ODEs leveraging the semi-linear structure, achieving impressive few-step sampling performance. The main contributions are clearly communicated and empirically validated. However, the derivation contains a sign inconsistency in a key relationship (Eq. 3.2) that could confuse readers, and the handling of the t=0 boundary (\u03bb_0 undefined) is underspecified, which is important for reproducibility. These issues are moderate but fixable without undermining the core methodology.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Sign error in derivation of the integral formulation",
+          "quote": "We can rewrite g(t) in Eq. (2.3) as g(t)^2/(2\u03c3_t) = \u03c3_t d\u03bb_t/dt",
+          "explanation": "The relationship appears to have a sign error. From the definitions f(t)=d log \u03b1_t/dt and g(t)^2 = d\u03c3_t^2/dt - 2f(t)\u03c3_t^2, one obtains g(t)^2/(2\u03c3_t) = \u03c3_t' - f(t)\u03c3_t = -\u03c3_t d\u03bb_t/dt (since d\u03bb_t/dt = f(t) - \u03c3_t'/\u03c3_t). The paper\u2019s expression with a plus sign propagates into Eq. (3.3) and Proposition 3.1, yet the final algorithm formulas (e.g., DPM-Solver-1) are consistent with a compensating sign choice (as they match DDIM). The derivation is thus misleading, though the implemented solvers appear correct.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Undefined \u03bb_0 and boundary at t=0",
+          "quote": "uniformly split the interval [\u03bb_T, \u03bb_0]",
+          "explanation": "\u03bb_t = log(\u03b1_t/\u03c3_t). At t=0, \u03b1_0=1 and \u03c3_0=0, so \u03bb_0 tends to +\u221e, making it impossible to define a finite interval or to compute terms like e^{h_i} for steps terminating at t=0. The paper states that the ODE is solved from T to 0 and sets t_M=0, but does not specify a minimal time (e.g., t_\u03b5) or any regularization. This is a critical gap for reproducibility, especially in the few-step regime where the boundary is reached. In practice, a small cutoff is likely used (e.g., t_min=0.001), but this should be explicitly stated.",
+          "comment_type": "logical",
+          "paragraph_index": 43,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0069,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 24310,
+      "completion_tokens": 17503
+    }
+  }
+}

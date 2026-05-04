@@ -1,0 +1,1384 @@
+{
+  "slug": "neurips2021-GlEWs-V9-volume-rendering-of-neural-implicit-surfaces",
+  "title": "Volume Rendering of Neural Implicit Surfaces [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Volume Rendering of Neural Implicit Surfaces**\n\n**Lior Yariv**[1] **Jiatao Gu**[2] **Yoni Kasten**[1] **Yaron Lipman**[1] _[,]_[2]"
+    },
+    {
+      "index": 1,
+      "text": "1Weizmann Institute of Science 2Facebook AI Research\n\n## **Abstract**\n\nNeural volume rendering became increasingly popular recently due to its success in synthesizing novel views of a scene from a sparse set of input images. So far, the geometry learned by neural volume rendering techniques was modeled using a generic density function. Furthermore, the geometry itself was extracted using an arbitrary level set of the density function leading to a noisy, often low fidelity reconstruction. The goal of this paper is to improve geometry representation and reconstruction in neural volume rendering. We achieve that by modeling the volume density as a function of the geometry. This is in contrast to previous work modeling the geometry as a function of the volume density. In more detail, we define the volume density function as Laplace\u2019s cumulative distribution function (CDF) applied to a signed distance function (SDF) representation. This simple density representation has three benefits: (i) it provides a useful inductive bias to the geometry learned in the neural volume rendering process; (ii) it facilitates a bound on the opacity approximation error, leading to an accurate sampling of the viewing ray. Accurate sampling is important to provide a precise coupling of geometry and radiance; and (iii) it allows efficient unsupervised disentanglement of shape and appearance in volume rendering. Applying this new density representation to challenging scene multiview datasets produced high quality geometry reconstructions, outperforming relevant baselines. Furthermore, switching shape and appearance between scenes is possible due to the disentanglement of the two."
+    },
+    {
+      "index": 2,
+      "text": "## **1 Introduction**\n\nVolume rendering [18] is a set of techniques that renders volume _density_ in _radiance fields_ by the so called volume rendering integral. It has recently been shown that representing both the density and radiance fields as neural networks can lead to excellent prediction of novel views by learning only from a sparse set of input images. This neural volume rendering approach, presented in [21] and developed by its follow-ups [34, 2] approximates the integral as alpha-composition in a differentiable way, allowing to learn simultaneously both from input images. Although this coupling indeed leads to good generalization of novel viewing directions, the density part is not as successful in faithfully predicting the scene\u2019s actual geometry, often producing noisy, low fidelity geometry approximation."
+    },
+    {
+      "index": 3,
+      "text": "We propose VolSDF to devise a different model for the density in neural volume rendering, leading to better approximation of the scene\u2019s geometry while maintaining the quality of view synthesis. The key idea is to represent the density as a function of the signed distance to the scene\u2019s surface, see Figure 1. Such density function enjoys several benefits. First, it guarantees the existence of a well-defined surface that generates the density. This provides a useful inductive bias for disentangling density and radiance fields, which in turn provides a more accurate geometry approximation. Second, we show this density formulation allows bounding the approximation error of the opacity along rays. This bound is used to sample the viewing ray so to provide a faithful coupling of density and radiance field in the volume rendering integral. E.g., without such a bound the computed radiance along a ray (pixel color) can potentially miss or extend surface parts leading to incorrect radiance approximation."
+    },
+    {
+      "index": 4,
+      "text": "35th Conference on Neural Information Processing Systems (NeurIPS 2021).\n\nFigure 1: VolSDF: given a set of input images (left) we learn a volumetric density (center-left, sliced) defined by a signed distance function (center-right, sliced) to produce a neural rendering (right). This definition of density facilitates high quality geometry reconstruction (gray surfaces, middle)."
+    },
+    {
+      "index": 5,
+      "text": "A closely related line of research, often referred to as neural implicit surfaces [22, 38, 14], have been focusing on representing the scene\u2019s geometry implicitly using a neural network, making the surface rendering process differentiable. The main drawback of these methods is their requirement of masks that separate objects from the background. Also, learning to render surfaces directly tends to grow extraneous parts due to optimization problems, which are avoided by volume rendering. In a sense, our work combines the best of both worlds: _volume rendering with neural implicit surfaces_ ."
+    },
+    {
+      "index": 6,
+      "text": "We demonstrate the efficacy of VolSDF by reconstructing surfaces from the DTU [12] and BlendedMVS [37] datasets. VolSDF produces more accurate surface reconstructions compared to NeRF [21] and NeRF++ [39], and comparable reconstruction compared to IDR [38], while avoiding the use of object masks. Furthermore, we show disentanglement results with our method, i.e., switching the density and radiance fields of different scenes, which is shown to fail in NeRF-based models."
+    },
+    {
+      "index": 7,
+      "text": "## **2 Related work**\n\n**Neural Scene Representation & Rendering** Implicit functions are traditionally adopted in modeling 3D scenes [24, 11, 4]. Recent studies have been focusing on model implicit functions with multi-layer perceptron (MLP) due to its expressive representation power and low memory foot-print, including scene (geometry & appearance) representation [9, 20, 19, 23, 25, 29, 36, 28, 35] and free-view rendering [33, 16, 30, 26, 17, 21, 15, 39, 34, 2]. In particular, NeRF [21] has opened up a line of research (see [6] for an overview) combining neural implicit functions together with volume rendering to achieve photo-realistic rendering results. However, it is non-trivial to find a proper threshold to extract surfaces from the predicted density, and the recovered geometry is far from satisfactory. Furthermore, sampling of points along a ray for rendering a pixel is done using an opacity function that is approximated from another network without any guarantee for correct approximation."
+    },
+    {
+      "index": 8,
+      "text": "**Multi-view 3D Reconstruction** Image-based 3D surface reconstruction (multi-view stereo) has been a longstanding problem in the past decades. Classical multi-view stereo approaches are generally either depth-based [1, 31, 8, 7] or voxel-based [5, 3, 32]. For instance, in COLMAP [31] (a typical depth-based method) image features are extracted and matched across different views to estimate depth. Then the predicted depth maps are fused to obtain dense point clouds. To obtain the surface, an additional meshing step e.g. Poisson surface reconstruction [13] is applied. However, these methods with complex pipelines may accumulate errors at each stage and usually result in incomplete 3D models, especially for non-Lambertian surfaces as they can not handle view dependent colors. On the contrary, although it produces complete models by directly modeling objects in a volume, voxel-based approaches are limited to low resolution due to high memory consumption. Recently, neural-based approaches such as DVR [22], IDR [38], NLR [14] have also been proposed to reconstruct scene geometry from multi-view images. However, these methods require accurate object masks and appropriate weight initialization due to the difficulty of propagating gradients."
+    },
+    {
+      "index": 9,
+      "text": "Independently from and concurrently with our work here, [27] also use implicit surface representation incorporated into volume rendering. In particular, they replace the local transparency function with an occupancy network [19]. This allows adding surface smoothing term to the loss, improving the quality of the resulting surfaces. Differently from their approach, we use signed distance representation, regularized with an Eikonal loss [38, 10] without any explicit smoothing term. Furthermore, we show that the choice of using signed distance allows bounding the opacity approximation error, facilitating the approximation of the volume rendering integral for the suggested family of densities."
+    },
+    {
+      "index": 10,
+      "text": "2\n\n## **3 Method**\n\nIn this section we introduce a novel parameterization for volume density, defined as transformed signed distance function. Then we show how this definition facilitates the volume rendering process. In particular, we derive a bound of the error in the opacity approximation and consequently devise a sampling procedure for approximating the volume rendering integral."
+    },
+    {
+      "index": 11,
+      "text": "## **3.1 Density as transformed SDF**\n\nLet the set \u2126 _\u2282_ R[3] represent the space occupied by some object in R[3] , and _M_ = _\u2202_ \u2126 its boundary surface. We denote by **1** \u2126 the \u2126 indicator function, and by _d_ \u2126 the Signed Distance Function (SDF) to its boundary _M_ ,"
+    },
+    {
+      "index": 12,
+      "text": "where _\u2225\u00b7\u2225_ is the standard Euclidean 2-norm. In neural volume rendering the volume _density \u03c3_ : R[3] _\u2192_ R+ is a scalar volumetric function, where _\u03c3_ ( _**x**_ ) is the rate that light is occluded at point _**x**_ ; _\u03c3_ is called density since it is proportional to the particle count per unit volume at _**x**_ [18]. In previous neural volumetric rendering approaches [21, 15, 39], the density function, _\u03c3_ , was modeled with a general-purpose Multi-Layer Perceptron (MLP). In this work we suggest to model the density using a certain transformation of a learnable Signed Distance Function (SDF) _d_ \u2126, namely"
+    },
+    {
+      "index": 13,
+      "text": "_\u03c3_ ( _**x**_ ) = _\u03b1_ \u03a8 _\u03b2_ ( _\u2212d_ \u2126( _**x**_ )) _,_ (2)\n\nwhere _\u03b1, \u03b2 >_ 0 are learnable parameters, and \u03a8 _\u03b2_ is the Cumulative Distribution Function (CDF) of the Laplace distribution with zero mean and _\u03b2_ scale (i.e., mean absolute deviation, which is intuitively the _L_ 1 version of the standard deviation),"
+    },
+    {
+      "index": 14,
+      "text": "Figure 1 (center left and right) depicts an example of such a density and SDF. As can be readily checked from this definition, as _\u03b2_ approach zero, the density _\u03c3_ converges to a scaled indicator function of \u2126, that is _\u03c3 \u2192 \u03b1_ **1** \u2126 for all points _**x** \u2208_ \u2126 _\\ M_ ."
+    },
+    {
+      "index": 15,
+      "text": "Intuitively, the density _\u03c3_ models a homogeneous object with a constant density _\u03b1_ that smoothly decreases near the object\u2019s boundary, where the smoothing amount is controlled by _\u03b2_ . The benefit in defining the density as in equation 2 is two-fold: First, it provides a useful inductive bias for the surface geometry _M_ , and provides a principled way to reconstruct the surface, i.e., as the zero level-set of _d_ \u2126. This is in contrast to previous work where the reconstruction was chosen as an arbitrary level set of the learned density. Second, the particular form of the density as defined in equation 2 facilitates a bound on the error of the _opacity_ (or, equivalently the _transparency_ ) of the rendered volume, a crucial component in the volumetric rendering pipeline. In contrast, such a bound will be hard to devise for a generic MLP densities."
+    },
+    {
+      "index": 16,
+      "text": "## **3.2 Volume rendering of** _\u03c3_\n\nIn this section we review the volume rendering integral and the numerical integration commonly used to approximate it, requiring a set _S_ of sample points per ray. In the following section (Section 3.3), we explore the properties of the density _\u03c3_ and derive a bound on the opacity approximation error along viewing rays. Finally, in Section 3.4 we derive an algorithm for producing a sample _S_ to be used in the volume rendering numerical integration."
+    },
+    {
+      "index": 17,
+      "text": "In volume rendering we consider a ray _**x**_ emanating from a camera position _**c** \u2208_ R[3] in direction _**v** \u2208_ R[3] , _\u2225_ _**v** \u2225_ = 1, defined by _**x**_ ( _t_ ) = _**c**_ + _t_ _**v**_ , _t \u2265_ 0. In essence, volume rendering is all about approximating the integrated (i.e., summed) light radiance along this ray reaching the camera. There are two important quantities that participate in this computation: the volume\u2019s _opacity O_ , or equivalently, its _transperancy T_ , and the _radiance field L_ ."
+    },
+    {
+      "index": 18,
+      "text": "The _transparency_ function of the volume along a ray _**x**_ , denoted _T_ , indicates, for each _t \u2265_ 0, the probability a light particle succeeds traversing the segment [ _**c** ,_ _**x**_ ( _t_ )] without bouncing off,"
+    },
+    {
+      "index": 19,
+      "text": "3\n\nand the _opacity O_ is the complement probability,\n\nNote that _O_ is a monotonic increasing function where _O_ (0) = 0, and assuming that every ray is eventually occluded _O_ ( _\u221e_ ) = 1. In that sense we can think of _O_ as a CDF, and"
+    },
+    {
+      "index": 20,
+      "text": "is its Probability Density Function (PDF). The volume rendering equation is the expected light along the ray,"
+    },
+    {
+      "index": 21,
+      "text": "where _L_ ( _**x** ,_ _**n** ,_ _**v**_ ) is the radiance field, namely the amount of light emanating from point _**x**_ in direction _**v**_ ; in our formulation we also allow _L_ to depend on the level-set\u2019s normal, i.e., _**n**_ ( _t_ ) = _\u2207_ _**x** d_ \u2126( _**x**_ ( _t_ )). Adding this dependency is motivated by the fact that BRDFs of common materials are often encoded with respect to the surface normal, facilitating disentanglement as done in surface"
+    },
+    {
+      "index": 22,
+      "text": "**----- Start of picture text -----**\n\nNeRF\n**----- End of picture text -----**\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 23,
+      "text": "VolSDF\n**----- End of picture text -----**\n\nFigure 2: Qualitative comparison to NeRF. VolSDF shows less artifacts."
+    },
+    {
+      "index": 24,
+      "text": "rendering [38]. We will get back to disentanglement in the experiments section. The integral in equation 7 is approximated using a numerical quadrature, namely the rectangle rule, at some discrete samples _S_ = _{si}[m] i_ =1[,][ 0 =] _[ s]_[1] _[< s]_[2] _[< . . . < s][m]_[=] _[ M]_[, where] _[ M]_[is some large constant:]"
+    },
+    {
+      "index": 25,
+      "text": "where we use the subscript _S_ in _I_[\u02c6] _S_ to highlight the dependence of the approximation on the sample set _S_ , _\u03c4_ \u02c6 _i \u2248 \u03c4_ ( _si_ )\u2206 _s_ is the approximated PDF multiplied by the interval length, and _Li_ = _L_ ( _**x**_ ( _si_ ) _,_ _**n**_ ( _si_ ) _,_ _**v**_ ) is the sampled radiance field. We provide full derivation and detail of _\u03c4_ \u02c6 _i_ in the supplementary."
+    },
+    {
+      "index": 26,
+      "text": "**Sampling.** Since the PDF _\u03c4_ is typically extremely concentrated near the object\u2019s boundary (see e.g., Figure 3, right) the choice of the sample points _S_ has a crucial effect on the approximation quality of equation 8. One solution is to use an adaptive sample, e.g., _S_ computed with the inverse CDF, i.e., _O[\u2212]_[1] . However, _O_ depends on the density model _\u03c3_ and is not given explicitly. In [21] a second, coarse network was trained specifically for the approximation of the opacity _O_ , and was used for inverse sampling. However, the second network\u2019s density does not necessarily faithfully represents the first network\u2019s density, for which we wish to compute the volume integral. Furthermore, as we show later, one level of sampling could be insufficient to produce an accurate sample _S_ . Using a naive or crude approximation of _O_ would lead to a sub-optimal sample set _S_ that misses, or over extends non-negligible _\u03c4_ values. Consequently, incorrect radiance approximations can occur (i.e., pixel color), potentially harming the learned density-radiance field decomposition. Our solution works with a single density _\u03c3_ , and the sampling _S_ is computed by a sampling algorithm based on an error bound for the opacity approximation. Figure 2 compares the NeRF and VolSDF renderings for the same scene. Note the salt and pepper artifacts in the NeRF rendering caused by the random samples; using fixed (uniformly spaced) sampling in NeRF leads to a different type of artifacts shown in the supplementary."
+    },
+    {
+      "index": 27,
+      "text": "## **3.3 Bound on the opacity approximation error**\n\nIn this section we develop a bound on the opacity approximation error using the rectangle rule. For a set of samples _T_ = _{ti}[n] i_ =1[,][ 0 =] _[ t]_[1] _[< t]_[2] _[<][ \u00b7 \u00b7 \u00b7][ < t][n]_[=] _[ M]_[, we let] _[ \u03b4][i]_[=] _[ t][i]_[+1] _[ \u2212][t][i]_[, and] _[ \u03c3][i]_[=] _[ \u03c3]_[(] _**[x]**_[(] _[t][i]_[))][.] Given some _t \u2208_ (0 _, M_ ], assume _t \u2208_ [ _tk, tk_ +1], and apply the rectangle rule (i.e., left Riemann sum) to get the approximation:"
+    },
+    {
+      "index": 28,
+      "text": "4\n\nis the rectangle rule approximation, and _E_ ( _t_ ) denotes the error in this approximation. The corresponding approximation of the opacity function (equation 5) is"
+    },
+    {
+      "index": 29,
+      "text": "Our goal in this section is to derive a uniform bound over [0 _, M_ ] to the approximation _O_[\ufffd] _\u2248 O_ . The key is the following bound on the derivative[1] of the density _\u03c3_ inside an interval along the ray _**x**_ ( _t_ ): **Theorem 1.** _The derivative of the density \u03c3 within a segment_ [ _ti, ti_ +1] _satisfies_"
+    },
+    {
+      "index": 30,
+      "text": "_and Bi_ = _{_ _**x** | \u2225_ _**x** \u2212_ _**x**_ ( _ti_ ) _\u2225 < |di|}, di_ = _d_ \u2126( _**x**_ ( _ti_ )) _._"
+    },
+    {
+      "index": 31,
+      "text": "The proof of this theorem, which is provided in the supplementary, makes a principled use of the signed distance function\u2019s unique properties; the explicit formula for _d[\u2217] i_[is a bit cumbersome and therefore] is deferred to the supplementary as-well. The inset depicts the boundary of the open balls union _Bi \u222a Bi_ +1, the interval [ _**x**_ ( _ti_ ) _,_ _**x**_ ( _ti_ +1)] and the bound is defined in terms of the minimal distance between these two sets, i.e., _d[\u2217]_[[.]]"
+    },
+    {
+      "index": 32,
+      "text": "_i_[[.]]\n\nThe benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval [ _ti, ti\u2212_ 1] based only on the unsigned distance at the interval\u2019s end points, _|di|, |di_ +1 _|_ , and the density parameters _\u03b1, \u03b2_ . This bound can be used to derive an error bound for the rectangle rule\u2019s approximation of the opacity,"
+    },
+    {
+      "index": 33,
+      "text": "Details are in the supplementary. Equation 12 leads to the following opacity error bound, also proved in the supplementary:"
+    },
+    {
+      "index": 34,
+      "text": "**Theorem 2.** _For t \u2208_ [0 _, M_ ] _, the error of the approximated opacity O_[\u02c6] _can be bounded as follows:_"
+    },
+    {
+      "index": 35,
+      "text": "Finally, we can bound the opacity error for _t \u2208_ [ _tk, tk_ +1] by noting that _E_[\ufffd] ( _t_ ), and consequently also exp( _E_[\ufffd] ( _t_ )) are monotonically increasing in _t_ , while exp( _\u2212R_[\ufffd] ( _t_ )) is monotonically decreasing in _t_ , and therefore"
+    },
+    {
+      "index": 36,
+      "text": "Taking the maximum over all intervals furnishes a bound _BT ,\u03b2_ as a function of _T_ and _\u03b2_ ,\n\nwhere by convention _R_[\ufffd] ( _t_ 0) = 0, and [ _\u2113_ ] = _{_ 1 _,_ 2 _, . . . , \u2113}_ . See Figure 3, where this bound is visualized in faint-red."
+    },
+    {
+      "index": 37,
+      "text": "To conclude this section we derive two useful properties, proved in the supplementary. The first, is that sufficiently dense sampling is guaranteed to reduce the error bound _BT ,\u03f5_ :"
+    },
+    {
+      "index": 38,
+      "text": "**Lemma 1.** _Fix \u03b2 >_ 0 _. For any \u03f5 >_ 0 _a sufficient dense sampling T will provide BT ,\u03b2 < \u03f5._\n\nSecond, with a fixed number of samples we can set _\u03b2_ such that the error bound is below _\u03f5_ : **Lemma 2.** _Fix n >_ 0 _. For any \u03f5 >_ 0 _a sufficiently large \u03b2 that satisfies_"
+    },
+    {
+      "index": 39,
+      "text": "_will provide BT ,\u03b2 \u2264 \u03f5._\n\n> 1As _d_ \u2126 is not differentiable everywhere the bound is on the _Lipschitz constant_ of _\u03c3_ , see supplementary."
+    },
+    {
+      "index": 40,
+      "text": "5\n\n**----- Start of picture text -----**\n\niteration 1 iteration 2 iteration 5 iteration 1 iteration 2 iteration 5\nOpacity\nError\n**----- End of picture text -----**"
+    },
+    {
+      "index": 41,
+      "text": "Figure 3: Qualitative evaluation of Algorithm 1 after 1, 2 and 5 iterations. Left-bottom: per-pixel _\u03b2_ + heatmap; Left-top: rendering of areas marked with black squares. Right-top: for a single ray indicated by white pixel we show the approximated (orange), true opacity (blue), the SDF (black), and _O_[\ufffd] _[\u2212]_[1] sample example (yellow dots). Right-bottom: for the same ray we now show the true opacity error (red), and error bound (faint red). After 5 iterations most of the rays converged, as can be inspected by the blue colors in the heatmap, providing a guaranteed _\u03f5_ approximation to the opacity, resulting in a crisp and more accurate rendering (center-left, top)."
+    },
+    {
+      "index": 42,
+      "text": "## **3.4 Sampling algorithm**\n\nIn this section we develop an algorithm for computing the sampling _S_ to be used in equation 8. This is done by first utilizing the bound in equation 15 to find samples _T_ so that _O_[\ufffd] (via equation 10) provides an _\u03f5_ approximation to the true opacity _O_ , where _\u03f5_ is a hyper-parameter, that is _BT ,\u03b2 < \u03f5_ . Second, we perform inverse CDF sampling with _O_[\u02c6] , as described in Section 3.2."
+    },
+    {
+      "index": 43,
+      "text": "Note that from Lemma 1 it follows that we can simply choose large enough _n_ to ensure _BT ,\u03b2 < \u03f5_ . However, this would lead to prohibitively large number of samples. Instead, we suggest a simple algorithm to reduce the number of required samples in practice and allows working with a limited budget of sample points. In a nutshell, we start with a uniform sampling _T_ = _T_ 0, and use Lemma 2 to initially set a _\u03b2_ + _> \u03b2_ that satisfies _BT ,\u03b2_ + _\u2264 \u03f5_ . Then, we repeatedly upsample _T_ to reduce _\u03b2_ + while maintaining _BT ,\u03b2_ + _\u2264 \u03f5_ . Even though this simple strategy is not guaranteed to converge, we find that _\u03b2_ + usually converges to _\u03b2_ (typically 85%, see also Figure 3), and even in cases it does not, the algorithm provides _\u03b2_ + for which the opacity approximation still maintains an _\u03f5_ error. The algorithm is presented below (Algorithm 1)."
+    },
+    {
+      "index": 44,
+      "text": "We initialize _T_ (Line 1 in Algorithm 1) with uniform sampling _T_ 0 = _{ti}[n] i_ =1[, where] _[ t][k]_[= (] _[k][\u2212]_[1)] _n[M] \u2212_ 1[,] _k \u2208_ [ _n_ ] (we use _n_ = 128 in our implementation). Given this sampling we next pick _\u03b2_ + _> \u03b2_ according to Lemma 2 so that the error bound satisfies the required _\u03f5_ bound (Line 2 in Algorithm 1)."
+    },
+    {
+      "index": 45,
+      "text": "In order to reduce _\u03b2_ + while keep _BT ,\u03b2_ + _\u2264 \u03f5_ , _n_ samples are added to _T_ (Line 4 in Algorithm 1), where the number of points sampled from each interval is proportional to its current error bound, equation 14. Assuming _T_ was sufficiently upsampled and satisfy _BT ,\u03b2_ + _< \u03f5_ , we decrease _\u03b2_ + towards _\u03b2_ . Since the algorithm did not stop we have that _BT ,\u03b2 > \u03f5_ . Therefore the Mean Value Theorem implies the existence of _\u03b2\u22c6 \u2208_ ( _\u03b2, \u03b2_ +) such that _BT ,\u03b2\u22c6_ = _\u03f5_ . We use the bisection method (with maximum of 10 iterations) to efficiently search for _\u03b2\u22c6_ and update _\u03b2_ + accordingly (Lines 6 and 7 in Algorithm 1). The algorithm runs iteratively until _BT ,\u03b2 \u2264 \u03f5_ or a maximal number of 5 iterations is reached. Either way, we use the final _T_ and _\u03b2_ + (guaranteed to provide _BT ,\u03b2_ + _\u2264 \u03f5_ ) to estimate the current opacity _O_[\ufffd] , Line 10 in Algorithm 1). Finally we return a fresh set of _m_ = 64 samples _O_[\u02c6] using inverse transform sampling (Line 11 in Algorithm 1). Figure 3 shows qualitative illustration of Algorithm 1, for _\u03b2_ = 0 _._ 001 and _\u03f5_ = 0 _._ 1 (typical values)."
+    },
+    {
+      "index": 46,
+      "text": "**Algorithm 1:** Sampling algorithm. **Input:** error threshold _\u03f5 >_ 0; _\u03b2_ **1** Initialize _T_ = _T_ 0 **2** Initialize _\u03b2_ + such that _BT ,\u03b2_ + _\u2264 \u03f5_ **3 while** _BT ,\u03b2 > \u03f5 and not max_iter_ **do 4** upsample _T_ **5 if** _BT ,\u03b2_ + _< \u03f5_ **then 6** Find _\u03b2\u22c6 \u2208_ ( _\u03b2, \u03b2_ +) so that _BT ,\u03b2\u22c6_ = _\u03f5_ **7** Update _\u03b2_ + _\u2190 \u03b2\u22c6_ **8 end 9 end 10** Estimate _O_[\ufffd] using _T_ and _\u03b2_ + **11** _S \u2190_ get fresh _m_ samples using _O_[\u02c6] _[\u2212]_[1] **12 return** _S_"
+    },
+    {
+      "index": 47,
+      "text": "6\n\nFigure 4: Qualitative results for reconstructed geometries of objects from the DTU dataset.\n\n## **3.5 Training**"
+    },
+    {
+      "index": 48,
+      "text": "Our system consists of two Multi-Layer Perceptrons (MLP): (i) _**f** \u03d5_ approximating the SDF of the learned geometry, as well as global geometry feature _**z**_ of dimension 256, i.e., _**f** \u03d5_ ( _**x**_ ) = ( _d_ ( _**x**_ ) _,_ _**z**_ ( _**x**_ )) _\u2208_ R[1+256] , where _\u03d5_ denotes its learnable parameters; (ii) _L\u03c8_ ( _**x** ,_ _**n** ,_ _**v** ,_ _**z**_ ) _\u2208_ R[3] representing the scene\u2019s radiance field with learnable parameters _\u03c8_ . In addition we have two scalar learnable parameters _\u03b1, \u03b2 \u2208_ R. In fact, in our implementation we make the choice _\u03b1_ = _\u03b2[\u2212]_[1] . We denote by _\u03b8 \u2208_ R _[p]_ the collection of all learnable parameters of the model, _\u03b8_ = ( _\u03d5, \u03c8, \u03b2_ ). To facilitate the learning of high frequency details of the geometry and radiance field, we exploit positional encoding [21] for the position _**x**_ and view direction _**v**_ in the geometry and radiance field. The influence of different positional encoding choices are presented in the supplementary."
+    },
+    {
+      "index": 49,
+      "text": "Our data consists of a collection of images with camera parameters. From this data we extract pixel level data: for each pixel _p_ we have a triplet ( _Ip,_ _**c** p,_ _**v** p_ ), where _Ip \u2208_ R[3] is its intensity (RGB color), _**c** p \u2208_ R[3] is its camera location, and _**v** p \u2208_ R[3] is the viewing direction (camera to pixel). Our training loss consists of two terms:"
+    },
+    {
+      "index": 50,
+      "text": "where _L_ RGB is the color loss; _\u2225\u00b7\u2225_ 1 denotes the 1-norm, _S_ is computed with Algorithm 1, and _I_[\u02c6] _S_ is the numerical approximation to the volume rendering integral in equation 8; here we also incorporate the global feature in the radiance field, i.e., _Li_ = _L\u03c8_ ( _**x**_ ( _si_ ) _,_ _**n**_ ( _si_ ) _,_ _**v** p,_ _**z**_ ( _**x**_ ( _si_ ))). _L_ SDF is the Eikonal loss encouraging _d_ to approximate a signed distance function [10]; the samples _**z**_ are taken to combine a single random uniform space point and a single point from _S_ for each pixel _p_ . We train with batches of size 1024 pixels _p_ . _\u03bb_ is a hyper-parameter set to 0 _._ 1 throughout the the experiments. Further implementation details are provided in the supplementary."
+    },
+    {
+      "index": 51,
+      "text": "## **4 Experiments**\n\nWe evaluate our method on the challenging task of multiview 3D surface reconstruction. We use two datasets: DTU [12] and BlendedMVS [37], both containing real objects with different materials that are captured from multiple views. In Section 4.1 we show qualitative and quantitative 3D surface reconstruction results of VolSDF, comparing favorably to relevant baselines. In Section 4.2 we demonstrate that, in contrast to NeRF [21], our model is able to successfully disentangle the geometry and appearance of the captured objects."
+    },
+    {
+      "index": 52,
+      "text": "7\n\n||Scan\n24\n37\n40\n55\n63\n65\n69\n83\n97\n105\n106\n110\n114\n118\n122\n**Mean**|\n|---|---|\n|Chamfer Distance|**IDR**\n1_._63\n1_._87\n0_._63\n0_._48\n1_._04\n0_._79\n0_._77\n1_._33\n1_._16\n0_._76\n0_._67\n0_._90\n0_._42\n0_._51\n0_._53\n0_._90\n**colmap**7\n0_._45\n0_._91\n0_._37\n0_._37\n0_._90\n1_._00\n0_._54\n1_._22\n1_._08\n0_._64\n0_._48\n0_._59\n0_._32\n0_._45\n0_._43\n0_._65|\n||**colmap**0\n**0**_._**81**\n2_._05\n**0**_._**73**\n1_._22\n1_._79\n1_._58\n1_._02\n3_._05\n1_._40\n2_._05\n1_._00\n1_._32\n0_._49\n0_._78\n1_._17\n1_._36\n**NeRF**\n1_._92\n1_._73\n1_._92\n0_._80\n3_._41\n1_._39\n1_._51\n5_._44\n2_._04\n1_._10\n1_._01\n2_._88\n0_._91\n1_._00\n0_._79\n1_._89\n**VolSDF**\n1_._14\n**1**_._**26**\n0_._81\n**0**_._**49**\n**1**_._**25**\n**0**_._**70**\n**0**_._**72**\n**1**_._**29**\n**1**_._**18**\n**0**_._**70**\n**0**_._**66**\n**1**_._**08**\n**0**_._**42**\n**0**_._**61**\n**0**_._**55**\n**0**_._**86**|\n|PSNR|**NeRF**\n26_._24 25_._74 26_._79 27_._57 31_._96 31_._50 29_._58 32_._78 28_._35 32_._08 33_._49 31_._54\n31_._0\n35_._59 35_._51 30_._65\n**VolSDF**\n26_._28 25_._61 26_._55 26_._76 31_._57\n31_._5\n29_._38 33_._23 28_._03 32_._13 33_._16 31_._49 30_._33\n34_._9\n34_._75 30_._38|"
+    },
+    {
+      "index": 53,
+      "text": "Table 1: Quantitative results for the DTU dataset.\n\nFigure 5: Qualitative results sampled from the BlendedMVS dataset. For each scan we present a visualization of a rendered image and the reconstructed 3D geometry."
+    },
+    {
+      "index": 54,
+      "text": "## **4.1 Multi-view 3D reconstruction**\n\n**DTU** The DTU [12] dataset contains multi-view image (49 or 64) of different objects with fixed camera and lighting parameters. We evaluate our method on the 15 scans that were selected by [38]. We compare our surface accuracy using the Chamfer _l_ 1 loss (measured in mm) to COLMAP0 (which is watertight reconstruction; COLMAP7 is not watertight and provided only for reference) [31], NeRF [21] and IDR [38], where for fair comparison with IDR we only evaluate the reconstruction inside the visual hull of the objects (defined by the segmentation masks of [38]). We further evaluate the PSNR of our rendering compared to [21]. Quantitative results are presented in Table 1. It can be observed that our method is on par with IDR (that uses object masks for all images) and outperforms NeRF and COLMAP in terms of reconstruction accuracy. Our rendering quality is comparable to NeRF\u2019s."
+    },
+    {
+      "index": 55,
+      "text": "**BlendedMVS** The BlendedMVS dataset [37] contains a large collection of 113 scenes captured from multiple views. It supplies high quality ground truth 3D models for evaluation, various camera configurations, and a variety of indoor/outdoor real environments. We selected 9 different scenes and used our method to reconstruct the surface of each object. In contrast to the DTU dataset, BlendedMVS scenes have complex backgrounds. Therefore we use NeRF++ [39] as a baseline for this dataset. In Table 2 we present our results compared to NeRF++. Qualitative comparisons are presented in Fig. 5; since the units are unknown in this case we present relative improvement of Chamfer distance (in %) compared to NeRF. Also in this case, we improve NeRF reconstructions considerably, while being on-par in terms of the rendering quality (PSNR)."
+    },
+    {
+      "index": 56,
+      "text": "**Comparison to [38]** IDR [38] is the state of the art 3D surface reconstruction method using implicit representation. However, it suffers from two drawbacks: first, it requires object masks for training, which is a strong supervision signal. Second, since it sets the pixel color based only on the single point of intersection of the corresponding viewing ray, it is more pruned to local minima that Figure 6: IDR extraneous parts. sometimes appear in the form of extraneous surface parts. Figure 6 compares the same scene trained"
+    },
+    {
+      "index": 57,
+      "text": "8\n\n||Scene|Doll|Egg|Head|Angel|Bull|Robot|Dog|Bread|Camera|**Mean**|\n|---|---|---|---|---|---|---|---|---|---|---|---|\n|Chamfer_l_1|Our Improvement (%)|54_._0|91_._2|24_._3|75_._1|60_._7|27_._2|47_._7|34_._6|51_._8|51_._8|\n||**NeRF++**|26_._95|27_._34|27_._23|30_._06|26_._65|26_._73|27_._90|31_._68|23_._44|27_._55|\n|PSNR||||||||||||\n||**VolSDF**|25_._49|27_._18|26_._36|29_._79|26_._01|26_._03|28_._65|31_._24|22_._97|27_._08|"
+    },
+    {
+      "index": 58,
+      "text": "Table 2: Quantitative results for the BlendedMVS dataset.\n\nwith IDR with the addition of ground truth masks, and VolSDF trained without masks. Note that IDR introduces some extraneous surface parts (e.g., in marked red), while VolSDF provides a more faithful result in this case."
+    },
+    {
+      "index": 59,
+      "text": "## **4.2 Disentanglement of geometry and appearance**\n\nWe have tested the disentanglement of scenes to geometry (density) and appearance (radiance field) by switching the radiance fields of two trained scenes. For VolSDF we switched _L\u03c8_ . For NeRF [21] we note that the radiance field is computed as _L\u03c8_ ( _**z** ,_ _**v**_ ), where _L\u03c8_ is a fully connected network with one hidden layer (of width 128 and ReLU activation) and _**z**_ is a feature vector. We tested two versions of NeRF disentanglement: First, by switching the original radiance fields _L\u03c8_ of trained NeRF networks. Second, by switching the radiance fields of trained NeRF models with an identical radiance field model to ours, namely _L\u03c8_ ( _**x** ,_ _**n** ,_ _**v** ,_ _**z**_ ). As shown in Figure 7 both versions of NeRF fail to produce a correct disentanglement in these scenes, while VolSDF successfully switches the materials of the two objects. We attribute this to the specific inductive bias injected with the use of the density in equation 2."
+    },
+    {
+      "index": 60,
+      "text": "NeRF NeRF _with normal_ **VolSDF**\n\nFigure 7: Geometry and radiance disentanglement is physically plausible with VolSDF."
+    },
+    {
+      "index": 61,
+      "text": "## **5 Conclusions**\n\nWe introduce VolSDF, a volume rendering framework for implicit neural surfaces. We represent the volume density as a transformed version of the signed distance function to the learned surface geometry. This seemingly simple definition provides a useful inductive bias, allowing disentanglement of geometry (i.e., density) and radiance field, and improves the geometry approximation over previous neural volume rendering techniques. Furthermore, it allows to bound the opacity approximation error leading to high fidelity sampling of the volume rendering integral."
+    },
+    {
+      "index": 62,
+      "text": "Some limitations of our method present interesting future research opportunities. First, although working well in practice, we do not have a proof of correctness for the sampling algorithm. We believe providing such a proof, or finding a version of this algorithm that has a proof would be a useful contribution. In general, we believe working with bounds in volume rendering could improve learning and disentanglement and push the field forward. Second, representing non-watertight manifolds and/or manifolds with boundaries, such as zero thickness surfaces, is not possible with an SDF. Generalizations such as multiple implicits and unsigned fields could be proven valuable. Third, our current formulation assumes homogeneous density; extending it to more general density models would allow representing a broader class of geometries. Fourth, now that high quality geometries can be learned in an unsupervised manner it will be interesting to learn dynamic geometries and shape spaces directly from collections of images. Lastly, although we don\u2019t see immediate negative societal impact of our work, we do note that accurate geometry reconstruction from images can be used for malice purposes."
+    },
+    {
+      "index": 63,
+      "text": "9\n\n## **Acknowledgments**\n\nLY is supported by the European Research Council (ERC Consolidator Grant, \"LiftMatch\" 771136), the Israel Science Foundation (Grant No. 1830/17), and Carolito Stiftung (WAIC). YK is supported by the U.S.- Israel Binational Science Foundation, grant number 2018680, Carolito Stiftung (WAIC), and by the Kahn foundation."
+    },
+    {
+      "index": 64,
+      "text": "## **References**\n\n- [1] C. Barnes, E. Shechtman, A. Finkelstein, and D. B. Goldman. PatchMatch: A randomized correspondence algorithm for structural image editing. _ACM Transactions on Graphics (Proc. SIGGRAPH)_ , 28(3), Aug. 2009."
+    },
+    {
+      "index": 65,
+      "text": "- [2] M. Boss, R. Braun, V. Jampani, J. T. Barron, C. Liu, and H. P. Lensch. Nerd: Neural reflectance decomposition from image collections, 2020."
+    },
+    {
+      "index": 66,
+      "text": "- [3] A. Broadhurst, T. Drummond, and R. Cipolla. A probabilistic framework for space carving. In _Proceedings Eighth IEEE International Conference on Computer Vision. ICCV 2001_ , volume 1, pages 388\u2013393 vol.1, 2001."
+    },
+    {
+      "index": 67,
+      "text": "- [4] A. Dai, M. Nie\u00dfner, M. Zollh\u00f6fer, S. Izadi, and C. Theobalt. Bundlefusion: Real-time globally consistent 3d reconstruction using on-the-fly surface reintegration. _ACM Transactions on Graphics (ToG)_ , 36(4):1, 2017."
+    },
+    {
+      "index": 68,
+      "text": "- [5] J. S. De Bonet and P. Viola. Poxels: Probabilistic voxelized volume reconstruction. In _Proceedings of the IEEE International Conference on Computer Vision. ICCV 1999_ , 1999."
+    },
+    {
+      "index": 69,
+      "text": "- [6] F. Dellaert and L. Yen-Chen. Neural volume rendering: Nerf and beyond. _arXiv preprint arXiv:2101.05204_ , 2020."
+    },
+    {
+      "index": 70,
+      "text": "- [7] Y. Furukawa and J. Ponce. Accurate, dense, and robust multiview stereopsis. _IEEE Transactions on Pattern Analysis and Machine Intelligence_ , 32(8):1362\u20131376, 2010."
+    },
+    {
+      "index": 71,
+      "text": "- [8] S. Galliani, K. Lasinger, and K. Schindler. Massively parallel multiview stereopsis by surface normal diffusion. In _Proceedings of the IEEE International Conference on Computer Vision_ , pages 873\u2013881, 2015."
+    },
+    {
+      "index": 72,
+      "text": "- [9] K. Genova, F. Cole, D. Vlasic, A. Sarna, W. T. Freeman, and T. Funkhouser. Learning shape templates with structured implicit functions. In _Proceedings of the IEEE/CVF International Conference on Computer Vision_ , pages 7154\u20137164, 2019."
+    },
+    {
+      "index": 73,
+      "text": "- [10] A. Gropp, L. Yariv, N. Haim, M. Atzmon, and Y. Lipman. Implicit geometric regularization for learning shapes. _arXiv preprint arXiv:2002.10099_ , 2020."
+    },
+    {
+      "index": 74,
+      "text": "- [11] S. Izadi, D. Kim, O. Hilliges, D. Molyneaux, R. Newcombe, P. Kohli, J. Shotton, S. Hodges, D. Freeman, A. Davison, et al. Kinectfusion: real-time 3d reconstruction and interaction using a moving depth camera. In _Proceedings of the 24th annual ACM symposium on User interface software and technology_ , pages 559\u2013568, 2011."
+    },
+    {
+      "index": 75,
+      "text": "- [12] R. Jensen, A. Dahl, G. Vogiatzis, E. Tola, and H. Aan\u00e6s. Large scale multi-view stereopsis evaluation. In _2014 IEEE Conference on Computer Vision and Pattern Recognition_ , pages 406\u2013413. IEEE, 2014."
+    },
+    {
+      "index": 76,
+      "text": "- [13] M. Kazhdan, M. Bolitho, and H. Hoppe. Poisson Surface Reconstruction. In A. Sheffer and K. Polthier, editors, _Symposium on Geometry Processing_ . The Eurographics Association, 2006."
+    },
+    {
+      "index": 77,
+      "text": "- [14] P. Kellnhofer, L. Jebe, A. Jones, R. Spicer, K. Pulli, and G. Wetzstein. Neural lumigraph rendering. In _CVPR_ , 2021."
+    },
+    {
+      "index": 78,
+      "text": "- [15] L. Liu, J. Gu, K. Zaw Lin, T.-S. Chua, and C. Theobalt. Neural sparse voxel fields. _Advances in Neural Information Processing Systems_ , 33, 2020."
+    },
+    {
+      "index": 79,
+      "text": "- [16] S. Liu, Y. Zhang, S. Peng, B. Shi, M. Pollefeys, and Z. Cui. Dist: Rendering deep implicit signed distance function with differentiable sphere tracing. _arXiv preprint arXiv:1911.13225_ , 2019."
+    },
+    {
+      "index": 80,
+      "text": "- [17] S. Lombardi, T. Simon, J. Saragih, G. Schwartz, A. Lehrmann, and Y. Sheikh. Neural volumes: Learning dynamic renderable volumes from images. _arXiv preprint arXiv:1906.07751_ , 2019."
+    },
+    {
+      "index": 81,
+      "text": "- [18] N. Max. Optical models for direct volume rendering. _IEEE Transactions on Visualization and Computer Graphics_ , 1(2):99\u2013108, 1995.\n\n10"
+    },
+    {
+      "index": 82,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__qwen3-235b-a22b-2507": {
+      "label": "Progressive (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "This paper presents a well-motivated and technically sound advancement in neural volume rendering by rethinking the relationship between geometry and density representation. The core idea\u2014modeling volume density as a function of a signed distance function (SDF), rather than treating geometry as a level set of an unconstrained density field\u2014introduces a principled geometric prior that significantly improves both the fidelity of surface reconstruction and the stability of volume rendering. The formulation via Laplace\u2019s CDF of an SDF is elegant and yields multiple benefits: it ensures a well-defined surface, enables error-bounded ray sampling for more accurate opacity integration, and facilitates unsupervised disentanglement of shape and appearance\u2014contributions that are both theoretically grounded and empirically validated. The paper is clearly written, well-structured, and effectively positions VolSDF at the intersection of neural implicit surfaces and volume rendering, addressing key limitations in both domains. However, a major limitation lies in the reliance on the Eikonal regularization to enforce SDF properties, which may introduce optimization challenges and computational overhead; the paper would benefit from a more thorough discussion of this trade-off, including empirical validation of how closely the learned function adheres to a true SDF during training. Additionally, while comparisons to NeRF and IDR are provided, a more detailed ablation on the impact of each component\u2014especially the error-bound-guided sampling\u2014would strengthen the claims. Overall, the work represents a significant step toward more geometrically accurate neural rendering, with implications for both reconstruction quality and controllable synthesis.",
+      "comments": [
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_0",
+          "title": "Ambiguity in the definition of density transformation with respect to SDF sign",
+          "quote": "_\u03c3_ ( _**x**_ ) = _\u03b1_ \u03a8 _\u03b2_ ( _\u2212d_ \u03a9( _**x**_ )) _,_ (2)",
+          "explanation": "The use of \u2212d_\u03a9(**x**) in Equation (2) may initially confuse readers because standard SDFs are negative inside the shape. Applying the increasing Laplace CDF \u03a8_\u03b2 to \u2212d_\u03a9(**x**) means high values occur when d_\u03a9(**x**) is large and negative (i.e., deep inside the object), achieving the intended behavior. This is mathematically correct and consistent with the limit as \u03b2 \u2192 0 producing a scaled indicator of \u03a9. However, the negative sign is subtle and not explicitly justified in the text. Without clarification (e.g., that \u2212d_\u03a9 ensures high density in the interior), a reader might mistakenly expect \u03a8_\u03b2(d_\u03a9(**x**)) for thresholding, which would invert the behavior. Given that SDF conventions vary and disentanglement relies on correct geometric interpretation, a brief note explaining the role of the negative sign would prevent misinterpretation.",
+          "comment_type": "logical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_1",
+          "title": "Potential confusion between opacity O and transparency T due to imprecise language",
+          "quote": "the volume\u2019s _opacity O_ , or equivalently, its _transperancy T_ ,",
+          "explanation": "The term 'equivalently' incorrectly suggests opacity and transparency are the same, when they are in fact complementary: O(t) = 1 \u2212 T(t). While the subsequent equations (4) and (5) correctly define T(t) = exp(\u2212\u222b\u03c3) and O(t) = 1 \u2212 T(t), the phrase 'equivalently' is misleading in technical writing. The intended meaning is likely that T and O are dual representations of the same physical quantity. A more precise term like 'complementary' or 'related' should be used. Though the error is resolved by equations, this momentary imprecision undermines clarity and should be corrected for accuracy.",
+          "comment_type": "logical",
+          "paragraph_index": 17,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_2",
+          "title": "Inconsistent notation and ambiguity in sample sets S and T across sections",
+          "quote": "where _S_ = _{si}[m] i_ =1[,][ 0 =] _[ s]_[1] _[< s]_[2] _[< . . . < s][m]_[=] _[ M]_[, where] _[ M]_[is some large constant:]",
+          "explanation": "The notation introduces S as the final sample set in Section 3.2 for numerical integration, yet in Algorithm 1, S is generated via inverse transform sampling from an adaptively refined estimate based on T. This creates confusion: is S a fixed, predefined set or dynamically constructed? The initial presentation in Section 3.2 treats S as static, with no foreshadowing of the adaptive method in Section 3.4. Since T is used for coarse opacity estimation and later upsampled to inform S, the distinction is meaningful. To prevent misinterpretation, Section 3.2 should note that S will be adaptively sampled in practice based on learned opacity bounds, rather than being uniformly fixed.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_3",
+          "title": "Inconsistent indexing in Theorem 1 and interval notation error",
+          "quote": "The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval [ ti, ti\u22121 ] based only on the unsigned distance at the interval\u2019s end points, |di|, |di+1|, and the density parameters \u03b1, \u03b2.",
+          "explanation": "The interval [ti, ti\u22121] is likely a typographical or OCR error, as it contradicts the ordering assumption ti < ti+1. This notation implies decreasing indices and reverses the interval, which is inconsistent with the use of [tk, tk+1] elsewhere and the definition of \u03b4i = ti+1 \u2212 ti. Furthermore, referencing |di| and |di+1| as endpoint distances only makes sense under forward consecutive indexing. The correct interval should be [ti\u22121, ti] or more consistently [ti, ti+1] to match other usage. This error risks confusing readers about the bounds' geometric scope and requires correction for notational consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_4",
+          "title": "Missing condition in Lemma 2 undermines constructive use in Algorithm 1",
+          "quote": "For any \u03b5 > 0 a sufficiently large \u03b2 that satisfies _will provide BT,\u03b2 \u2264 \u03b5._",
+          "explanation": "Lemma 2 claims that a sufficiently large \u03b2 yields BT,\u03b2 \u2264 \u03b5 but omits the actual condition or inequality that \u03b2 must satisfy\u2014likely due to formatting or OCR loss. This renders the lemma non-actionable, especially since Algorithm 1 relies on it to initialize \u03b2+ such that BT,\u03b2+ \u2264 \u03b5. Without a formula or bound specifying how large \u03b2 must be in terms of \u03b5, \u03b1, and the sampling T, the algorithm cannot be implemented as described. While intuitive (larger \u03b2 smooths \u03c3, reducing integration error), this theoretical gap critically weakens reproducibility of the core adaptive sampling method.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_5",
+          "title": "Algorithm 1 underspecifies initialization and sampling mechanism for \u03b2+ and T",
+          "quote": "Initialize \u03b2+ such that BT,\u03b2+ \u2264 \u03b5",
+          "explanation": "Line 2 of Algorithm 1 instructs initialization of \u03b2+ to satisfy the error bound but provides no method for doing so, especially given that Lemma 2's required condition is missing. Additionally, the upsampling step (Line 4) adds n samples to T, distributed proportionally to 'its current error bound' (referencing equation 14). However, equation 14 defines a cumulative max-sum bound, not a per-interval error. The intended distribution\u2014likely proportional to the additive term (\u03b1 \u03b4_i\u00b2 / (2\u03b2)) \u00b7 f(d_i*)\u2014is plausible but not explicitly specified. This underspecifies a key adaptive mechanism essential for implementation and reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_6",
+          "title": "Confusion between learned \u03b2 and sampling proxy \u03b2+ in convergence and error guarantees",
+          "quote": "We use the bisection method (with maximum of 10 iterations) to efficiently search for \u03b2\u22c6 and update \u03b2+ accordingly (Lines 6 and 7 in Algorithm 1). The algorithm runs iteratively until B_{T,\u03b2} \u2264 \u03b5 or a maximal number of 5 iterations is reached.",
+          "explanation": "The algorithm maintains B_{T,\u03b2+} \u2264 \u03b5 during sampling, with \u03b2+ > \u03b2 acting as a smoothing proxy. However, the stopping condition uses B_{T,\u03b2} \u2264 \u03b5\u2014i.e., the bound evaluated at the true, learned \u03b2. This conflation is problematic: B_{T,\u03b2} may exceed \u03b5 even if B_{T,\u03b2+} is satisfied, especially if \u03b2+ > \u03b2. The text claims \u03b2+ 'usually converges to \u03b2', but stopping based on B_{T,\u03b2} falsely suggests the true model\u2019s error is bounded. Moreover, it's ambiguous whether \u03b2+ is used in computing \u03c3 during opacity estimation. If \u03b2+ \u2260 \u03b2 is used in \u03c3, it introduces inconsistency with the learned model; if not, the bound may not reflect actual error. The roles of \u03b2 and \u03b2+ need clearer separation in both notation and description.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_7",
+          "title": "Inconsistent parameterization: \u03b1 = \u03b2^\u22121 not reflected in error bound or parameter set \u03b8",
+          "quote": "In fact, in our implementation we make the choice \u03b1 = \u03b2^{\u22121}. We denote by \u03b8 \u2208 R^{[p]} the collection of all learnable parameters of the model, \u03b8 = (\u03c6, \u03c8, \u03b2).",
+          "explanation": "The paper introduces \u03b1 and \u03b2 as learnable parameters, but states that \u03b1 = \u03b2^\u22121 is used in practice. Consequently, \u03b1 is not independently optimized, and \u03b8 correctly excludes it. However, the error bound B_{T,\u03b2} implicitly depends on \u03b1 through the density derivative, yet does not incorporate \u03b1 = \u03b2^\u22121 into its formulation. This disconnect between actual implementation and theoretical analysis may mislead readers into thinking the bound applies generically to any \u03b1, while in practice it is tied to \u03b2. Furthermore, while \u03b8 is correctly defined, the presentation gives the impression that \u03b2 is learned freely\u2014a concern when gradients depend on the \u03b1\u2013\u03b2 coupling. A comment linking the bound to the practical parameterization would improve clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_8",
+          "title": "Contradictory statements on \u03b1 = \u03b2 vs. \u03b1 = \u03b2^{\u22121} in implementation",
+          "quote": "In fact, in our implementation we make the choice $ \u03b1 = \u03b2^{-1} $.",
+          "explanation": "There is a direct conflict between the paper's body and its summary: the summary states \u03b1 = \u03b2 in implementation, while Section 3.5 states \u03b1 = \u03b2^{\u22121}. This is not a minor parametric choice\u2014heavy-tailed behavior (\u03b2 \u2192 0) yields \u03b1 \u2192 \u221e under \u03b1 = \u03b2^{\u22121}, causing \u03c3 to diverge, which contradicts the stated limit \u03c3 \u2192 \u03b1 **1**_\u03a9. Conversely, \u03b1 = \u03b2 keeps \u03b1 bounded as \u03b2 \u2192 0. Given that both choices dramatically affect model scaling and learning dynamics, this contradiction undermines reproducibility and theoretical consistency. One of the two statements must be incorrect, and this requires urgent correction.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_9",
+          "title": "Ambiguous definition of minimal distance d* in derivative bound (Theorem 1)",
+          "quote": "The inset depicts the boundary of the open balls union Bi \u222a Bi+1, the interval [x(ti), x(ti+1)] and the bound is defined in terms of the minimal distance between these two sets, i.e., d*.. i..",
+          "explanation": "The phrase 'minimal distance between these two sets' is ambiguous: it could refer to the ray segment [x(ti), x(ti+1)] and the union Bi \u222a Bi+1, or to Bi and Bi+1 themselves. The notation 'd*.. i..' appears corrupted, likely meant to be d*_i or d_{*,i}. The formal definition of d* is essential for verifying the derivative bound in Theorem 1, which underpins the error analysis. While such constructions are common in level-set methods, the lack of a precise formula or reference to the supplementary prevents validation. Given its role in geometric reasoning, d* should be explicitly defined.",
+          "comment_type": "technical",
+          "paragraph_index": 31,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_10",
+          "title": "Flawed description of NeRF radiance field introduces misleading baseline",
+          "quote": "For NeRF [21] we note that the radiance field is computed as $ L_\u03c8 ( z , v ) $, where $ L_\u03c8 $ is a fully connected network with one hidden layer (of width 128 and ReLU activation) and $ z $ is a feature vector.",
+          "explanation": "This description inaccurately characterizes NeRF: the original formulation uses $ L_\u03c8(x, v) $, where x is position (post-positional encoding), not a global feature vector z. NeRF does not collapse spatial dependence into a single z; instead, it conditions radiance on per-sample x. Using z suggests a global feature model (e.g., NeRF++ or pixelNeRF), not vanilla NeRF. This misrepresentation weakens the disentanglement comparison, as poor disentanglement in the described variant may stem from architecture\u2014not inherent to NeRF-style representation. For a fair comparison, baselines must reflect standard implementations.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_11",
+          "title": "Underspecification in disentanglement evaluation procedure",
+          "quote": "We have tested the disentanglement of scenes to geometry (density) and appearance (radiance field) by switching the radiance fields of two trained scenes. For VolSDF we switched $ L_\u03c8 $.",
+          "explanation": "The claim that disentanglement is demonstrated by 'switching $ L_\u03c8 $' lacks crucial detail. The radiance field $ L_\u03c8 $ depends on features $ z(x) $ and normal $ n(x) $, both derived from the geometry network $ f_\u03c6 $. To properly swap appearance, one must use the source $ L_\u03c8 $ *and* feed it features computed from the target geometry. The text does not specify whether inputs to $ L_\u03c8 $ were recomputed using the source or target geometry. If features from a different geometry were used, it would not be a clean ablation. Given that disentanglement is a central claim, the evaluation method must be fully specified for reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_12",
+          "title": "Missing training details for SDF and radiance field",
+          "quote": "Adding this dependency is motivated by the fact that BRDFs of common materials are often encoded with respect to the surface normal, facilitating disentanglement as done in surface rendering [38].",
+          "explanation": "Section 3.5, where training details should be provided, is missing. While the model architecture builds careful sampling and geometric priors, the training objective\u2014crucial for unsupervised disentanglement and mask-free learning\u2014is absent. It is unclear whether Eikonal regularization is applied, how the SDF is trained without mask supervision, or how view-dependent effects are learned. This gap prevents reproduction of the full system despite sound sampling design. The paper claims methodological novelty, but omitting the training procedure renders the method incomplete.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3-235b-a22b-2507_13",
+          "title": "Unjustified assumption in radiance field input stability",
+          "quote": "Adding this dependency is motivated by the fact that BRDFs of common materials are often encoded with respect to the surface normal, facilitating disentanglement as done in surface rendering [38].",
+          "explanation": "The use of $ n(t) = \u2207_x d_\u03a9(x(t)) $ in the radiance field assumes $ d_\u03a9 $ is differentiable and its gradient meaningful along the ray. However, learned SDFs may not satisfy $ ||\u2207d_\u03a9|| = 1 $ during training, especially early on. Without mention of gradient normalization, clamping, or Eikonal regularization timing, the numerical stability of $ n(t) $ as input to $ L_\u03c8 $ is questionable. If $ n(t) $ is noisy or misaligned, it may entangle geometry with appearance rather than disentangle them. This critical implementation detail should be addressed given its role in the paper\u2019s core claim.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0153,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 78303,
+      "completion_tokens": 18700
+    },
+    "progressive_original__qwen3-235b-a22b-2507": {
+      "label": "Progressive Original (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "This paper presents a well-motivated and technically sound advancement in neural volume rendering by rethinking the relationship between geometry and density representation. The core idea\u2014modeling volume density as a function of a signed distance function (SDF), rather than treating geometry as a level set of an unconstrained density field\u2014introduces a principled geometric prior that significantly improves both the fidelity of surface reconstruction and the stability of volume rendering. The formulation via Laplace\u2019s CDF of an SDF is elegant and yields multiple benefits: it ensures a well-defined surface, enables error-bounded ray sampling for more accurate opacity integration, and facilitates unsupervised disentanglement of shape and appearance\u2014contributions that are both theoretically grounded and empirically validated. The paper is clearly written, well-structured, and effectively positions VolSDF at the intersection of neural implicit surfaces and volume rendering, addressing key limitations in both domains. However, a major limitation lies in the reliance on the Eikonal regularization to enforce SDF properties, which may introduce optimization challenges and computational overhead; the paper would benefit from a more thorough discussion of this trade-off, including empirical validation of how closely the learned function adheres to a true SDF during training. Additionally, while comparisons to NeRF and IDR are provided, a more detailed ablation on the impact of each component\u2014especially the error-bound-guided sampling\u2014would strengthen the claims. Overall, the work represents a significant step toward more geometrically accurate neural rendering, with implications for both reconstruction quality and controllable synthesis.",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_0",
+          "title": "Ambiguity in the definition of density transformation with respect to SDF sign",
+          "quote": "_\u03c3_ ( _**x**_ ) = _\u03b1_ \u03a8 _\u03b2_ ( _\u2212d_ \u03a9( _**x**_ )) _,_ (2)",
+          "explanation": "At first glance, the use of _\u2212d_\u03a9(**x**) in the argument of \u03a8_\u03b2 raises a concern: standard signed distance functions are negative inside the shape (i.e., d_\u03a9(**x**) < 0 for **x** \u2208 \u03a9) and positive outside. Applying the CDF of a Laplace distribution\u2014which is increasing\u2014to _\u2212d_\u03a9(**x**) would then assign higher density values outside the object if d_\u03a9 is negative inside. This seems to contradict the expectation that density should be high inside and low outside. However, upon closer inspection and in context of the sentence that follows\u2014'as \u03b2 approaches zero, the density \u03c3 converges to a scaled indicator function of \u03a9'\u2014it becomes clear that the authors intend for high density inside \u03a9. This only holds if \u03a8_\u03b2 is large when its argument is large and positive, i.e., when _\u2212d_\u03a9(**x**) is large positive \u21d2 d_\u03a9(**x**) is large negative \u21d2 **x** is deep inside \u03a9. That aligns with \u03a8_\u03b2 being the CDF of a zero-mean Laplace distribution, which increases with its argument, and thus _\u03c3_(**x**) increases as d_\u03a9(**x**) becomes more negative. Therefore, although the expression is correct under this interpretation, the use of _\u2212d_\u03a9_ instead of directly using a transformation that reflects 'interior distance' may confuse readers unfamiliar with the Laplace CDF's behavior. A brief clarification\u2014e.g., noting that the negative sign ensures high density in the interior\u2014would improve readability. While resolved via context, the initial ambiguity could mislead, especially given that SDF conventions vary across papers.",
+          "comment_type": "logical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_1",
+          "title": "Potential confusion between opacity O and transperancy T due to typo",
+          "quote": "the volume\u2019s _opacity O_ , or equivalently, its _transperancy T_ ,",
+          "explanation": "The text states that opacity O is equivalent to 'transperancy T'. This is confusing because opacity and transparency are complements: O(t) = 1 \u2212 T(t), not equivalents. However, the subsequent equations (4) and (5) correctly define T(t) = exp(\u2212\u222b\u03c3) and O(t) = 1 \u2212 T(t), showing that the authors understand the distinction. The word 'equivalently' here seems to be used informally to mean 'related' or 'paired', which is not standard. In technical writing, claiming equivalence between complementary quantities is misleading. While this is likely just poor phrasing rather than a conceptual error, and the equations correct any misunderstanding, it momentarily undermines precision. 'Complementary' or 'reciprocal' would be more accurate than 'equivalently'. Given the context immediately resolves this, the issue is minor but still worth flagging for clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 17,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_2",
+          "title": "Inconsistent notation for sample set indices in numerical integration",
+          "quote": "where _S_ = _{si}[m] i_ =1[,][ 0 =] _[ s]_[1] _[< s]_[2] _[< . . . < s][m]_[=] _[ M]_[, where] _[ M]_[is some large constant:]",
+          "explanation": "The notation for the sample set S is presented as {si}[m] i=1 with s\u2081 = 0 and s\u2098 = M. However, in the discussion of the rectangle rule in Section 3.3, the samples are referred to as T = {ti}[n] i=1 with t\u2081 = 0 and tn = M. This is not inherently problematic\u2014different variable names for different temporary sample sets are acceptable. However, later in Algorithm 1, the set T is upsampled and eventually used to estimate \u00d4, which is then used to generate S via inverse transform sampling. The distinction is meaningful: T is a coarse set used for opacity estimation, S is the final stratified sample. But in the initial definition in Section 3.2, S is treated as the final sample set used in quadrature (equation 8), and no mention is made of a secondary inference-time resampling step. This creates a dissonance: is S the uniformly or adaptively chosen sample set, or is it derived from T? Only after reading Section 3.4 and Algorithm 1 does it become clear that S is generated afresh from \u00d4\u207b\u00b9. Thus, the early use of S in equation (8) as if it were an arbitrary fixed sample set without foreshadowing its actual dynamic construction could mislead a reader into thinking sampling is static. The model is correct and the algorithm sound, but the notation assumes forward knowledge of Section 3.4. A clarifying note in Section 3.2 that 'S will later be chosen adaptively via opacity bounds' would resolve this ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_3",
+          "title": "Missing justification for monotonicity of exp(\u2212R\u0302(t)) in Theorem 2 derivation",
+          "quote": "Finally, we can bound the opacity error for _t \u2208_ [ _tk, tk_ +1] by noting that _E_[] ( _t_ ), and consequently also exp( _E_[] ( _t_ )) are monotonically increasing in _t_ , while exp( _\u2212R_[] ( _t_ )) is monotonically decreasing in _t_ ,",
+          "explanation": "The argument relies on exp(\u2212R\u0302(t)) being monotonically decreasing in t. R\u0302(t) is defined as the rectangle rule approximation to the integral of \u03c3, which is non-negative. Hence R\u0302(t) is increasing in t, so \u2212R\u0302(t) is decreasing, and since exp is increasing, exp(\u2212R\u0302(t)) is decreasing\u2014so this is correct. However, while mathematically sound, the claim is presented without explicit justification. In a paper emphasizing rigorous error bounds, it would be better to note that R\u0302(t) is increasing because \u03c3 \u2265 0 and the integral accumulates forward. The omission is minor given the simplicity of the result for readers familiar with integrals, but in the context of a theoretical contribution centered on bounds, even basic monotonicity should be briefly grounded. Still, this does not rise to a major flaw, as the statement is true and derivable from prior definitions.",
+          "comment_type": "logical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_4",
+          "title": "Underspecification of how radiance depends on surface normal in training",
+          "quote": "Adding this dependency is motivated by the fact that BRDFs of common materials are often encoded with respect to the surface normal, facilitating disentanglement as done in surface rendering [38].",
+          "explanation": "The text introduces the radiance field L(**x**, **n**, **v**) with explicit dependence on the normal **n**(t) = \u2207\u2093d_\u03a9(**x**(t)). This is a key component for disentanglement. However, the section titled '3.5 Training'\u2014which would be the natural place to detail how this is implemented\u2014is missing from the provided text. While Figure 3 suggests the normal is computed via gradient of the SDF, and the framework is inspired by IDR [38], the actual training objective (e.g., whether Eikonal regularization is used, whether mask supervision is avoided as claimed in the intro) is not specified here. Given the paper claims unsupervised disentanglement and mask-free training, the omission of the loss function or training procedure is a significant gap in reproducibility. The method section builds up the sampling and density model carefully, but without the training details\u2014especially how the SDF is regularized and how radiance learns view-dependent effects\u2014the full method cannot be reproduced. This is not an error per se, but an underspecification. If this section exists elsewhere, it's not in context. As it stands, a reader cannot implement the full system.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_5",
+          "title": "OCR artifact in author affiliation list",
+          "quote": "Yaron Lipman**[1] _[,]_[2]",
+          "explanation": "The second to last author, Yaron Lipman, is listed with affiliations [1] and an apparent OCR error: '_[,]_[2]' instead of ',[2]'. This appears to be a scanning artifact where the comma was misread or poorly typeset. Given that the affiliations list clearly states '1 Weizmann Institute of Science 2 Facebook AI Research', and Jiatao Gu is already assigned [2], it is evident that Yaron Lipman is intended to have dual affiliation [1,2]. This is confirmed by the fact that Lipman is at Weizmann (as per his known position) and collaborated with Facebook AI. Thus, this is not a material error in meaning, but a clear OCR flaw. Since the instruction is to flag OCR issues only if they create ambiguity even under plausible correction, and here the correction is unambiguous, it should not be flagged as a real issue. Hence, while noted, no flag is needed\u2014it's resolved by context.",
+          "comment_type": "technical",
+          "paragraph_index": 0,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_6",
+          "title": "Ambiguity in sign of SDF argument in density transformation",
+          "quote": "_\u03c3_ ( _**x**_ ) = _\u03b1_ \u03a8 _\u03b2_ ( _\u2212d_ \u03a9( _**x**_ )) _,_ (2)",
+          "explanation": "At first glance, the use of _\u2212d_\u03a9(_**x**_) in Equation (2) raised concern because the SDF, _d_\u03a9(_**x**_), is typically defined as negative inside the object and positive outside (i.e., _d_\u03a9(_**x**) < 0 for _**x** \u2208 \u03a9_). The Laplace CDF \u03a8_\u03b2 is increasing, so applying it to _\u2212d_\u03a9(_**x**_) means that inside the object (where _d_\u03a9 is negative), _\u2212d_\u03a9 is positive, leading to high density \u2014 which aligns with the desired behavior. As _\u03b2 \u2192 0_, \u03a8_\u03b2 approaches a step function at 0, so \u03a8_\u03b2(\u2212d_\u03a9(_**x**)) \u2192 1 when \u2212d_\u03a9(_**x**) > 0, i.e., _d_\u03a9(_**x**) < 0, which corresponds exactly to _**x** \u2208 \u03a9_, matching the claim that \u03c3 \u2192 \u03b1 **1**_\u03a9. Thus, the negative sign ensures that high density is assigned to the interior (where SDF is negative), and the transformation smoothly approaches the indicator function. The authors are consistent with standard SDF conventions (as implied in the definition _d_\u03a9(**x**) = min_{**y**\u2208M} ||**x**\u2212**y**|| \u22c5 sign(dist)), and the use of \u2212d_\u03a9 is intentional and correct. However, the potential for confusion remains: a reader might expect the CDF to be applied directly to _d_\u03a9 to threshold at zero, but that would assign high density to the exterior. The negative sign is therefore crucial and justified, but its necessity is not explicitly justified in the prose. A brief clarification (e.g., 'to ensure high density inside where SDF < 0') would prevent misinterpretation. Given that the math is correct and the behavior is verified in the limit, this is not an error but a point of ambiguity.",
+          "comment_type": "logical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_7",
+          "title": "Inconsistency in opacity error bound usage between Theorem 2 and Algorithm 1",
+          "quote": "**Theorem 2.** _For t \u2208_ [0 _, M_ ] _, the error of the approximated opacity O_[\u02c6] _can be bounded as follows:_ ... _BT ,\u03b2_ as a function of _T_ and _\u03b2_",
+          "explanation": "Theorem 2 presents a uniform bound _BT,\u03b2_ on the opacity approximation error that depends on the sampling _T_ and the shape parameter _\u03b2_. Lemma 2 then states that for a fixed number of samples, increasing _\u03b2_ reduces the error bound, enabling _BT,\u03b2 \u2264 \u03f5_. However, in Algorithm 1, _\u03b2_+ is initialized to a value larger than the true _\u03b2_, and then reduced iteratively. This seems contradictory: increasing _\u03b2_ makes the density smoother (wider transition at boundary), which makes the derivative smaller and thus the error bound tighter \u2014 so using a larger _\u03b2_+ initially satisfies _BT,\u03b2+ \u2264 \u03f5_ more easily. Then, when updating, the goal is to decrease _\u03b2_+ toward the true _\u03b2_, which makes the density sharper and the error bound larger. The algorithm checks whether _BT,\u03b2 > \u03f5_ and upsamples if so. This logic aligns: use a conservative (larger) _\u03b2_+ to satisfy the bound at coarse sampling, then refine both sampling and _\u03b2_+ to approach the true density. The key potential confusion is that _\u03b2_ itself is a learnable parameter (controlling sharpness), but within the sampling algorithm, _\u03b2_+ is a temporary over-approximation used to ensure the opacity estimate is accurate during ray-marching. The paper does clarify that _\u03b2_+ > _\u03b2_ is chosen so that the bound holds, and bisection finds _\u03b2\u22c6_ such that _BT,\u03b2\u22c6 = \u03f5_. However, the fact that _\u03b2_ is both a fixed (learnable) model parameter and used in the bound as a variable in Lemma 2 and Algorithm 1 could mislead: one might think _\u03b2_ is being changed during sampling, but in fact, during inference, _\u03b2_ is fixed, and _\u03b2_+ is an auxiliary variable for safe sampling. The explanation in Section 3.4 is sufficient upon close reading, but could be clearer. Since Algorithm 1 works with a fixed _\u03b2_ (from the model) and manipulates _\u03b2_+ as a proxy, the distinction is crucial. The method is sound, but the dual use of _\u03b2_ without explicit separation (e.g., calling it _\u03b2_smoothing_hint_) introduces ambiguity. However, given the context and the correct flow of logic (especially the bisection toward _\u03b2_), this is resolved in context.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_8",
+          "title": "Undefined transparency function with missing integral in displayed equation",
+          "quote": "The _transparency_ function of the volume along a ray _**x**_ , denoted _T_ , indicates, for each _t \u2265_ 0, the probability a light particle succeeds traversing the segment [ _**c** ,_ _**x**_ ( _t_ )] without bouncing off,\n\n3",
+          "explanation": "After the prose defining transparency _T_ as the survival probability along the ray, the expected continuation would be an equation defining _T(t) = exp(\u2212\u222b_0^t \u03c3(**x**(s)) ds)_. However, the next visible content is just the number \u201c3\u201d, which is clearly a page number or OCR artifact. The actual equation is missing in the provided passage, though it appears the authors intend to define _T_ via the integral of _\u03c3_. Given the surrounding context and standard volume rendering conventions (and the later appearance of _\u03c4 = dO/dt_), the definition is recoverable and standard. The supplementary is referenced for derivation, suggesting the full form is elsewhere. In a complete paper, this equation would be present; its absence here is due to text extraction limits. Since the opacity _O_ is later defined as 1 \u2212 _T_, and _\u03c4 = dO/dt = \u03c3 exp(\u2212\u222b\u03c3)_, the functional form of _T_ can be inferred. No mathematical error occurs in the visible content, and the omission is due to OCR/page break, not author oversight. Thus, no real issue.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_9",
+          "title": "Potential confusion between 'learnable \u03b2' and 'bound parameter \u03b2' in error analysis",
+          "quote": "Lemma 2. _Fix n >_ 0 _. For any \u03f5 >_ 0 _a sufficiently large \u03b2 that satisfies ... will provide BT ,\u03b2 \u2264 \u03f5._",
+          "explanation": "In Lemma 2, increasing \u03b2 reduces the error bound \u2014 which aligns with the idea that smoother density (larger \u03b2) has smaller derivative, leading to smaller rectangle rule error. But \u03b2 is also a learnable parameter in the model that controls the sharpness of the density transition. A reader might wonder: are we changing the model's \u03b2 to satisfy the bound during training or inference? This would be problematic because \u03b2 is meant to be learned from data, not set for convenience. However, the context in Section 3.4 resolves this: the algorithm uses a temporary \u03b2+ \u2265 \u03b2 to satisfy the error bound, then converges to the true \u03b2. Lemma 2 is used to initialize \u03b2+ large enough to make BT,\u03b2+ \u2264 \u03f5 under coarse sampling. The true \u03b2 remains fixed as a model parameter, but Lemma 2 is invoked not to change it, but to find a safe over-smoothed version for sampling stability. Therefore, Lemma 2 is applied not to the model's \u03b2 directly, but to a hypothetical density with larger \u03b2 for the purpose of bounding. This is a subtle but crucial distinction. The paper could clarify that the \u03b2 in Lemma 2 refers to the parameter of a hypothetical density used for bound computation, not necessarily the trained one. But given that Algorithm 1 explicitly uses \u03b2+ > \u03b2, the intent is preserved. The logic holds, but the notation risks conflating two uses of \u03b2.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_10",
+          "title": "Missing justification for rectangle rule error bound derivation",
+          "quote": "Details are in the supplementary. Equation 12 leads to the following opacity error bound, also proved in the supplementary:",
+          "explanation": "The paper states that the rectangle rule approximation error for the opacity integral is bounded using a derivative bound on the density (Theorem 1), leading to the error bound in Equation 12 and ultimately Theorem 2. However, the step from bounding \u03c3\u2032 to bounding the error in \u222b\u03c3 is non-trivial, especially since the transparency T depends exponentially on the integral of \u03c3, and the opacity O(t) = 1 \u2212 exp(\u2212\u222b_0^t \u03c3 ds), so the error propagation is nonlinear. Standard error bounds for quadrature assume smoothness of the integrand, but here the opacity is a nonlinear transformation. The supplementary likely contains the full derivation, but within the main paper, the claim lacks intuitive justification. For instance, does the bound account for error accumulation in the exponential? The paper mentions that exp(\u2212R\u02c6(t)) and exp(E\u02c6(t)) are monotonic, which suggests a Gr\u00f6nwall-type argument, but this is not elaborated. Given that bounding such an error in volume rendering with adaptive sampling is a key contribution, deferring all details to the supplementary makes the method less transparent. However, since the supplementary is cited and the paper is from NeurIPS (where supplementary is standard), and given that the empirical results in Figure 3 support the convergence, this is a mild shortcoming in exposition, not a flaw in the method.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_11",
+          "title": "Inconsistent indexing in Theorem 1: interval [ti, ti+1] vs. [ti, ti\u22121]",
+          "quote": "The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval [ ti, ti\u22121 ] based only on the unsigned distance at the interval\u2019s end points, |di|, |di+1|, and the density parameters \u03b1, \u03b2.",
+          "explanation": "Initially, I was concerned that the interval [ti, ti\u22121] is referenced, which would imply a reversal of indices (since ti\u22121 < ti in an ordered sequence) and could suggest a typo. This contrasts with earlier and later use of [ti, ti+1] as the correct forward interval (e.g., 't \u2208 [tk, tk+1]'). Checking the context, the surrounding definitions consistently use increasing index order, and Theorem 1 is stated for segment [ti, ti+1], not [ti, ti\u22121]. Furthermore, the use of |di|, |di+1| as endpoint unsigned distances only makes sense with consecutive indices in forward order. Therefore, the mention of [ti, ti\u22121] must be an OCR or typographical error. It contradicts the established notation and could mislead a reader about the interval indexing. Even assuming the intended interval is [ti\u22121, ti], it still doesn't align with the rest of the section, where intervals are indexed forward. The correct reference should be [ti, ti+1], consistent with T = {ti} and \u03b4i = ti+1 \u2212 ti.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_12",
+          "title": "Missing expression for rectangle rule approximation in text",
+          "quote": "Given some t \u2208 (0, M], assume t \u2208 [tk, tk+1], and apply the rectangle rule (i.e., left Riemann sum) to get the approximation:\n\n4\n\nis the rectangle rule approximation, and E(t) denotes the error in this approximation.",
+          "explanation": "The passage breaks into a numbered line break ('4') before showing the actual equation, which was likely meant to display the integral approximation. In the context, we expect to see something like R\u0303(t) = \u2211_{i=1}^k \u03c3_i \u03b4_i as the piecewise constant (left-endpoint) approximation of \u222b_0^t \u03c3(x(s)) ds. The prose refers to 'the approximation' and 'E(t)' as the error, but the expression itself is missing \u2014 possibly due to OCR or formatting loss. While the concept is recoverable from context and the supplementary is referenced, a standalone reader cannot verify the exact form of the approximation or the error definition. This breaks the flow and risks ambiguity in what R\u0303(t) actually is (e.g., whether it's left, right, or midpoint). The field standard is left Riemann sum for such rendering approximations, so intent is clear. However, the absence of the expression remains a gap in completeness.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_13",
+          "title": "Inconsistent subscript in opacity approximation \u00d4 vs. \u014c in bound derivation",
+          "quote": "Finally, we can bound the opacity error for t \u2208 [tk, tk+1] by noting that \u00ca(t), and consequently also exp(\u00ca(t)) are monotonically increasing in t, while exp(\u2212R\u0303(t)) is monotonically decreasing in t, and therefore",
+          "explanation": "The notation shifts from \u00d4 (hat) as the approximated opacity to using \u00ca(t) and R\u0303(t) in the error decomposition. Earlier, the approximation of \u222b\u03c3 ds is R\u0303(t), and E(t) is the error so that \u222b_0^t \u03c3 ds = R\u0303(t) + E(t). Then T\u0303(t) = exp(\u2212R\u0303(t)), and \u1ed6(t) = 1 \u2212 T\u0303(t). But here, \u00ca(t) is used (with hat), which is not defined. Context suggests that \u00ca(t) should simply be E(t), the integral approximation error, which is already defined. The use of a hat may be an OCR artifact or inconsistent notation. If \u00ca(t) were an estimate of E(t), that would compound errors, but no such object is defined. The monotonicity argument relies on E(t) being positive and increasing due to the non-negativity of \u03c3, which holds, but the shifted notation risks confusion. Since E(t) is already the error in the rectangle rule approximation of the integral, introducing a hatted version adds unnecessary ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_14",
+          "title": "Ambiguous definition of d* as minimal distance between sets",
+          "quote": "The inset depicts the boundary of the open balls union Bi \u222a Bi+1, the interval [x(ti), x(ti+1)] and the bound is defined in terms of the minimal distance between these two sets, i.e., d*.. i..",
+          "explanation": "The phrase 'the minimal distance between these two sets' is ambiguous. Which two sets? Bi \u222a Bi+1 and the ray segment [x(ti), x(ti+1)]? Or Bi and Bi+1 themselves? The proof relies on geometric properties of signed distance functions, and typically such bounds involve the distance from the segment to the complement of the union of balls where the SDF is controlled. However, without a precise definition or reference to the supplementary (which isn't available), it\u2019s unclear how d* is formally derived. The notation 'd*.. i..' suggests a subscripted d* with indices, likely d*_i, but is garbled. The OCR likely corrupted a subscript like d*_i or d_{\u2217,i}. While the general idea\u2014that the derivative bound depends on local geometry of the SDF near the ray segment\u2014is sound and standard in level-set methods, the lack of clarity in how d* is defined prevents verification of Theorem 1's applicability. This is a known construction in Eikonal equation analysis, but the omission of a formula or clearer description is problematic for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 31,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_15",
+          "title": "Lemma 2 claims existence but lacks constructive condition",
+          "quote": "For any \u03f5 > 0 a sufficiently large \u03b2 that satisfies _will provide BT,\u03b2 \u2264 \u03f5._",
+          "explanation": "The statement of Lemma 2 is incomplete: it says 'a sufficiently large \u03b2 that satisfies' but provides no condition or inequality afterward \u2014 the formula is missing, likely due to OCR truncation. In context, \u03b2 controls the width of the transition in the density near the surface (\u03c3(x) = \u03b1 \u03a8_\u03b2(\u2212d_\u03a9(x))), so larger \u03b2 makes the density smoother and the derivative smaller, hence reducing the error in the rectangle rule. Thus, the bound BT,\u03b2 should decrease with \u03b2. But without the actual condition (e.g., \u03b2 > f(\u03f5, T)), the lemma is unusable. While Figure 3 and the algorithm description suggest that \u03b2+ is chosen to meet the error bound via a bisection, the omission of the required inequality undermines the theoretical grounding. The claim that large \u03b2 reduces error makes intuitive sense (smoother functions are easier to integrate), but the lack of a formal condition makes Lemma 2 underspecified. This is critical because Algorithm 1 depends on it (Line 2).",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_16",
+          "title": "Algorithm 1 does not define how \u03b2+ is initialized despite relying on Lemma 2",
+          "quote": "Initialize \u03b2+ such that BT,\u03b2+ \u2264 \u03f5",
+          "explanation": "Line 2 of Algorithm 1 says to initialize \u03b2+ such that the error bound is satisfied, but no method is given for computing this value. Given that Lemma 2\u2019s condition is missing (see previous issue), the algorithm lacks a specification for how \u03b2+ is chosen. While the text says 'according to Lemma 2', without the condition in Lemma 2, it\u2019s impossible to reproduce this step. A practical implementation would require either a formula, a root-finding method, or a conservative upper bound on the derivative. The reliance on an undefined procedure makes the algorithm underspecified. Even though bisection is used later, the initial value of \u03b2+ must be large enough to satisfy the bound, which requires knowing how BT,\u03b2 depends on \u03b2. This is particularly problematic because \u03b2 is also a learnable parameter\u2014so the algorithm balances between learning \u03b2 and using a larger \u03b2+ for sampling, which affects gradients.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_17",
+          "title": "Use of 'monotonically increasing' for exp(E(t)) assumes E(t) \u2265 0, which needs justification",
+          "quote": "Finally, we can bound the opacity error for t \u2208 [tk, tk+1] by noting that \u00ca(t), and consequently also exp(\u00ca(t)) are monotonically increasing in t, while exp(\u2212R\u0303(t)) is monotonically decreasing in t",
+          "explanation": "The argument that exp(E(t)) is monotonically increasing relies on E(t) being increasing, which in turn relies on the error in the rectangle rule being cumulative and non-negative. However, for a left Riemann sum of a non-negative function (\u03c3 \u2265 0), R\u0303(t) underestimates \u222b\u03c3 ds, so E(t) = \u222b\u03c3 ds \u2212 R\u0303(t) \u2265 0 and increases as t grows. While this is standard, the claim that E(t) is monotonically increasing is non-trivial \u2014 it depends on the monotonicity of both the true integral and the piecewise approximation. The true integral increases with t, and R\u0303(t) increases in steps, but E(t) could oscillate. However, within each interval [tk, tk+1], R\u0303(t) is constant, while \u222b\u03c3 ds increases, so E(t) increases piecewise-linearly. After tk+1, R\u0303 jumps up, possibly reducing E(t). Therefore, E(t) is not globally monotonic. The argument likely applies per interval or relies on a bound that is monotonic in a piecewise sense. The justification is underspecified, and the claim as stated is questionable without additional constraints on \u03c3 or the sampling. This weakens the derivation of the uniform bound BT,\u03b2.",
+          "comment_type": "logical",
+          "paragraph_index": 35,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_18",
+          "title": "Mismatch between stated m = 64 samples and T with n = 128 in upsampling",
+          "quote": "we use n = 128 in our implementation... Finally we return a fresh set of m = 64 samples",
+          "explanation": "The algorithm begins with T of size n = 128, then adds n = 128 more samples in each upsample step (Line 4). After several iterations, T becomes substantially larger (e.g., 128 \u2192 256 \u2192 384). Then, in Line 11, only m = 64 samples are drawn from \u00d4\u207b\u00b9 via inverse transform sampling. This raises a question: why invest in a large T to get a high-fidelity \u00d4, only to resample just 64 points? While this is efficient (using a detailed T to estimate \u00d4, then sampling sparsely from it), the justification for down-sampling is not given. Standard practice (e.g., in NeRF) uses ~64 coarse + 64 fine samples. Here, the fine set S (64 points) is derived from \u00d4, but the coarse set T (growing to 384+) is not reused. This could imply redundancy. It would be clearer if the algorithm reused some points or justified the reduction. While not an error, the inefficiency or lack of explanation could mislead readers about computational cost or sampling strategy. Given that T is already dense near boundaries, resampling 64 points may be sufficient, but the choice of m = 64 vs. the large T is unexplained.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_19",
+          "title": "Inconsistency in parameterization: \u03b1 = \u03b2\u207b\u00b9 not reflected in opacity error bound",
+          "quote": "In fact, in our implementation we make the choice \u03b1 = \u03b2^{\u22121}. We denote by \u03b8 \u2208 R^{[p]} the collection of all learnable parameters of the model, \u03b8 = (\u03d5, \u03c8, \u03b2).",
+          "explanation": "The authors state that they set \u03b1 = \u03b2\u207b\u00b9 in practice, which is a reasonable design choice to reduce the number of free parameters. However, this choice is not reflected in the opacity error bound B_{T,\u03b2}, which depends explicitly on \u03b1 through the derivative bound in Theorem 1 and subsequently in the summation term of B_{T,\u03b2}. Given that \u03b1 scales the density, and the rectangle rule error |E_\\hat{}(t)| scales with \u03b1 (via the integral \u222b\u03c3 ds), setting \u03b1 = \u03b2\u207b\u00b9 introduces a specific scaling dependence that should be incorporated into B_{T,\u03b2}. Yet the bound as defined does not substitute \u03b1 = \u03b2\u207b\u00b9, potentially overstating generality. While this doesn't invalidate the bound, it creates a disconnect between the implementation and the theoretical presentation: the actual error control in experiments depends on this coupling, but the analysis treats \u03b1 and \u03b2 independently. A careful reader might be misled into thinking B_{T,\u03b2} is valid for arbitrary \u03b1, while in practice it's tied to \u03b2. The issue is resolvable from context, but the lack of comment on this coupling in the error analysis is a missed opportunity for clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_20",
+          "title": "Missing justification for monotonicity of exp(\u2212R\u0302(t)) in derivation of uniform bound",
+          "quote": "Finally, we can bound the opacity error for t \u2208 [t_k, t_{k+1}] by noting that E_\\hat{}(t), and consequently also exp(E_\\hat{}(t)) are monotonically increasing in t, while exp(\u2212R\u0302(t)) is monotonically decreasing in t, and therefore\n\n|O(t) \u2212 \u00d4(t)| \u2264 1 \u2212 exp(\u2212|E_\\hat{}(t)|).",
+          "explanation": "The derivation of the uniform bound relies on the monotonicity of exp(\u2212R\u0302(t)) to justify taking the maximum over intervals. R\u0302(t) is defined as the rectangle rule approximation, which is piecewise constant between samples and jumps at t_i. Thus, R\u0302(t) is non-decreasing, so exp(\u2212R\u0302(t)) is non-increasing \u2014 this justifies the decreasing part. However, R\u0302(t) is piecewise constant, so exp(\u2212R\u0302(t)) is flat within each [t_k, t_{k+1}), not strictly decreasing. The error term |O(t) \u2212 \u00d4(t)| depends on both exp(\u2212R\u0302(t)) and exp(E_\\hat{}(t)), and E_\\hat{}(t) is increasing due to accumulation of integration error. But the combined behavior isn't trivially monotonic. The authors assert the bound without showing that the maximum occurs at interval endpoints \u2014 a key step. In practice, for convergence analysis, this bound is conservative and accepted in the field, so the claim likely holds, but the justification is underspecified. A reference to a standard result on error accumulation in rectangle rules for monotonic integrands would strengthen it.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_21",
+          "title": "Mismatch between defined parameter collection and implementation choice in \u03b8",
+          "quote": "We denote by \u03b8 \u2208 R^{[p]} the collection of all learnable parameters of the model, \u03b8 = (\u03d5, \u03c8, \u03b2).",
+          "explanation": "Earlier, the authors define both \u03b1 and \u03b2 as learnable scalar parameters, but then state that \u03b1 = \u03b2\u207b\u00b9 in implementation. If \u03b1 is not independently learnable, then \u03b8 should not include \u03b1 as a separate parameter \u2014 and it doesn't. However, naming \u03b8 = (\u03d5, \u03c8, \u03b2) and excluding \u03b1 is correct *only if* \u03b1 is strictly determined by \u03b2. But the presentation could mislead: one might assume \u03b2 is learned freely while \u03b1 is derived, yet in the model definition, both are said to be learnable. The resolution comes from the sentence 'in our implementation we make the choice \u03b1 = \u03b2\u207b\u00b9', which implies \u03b1 is not independently optimized. However, this is stated after \u03b8 is defined. A more careful reader might question whether \u03b1 is optimized at all or how the constraint is enforced (e.g., via reparameterization or loss penalty). The issue is minor because the text resolves it shortly after, but reversing the order would improve clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_22",
+          "title": "Underspecification of sampling distribution in upsampling step",
+          "quote": "In order to reduce \u03b2_+ while keep B_{T,\u03b2_+} \u2264 \u03f5, n samples are added to T (Line 4 in Algorithm 1), where the number of points sampled from each interval is proportional to its current error bound, equation 14.",
+          "explanation": "Line 4 of Algorithm 1 refers to adding n samples to T with count per interval proportional to 'its current error bound' \u2014 referring to equation 14, which is the per-interval contribution to B_{T,\u03b2}. However, equation 14 is not an error per interval, but a cumulative sum up to k. B_{T,\u03b2} = max_k (1 \u2212 exp(\u2212\u2211_{i=1}^k (\u03b1 \u03b4_i\u00b2 / (2\u03b2)) \u22c5 f(d_i^*))), so the per-k contribution isn't directly the term in the sum. The 'error bound' for interval i should be the additive contribution to the cumulative exponent \u2014 i.e., the term inside the sum for i. But this isn't specified. A reader cannot reproduce the sampling distribution without guessing that 'proportional to its current error bound' means 'proportional to the term corresponding to interval i in the sum \u2211_i (\u03b1 \u03b4_i\u00b2 / (2\u03b2)) \u22c5 f(d_i^*)'. While plausible and likely correct, this is underspecified. Given that Algorithm 1 is central to the method, more precision in how the error guides sampling would help reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_23",
+          "title": "Potential confusion between \u03b2 and \u03b2_+ in convergence description",
+          "quote": "We use the bisection method (with maximum of 10 iterations) to efficiently search for \u03b2\u22c6 and update \u03b2_+ accordingly (Lines 6 and 7 in Algorithm 1). The algorithm runs iteratively until B_{T,\u03b2} \u2264 \u03f5 or a maximal number of 5 iterations is reached.",
+          "explanation": "The algorithm initializes \u03b2_+ > \u03b2 and aims to reduce it toward \u03b2 while ensuring B_{T,\u03b2_+} \u2264 \u03f5. The stopping condition is B_{T,\u03b2} \u2264 \u03f5 \u2014 i.e., using the target \u03b2, not \u03b2_+. But during execution, the bound B_{T,\u03b2_+} is maintained, not B_{T,\u03b2}. The bisection finds \u03b2\u22c6 such that B_{T,\u03b2\u22c6} = \u03f5, which allows decreasing \u03b2_+, but the final rendering uses \u03b2, not \u03b2_+. There is an implicit assumption that once T is refined enough, B_{T,\u03b2} \u2264 \u03f5. But this is only guaranteed if \u03b2_+ has been decreased to \u03b2 and B_{T,\u03b2_+} \u2264 \u03f5 \u2014 which may not happen in 5 iterations. The authors say '\u03b2_+ usually converges to \u03b2 (typically 85%)', implying it's not always exact. Yet the final sampling uses \u03b2. This suggests that \u03b2 in B_{T,\u03b2} refers to the current \u03b2_+ during estimation, but the notation overloads \u03b2. A careful reader might be misled into thinking the algorithm ensures B_{T,\u03b2} \u2264 \u03f5 with the true \u03b2, but it's only ensured for \u03b2_+, which may be larger. This doesn't break the method \u2014 as \u03b2_+ controls the bound \u2014 but the description conflates \u03b2 and \u03b2_+, risking overstatement of error guarantees.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_24",
+          "title": "Inconsistent definition of $ \\alpha $ and $ \\beta $ in text vs. implementation",
+          "quote": "In fact, in our implementation we make the choice $ \\alpha = \\beta^{-1} $.",
+          "explanation": "Initially, I was concerned about a contradiction between the definition of $\\alpha$ and $\\beta$ in the PAPER SUMMARY and the passage. The summary states that $\\alpha, \\beta \\in \\mathbb{R}$ are scalar learnable parameters with $\\alpha = \\beta$ in implementation. However, the passage in Section 3.5 claims $\\alpha = \\beta^{-1}$. This is a direct conflict: one cannot have both $\\alpha = \\beta$ and $\\alpha = \\beta^{-1}$ unless $\\beta = 1$, which is not generally true during training.\n\nI checked whether this might be an OCR error (e.g., misreading $\\beta$ as $\\beta^{-1}$), but the LaTeX is clearly written as \\beta^{-1}. Then I considered if the summary might be outdated or simplified, but the summary explicitly says 'in implementation' \u2014 indicating it is describing the actual code. The supplementary material is referenced for details, but since this is a core parametric choice, it should be self-consistent in the main text.\n\nThe issue remains: either the summary is wrong, or the body text is wrong. Given that the model\u2019s behavior depends critically on the scale of $\\alpha$ (which controls density magnitude) and $\\beta$ (which controls SDF sharpness), setting $\\alpha = \\beta^{-1}$ introduces an inverse relationship that drastically changes the inductive bias compared to $\\alpha = \\beta$. This discrepancy undermines confidence in reproducibility and could affect disentanglement and convergence.\n\nMoreover, Equation (2) defines $\\sigma(\\mathbf{x}) = \\alpha \\Psi_\\beta(-d_\\Omega(\\mathbf{x}))$, where $\\Psi_\\beta$ is the Laplace CDF with scale $\\beta$. Since the Laplace CDF has range [0,1], $\\alpha$ acts as a maximum density. If $\\alpha = \\beta^{-1}$, then as $\\beta \\to 0$, $\\alpha \\to \\infty$, making the density diverge \u2014 which contradicts the stated behavior that $\\sigma \\to \\alpha \\mathbf{1}_\\Omega$ as $\\beta \\to 0$. For that limit to be meaningful, $\\alpha$ should remain bounded. This suggests $\\alpha = \\beta$ is more plausible than $\\alpha = \\beta^{-1}$, especially with $\\beta$ small.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_25",
+          "title": "NeRF radiance field formulation conflicts with canonical definition",
+          "quote": "For NeRF [21] we note that the radiance field is computed as $ L_\\psi ( \\mathbf{z} , \\mathbf{v} ) $, where $ L_\\psi $ is a fully connected network with one hidden layer (of width 128 and ReLU activation) and $ \\mathbf{z} $ is a feature vector.",
+          "explanation": "At first glance, this seems like a reasonable summary. But given that the paper is positioning VolSDF against NeRF, accuracy in describing NeRF is critical. The cited NeRF paper (Mildenhall et al., NeurIPS 2020) defines the radiance field as $ L_\\psi(\\mathbf{x}, \\mathbf{v}) $, where $\\mathbf{x}$ is the position (after positional encoding) and $\\mathbf{v}$ is the viewing direction. The feature vector $\\mathbf{z}$ is not directly used; instead, the coarse-to-fine sampling uses two networks: one for $\\sigma$ and one for radiance, both conditioned on $\\mathbf{x}$ and $\\mathbf{v}$.\n\nThe description here suggests NeRF uses a feature vector $\\mathbf{z}$ independent of $\\mathbf{x}$, which is inaccurate. NeRF does pass a coarse sample encoding through a network to condition the fine network, but it does not reduce the spatial dependence to a global feature $\\mathbf{z}$; position dependence is maintained. The use of $\\mathbf{z}$ as a fixed feature per ray or image would be more characteristic of NeRF++ or other decomposed models, not vanilla NeRF.\n\nThis misstatement weakens the validity of the disentanglement comparison: if the authors are testing a non-standard version of NeRF (e.g., one that removes spatial dependence via a global $\\mathbf{z}$), then the failure of disentanglement may be due to that architectural choice rather than a fundamental limitation of NeRF-style modeling.\n\nWhile the authors attempt fairness by testing a second variant with normal dependence, the first version described is not representative of the original NeRF, potentially misleading readers about the baseline.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_26",
+          "title": "Ambiguity in disentanglement evaluation methodology",
+          "quote": "We have tested the disentanglement of scenes to geometry (density) and appearance (radiance field) by switching the radiance fields of two trained scenes. For VolSDF we switched $ L_\\psi $.",
+          "explanation": "The claim of successful disentanglement hinges on the interpretation of what 'switching $ L_\\psi $' means. Initially, I assumed this meant swapping the entire radiance MLP weights between two trained models, while keeping the geometry (SDF and $\\mathbf{z}$) fixed. But $L_\\psi$ in VolSDF depends on $\\mathbf{x}, \\mathbf{n}, \\mathbf{v}, \\mathbf{z}$, where $\\mathbf{n} = \\nabla_\\mathbf{x} d_\\Omega(\\mathbf{x})$ and $\\mathbf{z} = \\mathbf{z}(\\mathbf{x})$ are outputs of $\\mathbf{f}_\\phi(\\mathbf{x})$ \u2014 i.e., they are derived from the geometry network.\n\nTherefore, if both $\\mathbf{n}$ and $\\mathbf{z}$ depend on the geometry, and $L_\\psi$ uses them as inputs, then simply switching $L_\\psi$'s weights is not sufficient to swap appearance \u2014 one must also ensure that the inputs $\\mathbf{z}(\\mathbf{x})$ are evaluated using the source geometry, not the target. But the passage does not specify how the inputs to the swapped $L_\\psi$ are computed.\n\nFor the disentanglement to be meaningful, one must render using: (1) geometry network $\\mathbf{f}_{\\phi_A}$, (2) radiance network $L_{\\psi_B}$, and (3) inputs to $L_{\\psi_B}$ computed from $\\mathbf{f}_{\\phi_A}(\\mathbf{x})$ \u2014 ensuring that the appearance is modulated by the source geometry's features. If instead $\\mathbf{z}(\\mathbf{x})$ were taken from $\\mathbf{f}_{\\phi_B}$, that would be mixing geometries.\n\nThe text says only 'switched $L_\\psi$', leaving this critical detail unspecified. Given that the visual result in Figure 7 appears plausible, the authors likely did it correctly, but the method is underspecified for reproduction. This is especially important because one of the claimed advantages of VolSDF is disentanglement \u2014 and without clarity on how it was tested, the claim is hard to validate.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_27",
+          "title": "Unjustified assumption in radiance field dependency on $ \\mathbf{n} $",
+          "quote": "Adding this dependency is motivated by the fact that BRDFs of common materials are often encoded with respect to the surface normal, facilitating disentanglement as done in surface rendering [38].",
+          "explanation": "The motivation for including the normal $\\mathbf{n}(t) = \\nabla_\\mathbf{x} d_\\Omega(\\mathbf{x}(t))$ in the radiance field $L_\\psi$ is presented as standard and unproblematic. However, this assumes that the gradient $\\nabla_\\mathbf{x} d_\\Omega$ is well-defined and meaningful along the ray, which is not guaranteed for a learned SDF.\n\nSigned distance functions are only differentiable almost everywhere, and $\\| \\nabla d_\\Omega \\| = 1$ only where differentiable \u2014 a property enforced via the Eikonal loss. However, during training, especially early on, $\\nabla d_\\Omega$ may not be unit norm, and may even be noisy or undefined at some points.\n\nThe paper does not clarify whether $\\mathbf{n}(t)$ is computed using automatic differentiation from the current $d_\\Omega$, or whether it\u2019s clamped or normalized. If used raw, it could introduce numerical instability or meaningless inputs to $L_\\psi$. The disentanglement benefit relies on $\\mathbf{n}$ being a clean geometric signal distinct from appearance \u2014 but if $\\mathbf{n}$ is noisy or corrupted by appearance gradients, the disentanglement may be superficial.\n\nWhile it's reasonable to assume the authors used $\\nabla d_\\Omega$ directly (standard practice), the lack of discussion on how $\\mathbf{n}$ is computed, stabilized, or regularized is a gap, especially since it's central to the disentanglement claim.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3-235b-a22b-2507_28",
+          "title": "Missing clarification on $ \\beta $ vs. $ \\beta_+ $ in sampling algorithm",
+          "quote": "We use the bisection method (with maximum of 10 iterations) to efficiently search for $ \\beta^\\star $ and update $ \\beta_+ $ accordingly (Lines 6 and 7 in Algorithm 1).",
+          "explanation": "In Algorithm 1 and surrounding text, $\\beta_+$ is used as a temporary slack variable to ensure the error bound $B_{T,\\beta_+} \\leq \\epsilon$ during sampling refinement. While this is a clever way to allow coarse initial approximation, the text never clarifies whether $\\beta_+$ is updated or used in the forward pass after sampling.\n\nSpecifically: is the density $\\sigma(\\mathbf{x}) = \\alpha \\Psi_\\beta(-d_\\Omega(\\mathbf{x}))$ computed using the original $\\beta$ or the adapted $\\beta_+$? If $\\beta_+$ differs from $\\beta$, and is not fed back into the density function, then the sampling is based on a different model than the one being rendered \u2014 introducing an inconsistency between sampling distribution and actual density.\n\nThe paper states that the final $\\hat{O}$ is estimated using $T$ and $\\beta_+$, but $\\hat{O}$ depends on $\\sigma$, which depends on $\\beta$ \u2014 unless $\\beta_+$ is substituted for $\\beta$ during opacity estimation. This is a key detail: if $\\beta_+$ is only used for bounding purposes but not in computing $\\sigma$, the bound may not hold. Conversely, if $\\beta_+$ is used in $\\sigma$, then the model effectively uses a different $\\beta$ during rendering than the one being optimized \u2014 breaking gradient flow.\n\nThe most plausible interpretation is that $\\beta_+$ is only used to compute $\\hat{O}$ for sampling, but the actual volume rendering uses $\\beta$. This would make sense, but introduces a distribution mismatch. The paper should clarify this point to avoid confusion.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0153,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 78303,
+      "completion_tokens": 18700
+    },
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The introduction and abstract for \"Volume Rendering of Neural Implicit Surfaces\" are highly effective, demonstrating both clear academic rigor and strong narrative motivation. The paper skillfully identifies a critical gap in contemporary neural volume rendering\u2014specifically the limitations of unstructured density fields for geometric recovery\u2014and proposes a compelling solution by re-parameterizing density through a signed distance function (SDF). The clarity of the technical contribution is commendable, particularly the description of how this representation introduces necessary inductive bias and enables analytical bounds on the opacity approximation error. However, a significant potential issue for a reader is the briefness of the technical \"bridge\" between the theoretical formulation and the practical optimization; while the conceptual shift is clear, the paper would benefit from explicitly addressing the potential instability of gradient propagation when training SDFs within an Eikonal framework, a known challenge in the field that the authors acknowledge only partially in the related work. Overall, the writing is precise, well-structured, and establishes a strong, logical foundation for the empirical results that follow.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "Unclear Definition of Bound in Lemma 1 and Lemma 2",
+          "quote": "Lemma 1. Fix beta > 0. For any epsilon > 0 a sufficient dense sampling T will provide B_{T, beta} < epsilon... Lemma 2. Fix n > 0. For any epsilon > 0 a sufficiently large beta will provide B_{T, beta} <= epsilon.",
+          "explanation": "The lemmas regarding the error bound $B_{T, \\beta}$ are imprecise. Lemma 1 fails to mention that the required sampling density $T$ is dependent on the sharpness parameter $\\beta$. Lemma 2 is potentially misstated or misleading; while larger $\\beta$ values increase smoothness, it neglects the necessity of $\\beta$ remaining small enough to maintain the structural fidelity of the geometry (i.e., the limit $\\beta \\to \\infty$ results in zero density). The interplay between $\\beta$, $n$ (sampling), and the error bound requires more explicit definition.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Subscript Inconsistency and Incompleteness in Theorem 1",
+          "quote": "Bi = { x | || x - x(ti) || < |di|}, di = d_Omega(x(ti)).",
+          "explanation": "The definition of the geometric bound $B_i$ appears incomplete. It relies solely on the SDF value $d_i$ at the start of the interval, failing to account for the geometry or interval length across the segment $[t_i, t_{i+1}]$. This makes the Lipschitz constant bound derivation unclear to the reader.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Lack of Formal Definition for Transparency Function",
+          "quote": "the probability a light particle succeeds traversing the segment [c, x(t)] without bouncing off",
+          "explanation": "The text describes the transparency function $T(t)$ conceptually but omits the formal integral expression $\\exp(-\\int_0^t \\sigma(x(s)) ds)$. Given that this function is a foundation for an opacity error bound, an explicit mathematical definition is required.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0295,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 65824,
+      "completion_tokens": 8697
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The introduction and abstract for \"Volume Rendering of Neural Implicit Surfaces\" are highly effective, demonstrating both clear academic rigor and strong narrative motivation. The paper skillfully identifies a critical gap in contemporary neural volume rendering\u2014specifically the limitations of unstructured density fields for geometric recovery\u2014and proposes a compelling solution by re-parameterizing density through a signed distance function (SDF). The clarity of the technical contribution is commendable, particularly the description of how this representation introduces necessary inductive bias and enables analytical bounds on the opacity approximation error. However, a significant potential issue for a reader is the briefness of the technical \"bridge\" between the theoretical formulation and the practical optimization; while the conceptual shift is clear, the paper would benefit from explicitly addressing the potential instability of gradient propagation when training SDFs within an Eikonal framework, a known challenge in the field that the authors acknowledge only partially in the related work. Overall, the writing is precise, well-structured, and establishes a strong, logical foundation for the empirical results that follow.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Mathematical inconsistency in the limit density definition",
+          "quote": "as $\\beta$ approach zero, the density $\\sigma$ converges to a scaled indicator function of $\\Omega$, that is $\\sigma \\to \\alpha \\mathbf{1}_\\Omega$ for all points $x \\in \\Omega \\setminus M$.",
+          "explanation": "The authors define $\\sigma(x) = \\alpha \\Psi_\\beta(-d_\\Omega(x))$. The Laplace CDF $\\Psi_\\beta(z)$ is given by $0.5 \\exp(z/\\beta)$ for $z < 0$ and $1 - 0.5 \\exp(-z/\\beta)$ for $z \\geq 0$. Plugging in $-d_\\Omega(x)$: for $x \\in \\Omega$ (where $d_\\Omega(x) < 0$), $-d_\\Omega(x) > 0$. Therefore, $\\sigma(x) = \\alpha(1 - 0.5 \\exp(d_\\Omega(x)/\\beta))$. As $\\beta \\to 0$, for any $x \\in \\Omega \\setminus M$, $d_\\Omega(x) < 0$, so the exponent term vanishes, and $\\sigma(x) \\to \\alpha$. This matches the authors' claim inside $\\Omega$. However, the claim phrasing \"$\\sigma \\to \\alpha \\mathbf{1}_\\Omega$ for all points\" is slightly imprecise regarding the boundary set $M$ (where it converges to $\\alpha/2$) and the exterior. While the intent is clear, the formal limit definition over the set $\\Omega \\setminus M$ is correct but could be misread as covering the entire space $\\mathbb{R}^3$.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguity in transparency function definition",
+          "quote": "the probability a light particle succeeds traversing the segment $[c, x(t)]$ without bouncing off,",
+          "explanation": "The text defines transparency $T(t)$ as the probability of reaching $x(t)$ without bouncing off. Mathematically, this is usually defined as $\\exp(-\\int_0^t \\sigma(x(s)) ds)$. The text describes it in words and later uses its property $O = 1-T$, but the actual formal expression is missing in the provided passage, leaving the reader to infer the standard definition. While standard in the field, for a paper claiming a derivation of an opacity error bound, the explicit definition of the transparency integral is a necessary foundation for the subsequent Theorem 2.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "Potential sign error in density equation",
+          "quote": "$\\sigma(x) = \\alpha \\Psi_\\beta(-d_\\Omega(x))$",
+          "explanation": "Typical signed distance functions are positive outside the object ($\\Omega^c$) and negative inside ($\\Omega$). The density $\\sigma$ is expected to be high inside the object and near zero outside. If $d_\\Omega(x) < 0$ inside, then $-d_\\Omega(x) > 0$. Since $\\Psi_\\beta$ is monotonically increasing, $\\Psi_\\beta$ of a large positive number is close to 1. Thus $\\sigma(x) \\approx \\alpha$. This logic holds. However, usually, SDFs are defined as $d(x) > 0$ outside and $d(x) < 0$ inside. The authors' notation is consistent with this, but it is worth noting that if the SDF convention were flipped (as seen in some papers), the density would be zero inside. The definition is logically sound as presented, but requires careful verification against the specific implementation's sign convention, which is only implicitly defined here.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Unclear Definition of Bound in Lemma 1",
+          "quote": "Lemma 1. Fix \u03b2 > 0. For any \u03f5 > 0 a sufficient dense sampling T will provide BT ,\u03b2 < \u03f5.",
+          "explanation": "In Lemma 1, the authors state that a sufficiently dense sampling will provide $B_{T, \\beta} < \\epsilon$. However, the notation $B_{T, \\beta}$ was introduced as an error bound that is explicitly dependent on $\\beta$ (the scale parameter of the Laplace CDF) and the set of samples $T$. The Lemma states that for a fixed $\\beta$, we can choose $T$ to satisfy the bound. While this is mathematically sound in a limiting sense, it is slightly ambiguous because the error bound for the rectangle rule approximation of the volume rendering integral typically depends on the variation of the integrand. Since the density $\\sigma$ is defined using $\\beta$, as $\\beta$ gets smaller (closer to the indicator function limit), the density becomes sharper, requiring finer sampling to maintain a constant error $\\epsilon$. The Lemma should ideally reflect the dependency of $T$ on $\\beta$ more explicitly to avoid the reader assuming that any fixed $\\beta$ works for any chosen $n$.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Subscript Inconsistency in Theorem 1",
+          "quote": "The derivative of the density \u03c3 within a segment [ti, ti+1] satisfies\n... and Bi = { x | \u2225 x \u2212 x ( ti ) \u2225 < |di|}, di = d \u03a9( x ( ti )) .",
+          "explanation": "The text references $B_i$ based on $d_i$, which is defined as the signed distance at $t_i$. However, the actual bound should intuitively relate to the geometry within the interval $[t_i, t_{i+1}]$. While the logic is likely directionally correct (using the local SDF value to bound the Lipshitz constant of the CDF), the notation is slightly confusing because $|d_i|$ (the absolute distance at the start of the interval) is insufficient to bound the change in the SDF across the entire interval $[t_i, t_{i+1}]$. A reader might be confused as to why the right endpoint $t_{i+1}$ or the interval length $\\delta_i$ does not appear in the definition of the geometric bound $B_i$. While this is likely resolved by the supplementary material which is referenced, as presented, the definition of $B_i$ appears incomplete for a formal theorem statement.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Ambiguity in Lemma 2",
+          "quote": "Lemma 2. Fix n > 0. For any \u03f5 > 0 a sufficiently large \u03b2 that satisfies\n... will provide BT ,\u03b2 \u2264 \u03f5.",
+          "explanation": "The lemma claims that choosing a 'sufficiently large $\\beta$' will provide $B_{T, \\beta} \\le \\epsilon$. This is counter-intuitive and potentially misstated. In the context of VolSDF, $\\beta$ controls the smoothness of the density function; as $\\beta \\to 0$, the density converges to an indicator function. A larger $\\beta$ makes the density function smoother (less steep gradients), which typically makes the approximation easier for a fixed sampling grid. However, the limit of $\\sigma$ as $\\beta \\to \\infty$ is zero density everywhere, not the target geometry. The authors likely mean that for a fixed number of samples $n$, one can choose a minimum $\\beta$ that is 'large enough' to ensure the derivative of the density does not exceed the capacity of the sampling grid to resolve. As stated, 'sufficiently large $\\beta$' without an upper bound on $\\beta$ (or context that $\\beta$ must not be so large that it destroys the signal) could be misleading.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0295,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 65824,
+      "completion_tokens": 8697
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "As an academic reviewer, I find the paper to be a strong and well-motivated contribution to neural rendering, offering a clear conceptual advance by re-framing volume density as a function of signed distance rather than vice versa. The exposition is generally clear, with a logical progression from the limitations of NeRF-based density modeling to the proposed Laplace CDF formulation. The three claimed benefits\u2014inductive bias, opacity error bound, and disentanglement\u2014are well-articulated and provide a compelling rationale for the method. However, several significant issues warrant attention. First, the opacity approximation error bound is presented as a key technical contribution, but its practical impact on rendering quality and convergence is not quantitatively demonstrated in the abstract or introduction; a more explicit link between the bound and improved sampling would strengthen the narrative. Second, while the paper claims \u201cunsupervised disentanglement of shape and appearance,\u201d this seems overstated given that supervision comes from multi-view images with known poses, and the disentanglement capability is only qualitatively shown in the introduction with a brief mention of switching scenes\u2014a more rigorous evaluation (e.g., controlled shape-appearance swapping metrics) is needed. Third, the reliance on a Laplace CDF (with a learnable scale parameter) introduces a hyperparameter that may affect surface smoothness and reconstruction fidelity; the sensitivity to this choice is not discussed. Finally, the comparison with IDR in the abstract is somewhat misleading\u2014IDR uses object masks while VolSDF does not\u2014but the paper later acknowledges this difference; however, the initial framing could confuse readers about the fair comparison. Overall, the paper presents a novel and impactful idea, but the clarity of its contributions and the robustness of its claims require additional substantiation.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Sampling guarantee uses opacity from a different density parameter",
+          "quote": "Finally we return a fresh set of m = 64 samples \\hat{O}\u02c6{-1} using inverse transform sampling (Line 11 in Algorithm 1).",
+          "explanation": "The algorithm estimates the opacity O\u0302 using the final T and \u03b2+, where \u03b2+ is (possibly larger than the true \u03b2) and is guaranteed to satisfy B_{T,\u03b2+} \u2264 \u03b5. However, the true density \u03c3 uses the learned \u03b2, not \u03b2+. The bound on the opacity approximation error is for the density with parameter \u03b2+, not for the true density. Consequently, the inverse transform sampling derived from O\u0302 is not guaranteed to be accurate for the true opacity O (with parameter \u03b2). The text does not address this mismatch, and the claim in the abstract and introduction that the bound leads to accurate sampling for the viewing ray is not fully justified by the presented algorithm. The algorithm may work well when \u03b2+ is close to \u03b2, but no error bound relative to the true density is provided.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Lemma 2 missing condition",
+          "quote": "Lemma 2. Fix n > 0. For any \u03b5 > 0 a sufficiently large \u03b2 that satisfies will provide B_{T,\u03b2} \u2264 \u03b5.",
+          "explanation": "The statement of Lemma 2 is incomplete: the condition on \u03b2 (presumably a lower bound) is missing from the extracted text. While this is likely an OCR omission, the lemma as presented lacks the necessary inequality for a reader to understand what condition 'sufficiently large \u03b2' must meet. The surrounding context does not resolve what condition is intended, making the lemma underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Notation clash: 'T' used for both transparency function and sample set",
+          "quote": "For a set of samples T = {t_i}_i=1^n",
+          "explanation": "In Section 3.2, the transparency function is denoted 'T' (e.g., 'the transparency function of the volume along a ray x, denoted T'). Later, in Section 3.3, the symbol 'T' is reused to represent the set of sample points used for numerical integration. Although the immediate context clarifies that 'T' refers to the sample set (because it is defined with braces and indices), a reader moving quickly from the earlier section may initially misinterpret it as the transparency function. This is a minor inconsistency in notation that could cause momentary confusion, but it is resolved by the surrounding text.",
+          "comment_type": "logical",
+          "paragraph_index": 27,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_3",
+          "title": "Underspecified upsampling strategy in Algorithm 1",
+          "quote": "upsample T ... where the number of points sampled from each interval is proportional to its current error bound",
+          "explanation": "Algorithm 1 describes a procedure to obtain a sampling set S for the volume rendering integral, but the upsampling step is not fully specified. The text says that intervals with larger error bounds receive proportionally more new sample points, but it does not state the total number of points added per iteration, nor how the proportional allocation is rounded to integers. This level of detail is insufficient for a reader to reproduce the algorithm without additional assumptions or access to the authors' code. The rest of the algorithm (initialization, bisection search, stopping criteria) is reasonably clear, but the core adaptive upsampling mechanism remains ambiguous, which is a moderate reproducibility concern.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_4",
+          "title": "Missing equation numbers referenced in text",
+          "quote": "Equation 12 leads to the following opacity error bound, also proved in the supplementary:",
+          "explanation": "The text references 'Equation 12' and later 'equation 14', but these equations are not present in the provided passage. While the passage is an OCR extraction and equations may have been omitted, the logical flow is broken: the authors claim a derivation from Theorem 1 to an error bound via 'Equation 12', but neither the derivation nor the explicit bound is shown in the visible text. This makes it impossible for a reader to verify the reasoning without consulting the supplementary. Considering the missing derivations are central to the bound claimed in Theorem 2, the gap is substantial.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_5",
+          "title": "Inconsistent argument in theorem and subsequent interval variable name",
+          "quote": "Theorem 1. The derivative of the density \u03c3 within a segment [ti, ti+1] satisfies ... The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval [ti, ti\u22121] based only on the unsigned distance at the interval\u2019s end points, |di|, |di+1|, and the density parameters \u03b1, \u03b2.",
+          "explanation": "The theorem statement refers to the interval [ti, ti+1], but the explanatory sentence immediately afterward incorrectly writes '[ti, ti\u22121]' (note the minus sign). This is likely a typographical error (ti\u22121 should be ti+1), and context resolves the intended meaning. However, it could confuse a careful reader momentarily, especially since the bound uses di and di+1, consistent with the interval [ti, ti+1]. This is a minor inconsistency.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_6",
+          "title": "The derivative bound formula is missing from the visible text",
+          "quote": "Theorem 1. The derivative of the density \u03c3 within a segment [ti, ti+1] satisfies ... and Bi = { x | \u2225x \u2212 x(ti)\u2225 < |di|}, di = d\u03a9(x(ti)).",
+          "explanation": "The statement of Theorem 1 is incomplete: after the word 'satisfies' there is no explicit inequality or expression. The equation or bound that constitutes the theorem is missing. The subsequent description mentions 'the explicit formula for d\u2217 i is a bit cumbersome' and discusses the bound in terms of the minimal distance between sets, but the actual bound on the derivative is never shown in the passage. This is a critical gap because the entire opacity error bound (Theorem 2) and the sampling algorithm rely on this derivative bound. A reader cannot assess the validity of the approach without seeing the bound.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_7",
+          "title": "Lemma 1 notation mixes variables: BT,\u03f5 instead of BT,\u03b2",
+          "quote": "Lemma 1. Fix \u03b2 > 0. For any \u03f5 > 0 a sufficient dense sampling T will provide BT ,\u03b2 < \u03f5.",
+          "explanation": "In the lemma statement, the error bound is written as BT ,\u03b2 (subscript \u03b2), but the lemma title in the preceding paragraph says 'BT ,\u03f5'. Given that the bound depends on both the sample set T and the parameter \u03b2, BT,\u03b2 is the correct notation consistent with earlier usage (e.g., BT,\u03b2 in the paragraph before the lemma). The BT,\u03f5 variant appears to be a typographical inconsistency introduced by OCR or editing. This is minor and context resolves it, but could cause confusion if a reader thinks \u03f5 is meant as a subscript.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_8",
+          "title": "Ambiguous condition for upsampling in Algorithm 1 description",
+          "quote": "In order to reduce \u03b2+ while keep BT ,\u03b2+ \u2264 \u03f5, n samples are added to T (Line 4 in Algorithm 1), where the number of points sampled from each interval is proportional to its current error bound, equation 14.",
+          "explanation": "The text states that 'n samples are added' but does not clarify how n relates to the existing number of samples. Is n the same value used for the initial uniform sampling (128)? Additionally, the phrase 'proportional to its current error bound' is vague: proportional how (linear, squared)? The algorithm description in the text is underspecified; a reader could not reproduce the exact upsampling procedure based on this description alone. This is moderate because the pseudocode (Algorithm 1) is present and the main loop logic is clear, but the critical detail of how many new samples to add and exactly how to distribute them proportionally is missing.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_9",
+          "title": "Potential contradiction in Lemma 2: condition not shown",
+          "quote": "Lemma 2. Fix n > 0. For any \u03f5 > 0 a sufficiently large \u03b2 that satisfies ... will provide BT ,\u03b2 \u2264 \u03f5.",
+          "explanation": "The condition that \u03b2 must satisfy is omitted (the ellipsis '...' appears in the text). This could be an OCR artifact, but it leaves the lemma incomplete. The intended meaning \u2014 that increasing \u03b2 makes the SDF-to-density mapping smoother, reducing opacity approximation error \u2014 is clear from context and from Lemma 2's use in the algorithm. However, the specific inequality or relationship is missing, which is important for a reader wanting to understand the theoretical guarantee or to implement the initialization step in Algorithm 1 (Line 2). This is a moderate gap.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_10",
+          "title": "Inconsistent treatment of learnable parameters \u03b1 and \u03b2",
+          "quote": "In addition we have two scalar learnable parameters \u03b1, \u03b2 \u2208 \u211d. In fact, in our implementation we make the choice \u03b1 = \u03b2^{-1} . We denote by \u03b8 \u2208 \u211d^p the collection of all learnable parameters of the model, \u03b8 = (\u03d5, \u03c8, \u03b2).",
+          "explanation": "The text first states that both \u03b1 and \u03b2 are learnable parameters, then immediately says that in the implementation \u03b1 is set equal to \u03b2^{-1}. This makes \u03b1 dependent on \u03b2 rather than independently learnable. Consistent with this dependency, the parameter vector \u03b8 is defined as (\u03d5, \u03c8, \u03b2) without \u03b1. The contradiction confuses whether \u03b1 is an actual free parameter or a derived quantity. The authors likely intended \u03b2 to be the only learnable scalar (with \u03b1 determined from it), but the phrasing 'two scalar learnable parameters' is misleading and should be corrected to avoid ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_11",
+          "title": "Training loss formula missing from the passage",
+          "quote": "Our training loss consists of two terms: where L_RGB is the color loss; \u2026 L_SDF is the Eikonal loss \u2026 \u03bb is a hyper-parameter set to 0.1 throughout the the experiments.",
+          "explanation": "The text claims the loss consists of two terms but does not provide an explicit equation for the total loss (e.g., L = L_RGB + \u03bb L_SDF). Instead it switches into describing the two components separately. A reader cannot determine how the terms are combined, whether the weighting is additive, multiplicative, or something else. While the surrounding context of the paper might include an equation, the missing explicit definition in this passage makes the training procedure underspecified and hinders reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_12",
+          "title": "Typographical error: duplicated article",
+          "quote": "throughout the the experiments",
+          "explanation": "The word 'the' appears twice consecutively. This is a minor copy-editing error that does not affect understanding but should be corrected for publication.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_13",
+          "title": "Ambiguous description of the NeRF variant with 'identical radiance field model'",
+          "quote": "Second, by switching the radiance fields of trained NeRF models with an identical radiance field model to ours, namely L_\u03c8( x , n , v , z ).",
+          "explanation": "The authors compare VolSDF with two NeRF variants: one using the original NeRF radiance field L_\u03c8(z, v), and another using 'an identical radiance field model to ours', i.e., L_\u03c8(x, n, v, z). However, it is unclear how this second NeRF variant is obtained. Standard NeRF does not produce normals n or a geometry feature z in the same way as VolSDF. If the authors retrained NeRF to output normals from its density gradient or to use a different feature vector, the description does not specify the training procedure or whether the same losses were used. This ambiguity could mislead readers about the fairness of the comparison, as the variant may not be directly comparable. The context does not resolve this concern because the paper does not elaborate on the adaptation.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0194,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 66652,
+      "completion_tokens": 35131
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "As an academic reviewer, I find the paper to be a strong and well-motivated contribution to neural rendering, offering a clear conceptual advance by re-framing volume density as a function of signed distance rather than vice versa. The exposition is generally clear, with a logical progression from the limitations of NeRF-based density modeling to the proposed Laplace CDF formulation. The three claimed benefits\u2014inductive bias, opacity error bound, and disentanglement\u2014are well-articulated and provide a compelling rationale for the method. However, several significant issues warrant attention. First, the opacity approximation error bound is presented as a key technical contribution, but its practical impact on rendering quality and convergence is not quantitatively demonstrated in the abstract or introduction; a more explicit link between the bound and improved sampling would strengthen the narrative. Second, while the paper claims \u201cunsupervised disentanglement of shape and appearance,\u201d this seems overstated given that supervision comes from multi-view images with known poses, and the disentanglement capability is only qualitatively shown in the introduction with a brief mention of switching scenes\u2014a more rigorous evaluation (e.g., controlled shape-appearance swapping metrics) is needed. Third, the reliance on a Laplace CDF (with a learnable scale parameter) introduces a hyperparameter that may affect surface smoothness and reconstruction fidelity; the sensitivity to this choice is not discussed. Finally, the comparison with IDR in the abstract is somewhat misleading\u2014IDR uses object masks while VolSDF does not\u2014but the paper later acknowledges this difference; however, the initial framing could confuse readers about the fair comparison. Overall, the paper presents a novel and impactful idea, but the clarity of its contributions and the robustness of its claims require additional substantiation.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Sampling guarantee uses opacity from a different density parameter",
+          "quote": "Finally we return a fresh set of m = 64 samples \\hat{O}\u02c6{-1} using inverse transform sampling (Line 11 in Algorithm 1).",
+          "explanation": "The algorithm estimates the opacity O\u0302 using the final T and \u03b2+, where \u03b2+ is (possibly larger than the true \u03b2) and is guaranteed to satisfy B_{T,\u03b2+} \u2264 \u03b5. However, the true density \u03c3 uses the learned \u03b2, not \u03b2+. The bound on the opacity approximation error is for the density with parameter \u03b2+, not for the true density. Consequently, the inverse transform sampling derived from O\u0302 is not guaranteed to be accurate for the true opacity O (with parameter \u03b2). The text does not address this mismatch, and the claim in the abstract and introduction that the bound leads to accurate sampling for the viewing ray is not fully justified by the presented algorithm. The algorithm may work well when \u03b2+ is close to \u03b2, but no error bound relative to the true density is provided.",
+          "comment_type": "logical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Lemma 2 missing condition",
+          "quote": "Lemma 2. Fix n > 0. For any \u03b5 > 0 a sufficiently large \u03b2 that satisfies will provide B_{T,\u03b2} \u2264 \u03b5.",
+          "explanation": "The statement of Lemma 2 is incomplete: the condition on \u03b2 (presumably a lower bound) is missing from the extracted text. While this is likely an OCR omission, the lemma as presented lacks the necessary inequality for a reader to understand what condition 'sufficiently large \u03b2' must meet. The surrounding context does not resolve what condition is intended, making the lemma underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Notation clash: 'T' used for both transparency function and sample set",
+          "quote": "For a set of samples T = {t_i}_i=1^n",
+          "explanation": "In Section 3.2, the transparency function is denoted 'T' (e.g., 'the transparency function of the volume along a ray x, denoted T'). Later, in Section 3.3, the symbol 'T' is reused to represent the set of sample points used for numerical integration. Although the immediate context clarifies that 'T' refers to the sample set (because it is defined with braces and indices), a reader moving quickly from the earlier section may initially misinterpret it as the transparency function. This is a minor inconsistency in notation that could cause momentary confusion, but it is resolved by the surrounding text.",
+          "comment_type": "logical",
+          "paragraph_index": 27,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Underspecified upsampling strategy in Algorithm 1",
+          "quote": "upsample T ... where the number of points sampled from each interval is proportional to its current error bound",
+          "explanation": "Algorithm 1 describes a procedure to obtain a sampling set S for the volume rendering integral, but the upsampling step is not fully specified. The text says that intervals with larger error bounds receive proportionally more new sample points, but it does not state the total number of points added per iteration, nor how the proportional allocation is rounded to integers. This level of detail is insufficient for a reader to reproduce the algorithm without additional assumptions or access to the authors' code. The rest of the algorithm (initialization, bisection search, stopping criteria) is reasonably clear, but the core adaptive upsampling mechanism remains ambiguous, which is a moderate reproducibility concern.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_4",
+          "title": "Missing equation numbers referenced in text",
+          "quote": "Equation 12 leads to the following opacity error bound, also proved in the supplementary:",
+          "explanation": "The text references 'Equation 12' and later 'equation 14', but these equations are not present in the provided passage. While the passage is an OCR extraction and equations may have been omitted, the logical flow is broken: the authors claim a derivation from Theorem 1 to an error bound via 'Equation 12', but neither the derivation nor the explicit bound is shown in the visible text. This makes it impossible for a reader to verify the reasoning without consulting the supplementary. Considering the missing derivations are central to the bound claimed in Theorem 2, the gap is substantial.",
+          "comment_type": "logical",
+          "paragraph_index": 33,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_5",
+          "title": "Inconsistent argument in theorem and subsequent interval variable name",
+          "quote": "Theorem 1. The derivative of the density \u03c3 within a segment [ti, ti+1] satisfies ... The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval [ti, ti\u22121] based only on the unsigned distance at the interval\u2019s end points, |di|, |di+1|, and the density parameters \u03b1, \u03b2.",
+          "explanation": "The theorem statement refers to the interval [ti, ti+1], but the explanatory sentence immediately afterward incorrectly writes '[ti, ti\u22121]' (note the minus sign). This is likely a typographical error (ti\u22121 should be ti+1), and context resolves the intended meaning. However, it could confuse a careful reader momentarily, especially since the bound uses di and di+1, consistent with the interval [ti, ti+1]. This is a minor inconsistency.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_6",
+          "title": "The derivative bound formula is missing from the visible text",
+          "quote": "Theorem 1. The derivative of the density \u03c3 within a segment [ti, ti+1] satisfies ... and Bi = { x | \u2225x \u2212 x(ti)\u2225 < |di|}, di = d\u03a9(x(ti)).",
+          "explanation": "The statement of Theorem 1 is incomplete: after the word 'satisfies' there is no explicit inequality or expression. The equation or bound that constitutes the theorem is missing. The subsequent description mentions 'the explicit formula for d\u2217 i is a bit cumbersome' and discusses the bound in terms of the minimal distance between sets, but the actual bound on the derivative is never shown in the passage. This is a critical gap because the entire opacity error bound (Theorem 2) and the sampling algorithm rely on this derivative bound. A reader cannot assess the validity of the approach without seeing the bound.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_7",
+          "title": "Lemma 1 notation mixes variables: BT,\u03f5 instead of BT,\u03b2",
+          "quote": "Lemma 1. Fix \u03b2 > 0. For any \u03f5 > 0 a sufficient dense sampling T will provide BT ,\u03b2 < \u03f5.",
+          "explanation": "In the lemma statement, the error bound is written as BT ,\u03b2 (subscript \u03b2), but the lemma title in the preceding paragraph says 'BT ,\u03f5'. Given that the bound depends on both the sample set T and the parameter \u03b2, BT,\u03b2 is the correct notation consistent with earlier usage (e.g., BT,\u03b2 in the paragraph before the lemma). The BT,\u03f5 variant appears to be a typographical inconsistency introduced by OCR or editing. This is minor and context resolves it, but could cause confusion if a reader thinks \u03f5 is meant as a subscript.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_8",
+          "title": "Ambiguous condition for upsampling in Algorithm 1 description",
+          "quote": "In order to reduce \u03b2+ while keep BT ,\u03b2+ \u2264 \u03f5, n samples are added to T (Line 4 in Algorithm 1), where the number of points sampled from each interval is proportional to its current error bound, equation 14.",
+          "explanation": "The text states that 'n samples are added' but does not clarify how n relates to the existing number of samples. Is n the same value used for the initial uniform sampling (128)? Additionally, the phrase 'proportional to its current error bound' is vague: proportional how (linear, squared)? The algorithm description in the text is underspecified; a reader could not reproduce the exact upsampling procedure based on this description alone. This is moderate because the pseudocode (Algorithm 1) is present and the main loop logic is clear, but the critical detail of how many new samples to add and exactly how to distribute them proportionally is missing.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_9",
+          "title": "Potential contradiction in Lemma 2: condition not shown",
+          "quote": "Lemma 2. Fix n > 0. For any \u03f5 > 0 a sufficiently large \u03b2 that satisfies ... will provide BT ,\u03b2 \u2264 \u03f5.",
+          "explanation": "The condition that \u03b2 must satisfy is omitted (the ellipsis '...' appears in the text). This could be an OCR artifact, but it leaves the lemma incomplete. The intended meaning \u2014 that increasing \u03b2 makes the SDF-to-density mapping smoother, reducing opacity approximation error \u2014 is clear from context and from Lemma 2's use in the algorithm. However, the specific inequality or relationship is missing, which is important for a reader wanting to understand the theoretical guarantee or to implement the initialization step in Algorithm 1 (Line 2). This is a moderate gap.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_10",
+          "title": "Inconsistent treatment of learnable parameters \u03b1 and \u03b2",
+          "quote": "In addition we have two scalar learnable parameters \u03b1, \u03b2 \u2208 \u211d. In fact, in our implementation we make the choice \u03b1 = \u03b2^{-1} . We denote by \u03b8 \u2208 \u211d^p the collection of all learnable parameters of the model, \u03b8 = (\u03d5, \u03c8, \u03b2).",
+          "explanation": "The text first states that both \u03b1 and \u03b2 are learnable parameters, then immediately says that in the implementation \u03b1 is set equal to \u03b2^{-1}. This makes \u03b1 dependent on \u03b2 rather than independently learnable. Consistent with this dependency, the parameter vector \u03b8 is defined as (\u03d5, \u03c8, \u03b2) without \u03b1. The contradiction confuses whether \u03b1 is an actual free parameter or a derived quantity. The authors likely intended \u03b2 to be the only learnable scalar (with \u03b1 determined from it), but the phrasing 'two scalar learnable parameters' is misleading and should be corrected to avoid ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_11",
+          "title": "Training loss formula missing from the passage",
+          "quote": "Our training loss consists of two terms: where L_RGB is the color loss; \u2026 L_SDF is the Eikonal loss \u2026 \u03bb is a hyper-parameter set to 0.1 throughout the the experiments.",
+          "explanation": "The text claims the loss consists of two terms but does not provide an explicit equation for the total loss (e.g., L = L_RGB + \u03bb L_SDF). Instead it switches into describing the two components separately. A reader cannot determine how the terms are combined, whether the weighting is additive, multiplicative, or something else. While the surrounding context of the paper might include an equation, the missing explicit definition in this passage makes the training procedure underspecified and hinders reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_12",
+          "title": "Typographical error: duplicated article",
+          "quote": "throughout the the experiments",
+          "explanation": "The word 'the' appears twice consecutively. This is a minor copy-editing error that does not affect understanding but should be corrected for publication.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_13",
+          "title": "Ambiguous description of the NeRF variant with 'identical radiance field model'",
+          "quote": "Second, by switching the radiance fields of trained NeRF models with an identical radiance field model to ours, namely L_\u03c8( x , n , v , z ).",
+          "explanation": "The authors compare VolSDF with two NeRF variants: one using the original NeRF radiance field L_\u03c8(z, v), and another using 'an identical radiance field model to ours', i.e., L_\u03c8(x, n, v, z). However, it is unclear how this second NeRF variant is obtained. Standard NeRF does not produce normals n or a geometry feature z in the same way as VolSDF. If the authors retrained NeRF to output normals from its density gradient or to use a different feature vector, the description does not specify the training procedure or whether the same losses were used. This ambiguity could mislead readers about the fairness of the comparison, as the variant may not be directly comparable. The context does not resolve this concern because the paper does not elaborate on the adaptation.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0194,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 66652,
+      "completion_tokens": 35131
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The provided excerpt presents a compelling and well-structured contribution to the field of neural implicit surface reconstruction. The authors propose VolSDF, a principled density formulation based on the Laplace CDF of a signed distance function (SDF), which elegantly addresses the persistent geometry fidelity limitations of standard NeRF methods while avoiding the mask dependencies characteristic of concurrent neural implicit surface approaches. The writing is clear and professional, effectively motivating the conceptual shift from modeling geometry as a function of density to the novel inversion of density as a function of geometry. The three claimed benefits\u2014intrinsic geometric inductive bias, a theoretical bound on opacity approximation error facilitating accurate ray sampling, and unsupervised shape-appearance disentanglement\u2014are logically organized and theoretically promising. The related work section demonstrates strong situational awareness, accurately distinguishing the method from concurrent occupancy-based approaches by emphasizing the SDF formulation, Eikonal regularization, and the unique opacity bounding capability. While the excerpt is truncated, the foundation is robust; the primary issues for the full paper to address will be the rigorous empirical validation of the opacity bound's impact on sampling accuracy, the robustness of the disentanglement claims in the absence of auxiliary supervision, and a detailed ablation demonstrating the necessity of the Laplace CDF choice over other monotonic mappings, as these are the core technical differentiators asserted in the introduction.",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Dangling quantifier and missing object in Introduction",
+          "quote": "allowing to learn simultaneously both from input images.",
+          "explanation": "The word 'both' explicitly signals two objects, but the sentence only provides one ('input images'). In the context of neural volume rendering (and specifically NeRF [21] cited right before), the intended meaning is clearly that the method learns both the density and radiance fields simultaneously. While the full paper context and field conventions resolve the ambiguity, the omission as written leaves a grammatical and logical gap that could momentarily confuse a careful reader about what exactly is being jointly optimized.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Over-simplified contrast in Abstract regarding prior geometry modeling",
+          "quote": "This is in contrast to previous work modeling the geometry as a function of the volume density.",
+          "explanation": "The authors frame their contribution as modeling density as a function of geometry, contrasting it with previous work that models geometry as a function of density. In reality, prior approaches like NeRF model density directly as a function of spatial coordinates and extract geometry post-hoc via an arbitrary isosurface threshold; they do not explicitly model geometry as a function of density. The authors' phrasing is a high-level rhetorical simplification suitable for an abstract, but technically imprecise. Given that the Introduction and Method sections correctly describe the actual contrast (SDF zero-level set vs. arbitrary MLP density level sets), this does not undermine the technical contribution, but it warrants clarification to avoid mischaracterizing the prior art.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Index/interval mismatch in quadrature sample set definition",
+          "quote": "at some discrete samples _S_ = _{si}[m] i_ =1[,][ 0 =] _[ s]_[1] _[< s]_[2] _[< . . . < s][m]_[=] _[ M]_[, where] _[ M]_[is some large constant:",
+          "explanation": "At first, the definition of the sample set seemed to imply that $m$ points would directly correspond to $m$ intervals for the rectangle rule quadrature. The text defines $S = \\{s_i\\}_{i=1}^m$ with $s_1=0$ and $s_m=M$, which mathematically yields only $m-1$ distinct intervals $[s_i, s_{i+1}]$. A standard left Riemann sum approximation would naturally sum over $i=1$ to $m-1$, or the sample set should have been defined with $m+1$ endpoints (e.g., $0=s_0 < s_1 < \\dots < s_m = M$). I checked the surrounding context and standard neural volume rendering conventions (e.g., NeRF, DVR), where $m$ samples typically map to $m-1$ intervals or an explicit grid of size $m+1$. While this is a common typographical oversight that practitioners would mentally correct, it introduces a minor notation inconsistency in the formal setup of the numerical integration. The subsequent approximation weights $\\hat{\\tau}_i$ are correctly described, but the indexing slip remains.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Underspecified upsampling strategy in Algorithm 1 pseudocode",
+          "quote": "**3 while** _BT ,\u03b2 > \u03f5 and not max_iter_ **do 4** upsample _T_ **5 if** _BT ,\u03b2_ + _< \u03f5_ **then",
+          "explanation": "Reading the pseudocode for Algorithm 1, line 4 simply states 'upsample T' without specifying how the new sample points are distributed along the ray. Initially, this appeared as a critical gap, as the choice of upsampling distribution heavily impacts convergence and computational budget. However, checking the accompanying prose in Section 3.4 resolved the ambiguity: the authors clarify that 'the number of points sampled from each interval is proportional to its current error bound, equation 14.' While the textual description correctly justifies the method and aligns with the error-bounding framework, the pseudocode block itself remains underspecified. A reader attempting to reproduce the algorithm directly from the pseudocode would miss the error-proportional refinement step, which is central to maintaining the $\\epsilon$-bound efficiently. The authors correctly leverage the SDF properties for adaptive sampling, but cross-referencing the prose within the algorithm block or expanding the pseudocode would improve reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Typographical error in interval notation",
+          "quote": "The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval $[t_i, t_{i-1}]$ based only on the unsigned distance at the interval\u2019s end points, $|d_i|, |d_{i+1}|$...",
+          "explanation": "The authors refer to the interval as $[t_i, t_{i-1}]$, but subsequently cite the endpoint distances as $|d_i|$ and $|d_{i+1}|$, and earlier define intervals along the ray as $[t_i, t_{i+1}]$. This is a clear notational typo; it should read $[t_i, t_{i+1}]$ (or $[t_{i-1}, t_i]$ depending on indexing convention). It does not undermine the mathematical derivation but represents a local inconsistency in notation.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Subscript typo in Lemma 1 preamble",
+          "quote": "To conclude this section we derive two useful properties, proved in the supplementary. The first, is that sufficiently dense sampling is guaranteed to reduce the error bound $B_{T, \\epsilon}$:",
+          "explanation": "The text incorrectly refers to the error bound as $B_{T, \\epsilon}$. The bound depends on the sample set $T$ and the Laplace scale parameter $\\beta$, not the target accuracy threshold $\\epsilon$. The subscript should be $B_{T, \\beta}$ to match Lemma 1's statement and subsequent usage. This is a minor typographical oversight.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_6",
+          "title": "Invalid uniform sampling formula",
+          "quote": "We initialize $T$ (Line 1 in Algorithm 1) with uniform sampling $T_0 = \\{t_i\\}_{i=1}^n$, where $t_k = \\frac{(k-1)}{n} M - 1$, $k \\in [n]$ (we use $n = 128$ in our implementation).",
+          "explanation": "The equation $t_k = \\frac{(k-1)}{n} M - 1$ contains a spurious `- 1` term. For $k=1$, this yields $t_1 = -1$, which violates the fundamental ray parameter constraint $t \\ge 0$ established in Section 3.2. This is almost certainly an OCR artifact or author typo for $t_k = \\frac{k-1}{n} M$ or similar. As written, it would produce invalid sampling locations.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_7",
+          "title": "Algorithm 1 termination condition vs refinement logic ambiguity",
+          "quote": "**3 while** _B_{T, \\beta} > \\epsilon_ and not max_iter **do 4** upsample _T_ **5 if** _B_{T, \\beta_+} < \\epsilon_ **then 6** Find _\\beta^\\star \\in (_ _\\beta,_ _\\beta_ +)_ so that _B_{T, \\beta^\\star} = \\epsilon_ **7** Update _\\beta_ + _\\leftarrow \\beta^\\star_ **8 end 9 end",
+          "explanation": "The loop condition checks whether the error bound for the *original* parameter $\\beta$ exceeds $\\epsilon$, while the body of the loop attempts to refine the *working* parameter $\\beta_+$ downwards toward $\\beta$. Although logically sound (the loop naturally terminates when the original $\\beta$ happens to satisfy the bound on the denser grid, or when max iterations are reached), the phrasing conflates the feasibility check for $\\beta$ with the optimization step for $\\beta_+$. A careful reader might initially question whether the bound should be tracked against $\\beta_+$ instead. Clarifying that the condition tests target feasibility while the body performs adaptive refinement would prevent misinterpretation during implementation.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_8",
+          "title": "Notation clash for variable z",
+          "quote": "global geometry feature _**z**_ of dimension 256, i.e., _**f** \u03d5_ ( _**x**_ ) = ( _d_ ( _**x**_ ) _,_ _**z**_ ( _**x**_ )) _\u2208_ R[1+256] ... the samples _**z**_ are taken to combine a single random uniform space point and a single point from _S_ for each pixel _p_ .",
+          "explanation": "The symbol _**z**_ is first explicitly defined as a 256-dimensional global geometry feature vector extracted from the geometry network. Shortly after, when describing the Eikonal loss sampling strategy, the authors reuse _**z**_ to denote a sampled 3D point in space. This creates a direct notation conflict between a high-dimensional latent code and a spatial coordinate. A careful reader might incorrectly assume the Eikonal loss operates on the latent feature or be confused by the dimensionality mismatch. The spatial sample should be denoted with a distinct variable (e.g., _**x**_e or _**q**_) to maintain clarity and align with standard conventions in implicit surface literature.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_9",
+          "title": "Parameter domain inconsistency for \u03b1 and \u03b2",
+          "quote": "In addition we have two scalar learnable parameters \u03b1, \u03b2 \u2208_ R.",
+          "explanation": "The text states that _\u03b1_ and _\u03b2_ belong to _R_ (all real numbers), but the paper's core formulation defines _\u03c3_ as a scaled Laplace CDF applied to an SDF. This mathematically requires _\u03b2_ > 0 (as a scale parameter) and _\u03b1_ > 0 (as a density magnitude) to maintain valid distribution properties and non-negative volume density. The context explicitly lists '\u03b1, \u03b2 > 0' in the assumptions. Allowing them to be negative or zero would invalidate the CDF interpretation, break the opacity bounds, and cause numerical issues in the exponential terms. Restricting to _R_{>0}_ or _R_{\u22650}_ would be strictly accurate.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_10",
+          "title": "Typographical error",
+          "quote": "\u03bb is a hyper-parameter set to 0 _._ 1 throughout the the experiments.",
+          "explanation": "The word 'the' is duplicated. While this does not affect the mathematical derivations or experimental setup, it is a noticeable proofreading error in the methodology description.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_11",
+          "title": "Mischaracterization of NeRF's radiance field architecture and inputs",
+          "quote": "For NeRF [21] we note that the radiance field is computed as L\u03c8 ( **z** , **v** ), where L\u03c8 is a fully connected network with one hidden layer (of width 128 and ReLU activation) and **z** is a feature vector.",
+          "explanation": "The authors describe the baseline NeRF [21] radiance field to contextualize their disentanglement comparison. However, this description contains two factual inaccuracies regarding the original NeRF architecture. First, the NeRF radiance network explicitly takes the 3D position **x**, view direction **v**, and the geometry network's global feature **z** as inputs (i.e., L_\u03c8(**x**, **v**, **z**)). Omitting **x** incorrectly implies the network is position-invariant, which fundamentally contradicts NeRF's design and its ability to model spatially varying materials. Second, the hidden layer width for NeRF's radiance network is 256, not 128 as stated (the original paper specifies 4 hidden layers of width 256 for the geometry network and 1 hidden layer of width 256 for the radiance network). These inaccuracies misrepresent the baseline model. While the authors aim to demonstrate that VolSDF's explicit density formulation provides superior inductive bias for disentangling geometry and appearance, comparing against a structurally simplified or incorrectly specified baseline (position-invariant, narrower) could artificially widen the performance gap and weaken the fairness of the claimed disentanglement advantage.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.1206,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 73238,
+      "completion_tokens": 72958
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The provided excerpt presents a compelling and well-structured contribution to the field of neural implicit surface reconstruction. The authors propose VolSDF, a principled density formulation based on the Laplace CDF of a signed distance function (SDF), which elegantly addresses the persistent geometry fidelity limitations of standard NeRF methods while avoiding the mask dependencies characteristic of concurrent neural implicit surface approaches. The writing is clear and professional, effectively motivating the conceptual shift from modeling geometry as a function of density to the novel inversion of density as a function of geometry. The three claimed benefits\u2014intrinsic geometric inductive bias, a theoretical bound on opacity approximation error facilitating accurate ray sampling, and unsupervised shape-appearance disentanglement\u2014are logically organized and theoretically promising. The related work section demonstrates strong situational awareness, accurately distinguishing the method from concurrent occupancy-based approaches by emphasizing the SDF formulation, Eikonal regularization, and the unique opacity bounding capability. While the excerpt is truncated, the foundation is robust; the primary issues for the full paper to address will be the rigorous empirical validation of the opacity bound's impact on sampling accuracy, the robustness of the disentanglement claims in the absence of auxiliary supervision, and a detailed ablation demonstrating the necessity of the Laplace CDF choice over other monotonic mappings, as these are the core technical differentiators asserted in the introduction.",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Dangling quantifier and missing object in Introduction",
+          "quote": "allowing to learn simultaneously both from input images.",
+          "explanation": "The word 'both' explicitly signals two objects, but the sentence only provides one ('input images'). In the context of neural volume rendering (and specifically NeRF [21] cited right before), the intended meaning is clearly that the method learns both the density and radiance fields simultaneously. While the full paper context and field conventions resolve the ambiguity, the omission as written leaves a grammatical and logical gap that could momentarily confuse a careful reader about what exactly is being jointly optimized.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Over-simplified contrast in Abstract regarding prior geometry modeling",
+          "quote": "This is in contrast to previous work modeling the geometry as a function of the volume density.",
+          "explanation": "The authors frame their contribution as modeling density as a function of geometry, contrasting it with previous work that models geometry as a function of density. In reality, prior approaches like NeRF model density directly as a function of spatial coordinates and extract geometry post-hoc via an arbitrary isosurface threshold; they do not explicitly model geometry as a function of density. The authors' phrasing is a high-level rhetorical simplification suitable for an abstract, but technically imprecise. Given that the Introduction and Method sections correctly describe the actual contrast (SDF zero-level set vs. arbitrary MLP density level sets), this does not undermine the technical contribution, but it warrants clarification to avoid mischaracterizing the prior art.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Index/interval mismatch in quadrature sample set definition",
+          "quote": "at some discrete samples _S_ = _{si}[m] i_ =1[,][ 0 =] _[ s]_[1] _[< s]_[2] _[< . . . < s][m]_[=] _[ M]_[, where] _[ M]_[is some large constant:",
+          "explanation": "At first, the definition of the sample set seemed to imply that $m$ points would directly correspond to $m$ intervals for the rectangle rule quadrature. The text defines $S = \\{s_i\\}_{i=1}^m$ with $s_1=0$ and $s_m=M$, which mathematically yields only $m-1$ distinct intervals $[s_i, s_{i+1}]$. A standard left Riemann sum approximation would naturally sum over $i=1$ to $m-1$, or the sample set should have been defined with $m+1$ endpoints (e.g., $0=s_0 < s_1 < \\dots < s_m = M$). I checked the surrounding context and standard neural volume rendering conventions (e.g., NeRF, DVR), where $m$ samples typically map to $m-1$ intervals or an explicit grid of size $m+1$. While this is a common typographical oversight that practitioners would mentally correct, it introduces a minor notation inconsistency in the formal setup of the numerical integration. The subsequent approximation weights $\\hat{\\tau}_i$ are correctly described, but the indexing slip remains.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Underspecified upsampling strategy in Algorithm 1 pseudocode",
+          "quote": "**3 while** _BT ,\u03b2 > \u03f5 and not max_iter_ **do 4** upsample _T_ **5 if** _BT ,\u03b2_ + _< \u03f5_ **then",
+          "explanation": "Reading the pseudocode for Algorithm 1, line 4 simply states 'upsample T' without specifying how the new sample points are distributed along the ray. Initially, this appeared as a critical gap, as the choice of upsampling distribution heavily impacts convergence and computational budget. However, checking the accompanying prose in Section 3.4 resolved the ambiguity: the authors clarify that 'the number of points sampled from each interval is proportional to its current error bound, equation 14.' While the textual description correctly justifies the method and aligns with the error-bounding framework, the pseudocode block itself remains underspecified. A reader attempting to reproduce the algorithm directly from the pseudocode would miss the error-proportional refinement step, which is central to maintaining the $\\epsilon$-bound efficiently. The authors correctly leverage the SDF properties for adaptive sampling, but cross-referencing the prose within the algorithm block or expanding the pseudocode would improve reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Typographical error in interval notation",
+          "quote": "The benefit in Theorem 1 is that it allows to bound the density\u2019s derivative in each interval $[t_i, t_{i-1}]$ based only on the unsigned distance at the interval\u2019s end points, $|d_i|, |d_{i+1}|$...",
+          "explanation": "The authors refer to the interval as $[t_i, t_{i-1}]$, but subsequently cite the endpoint distances as $|d_i|$ and $|d_{i+1}|$, and earlier define intervals along the ray as $[t_i, t_{i+1}]$. This is a clear notational typo; it should read $[t_i, t_{i+1}]$ (or $[t_{i-1}, t_i]$ depending on indexing convention). It does not undermine the mathematical derivation but represents a local inconsistency in notation.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Subscript typo in Lemma 1 preamble",
+          "quote": "To conclude this section we derive two useful properties, proved in the supplementary. The first, is that sufficiently dense sampling is guaranteed to reduce the error bound $B_{T, \\epsilon}$:",
+          "explanation": "The text incorrectly refers to the error bound as $B_{T, \\epsilon}$. The bound depends on the sample set $T$ and the Laplace scale parameter $\\beta$, not the target accuracy threshold $\\epsilon$. The subscript should be $B_{T, \\beta}$ to match Lemma 1's statement and subsequent usage. This is a minor typographical oversight.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Invalid uniform sampling formula",
+          "quote": "We initialize $T$ (Line 1 in Algorithm 1) with uniform sampling $T_0 = \\{t_i\\}_{i=1}^n$, where $t_k = \\frac{(k-1)}{n} M - 1$, $k \\in [n]$ (we use $n = 128$ in our implementation).",
+          "explanation": "The equation $t_k = \\frac{(k-1)}{n} M - 1$ contains a spurious `- 1` term. For $k=1$, this yields $t_1 = -1$, which violates the fundamental ray parameter constraint $t \\ge 0$ established in Section 3.2. This is almost certainly an OCR artifact or author typo for $t_k = \\frac{k-1}{n} M$ or similar. As written, it would produce invalid sampling locations.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_7",
+          "title": "Algorithm 1 termination condition vs refinement logic ambiguity",
+          "quote": "**3 while** _B_{T, \\beta} > \\epsilon_ and not max_iter **do 4** upsample _T_ **5 if** _B_{T, \\beta_+} < \\epsilon_ **then 6** Find _\\beta^\\star \\in (_ _\\beta,_ _\\beta_ +)_ so that _B_{T, \\beta^\\star} = \\epsilon_ **7** Update _\\beta_ + _\\leftarrow \\beta^\\star_ **8 end 9 end",
+          "explanation": "The loop condition checks whether the error bound for the *original* parameter $\\beta$ exceeds $\\epsilon$, while the body of the loop attempts to refine the *working* parameter $\\beta_+$ downwards toward $\\beta$. Although logically sound (the loop naturally terminates when the original $\\beta$ happens to satisfy the bound on the denser grid, or when max iterations are reached), the phrasing conflates the feasibility check for $\\beta$ with the optimization step for $\\beta_+$. A careful reader might initially question whether the bound should be tracked against $\\beta_+$ instead. Clarifying that the condition tests target feasibility while the body performs adaptive refinement would prevent misinterpretation during implementation.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_8",
+          "title": "Notation clash for variable z",
+          "quote": "global geometry feature _**z**_ of dimension 256, i.e., _**f** \u03d5_ ( _**x**_ ) = ( _d_ ( _**x**_ ) _,_ _**z**_ ( _**x**_ )) _\u2208_ R[1+256] ... the samples _**z**_ are taken to combine a single random uniform space point and a single point from _S_ for each pixel _p_ .",
+          "explanation": "The symbol _**z**_ is first explicitly defined as a 256-dimensional global geometry feature vector extracted from the geometry network. Shortly after, when describing the Eikonal loss sampling strategy, the authors reuse _**z**_ to denote a sampled 3D point in space. This creates a direct notation conflict between a high-dimensional latent code and a spatial coordinate. A careful reader might incorrectly assume the Eikonal loss operates on the latent feature or be confused by the dimensionality mismatch. The spatial sample should be denoted with a distinct variable (e.g., _**x**_e or _**q**_) to maintain clarity and align with standard conventions in implicit surface literature.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_9",
+          "title": "Parameter domain inconsistency for \u03b1 and \u03b2",
+          "quote": "In addition we have two scalar learnable parameters \u03b1, \u03b2 \u2208_ R.",
+          "explanation": "The text states that _\u03b1_ and _\u03b2_ belong to _R_ (all real numbers), but the paper's core formulation defines _\u03c3_ as a scaled Laplace CDF applied to an SDF. This mathematically requires _\u03b2_ > 0 (as a scale parameter) and _\u03b1_ > 0 (as a density magnitude) to maintain valid distribution properties and non-negative volume density. The context explicitly lists '\u03b1, \u03b2 > 0' in the assumptions. Allowing them to be negative or zero would invalidate the CDF interpretation, break the opacity bounds, and cause numerical issues in the exponential terms. Restricting to _R_{>0}_ or _R_{\u22650}_ would be strictly accurate.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_10",
+          "title": "Typographical error",
+          "quote": "\u03bb is a hyper-parameter set to 0 _._ 1 throughout the the experiments.",
+          "explanation": "The word 'the' is duplicated. While this does not affect the mathematical derivations or experimental setup, it is a noticeable proofreading error in the methodology description.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_11",
+          "title": "Mischaracterization of NeRF's radiance field architecture and inputs",
+          "quote": "For NeRF [21] we note that the radiance field is computed as L\u03c8 ( **z** , **v** ), where L\u03c8 is a fully connected network with one hidden layer (of width 128 and ReLU activation) and **z** is a feature vector.",
+          "explanation": "The authors describe the baseline NeRF [21] radiance field to contextualize their disentanglement comparison. However, this description contains two factual inaccuracies regarding the original NeRF architecture. First, the NeRF radiance network explicitly takes the 3D position **x**, view direction **v**, and the geometry network's global feature **z** as inputs (i.e., L_\u03c8(**x**, **v**, **z**)). Omitting **x** incorrectly implies the network is position-invariant, which fundamentally contradicts NeRF's design and its ability to model spatially varying materials. Second, the hidden layer width for NeRF's radiance network is 256, not 128 as stated (the original paper specifies 4 hidden layers of width 256 for the geometry network and 1 hidden layer of width 256 for the radiance network). These inaccuracies misrepresent the baseline model. While the authors aim to demonstrate that VolSDF's explicit density formulation provides superior inductive bias for disentangling geometry and appearance, comparing against a structurally simplified or incorrectly specified baseline (position-invariant, narrower) could artificially widen the performance gap and weaken the fairness of the claimed disentanglement advantage.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.1206,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 73238,
+      "completion_tokens": 72958
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a substantial contribution to the field of neural rendering by addressing the long-standing instability of geometry extraction in volume rendering models like NeRF. The authors make a compelling conceptual distinction by reversing the standard modeling paradigm\u2014shifting from modeling geometry as a function of density to modeling density as a function of geometry (via a Signed Distance Function). The writing is concise and technically precise; the Abstract and Introduction clearly articulate the method",
+      "comments": [],
+      "cost_usd": 0.0383,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 66672,
+      "completion_tokens": 84596
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a substantial contribution to the field of neural rendering by addressing the long-standing instability of geometry extraction in volume rendering models like NeRF. The authors make a compelling conceptual distinction by reversing the standard modeling paradigm\u2014shifting from modeling geometry as a function of density to modeling density as a function of geometry (via a Signed Distance Function). The writing is concise and technically precise; the Abstract and Introduction clearly articulate the method",
+      "comments": [],
+      "cost_usd": 0.0383,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 66672,
+      "completion_tokens": 84596
+    }
+  }
+}

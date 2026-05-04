@@ -1,0 +1,1115 @@
+{
+  "slug": "neurips2021-EI2KOXKd-mlp-mixer-an-all-mlp-architecture-for-vision",
+  "title": "MLP-Mixer: An all-MLP Architecture for Vision [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **MLP-Mixer: An all-MLP Architecture for Vision**\n\n**Ilya Tolstikhin** _[\u2217]_ **, Neil Houlsby** _[\u2217]_ **, Alexander Kolesnikov** _[\u2217]_ **, Lucas Beyer** _[\u2217]_ **, Xiaohua Zhai, Thomas Unterthiner, Jessica Yung, Andreas Steiner, Daniel Keysers, Jakob Uszkoreit, Mario Lucic, Alexey Dosovitskiy**"
+    },
+    {
+      "index": 1,
+      "text": "> _\u2217_ equal contribution Google Research, Brain Team\n\n`{tolstikhin, neilhoulsby, akolesnikov, lbeyer, xzhai, unterthiner, jessicayung` _[\u2020]_ `, andstein, keysers, usz, lucic, adosovitskiy}@google.com`"
+    },
+    {
+      "index": 2,
+      "text": "> _\u2020_ work done during Google AI Residency\n\n## **Abstract**\n\nConvolutional Neural Networks (CNNs) are the go-to model for computer vision. Recently, attention-based networks, such as the Vision Transformer, have also become popular. In this paper we show that while convolutions and attention are both sufficient for good performance, neither of them are necessary. We present _MLP-Mixer_ , an architecture based exclusively on multi-layer perceptrons (MLPs). MLP-Mixer contains two types of layers: one with MLPs applied independently to image patches (i.e. \u201cmixing\u201d the per-location features), and one with MLPs applied across patches (i.e. \u201cmixing\u201d spatial information). When trained on large datasets, or with modern regularization schemes, MLP-Mixer attains competitive scores on image classification benchmarks, with pre-training and inference cost comparable to state-of-the-art models. We hope that these results spark further research beyond the realms of well established CNNs and Transformers.[1]"
+    },
+    {
+      "index": 3,
+      "text": "## **1 Introduction**\n\nAs the history of computer vision demonstrates, the availability of larger datasets coupled with increased computational capacity often leads to a paradigm shift. While Convolutional Neural Networks (CNNs) have been the de-facto standard for computer vision, recently Vision Transformers [14] (ViT), an alternative based on self-attention layers, attained state-of-the-art performance. ViT continues the long-lasting trend of removing hand-crafted visual features and inductive biases from models and relies further on learning from raw data."
+    },
+    {
+      "index": 4,
+      "text": "We propose the _MLP-Mixer_ architecture (or \u201cMixer\u201d for short), a competitive but conceptually and technically simple alternative, that does not use convolutions or self-attention. Instead, Mixer\u2019s architecture is based entirely on multi-layer perceptrons (MLPs) that are repeatedly applied across either spatial locations or feature channels. Mixer relies only on basic matrix multiplication routines, changes to data layout (reshapes and transpositions), and scalar nonlinearities."
+    },
+    {
+      "index": 5,
+      "text": "Figure 1 depicts the macro-structure of Mixer. It accepts a sequence of linearly projected image patches (also referred to as _tokens_ ) shaped as a \u201cpatches _\u00d7_ channels\u201d table as an input, and maintains this dimensionality. Mixer makes use of two types of MLP layers: _channel-mixing MLPs_ and _token-mixing MLPs_ . The channel-mixing MLPs allow communication between different channels;"
+    },
+    {
+      "index": 6,
+      "text": "> 1MLP-Mixer code is available at `https://github.com/google-research/vision_transformer`\n\n35th Conference on Neural Information Processing Systems (NeurIPS 2021)."
+    },
+    {
+      "index": 7,
+      "text": "Figure 1: MLP-Mixer consists of per-patch linear embeddings, Mixer layers, and a classifier head. Mixer layers contain one token-mixing MLP and one channel-mixing MLP, each consisting of two fully-connected layers and a GELU nonlinearity. Other components include: skip-connections, dropout, and layer norm on the channels."
+    },
+    {
+      "index": 8,
+      "text": "they operate on each token independently and take individual rows of the table as inputs. The token-mixing MLPs allow communication between different spatial locations (tokens); they operate on each channel independently and take individual columns of the table as inputs. These two types of layers are interleaved to enable interaction of both input dimensions."
+    },
+    {
+      "index": 9,
+      "text": "In the extreme case, our architecture can be seen as a very special CNN, which uses 1 _\u00d7_ 1 convolutions for _channel mixing_ , and single-channel depth-wise convolutions of a full receptive field and parameter sharing for _token mixing_ . However, the converse is not true as typical CNNs are not special cases of Mixer. Furthermore, a convolution is more complex than the plain matrix multiplication in MLPs as it requires an additional costly reduction to matrix multiplication and/or specialized implementation."
+    },
+    {
+      "index": 10,
+      "text": "Despite its simplicity, Mixer attains competitive results. When pre-trained on large datasets (i.e., _\u223c_ 100M images), it reaches near state-of-the-art performance, previously claimed by CNNs and Transformers, in terms of the accuracy/cost trade-off. This includes 87.94% top-1 validation accuracy on ILSVRC2012 \u201cImageNet\u201d [13]. When pre-trained on data of more modest scale (i.e., _\u223c_ 1\u2013 10M images), coupled with modern regularization techniques [49, 54], Mixer also achieves strong performance. However, similar to ViT, it falls slightly short of specialized CNN architectures."
+    },
+    {
+      "index": 11,
+      "text": "## **2 Mixer Architecture**\n\nModern deep vision architectures consist of layers that mix features (i) at a given spatial location, (ii) between different spatial locations, or both at once. In CNNs, (ii) is implemented with _N \u00d7 N_ convolutions (for _N >_ 1) and pooling. Neurons in deeper layers have a larger receptive field [1, 29]. At the same time, 1 _\u00d7_ 1 convolutions also perform (i), and larger kernels perform both (i) and (ii). In Vision Transformers and other attention-based architectures, self-attention layers allow both (i) and (ii) and the MLP-blocks perform (i). The idea behind the Mixer architecture is to clearly separate the per-location ( _channel-mixing_ ) operations (i) and cross-location ( _token-mixing_ ) operations (ii). Both operations are implemented with MLPs. Figure 1 summarizes the architecture."
+    },
+    {
+      "index": 12,
+      "text": "Mixer takes as input a sequence of _S_ non-overlapping image patches, each one projected to a desired _hidden dimension C_ . This results in a two-dimensional real-valued input table, **X** _\u2208_ R _[S][\u00d7][C]_ . If the original input image has resolution ( _H, W_ ), and each patch has resolution ( _P, P_ ), then the number of patches is _S_ = _HW/P_[2] . All patches are linearly projected with the _same_ projection matrix. Mixer consists of multiple layers of identical size, and each layer consists of two MLP blocks. The first one is the _token-mixing_ MLP: it acts on columns of **X** (i.e. it is applied to a transposed input table **X** _[\u22a4]_ ), maps R _[S] \ufffd\u2192_ R _[S]_ , and is shared across all columns. The second one is the _channel-mixing_ MLP: it acts on rows of **X** , maps R _[C] \ufffd\u2192_ R _[C]_ , and is shared across all rows. Each MLP block contains two"
+    },
+    {
+      "index": 13,
+      "text": "2\n\nfully-connected layers and a nonlinearity applied independently to each row of its input data tensor. Mixer layers can be written as follows (omitting layer indices):"
+    },
+    {
+      "index": 14,
+      "text": "Here _\u03c3_ is an element-wise nonlinearity (GELU [16]). _DS_ and _DC_ are tunable hidden widths in the token-mixing and channel-mixing MLPs, respectively. Note that _DS_ is selected independently of the number of input patches. Therefore, the computational complexity of the network is linear in the number of input patches, unlike ViT whose complexity is quadratic. Since _DC_ is independent of the patch size, the overall complexity is linear in the number of pixels in the image, as for a typical CNN."
+    },
+    {
+      "index": 15,
+      "text": "As mentioned above, the _same_ channel-mixing MLP (token-mixing MLP) is applied to every row (column) of **X** . Tying the parameters of the channel-mixing MLPs (within each layer) is a natural choice\u2014it provides positional invariance, a prominent feature of convolutions. However, tying parameters across channels is much less common. For example, separable convolutions [9, 40], used in some CNNs, apply convolutions to each channel independently of the other channels. However, in separable convolutions, a different convolutional kernel is applied to each channel unlike the token-mixing MLPs in Mixer that share the same kernel (of full receptive field) for all of the channels. The parameter tying prevents the architecture from growing too fast when increasing the hidden dimension _C_ or the sequence length _S_ and leads to significant memory savings. Surprisingly, this choice does not affect the empirical performance, see Supplementary A.1."
+    },
+    {
+      "index": 16,
+      "text": "Each layer in Mixer (except for the initial patch projection layer) takes an input of the same size. This \u201cisotropic\u201d design is most similar to Transformers, or deep RNNs in other domains, that also use a fixed width. This is unlike most CNNs, which have a _pyramidal_ structure: deeper layers have a lower resolution input, but more channels. Note that while these are the typical designs, other combinations exist, such as isotropic ResNets [38] and pyramidal ViTs [52]."
+    },
+    {
+      "index": 17,
+      "text": "Aside from the MLP layers, Mixer uses other standard architectural components: skip-connections [15] and layer normalization [2]. Unlike ViTs, Mixer does not use position embeddings because the token-mixing MLPs are sensitive to the order of the input tokens. Finally, Mixer uses a standard classification head with the global average pooling layer followed by a linear classifier. Overall, the architecture can be written compactly in JAX/Flax, the code is given in Supplementary F."
+    },
+    {
+      "index": 18,
+      "text": "## **3 Experiments**\n\nWe evaluate the performance of MLP-Mixer models, pre-trained with medium- to large-scale datasets, on a range of small and mid-sized downstream classification tasks. We are interested in three primary quantities: (1) Accuracy on the downstream task; (2) _Total_ computational cost of pre-training, which is important when training the model from scratch on the upstream dataset; (3) Test-time throughput, which is important to the practitioner. Our goal is not to demonstrate state-of-the-art results, but to show that, remarkably, a simple MLP-based model is competitive with today\u2019s best convolutional and attention-based models."
+    },
+    {
+      "index": 19,
+      "text": "**Downstream tasks** We use popular downstream tasks such as ILSVRC2012 \u201cImageNet\u201d (1.3M training examples, 1k classes) with the original validation labels [13] and cleaned-up ReaL labels [5], CIFAR-10/100 (50k examples, 10/100 classes) [23], Oxford-IIIT Pets (3.7k examples, 36 classes) [33], and Oxford Flowers-102 (2k examples, 102 classes) [32]. We also use the Visual Task Adaptation Benchmark (VTAB-1k), which consists of 19 diverse datasets, each with 1k training examples [58]."
+    },
+    {
+      "index": 20,
+      "text": "**Pre-training** We follow the standard transfer learning setup: pre-training followed by fine-tuning on the downstream tasks. We pre-train our models on two public datasets: ILSVRC2021 ImageNet, and ImageNet-21k, a superset of ILSVRC2012 that contains 21k classes and 14M images [13]. To assess performance at larger scale, we also train on JFT-300M, a proprietary dataset with 300M examples and 18k classes [44]. We de-duplicate all pre-training datasets with respect to the test sets of the downstream tasks as done in Dosovitskiy et al. [14], Kolesnikov et al. [22]. We pre-train all models at resolution 224 using Adam with _\u03b2_ 1 = 0 _._ 9, _\u03b2_ 2 = 0 _._ 999, linear learning rate warmup of 10k steps and linear decay, batch size 4 096, weight decay, and gradient clipping at global norm 1. For JFT-300M, we pre-process images by applying the cropping technique from Szegedy et al. [45] in addition to random horizontal flipping. For ImageNet and ImageNet-21k, we employ additional data augmentation and regularization techniques. In particular, we use RandAugment [12], mixup [60],"
+    },
+    {
+      "index": 21,
+      "text": "3\n\nTable 1: Specifications of the Mixer architectures. The \u201cB\u201d, \u201cL\u201d, and \u201cH\u201d (base, large, and huge) model scales follow Dosovitskiy et al. [14]. A brief notation \u201cB/16\u201d means the model of base scale with patches of resolution 16 _\u00d7_ 16. The number of parameters is reported for an input resolution of 224 and does not include the weights of the classifier head."
+    },
+    {
+      "index": 22,
+      "text": "|Specifcation|S/32|S/16|B/32|B/16|L/32|L/16|H/14|\n|---|---|---|---|---|---|---|---|\n|Number of layers|8|8|12|12|24|24|32|\n|Patch resolution_P\u00d7P_|32_\u00d7_32|16_\u00d7_16|32_\u00d7_32|16_\u00d7_16|32_\u00d7_32|16_\u00d7_16|14_\u00d7_14|\n|Hidden size_C_|512|512|768|768|1024|1024|1280|\n|Sequence length_S_|49|196|49|196|49|196|256|\n|MLP dimension_DC_|2048|2048|3072|3072|4096|4096|5120|\n|MLP dimension_DS_|256|256|384|384|512|512|640|\n|Parameters (M)|19|18|60|59|206|207|431|"
+    },
+    {
+      "index": 23,
+      "text": "dropout [43], and stochastic depth [19]. This set of techniques was inspired by the _timm library_ [54] and Touvron et al. [48]. More details on these hyperparameters are provided in Supplementary B."
+    },
+    {
+      "index": 24,
+      "text": "**Fine-tuning** We fine-tune using momentum SGD, batch size 512, gradient clipping at global norm 1, and a cosine learning rate schedule with a linear warmup. We do not use weight decay when finetuning. Following common practice [22, 48], we also fine-tune at higher resolutions with respect to those used during pre-training. Since we keep the patch resolution fixed, this increases the number of input patches (say from _S_ to _S[\u2032]_ ) and thus requires modifying the shape of Mixer\u2019s token-mixing MLP blocks. Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal. This particular scheme only allows for _S[\u2032]_ = _K_[2] _S_ with _K \u2208_ N. See Supplementary C for further details. On the VTAB-1k benchmark we follow the BiT-HyperRule [22] and fine-tune Mixer models at resolution 224 and 448 on the datasets with small and large input images respectively."
+    },
+    {
+      "index": 25,
+      "text": "**Metrics** We evaluate the trade-off between the model\u2019s computational cost and quality. For the former we compute two metrics: (1) Total pre-training time on TPU-v3 accelerators, which combines three relevant factors: the theoretical FLOPs for each training setup, the computational efficiency on the relevant training hardware, and the data efficiency. (2) Throughput in images/sec/core on TPU-v3. Since models of different sizes may benefit from different batch sizes, we sweep the batch sizes and report the highest throughput for each model. For model quality, we focus on top-1 downstream accuracy after fine-tuning. On two occasions (Figure 3, right and Figure 4), where fine-tuning all of the models is too costly, we report the few-shot accuracies obtained by solving the _\u2113_ 2-regularized linear regression problem between the frozen learned representations of images and the labels."
+    },
+    {
+      "index": 26,
+      "text": "**Models** We compare various configurations of Mixer, summarized in Table 1, to the most recent, state-of-the-art, CNNs and attention-based models. In all the figures and tables, the MLP-based Mixer models are marked with pink ( ), convolution-based models with yellow ( ), and attention-based models with blue ( ). The Vision Transformers (ViTs) have model scales and patch resolutions similar to Mixer. HaloNets are attention-based models that use a ResNet-like structure with local selfattention layers instead of 3 _\u00d7_ 3 convolutions [51]. We focus on the particularly efficient \u201cHaloNet-H4 (base 128, Conv-12)\u201d model, which is a hybrid variant of the wider HaloNet-H4 architecture with some of the self-attention layers replaced by convolutions. Note, we mark HaloNets with both attention and convolutions with blue ( ). Big Transfer (BiT) [22] models are ResNets optimized for transfer learning. NFNets [7] are normalizer-free ResNets with several optimizations for ImageNet classification. We consider the NFNet-F4+ model variant. We consider MPL [35] and ALIGN [21] for EfficientNet architectures. MPL is pre-trained at very large-scale on JFT-300M images, using meta-pseudo labelling from ImageNet instead of the original labels. We compare to the EfficientNetB6-Wide model variant. ALIGN pre-train image encoder and language encoder on noisy web image text pairs in a contrastive way. We compare to their best EfficientNet-L2 image encoder."
+    },
+    {
+      "index": 27,
+      "text": "## **3.1 Main results**\n\nTable 2 presents comparison of the largest Mixer models to state-of-the-art models from the literature. \u201cImNet\u201d and \u201cReaL\u201d columns refer to the original ImageNet validation [13] and cleaned-up ReaL [5]"
+    },
+    {
+      "index": 28,
+      "text": "4\n\nTable 2: Transfer performance, inference throughput, and training cost. The rows are sorted by inference throughput (fifth column). Mixer has comparable transfer accuracy to state-of-the-art models with similar cost. The Mixer models are fine-tuned at resolution 448. Mixer performance numbers are averaged over three fine-tuning runs and standard deviations are smaller than 0 _._ 1."
+    },
+    {
+      "index": 29,
+      "text": "||ImNet|ReaL|Avg 5|VTAB-1k|Throughput|TPUv3|\n|---|---|---|---|---|---|---|\n||top-1|top-1|top-1|19 tasks|img/sec/core|core-days|\n||Pre-trained on||ImageNet-21k (public)||||\n|HaloNet [51]|85.8|\u2014|\u2014|\u2014|120|0.10k|\n|Mixer-L/16|84.15|87.86|93.91|74.95|105|0.41k|\n|ViT-L/16 [14]|85.30|88.62|94.39|72.72|32|0.18k|\n|BiT-R152x4 [22]|85.39|\u2014|94.04|70.64|26|0.94k|\n||Pre-trained on JFT-300M (proprietary)||||||\n|NFNet-F4+ [7]|89.2|\u2014|\u2014|\u2014|46|1.86k|\n|Mixer-H/14|87.94|90.18|95.71|75.33|40|1.01k|\n|BiT-R152x4 [22]|87.54|90.54|95.33|76.29|26|9.90k|\n|ViT-H/14 [14]|88.55|90.72|95.97|77.63|15|2.30k|\n|Pre-trained on unlabelled or weakly labelled data (proprietary)|||||||\n|MPL [35]|90.0|91.12|\u2014|\u2014|\u2014|20.48k|\n|ALIGN [21]|88.64|\u2014|\u2014|79.99|15|14.82k|"
+    },
+    {
+      "index": 30,
+      "text": "labels. \u201cAvg. 5\u201d stands for the average performance across all five downstream tasks (ImageNet, CIFAR-10, CIFAR-100, Pets, Flowers). Figure 2 (left) visualizes the accuracy-compute frontier. When pre-trained on ImageNet-21k with additional regularization, Mixer achieves an overall strong performance (84.15% top-1 on ImageNet), although slightly inferior to other models[2] . Regularization in this scenario is necessary and Mixer overfits without it, which is consistent with similar observations for ViT [14]. The same conclusion holds when training Mixer from random initialization on ImageNet (see Section 3.2): Mixer-B/16 attains a reasonable score of 76.4% at resolution 224, but tends to overfit. This score is similar to a vanilla ResNet50, but behind state-of-the-art CNNs/hybrids for the ImageNet \u201cfrom scratch\u201d setting, e.g. 84.7% BotNet [42] and 86.5% NFNet [7]."
+    },
+    {
+      "index": 31,
+      "text": "When the size of the upstream dataset increases, Mixer\u2019s performance improves significantly. In particular, Mixer-H/14 achieves 87.94% top-1 accuracy on ImageNet, which is 0.5% better than BiTResNet152x4 and only 0.5% lower than ViT-H/14. Remarkably, Mixer-H/14 runs 2.5 times faster than ViT-H/14 and almost twice as fast as BiT. Overall, Figure 2 (left) supports our main claim that in terms of the accuracy-compute trade-off Mixer is competitive with more conventional neural network architectures. The figure also demonstrates a clear correlation between the total pre-training cost and the downstream accuracy, even across architecture classes."
+    },
+    {
+      "index": 32,
+      "text": "BiT-ResNet152x4 in the table are pre-trained using SGD with momentum and a long schedule. Since Adam tends to converge faster, we complete the picture in Figure 2 (left) with the BiT-R200x3 model from Dosovitskiy et al. [14] pre-trained on JFT-300M using Adam. This ResNet has a slightly lower accuracy, but considerably lower pre-training compute. Finally, the results of smaller ViT-L/16 and Mixer-L/16 models are also reported in this figure."
+    },
+    {
+      "index": 33,
+      "text": "## **3.2 The role of the model scale**\n\nThe results outlined in the previous section focus on (large) models at the upper end of the compute spectrum. We now turn our attention to smaller Mixer models."
+    },
+    {
+      "index": 34,
+      "text": "We may scale the model in two independent ways: (1) Increasing the model size (number of layers, hidden dimension, MLP widths) when pre-training; (2) Increasing the input image resolution when"
+    },
+    {
+      "index": 35,
+      "text": "> 2In Table 2 we consider the highest accuracy models in each class for each pre-training dataset. These all use the large resolutions (448 and above). However, fine-tuning at smaller resolution can lead to substantial improvements in the test-time throughput, with often only a small accuracy penalty. For instance, when pretraining on ImageNet-21k, the Mixer-L/16 model fine-tuned at 224 resolution achieves 82.84% ImageNet top-1 accuracy at throughput 420 img/sec/core; the ViT-L/16 model fine-tuned at 384 resolution achieves 85.15% at 80 img/sec/core [14]; and HaloNet fine-tuned at 384 resolution achieves 85.5% at 258 img/sec/core [51]."
+    },
+    {
+      "index": 36,
+      "text": "5\n\n**----- Start of picture text -----**\n\n92 Mixer (i21k | JFT) NFNet (JFT)\nViT (i21k | JFT) MPL (JFT) 70\nHaloNet (i21k) ALIGN (web)\n90 BiT (i21k | JFT)\n60\n88\n50\n86 Mixer-B/32 ViT-B/32\n40 Mixer-L/32 ViT-L/32\nMixer-L/16 ViT-L/16\n84 BiT-R152x2\n30\n10Total pre-training kilo-TPUv3-core-days1 10 [0] 10 [1] 10 M 30 M Training Size100 M 300 M ~3B\nLeft:  ImageNet accuracy/training cost Pareto frontier (dashed line) for the SOTA models in\n. Models are pre-trained on ImageNet-21k, or JFT (labelled, or pseudo-labelled for MPL), or\nMixer is as good as these extremely performant ResNets, ViTs, and hybrid\nmodels, and sits on frontier with HaloNet, ViT, NFNet, and MPL.  Right:\nexceeds BiT (dotted) and ViT (dashed) as the data size grows. Every point on a curve uses the same\npre-training compute; they correspond to pre-training on 3%, 10%, 30%, and 100% of JFT-300M for\n233, 70, 23, and 7 epochs, respectively. Additional points at  \u223c 3B correspond to pre-training on an\neven larger JFT-3B dataset for the same number of total steps. Mixer improves more rapidly with\ndata than ResNets, or even ViT. The gap between large Mixer and ViT models shrinks.\n90 90\n85 85\n80 80\n75 Mixer 75\nTransformer (ViT)\n70 70\nResNet (Adam, BiT)\n65 65\n10 [2] 10 [3] 10 [2] 10 [3] 10 [4]\nTPUv3-core-days Throughput (img/sec/core)\nImageNet transfer accuracy [%] Linear 5-shot ImageNet Top-1 [%]\nImageNet transfer accuracy\n**----- End of picture text -----**"
+    },
+    {
+      "index": 37,
+      "text": "Figure 2: **Left:** ImageNet accuracy/training cost Pareto frontier (dashed line) for the SOTA models in Table 2. Models are pre-trained on ImageNet-21k, or JFT (labelled, or pseudo-labelled for MPL), or web image text pairs. Mixer is as good as these extremely performant ResNets, ViTs, and hybrid models, and sits on frontier with HaloNet, ViT, NFNet, and MPL. **Right:** Mixer (solid) catches or exceeds BiT (dotted) and ViT (dashed) as the data size grows. Every point on a curve uses the same pre-training compute; they correspond to pre-training on 3%, 10%, 30%, and 100% of JFT-300M for 233, 70, 23, and 7 epochs, respectively. Additional points at _\u223c_ 3B correspond to pre-training on an even larger JFT-3B dataset for the same number of total steps. Mixer improves more rapidly with data than ResNets, or even ViT. The gap between large Mixer and ViT models shrinks."
+    },
+    {
+      "index": 38,
+      "text": "Figure 3: The role of the model scale. ImageNet validation top-1 accuracy vs. total pre-training compute ( **left** ) and throughput ( **right** ) of ViT, BiT, and Mixer models at various scales. All models are pre-trained on JFT-300M and fine-tuned at resolution 224, which is lower than in Figure 2 (left)."
+    },
+    {
+      "index": 39,
+      "text": "fine-tuning. While the former affects both pre-training compute and test-time throughput, the latter only affects the throughput. Unless stated otherwise, we fine-tune at resolution 224."
+    },
+    {
+      "index": 40,
+      "text": "We compare various configurations of Mixer (see Table 1) to ViT models of similar scales and BiT models pre-trained with Adam. The results are summarized in Table 3 and Figure 3. When trained from scratch on ImageNet, Mixer-B/16 achieves a reasonable top-1 accuracy of 76.44%. This is 3% behind the ViT-B/16 model. The training curves (not reported) reveal that both models achieve very similar values of the training loss. In other words, Mixer-B/16 overfits more than ViT-B/16. For the Mixer-L/16 and ViT-L/16 models this difference is even more pronounced."
+    },
+    {
+      "index": 41,
+      "text": "As the pre-training dataset grows, Mixer\u2019s performance steadily improves. Remarkably, Mixer-H/14 pre-trained on JFT-300M and fine-tuned at 224 resolution is only 0.3% behind ViT-H/14 on ImageNet whilst running 2.2 times faster. Figure 3 clearly demonstrates that although Mixer is slightly below the frontier on the lower end of model scales, it sits confidently on the frontier at the high end."
+    },
+    {
+      "index": 42,
+      "text": "## **3.3 The role of the pre-training dataset size**\n\nThe results presented thus far demonstrate that pre-training on larger datasets significantly improves Mixer\u2019s performance. Here, we study this effect in more detail."
+    },
+    {
+      "index": 43,
+      "text": "To study Mixer\u2019s ability to make use of the growing number of training examples we pre-train Mixer-B/32, Mixer-L/32, and Mixer-L/16 models on random subsets of JFT-300M containing 3%, 10%, 30% and 100% of all the training examples for 233, 70, 23, and 7 epochs. Thus, every model is pre-trained for the same number of total steps. We also pre-train Mixer-L/16 model on an even larger JFT-3B dataset [59] containing roughly 3B images with 30k classes for the same number of total steps."
+    },
+    {
+      "index": 44,
+      "text": "6\n\nTable 3: Performance of Mixer and other models from the literature across various model and pre-training dataset scales. \u201cAvg. 5\u201d denotes the average performance across five downstream tasks. Mixer and ViT models are averaged over three fine-tuning runs, standard deviations are smaller than 0 _._ 15. ( _\u2021_ ) Extrapolated from the numbers reported for the same models pre-trained on JFT-300M without extra regularization. (\ufffd) Numbers provided by authors of Dosovitskiy et al. [14] through personal communication. Rows are sorted by throughput."
+    },
+    {
+      "index": 45,
+      "text": "||Image|Pre-Train|ImNet|ReaL|Avg. 5|Throughput|TPUv3|\n|---|---|---|---|---|---|---|---|\n||size|Epochs|top-1|top-1|top-1|(img/sec/core)|core-days|\n||Pre-trained on ImageNet (with extra regularization)|||||||\n|Mixer-B/16|224|300|76.44|82.36|88.33|1384|0.01k(_\u2021_)|\n|ViT-B/16 (\ufffd)|224|300|79.67|84.97|90.79|861|0.02k(_\u2021_)|\n|Mixer-L/16|224|300|71.76|77.08|87.25|419|0.04k(_\u2021_)|\n|ViT-L/16 (\ufffd)|224|300|76.11|80.93|89.66|280|0.05k(_\u2021_)|\n||Pre-trained on ImageNet-21k|||(with extra|regularization)|||\n|Mixer-B/16|224|300|80.64|85.80|92.50|1384|0.15k(_\u2021_)|\n|ViT-B/16 (\ufffd)|224|300|84.59|88.93|94.16|861|0.18k(_\u2021_)|\n|Mixer-L/16|224|300|82.89|87.54|93.63|419|0.41k(_\u2021_)|\n|ViT-L/16 (\ufffd)|224|300|84.46|88.35|94.49|280|0.55k(_\u2021_)|\n|Mixer-L/16|448|300|83.91|87.75|93.86|105|0.41k(_\u2021_)|\n|||Pre-trained on||JFT-300M||||\n|Mixer-S/32|224|5|68.70|75.83|87.13|11489|0.01k|\n|Mixer-B/32|224|7|75.53|81.94|90.99|4208|0.05k|\n|Mixer-S/16|224|5|73.83|80.60|89.50|3994|0.03k|\n|BiT-R50x1|224|7|73.69|81.92|\u2014|2159|0.08k|\n|Mixer-B/16|224|7|80.00|85.56|92.60|1384|0.08k|\n|Mixer-L/32|224|7|80.67|85.62|93.24|1314|0.12k|\n|BiT-R152x1|224|7|79.12|86.12|\u2014|932|0.14k|\n|BiT-R50x2|224|7|78.92|86.06|\u2014|890|0.14k|\n|BiT-R152x2|224|14|83.34|88.90|\u2014|356|0.58k|\n|Mixer-L/16|224|7|84.05|88.14|94.51|419|0.23k|\n|Mixer-L/16|224|14|84.82|88.48|94.77|419|0.45k|\n|ViT-L/16|224|14|85.63|89.16|95.21|280|0.65k|\n|Mixer-H/14|224|14|86.32|89.14|95.49|194|1.01k|\n|BiT-R200x3|224|14|84.73|89.58|\u2014|141|1.78k|\n|Mixer-L/16|448|14|86.78|89.72|95.13|105|0.45k|\n|ViT-H/14|224|14|86.65|89.56|95.57|87|2.30k|\n|ViT-L/16 [14]|512|14|87.76|90.54|95.63|32|0.65k|"
+    },
+    {
+      "index": 46,
+      "text": "While not strictly comparable, this allows us to further extrapolate the effect of scale. We use the linear 5-shot top-1 accuracy on ImageNet as a proxy for transfer quality. For every pre-training run we perform early stopping based on the best upstream validation performance. Results are reported in Figure 2 (right), where we also include ViT-B/32, ViT-L/32, ViT-L/16, and BiT-R152x2 models."
+    },
+    {
+      "index": 47,
+      "text": "When pre-trained on the smallest subset of JFT-300M, all Mixer models strongly overfit. BiT models also overfit, but to a lesser extent, possibly due to the strong inductive biases associated with the convolutions. As the dataset increases, the performance of both Mixer-L/32 and Mixer-L/16 grows faster than BiT; Mixer-L/16 keeps improving, while the BiT model plateaus."
+    },
+    {
+      "index": 48,
+      "text": "The same conclusions hold for ViT, consistent with Dosovitskiy et al. [14]. However, the relative improvement of larger Mixer models are even more pronounced. The performance gap between Mixer-L/16 and ViT-L/16 shrinks with data scale. It appears that Mixer benefits from the growing dataset size even more than ViT. One could speculate and explain it again with the difference in inductive biases: self-attention layers in ViT lead to certain properties of the learned functions that are _less compatible_ with the true underlying distribution than those discovered with Mixer architecture."
+    },
+    {
+      "index": 49,
+      "text": "## **3.4 Invariance to input permutations**\n\nIn this section, we study the difference between inductive biases of Mixer and CNN architectures. Specifically, we train Mixer-B/16 and ResNet50x1 models on JFT-300M following the pre-training"
+    },
+    {
+      "index": 50,
+      "text": "7\n\n**----- Start of picture text -----**\n\nOriginal Patch + pixel shuffling Global shuffling\noriginal global shuffling patch + pixel shuffling\n60 Mixer-B/16 60 ResNet50x1\n40 40\n20 20\n0 0\n0 100 k 200 k 300 k 400 k 500 k 0 100 k 200 k 300 k 400 k 500 k\nTraining steps Training steps\nLinear 5-shot ImageNet\n**----- End of picture text -----**"
+    },
+    {
+      "index": 51,
+      "text": "Figure 4: **Top:** Input examples from ImageNet before permuting the contents (left); after shuffling the 16 _\u00d7_ 16 patches and pixels within the patches (center); after shuffling pixels globally (right). **Bottom:** Mixer-B/16 (left) and ResNet50x1 (right) trained with three corresponding input pipelines."
+    },
+    {
+      "index": 52,
+      "text": "Figure 5: Hidden units in the first ( **left** ), second ( **center** ), and third ( **right** ) token-mixing MLPs of a Mixer-B/16 model trained on JFT-300M. Each unit has 196 weights, one for each of the 14 _\u00d7_ 14 incoming patches. We pair the units to highlight the emergence of kernels of opposing phase. Pairs are sorted by filter frequency. In contrast to the kernels of convolutional filters, where each weight corresponds to one pixel in the input image, one weight in any plot from the left column corresponds to a particular 16 _\u00d7_ 16 patch of the input image. Complete plots in Supplementary D."
+    },
+    {
+      "index": 53,
+      "text": "setup described in Section 3 and using one of two different input transformations: (1) Shuffle the order of 16 _\u00d7_ 16 patches and permute pixels within each patch with a shared permutation; (2) Permute the pixels globally in the entire image. Same permutation is used across all images. We report the linear 5-shot top-1 accuracy of the trained models on ImageNet in Figure 4 (bottom). Some original images along with their two transformed versions appear in Figure 4 (top). As could be expected, Mixer is invariant to the order of patches and pixels within the patches (the blue and green curves match perfectly). On the other hand, ResNet\u2019s strong inductive bias relies on a particular order of pixels within an image and its performance drops significantly when the patches are permuted. _\u223c_ Remarkably, when globally permuting the pixels, Mixer\u2019s performance drops much less ( 45% drop) _\u223c_ compared to the ResNet ( 75% drop)."
+    },
+    {
+      "index": 54,
+      "text": "## **3.5 Visualization**\n\nIt is commonly observed that the first layers of CNNs tend to learn Gabor-like detectors that act on pixels in local regions of the image. In contrast, Mixer allows for global information exchange in the token-mixing MLPs, which begs the question whether it processes information in a similar fashion. Figure 5 shows hidden units of the first three token-mixing MLPs of Mixer trained on JFT-300M. Recall that the token-mixing MLPs allow global communication between different spatial locations. Some of the learned features operate on the entire image, while others operate on smaller regions. Deeper layers appear to have no clearly identifiable structure. Similar to CNNs, we observe many pairs of feature detectors with opposite phases [39]. The structure of learned units depends on the hyperparameters. Plots for the first embedding layer appear in Figure 2 of Supplementary D."
+    },
+    {
+      "index": 55,
+      "text": "8\n\n## **4 Related work**\n\nMLP-Mixer is a new architecture for computer vision that differs from previous successful architectures because it uses neither convolutional nor self-attention layers. Nevertheless, the design choices can be traced back to ideas from the literature on CNNs [24, 25] and Transformers [50]."
+    },
+    {
+      "index": 56,
+      "text": "CNNs have been the de-facto standard in computer vision since the AlexNet model [24] surpassed prevailing approaches based on hand-crafted image features [36]. Many works focused on improving the design of CNNs. Simonyan and Zisserman [41] demonstrated that one can train state-of-the-art models using only convolutions with small 3 _\u00d7_ 3 kernels. He et al. [15] introduced skip-connections together with the batch normalization [20], which enabled training of very deep neural networks and further improved performance. A prominent line of research has investigated the benefits of using sparse convolutions, such as grouped [57] or depth-wise [9, 17] variants. In a similar spirit to our token-mixing MLPs, Wu et al. [55] share parameters in the depth-wise convolutions for natural language processing. Hu et al. [18] and Wang et al. [53] propose to augment convolutional networks with non-local operations to partially alleviate the constraint of local processing from CNNs. Mixer takes the idea of using convolutions with small kernels to the extreme: by reducing the kernel size to 1 _\u00d7_ 1 it turns convolutions into standard dense matrix multiplications applied independently to each spatial location (channel-mixing MLPs). This alone does not allow aggregation of spatial information and to compensate we apply dense matrix multiplications that are applied to every feature across all spatial locations (token-mixing MLPs). In Mixer, matrix multiplications are applied row-wise or column-wise on the \u201cpatches _\u00d7_ features\u201d input table, which is also closely related to the work on sparse convolutions. Mixer uses skip-connections [15] and normalization layers [2, 20]."
+    },
+    {
+      "index": 57,
+      "text": "In computer vision, self-attention based Transformer architectures were initially applied for generative modeling [8, 34]. Their value for image recognition was demonstrated later, albeit in combination with a convolution-like locality bias [37], or on low-resolution images [10]. Dosovitskiy et al. [14] introduced ViT, a pure transformer model that has fewer locality biases, but scales well to large data. ViT achieves state-of-the-art performance on popular vision benchmarks while retaining the robustness of CNNs [6]. Touvron et al. [49] trained ViT effectively on smaller datasets using extensive regularization. Mixer borrows design choices from recent transformer-based architectures. The design of Mixer\u2019s MLP-blocks originates in [27, 50]. Converting images to a sequence of patches and directly processing embeddings of these patches originates in Dosovitskiy et al. [14]."
+    },
+    {
+      "index": 58,
+      "text": "Many recent works strive to design more effective architectures for vision. Srinivas et al. [42] replace 3 _\u00d7_ 3 convolutions in ResNets by self-attention layers. Ramachandran et al. [37], Tay et al. [47], Li et al. [26], and Bello [3] design networks with new attention-like mechanisms. Mixer can be seen as a step in an orthogonal direction, without reliance on locality bias and attention mechanisms."
+    },
+    {
+      "index": 59,
+      "text": "The work of Lin et al. [28] is closely related. It attains reasonable performance on CIFAR-10 using fully connected networks, heavy data augmentation, and pre-training with an auto-encoder. Neyshabur [31] devises custom regularization and optimization algorithms and trains a fully-connected network, attaining impressive performance on small-scale tasks. Instead we rely on token and channel-mixing MLPs, use standard regularization and optimization techniques, and scale to large data effectively."
+    },
+    {
+      "index": 60,
+      "text": "Traditionally, networks evaluated on ImageNet [13] are trained from random initialization using Inception-style pre-processing [46]. For smaller datasets, transfer of ImageNet models is popular. However, modern state-of-the-art models typically use either weights pre-trained on larger datasets, or more recent data-augmentation and training strategies. For example, Dosovitskiy et al. [14], Kolesnikov et al. [22], Mahajan et al. [30], Pham et al. [35], Xie et al. [56] all advance state-of-the-art in image classification using large-scale pre-training. Examples of improvements due to augmentation or regularization changes include Cubuk et al. [11], who attain excellent classification performance with learned data augmentation, and Bello et al. [4], who show that canonical ResNets are still near state-of-the-art, if one uses recent training and augmentation strategies."
+    },
+    {
+      "index": 61,
+      "text": "## **5 Conclusions**\n\nWe describe a very simple architecture for vision. Our experiments demonstrate that it is as good as existing state-of-the-art methods in terms of the trade-off between accuracy and computational resources required for training and inference. We believe these results open many questions. On the practical side, it may be useful to study the features learned by the model and identify the main"
+    },
+    {
+      "index": 62,
+      "text": "9\n\ndifferences (if any) from those learned by CNNs and Transformers. On the theoretical side, we would like to understand the inductive biases hidden in these various features and eventually their role in generalization. Most of all, we hope that our results spark further research, beyond the realms of established models based on convolutions and self-attention. It would be particularly interesting to see whether such a design works in NLP or other domains."
+    },
+    {
+      "index": 63,
+      "text": "## **Acknowledgments and Disclosure of Funding**\n\nThe work was performed in the Brain teams in Berlin and Z\u00fcrich. We thank Josip Djolonga for feedback on the initial version of the paper; Preetum Nakkiran for proposing to train MLP-Mixer on input images with shuffled pixels; Olivier Bousquet, Yann Dauphin, and Dirk Weissenborn for useful discussions."
+    },
+    {
+      "index": 64,
+      "text": "## **References**\n\n- [1] A. Araujo, W. Norris, and J. Sim. Computing receptive fields of convolutional neural networks. _Distill_ , 2019. doi: 10.23915/distill.00021. URL `https://distill.pub/2019/ computing-receptive-fields` ."
+    },
+    {
+      "index": 65,
+      "text": "- [2] J. L. Ba, J. R. Kiros, and G. E. Hinton. Layer normalization. _arXiv preprint arXiv:1607.06450_ , 2016."
+    },
+    {
+      "index": 66,
+      "text": "- [3] I. Bello. LambdaNetworks: Modeling long-range interactions without attention. _arXiv preprint arXiv:2102.08602_ , 2021."
+    },
+    {
+      "index": 67,
+      "text": "- [4] I. Bello, W. Fedus, X. Du, E. D. Cubuk, A. Srinivas, T.-Y. Lin, J. Shlens, and B. Zoph. Revisiting ResNets: Improved training and scaling strategies. _arXiv preprint arXiv:2103.07579_ , 2021."
+    },
+    {
+      "index": 68,
+      "text": "- [5] L. Beyer, O. J. H\u00e9naff, A. Kolesnikov, X. Zhai, and A. van den Oord. Are we done with ImageNet? _arXiv preprint arXiv:2006.07159_ , 2020."
+    },
+    {
+      "index": 69,
+      "text": "- [6] S. Bhojanapalli, A. Chakrabarti, D. Glasner, D. Li, T. Unterthiner, and A. Veit. Understanding robustness of transformers for image classification. _arXiv preprint arXiv:2103.14586_ , 2021."
+    },
+    {
+      "index": 70,
+      "text": "- [7] A. Brock, S. De, S. L. Smith, and K. Simonyan. High-performance large-scale image recognition without normalization. _arXiv preprint arXiv:2102.06171_ , 2021."
+    },
+    {
+      "index": 71,
+      "text": "- [8] R. Child, S. Gray, A. Radford, and I. Sutskever. Generating long sequences with sparse transformers. _arXiv preprint arXiv:1904.10509_ , 2019."
+    },
+    {
+      "index": 72,
+      "text": "- [9] F. Chollet. Xception: Deep learning with depthwise separable convolutions. In _CVPR_ , 2017.\n\n- [10] J.-B. Cordonnier, A. Loukas, and M. Jaggi. On the relationship between self-attention and convolutional layers. In _ICLR_ , 2020."
+    },
+    {
+      "index": 73,
+      "text": "- [11] E. D. Cubuk, B. Zoph, D. Mane, V. Vasudevan, and Q. V. Le. AutoAugment: Learning augmentation policies from data. In _CVPR_ , 2019."
+    },
+    {
+      "index": 74,
+      "text": "- [12] E. D. Cubuk, B. Zoph, J. Shlens, and Q. V. Le. RandAugment: Practical automated data augmentation with a reduced search space. In _CVPR Workshops_ , 2020."
+    },
+    {
+      "index": 75,
+      "text": "- [13] J. Deng, W. Dong, R. Socher, L. Li, Kai Li, and Li Fei-Fei. ImageNet: A large-scale hierarchical image database. In _CVPR_ , 2009."
+    },
+    {
+      "index": 76,
+      "text": "- [14] A. Dosovitskiy, L. Beyer, A. Kolesnikov, D. Weissenborn, X. Zhai, T. Unterthiner, M. Dehghani, M. Minderer, G. Heigold, S. Gelly, J. Uszkoreit, and N. Houlsby. An image is worth 16x16 words: Transformers for image recognition at scale. In _ICLR_ , 2021."
+    },
+    {
+      "index": 77,
+      "text": "- [15] K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image recognition. In _CVPR_ , 2016."
+    },
+    {
+      "index": 78,
+      "text": "- [16] D. Hendrycks and K. Gimpel. Gaussian error linear units (GELUs). _arXiv preprint arXiv:1606.08415_ , 2016."
+    },
+    {
+      "index": 79,
+      "text": "- [17] A. G. Howard, M. Zhu, B. Chen, D. Kalenichenko, W. Wang, T. Weyand, M. Andreetto, and H. Adam. Mobilenets: Efficient convolutional neural networks for mobile vision applications. _arXiv preprint arXiv:1704.04861_ , 2017.\n\n- [18] J. Hu, L. Shen, and G. Sun. Squeeze-and-excitation networks. In _CVPR_ , 2018.\n\n10"
+    },
+    {
+      "index": 80,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__gemini-3-flash-preview": {
+      "label": "Progressive (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "This paper presents a compelling and conceptually elegant challenge to the prevailing dominance of Convolutions and Self-Attention in computer vision. The quality of the work is high, characterized by a clear structural breakdown of how spatial and characteristic information can be decoupled using only Multi-Layer Perceptrons (MLPs). The paper\u2019s primary strength lies in its simplicity; by reducing the architecture to \"token-mixing\" and \"channel-mixing\" operations, the authors provide a transparent alternative to the more complex inductive biases found in CNNs and Transformers. The clarity of the technical description\u2014specifically the formulation of the Mixer layer\u2014is excellent, making the architecture highly reproducible.\n\nHowever, the most significant issue lies in the model's reliance on massive-scale pre-training or heavy regularization to remain competitive. As the authors acknowledge, the lack of inherent inductive biases (like translation equivariance in CNNs) causes the model to underperform when data is scarce. While the linear scaling relative to pixels is a theoretical advantage, the practical \"utility\" of an all-MLP structure over a Vision Transformer (ViT) remains a point of contention, as both ultimately rely on similar global mixing strategies. The paper would be further strengthened by a more rigorous discussion on the interpretability of the token-mixing weights to determine if the model learns filters similar to traditional convolutional kernels or if it utilizes a entirely different spatial logic. Regardless, this is a significant contribution that reopens the floor for fundamental architectural design in deep learning.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3-flash-preview_0",
+          "title": "Missing Equations in Mixer Layer Definition",
+          "quote": "Mixer layers can be written as follows (omitting layer indices):",
+          "explanation": "The text explicitly states 'Mixer layers can be written as follows', but the equations themselves are missing from the provided passage (likely due to an extraction/OCR failure in that specific block). While the text follows up with definitions for $\\sigma$, $D_S$, and $D_C$, the actual mathematical representation of Equations (1) and (2) is absent. This makes it difficult to verify the exact logic of the residual connections and LayerNorm mentioned in the text, although Figure 1 provides a visual schematic.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_1",
+          "title": "Conflict in Scaling Logic and Complexity Claims",
+          "quote": "Therefore, the computational complexity of the network is linear in the number of input patches, unlike ViT whose complexity is quadratic.",
+          "explanation": "There is a logical contradiction between the claim of linear complexity and the proposed fine-tuning scheme. The text claims complexity is linear in $S$ because $D_S$ is independent of $S$. However, the token-mixing step involves matrix multiplications resulting in $\\mathcal{O}(S \\cdot D_S \\cdot C)$. If $D_S$ is held constant, complexity is $\\mathcal{O}(S)$. However, in the fine-tuning section, the authors state they increase the hidden width $D_S'$ 'in proportion' to the number of patches $S'$. If $D_S$ scales with $S$, the complexity becomes $O(S^2)$, matching the quadratic complexity of self-attention in ViT. This creates a tension between the 'linear complexity' marketing of the architecture and the 'proportional scaling' required for the proposed resolution-adaptation initialization.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_2",
+          "title": "Ill-defined Initialization for Higher-Resolution Fine-tuning",
+          "quote": "initialize the (now larger) weight matrix $\\mathbf{W}_2' \\in \\mathbb{R}^{D_S' \\times S'}$ with a block-diagonal matrix containing copies of $\\mathbf{W}_2$ on its diagonal.",
+          "explanation": "This description contains technical inconsistencies regarding the expansion of the token-mixing layers. First, a block-diagonal initialization using copies of a $D_S \\times S$ matrix $\\mathbf{W}_2$ to create a $(K^2 D_S) \\times (K^2 S)$ matrix physically suggests that each 'block' of new tokens only communicates within itself. If the authors intended to maintain global communication (mixing across all $S'$ tokens), a block-diagonal strategy is insufficient as it zero-initializes the cross-block interactions. Secondly, because the authors claim $D_S$ is selected 'independently' of $S$, the scaling factor for $D_S'$ is not mathematically defined unless $D_S$ and $S$ scale by the exact same ratio. Without a defined rule for $D_S'$ scaling, the block-diagonal initialization of $\\mathbf{W}_2'$ is ill-defined.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3-flash-preview_3",
+          "title": "Numerical Inconsistency in Mixer-L/16 Parameter Count",
+          "quote": "|L/16|24|16 x 116|1024|196|4096|512|207|",
+          "explanation": "In Table 1, the Mixer-L/32 and Mixer-L/16 models are listed with 206M and 207M parameters respectively. In a Mixer layer, parameters are independent of sequence length $S$ due to weight sharing. The only part that varies with patch size is the initial linear projection. For L/32, the patch size is $32 \\times 32 \\times 3 = 3072$. For L/16, it is $16 \\times 16 \\times 3 = 768$. In the 'S' and 'B' scales, the '/16' variants correctly show fewer parameters than the '/32' variants due to the smaller projection matrix. Paradoxically, the 'L/16' variant is listed as having more parameters than 'L/32', which contradicts the architectural definition and the trend established in the rest of the table.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0829,
+      "prompt_tokens": 83268,
+      "completion_tokens": 13763
+    },
+    "progressive_original__gemini-3-flash-preview": {
+      "label": "Progressive Original (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "This paper presents a compelling and conceptually elegant challenge to the prevailing dominance of Convolutions and Self-Attention in computer vision. The quality of the work is high, characterized by a clear structural breakdown of how spatial and characteristic information can be decoupled using only Multi-Layer Perceptrons (MLPs). The paper\u2019s primary strength lies in its simplicity; by reducing the architecture to \"token-mixing\" and \"channel-mixing\" operations, the authors provide a transparent alternative to the more complex inductive biases found in CNNs and Transformers. The clarity of the technical description\u2014specifically the formulation of the Mixer layer\u2014is excellent, making the architecture highly reproducible.\n\nHowever, the most significant issue lies in the model's reliance on massive-scale pre-training or heavy regularization to remain competitive. As the authors acknowledge, the lack of inherent inductive biases (like translation equivariance in CNNs) causes the model to underperform when data is scarce. While the linear scaling relative to pixels is a theoretical advantage, the practical \"utility\" of an all-MLP structure over a Vision Transformer (ViT) remains a point of contention, as both ultimately rely on similar global mixing strategies. The paper would be further strengthened by a more rigorous discussion on the interpretability of the token-mixing weights to determine if the model learns filters similar to traditional convolutional kernels or if it utilizes a entirely different spatial logic. Regardless, this is a significant contribution that reopens the floor for fundamental architectural design in deep learning.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3-flash-preview_0",
+          "title": "Incorrect Formula for Number of Patches",
+          "quote": "If the original input image has resolution ( _H, W_ ), and each patch has resolution ( _P, P_ ), then the number of patches is _S_ = _HW/P_[2] .",
+          "explanation": "The text states the number of patches $S$ is $HW/P^2$. While $HW$ represents the total area of the image and $P^2$ represents the area of a single patch, the standard geometric interpretation for non-overlapping patches requires dividing the total area by the patch area. If the image is divided into a grid of $P \times P$ patches, the number of patches along the height is $H/P$ and along the width is $W/P$, leading to a total $S = (H/P) \times (W/P) = HW/P^2$. However, the OCR/text here reads '_HW/P_[2]'. If treated as $HW/P^2$, it is correct. But if read literally as $HW/P$ (with a stray footnote indicator [2]), it is mathematically incorrect for a 2D image. Given that the subsequent text and Table 1 ($49 \times 32^2 = 224^2$) confirm the authors understand the area relationship, this is likely a notation/OCR artifact, but as written in the passage, it appears as a potential formula error.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_1",
+          "title": "Missing Equations in Mixer Layer Definition",
+          "quote": "Mixer layers can be written as follows (omitting layer indices):",
+          "explanation": "The text explicitly states 'Mixer layers can be written as follows', but the equations themselves are missing from the provided passage (likely due to an extraction/OCR failure in that specific block). While the text follows up with definitions for $\\sigma$, $D_S$, and $D_C$, the actual mathematical representation of Equations (1) and (2) is absent. This makes it difficult to verify the exact logic of the residual connections and LayerNorm mentioned in the text, although Figure 1 provides a visual schematic.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_2",
+          "title": "Ambiguous Complexity Claim vs. ViT",
+          "quote": "Therefore, the computational complexity of the network is linear in the number of input patches, unlike ViT whose complexity is quadratic.",
+          "explanation": "The authors claim MLP-Mixer's complexity is linear in the number of patches $S$, whereas ViT is quadratic. This is true for the 'mixing' operations: Mixer\u2019s token-mixing is $O(S \\cdot D_S)$ (shared across channels) or $O(S^2)$ if one considers $D_S$ to scale with $S$. However, in standard ViT, the quadratic complexity $O(S^2)$ arises from the self-attention mechanism (all-to-all interaction). In Mixer, the token-mixing MLP is a fully connected layer acting on $S$ tokens. A fully connected layer mapping $S$ inputs to $S$ outputs has $S^2$ weights. If the authors keep the hidden dimension $D_S$ fixed as $S$ increases, it is linear in $S$ overall, but if $D_S$ scales with $S$ (as it typically does in MLP layers to maintain capacity), the weight matrix size is $S \\times D_S$, making it $O(S^2)$. The passage later says $D_S$ is selected independently of the number of patches, which justifies the 'linear' claim, but this implies that as resolution increases, the model's capacity per spatial location does not grow, which is a significant distinction from how MLPs are usually scaled and might be a nuance a reader misses.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_3",
+          "title": "Unspecified scaling logic for token-mixing MLP hidden width",
+          "quote": "For this, we increase the hidden layer width from $D_S$ to $D_S'$ in proportion to the number of patches and initialize the (now larger) weight matrix $\\mathbf{W}_2' \\in \\mathbb{R}^{D_S' \\times S'}$ with a block-diagonal matrix containing copies of $\\mathbf{W}_2$ on its diagonal.",
+          "explanation": "The authors describe a method for increasing the hidden layer width $D_S$ to $D_S'$ when fine-tuning at higher resolutions ($S'$). While they state the hidden width increases 'in proportion' to the number of patches, the block-diagonal initialization described for $\\mathbf{W}_2'$ (which maps from $D_S'$ to $S'$) only makes mathematical sense if the input dimension $D_S$ and the output dimension $S$ scale by the same factor $K^2$. However, the summary earlier states that $D_S$ is a 'tunable' hidden width selected 'independently of the number of input patches.' If $D_S$ is independent of $S$, a reader cannot determine $D_S'$ without a specific rule (e.g., does it scale exactly by $K^2$, or does it remain constant while only $S$ changes?). If $D_S$ does not scale by the same factor as $S$, the block-diagonal initialization of $\\mathbf{W}_2'$ becomes ill-defined as the dimensions of the internal blocks would not match the original $\\mathbf{W}_2$.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_4",
+          "title": "Numerical inconsistency in Mixer-L/16 parameter count",
+          "quote": "|L/16|24|16 x 16|1024|196|4096|512|207|",
+          "explanation": "In Table 1, the Mixer-L/32 and Mixer-L/16 models are listed with 206M and 207M parameters respectively. However, both models share the same depth (24 layers), hidden size $C$ (1024), channel-MLP width $D_C$ (4096), and token-MLP width $D_S$ (512). The only listed difference is the sequence length $S$ (49 vs 196). In a Mixer layer, the parameters are independent of $S$ due to parameter tying across channels. The only part of the architecture that should vary in parameters with $S$ is the initial linear projection (which maps patch pixels to $C$). For L/32, the patch size is $32 \\times 32 \\times 3 = 3072$ inputs. For L/16, the patch size is $16 \\times 16 \\times 3 = 768$ inputs. Paradoxically, the S/16 and B/16 configurations in the table show *fewer* parameters than their S/32 and B/32 counterparts, which is consistent with the smaller projection matrix ($768 \\times C$ vs $3072 \\times C$). For the 'L' scale, the '16' variant is listed as having *more* parameters (207M vs 206M), which contradicts the logic seen in the 'S' and 'B' scales and the architectural definition. This suggests a typo in the table or an unstated change in the Large model configuration.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_5",
+          "title": "Potential conflict in definition of token-mixing complexity",
+          "quote": "Note that $D_S$ is selected independently of the number of input patches. Therefore, the computational complexity of the network is linear in the number of input patches, unlike ViT whose complexity is quadratic.",
+          "explanation": "The text claims complexity is linear in $S$ because $D_S$ is independent of $S$. However, the token-mixing step involves $\\mathbf{W}_1 \\in \\mathbb{R}^{D_S \\times S}$ and $\\mathbf{W}_2 \\in \\mathbb{R}^{S \\times D_S}$. A single matrix multiplication of $\\mathbf{W}_1$ with the input (transposed $\\mathbf{X} \\in \\mathbb{R}^{C \\times S}$) results in a complexity of $\\mathcal{O}(S \\cdot D_S \\cdot C)$. If $D_S$ is held constant as $S$ increases (as suggested by the independence claim), the total complexity is indeed $\\mathcal{O}(S)$. However, if $D_S$ is scaled 'in proportion' to $S$ during resolution changes (as mentioned in the fine-tuning section), the complexity becomes $O(S^2)$, matching the quadratic complexity of self-attention in ViT. This creates a logical tension between the 'linear complexity' claim and the 'proportional scaling' required for the proposed block-diagonal fine-tuning initialization.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_6",
+          "title": "Initialization scheme for fine-tuning at higher resolutions",
+          "quote": "initialize the (now larger) weight matrix $\\mathbf{W}_2' \\in \\mathbb{R}^{D_S' \\times S'}$ with a block-diagonal matrix containing copies of $\\mathbf{W}_2$ on its diagonal.",
+          "explanation": "This description contains two technical inconsistencies. First, in the 'Notation & Definitions' and 'Key Equations' sections, the token-mixing weights are defined as $\\mathbf{W}_1 \\in \\mathbb{R}^{S \\times D_S}$ and $\\mathbf{W}_2 \\in \\mathbb{R}^{D_S \\times S}$. The text here suggests $\\mathbf{W}_2'$ should be shaped $D_S' \\times S'$, which matches this convention. However, if $S'$ (the new number of tokens) increases by factor $K^2$, and the hidden width $D_S'$ increases proportionally, a block-diagonal initialization using copies of a $D_S \\times S$ matrix $\\mathbf{W}_2$ would result in a matrix of size $(K^2 D_S) \\times (K^2 S)$. While the dimensions match, block-diagonalizing a non-square matrix ($D_S \\neq S$) to map spatial information in this way is non-standard and physically suggests that each 'block' of new tokens only communicates within itself. If the authors intended to maintain global communication (mixing across all $S'$ tokens), a block-diagonal strategy is insufficient as it zero-initializes the cross-block interactions. Secondly, the provided example $S' = K^2 S$ is noted as allowing this scheme, but the text describes the weights as being 'on the diagonal,' implying a specific structural mapping that is not fully detailed for a non-convolutional, all-to-all MLP layer. Given that the paper claims Mixer is 'inherently sensitive to input order,' how this order is preserved or interpolated when the weight matrix is expanded via block-copying is a critical implementation detail for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3-flash-preview_7",
+          "title": "Claim of linear complexity in pixels is potentially misleading",
+          "quote": "Since $D_C$ is independent of the patch size, the overall complexity is linear in the number of pixels in the image, as for a typical CNN.",
+          "explanation": "While it is true that the channel-mixing MLP and the per-patch projection are linear in pixels, the paper defines the token-mixing step in Eq. (1) as using weight matrices acting on the sequence length $S$. In a standard MLP where $\\mathbf{W}_1 \\in \\mathbb{R}^{S \\times D_S}$, the number of parameters and the complexity of the matrix multiplication is $O(S \\cdot D_S)$. If $D_S$ is scaled proportionally to $S$ (as suggested in the fine-tuning section where $D_S'$ grows with $S'$), the complexity becomes $O(S^2)$, mirroring the quadratic complexity of self-attention in Transformers. If $D_S$ is kept constant, the complexity is $O(S)$. However, 'linear in the number of pixels' is only true if $S$ (the number of patches) is proportional to the number of pixels $HW/P^2$. While the authors are technically correct under the condition that $D_S$ is constant, the claim that it's 'unlike ViT whose complexity is quadratic' is slightly nuanced: ViT is quadratic in $S$, and Mixer is also quadratic in $S$ if $D_S$ scales with the input to maintain model capacity. The text glosses over whether $D_S$ is fixed across all image resolutions or scaled, which determines if the complexity is truly linear or effectively quadratic in practice.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0829,
+      "prompt_tokens": 83268,
+      "completion_tokens": 13763
+    },
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is exceptionally well-written, characterized by a clear, logical structure and a compelling narrative that effectively challenges the dominance of CNNs and Transformers in computer vision. The authors do a commendable job of distilling a conceptually simple idea\u2014the decoupling of spatial and channel information\u2014into a rigorous architectural proposal, supported by intuitive mathematical notation and high-quality supplementary figures. The manuscript\u2019s primary strength lies in its \"minimalist\" approach to deep learning, which serves as a valuable theoretical contribution by questioning the necessity of complex inductive biases like convolutions or attention mechanisms. While the clarity and technical rigor are exemplary, the most significant challenge for the authors (addressed briefly in the text) is articulating the broader significance of the architecture\u2019s performance gap; specifically, the paper would benefit from a more critical discussion on whether the marginal accuracy trade-offs are outweighed by the theoretical elegance and computational efficiency of the MLP-Mixer. Overall, the work is highly persuasive and sets a high standard for clarity in architectural research.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "Formula omission",
+          "quote": "Mixer layers can be written as follows (omitting layer indices):",
+          "explanation": "The text explicitly states that Mixer layers can be written as equations, but the equations themselves are missing from the provided passage. While this is clearly an OCR/extraction artifact rather than a conceptual error by the authors, it leaves the key architectural definition incomplete for the reader. Given this is the primary definition of the model's transformation, the absence of the mathematical mapping is a significant gap in the provided text.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Potentially ambiguous dimension calculation",
+          "quote": "If the original input image has resolution (H, W), and each patch has resolution (P, P), then the number of patches is S = HW/P[2]",
+          "explanation": "The OCR correctly identified the intent, but the notation 'P[2]' is a clear misread of 'P^2'. While a reader familiar with computer vision will immediately recognize this as 'HW / P^2', the equation as rendered is mathematically incorrect (implying the number of patches depends on the P-th power of 2, rather than the square of P).",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Notation inconsistency in weight matrix definition during fine-tuning (S' vs S)",
+          "quote": "initialize the (now larger) weight matrix \\mathbf{W} 2 \\_ [\\prime] [\\in] \\_ R \\_ [D][S][\\prime][\\times][S][\\prime] \\_ [with a block-diagonal matrix containing copies of] \\mathbf{ [ W] } [2] [on its] diagonal.",
+          "explanation": "In the preceding sentence, the authors introduce the weight matrix as $\\mathbf{W}_1 \\in \\mathbb{R}^{D_S \\times S}$. When describing the resizing operation, the text refers to $\\mathbf{W}_2'_\\prime \\in \\mathbb{R}^{D_S^\\prime \\times S^\\prime}$, but the subscript index suddenly shifts to '2'. Given the previous context, this is likely an OCR error or a manuscript inconsistency where the index should remain '1' (corresponding to the $\\mathbf{W}_1$ weight matrix of the token-mixing MLP being resized). This could confuse a reader trying to implement the initialization scheme, as '$\\mathbf{W}_2$' was never defined in this context.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_3",
+          "title": "Mathematical inconsistency in patch resolution scaling",
+          "quote": "This particular scheme only allows for $S' = K^2 S$ with $K \\in \\mathbb{N}$.",
+          "explanation": "The text states that the fine-tuning resolution adjustment requires $S' = K^2 S$. However, if fine-tuning is performed at a higher resolution (e.g., $H' \\times W'$), the number of patches $S'$ is defined by $(H'W')/P^2$. Since $S = HW/P^2$, then $S'/S = (H'W')/(HW)$. The requirement $S'/S = K^2$ implies that the total number of pixels must increase by a perfect square factor, which is a constraint on the image resolution relative to the patch size, not merely an arbitrary flexibility. While the authors define this as the allowed case, it is a significant restriction on the fine-tuning resolution that could be misinterpreted as a general mechanism for any resolution change. Given the context of fixed $P$, this is a rigorous constraint, not just a procedural choice.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_4",
+          "title": "Notation conflict for weight matrix W2",
+          "quote": "initialize the (now larger) weight matrix $\\mathbf{W}_2' \\in \\mathbb{R}^{D_S' \\times S'}$ with a block-diagonal matrix",
+          "explanation": "In Section 2, the layer-wise token-mixing mapping is defined as $R^S \\to R^S$ and the weight matrices involved in the MLP are generally denoted as $W$ or derived from the MLP linear layers. In this specific passage, the authors introduce $\\mathbf{W}_2'$ as the weight matrix for the token-mixing MLP after resolution scaling. However, the dimensions $D_S' \\times S'$ suggest this is a linear transformation from the spatial dimension back to itself (or hidden space). This is slightly opaque because the token-mixing MLP was previously described as having hidden width $D_S$. It is unclear if $\\mathbf{W}_2'$ refers to the second weight matrix of the MLP (which maps from $D_S$ back to $S$) or the entire block. Based on the context of 'initialize... with a block-diagonal matrix', it seems to refer to the weights within the mixer block, but the notation $\\mathbf{W}_2$ was not strictly defined previously in terms of its dimensions, creating a mild ambiguity for the reader trying to verify the architectural modification.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistent formulation of token-mixing mapping",
+          "quote": "it acts on columns of X (i.e. it is applied to a transposed input table X^T), maps R^S \u21a6 R^S, and is shared across all columns.",
+          "explanation": "In Section 2, the authors define the input as X \u2208 R^{S\u00d7C}. For the token-mixing MLP, if it operates on columns (individual spatial locations), it maps R^S to R^S. However, the text says the MLP is applied to the transposed input table X^T (which would be R^{C\u00d7S}), meaning it acts on the rows of the transposed matrix. While this is mathematically equivalent to column-mixing on the original table, the notation R^S \u21a6 R^S is slightly ambiguous because it does not explicitly clarify the action on the C channels. Furthermore, in the mixer layer equation, the map is applied to X^T and later transposed back, which implies the operation is performed on vectors of length S. This is a common source of confusion in tensor-based architectures; while the implementation is clear, the formal mapping notation R^S \u21a6 R^S feels underspecified regarding the role of C across that transformation.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguity in weight matrix notation for variable-length fine-tuning",
+          "quote": "initialize the (now larger) weight matrix W_2' \u2208 R^{D_S' \u00d7 S'} with a block-diagonal matrix containing copies of W_2 on its diagonal.",
+          "explanation": "The text states that when changing the patch count from S to S', the weight matrix W_2 (which maps R^S to R^S) is replaced by W_2'. The claim is that they are initialized by placing copies of W_2 onto the diagonal. If W_2 is of size D_S \u00d7 S (actually, it should be S \u00d7 S for a linear projection of tokens, or D_S \u00d7 S if it involves hidden dimension D_S), placing it into a block-diagonal matrix for a new dimension S' = K^2 S requires that K^2 is an integer (which is satisfied by K \u2208 N). However, if W_2 acts as a linear transformation on the sequence length, a block-diagonal expansion is a specific interpolation strategy. The text lacks detail on how the 'D_S' (hidden width) dimension is reconciled with the new S' vs S, as the hidden width D_S is also described as scaling to D_S'. This description is slightly underspecified for a reader trying to implement the resize logic.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_7",
+          "title": "Questionable claim on parameter tying and memory savings",
+          "quote": "The parameter tying... leads to significant memory savings. Surprisingly, this choice does not affect the empirical performance, see Supplementary A.1.",
+          "explanation": "The authors claim parameter tying leads to 'significant memory savings' and that performance is unaffected 'surprisingly'. In the context of modern vision architectures, parameter tying (or weight sharing across spatial positions) is the standard definition of a convolution (as they themselves concede in the same section). Labeling this as a unique choice that 'surprises' in terms of performance seems to be an overstatement, as this is precisely the inductive bias that makes convolutions successful. The claim is slightly misleading in its novelty; the performance is generally expected to hold, not surprising to the academic community.",
+          "comment_type": "logical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_8",
+          "title": "Inconsistency in LaTeX/OCR notation for matrix operations",
+          "quote": "The first one is the token-mixing MLP: it acts on columns of X (i.e. it is applied to a transposed input table X[\u22a4]), maps R[S] \u2192 R[S], and is shared across all columns. The second one is the channel-mixing MLP: it acts on rows of X , maps R[C] \u2192 R[C], and is shared across all rows.",
+          "explanation": "The OCR-corrected text uses \"X[\\top]\" and \"R[S] \u2192 R[S]\" with unusual characters (). While the context clear (transposition and mapping from dimension S to S), the mix of standard LaTeX and corrupted characters creates ambiguity in the formal description. Given this is a foundational definition of the architecture's operation, the character corruption for the mapping arrow is a technical error.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_9",
+          "title": "Unclear handling of fine-tuning resolution scaling regarding matrix dimensions",
+          "quote": "For this, we increase the hidden layer width from DS to DS' in proportion to the number of patches and initialize the (now larger) weight matrix W2'[\u2208]R[DS'][\u00d7][DS'] with a block-diagonal matrix containing copies of W2 on its diagonal.",
+          "explanation": "The text states that the channel-mixing MLP operates on rows of length C, but the fine-tuning logic described here discusses scaling DS (the hidden dimension of the token-mixing MLP). The text describes scaling W2 (a component of the token-mixing MLP) when changing S (patch count). The notation W2 is used throughout this paragraph, but the token-mixing MLP is defined by the mapping R^S -> R^S. The description of the initialization and scaling is slightly opaque due to the mixing of variables (DS vs C) and the unconventional OCR of matrix dimensions. It is technically consistent with the intent of scaling token-mixing parameters, but the prose is quite difficult to parse due to OCR artifacts.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_10",
+          "title": "Mathematical Notation Error in Token-mixing Mapping",
+          "quote": "maps $R^S \\to R^S$",
+          "explanation": "In Section 2, the authors define the token-mixing mapping. The text states it 'maps $R^S \\to R^S$'. However, the input is a table $X \\in R^{S \\times C}$. The token-mixing MLP acts on columns (of length $S$). While a single column vector belongs to $R^S$, the mapping described in Eq (1) involves a learned weight matrix applied to the sequence of tokens. The symbol '$\\to$' usually denotes a function map, but the use of the '$\\to$' symbol here (appearing to be a garbled version of $\\mapsto$ or simply a typo for the dimension) is technically confusing given that the input is a matrix $X$ and the operation is applied across $C$ channels. It seems to be an OCR misread or a notation inconsistency where the dimensionality of the transformation is conflated with the input space $R^S$.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_11",
+          "title": "Inconsistent Variable Notation in Fine-tuning Section",
+          "quote": "initialize the (now larger) weight matrix $W_2' \\in R^{D_S' \\times S'} \\in R^{D_S' \\times S'}$",
+          "explanation": "The text describes resizing the weight matrix $W_2$ to $W_2'$ to accommodate a new number of patches $S'$. The passage contains the string '$W_2' \\in R^{D_S' \\times S'} \\in R^{D_S' \\times S'}$'. This is a clear duplication error likely introduced during OCR. While the context (increasing hidden layer width and using a block-diagonal matrix) makes the intent clear, the formal definition of the weight matrix is mangled.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_12",
+          "title": "Ambiguity in 'Isotropic' Definition regarding MLP widths",
+          "quote": "$D_S$ and $D_C$ are tunable hidden widths in the token-mixing and channel-mixing MLPs, respectively. Note that $D_S$ is selected independently of the number of input patches.",
+          "explanation": "The text claims $D_S$ is independent of the number of patches $S$. However, in the very next section (and in the fine-tuning description), it is explicitly stated that $D_S$ is adjusted proportionally to the number of patches $S'$ during resolution scaling. Thus, the 'independence' holds only for a specific architecture configuration during pre-training, but the growth factor is tied. While not a logical error in the *current* layer, a careful reader might be confused by the 'independence' claim followed immediately by a 'proportionate scaling' requirement.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0325,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 81598,
+      "completion_tokens": 8074
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is exceptionally well-written, characterized by a clear, logical structure and a compelling narrative that effectively challenges the dominance of CNNs and Transformers in computer vision. The authors do a commendable job of distilling a conceptually simple idea\u2014the decoupling of spatial and channel information\u2014into a rigorous architectural proposal, supported by intuitive mathematical notation and high-quality supplementary figures. The manuscript\u2019s primary strength lies in its \"minimalist\" approach to deep learning, which serves as a valuable theoretical contribution by questioning the necessity of complex inductive biases like convolutions or attention mechanisms. While the clarity and technical rigor are exemplary, the most significant challenge for the authors (addressed briefly in the text) is articulating the broader significance of the architecture\u2019s performance gap; specifically, the paper would benefit from a more critical discussion on whether the marginal accuracy trade-offs are outweighed by the theoretical elegance and computational efficiency of the MLP-Mixer. Overall, the work is highly persuasive and sets a high standard for clarity in architectural research.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Formula omission",
+          "quote": "Mixer layers can be written as follows (omitting layer indices):",
+          "explanation": "The text explicitly states that Mixer layers can be written as equations, but the equations themselves are missing from the provided passage. While this is clearly an OCR/extraction artifact rather than a conceptual error by the authors, it leaves the key architectural definition incomplete for the reader. Given this is the primary definition of the model's transformation, the absence of the mathematical mapping is a significant gap in the provided text.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Potentially ambiguous dimension calculation",
+          "quote": "If the original input image has resolution (H, W), and each patch has resolution (P, P), then the number of patches is S = HW/P[2]",
+          "explanation": "The OCR correctly identified the intent, but the notation 'P[2]' is a clear misread of 'P^2'. While a reader familiar with computer vision will immediately recognize this as 'HW / P^2', the equation as rendered is mathematically incorrect (implying the number of patches depends on the P-th power of 2, rather than the square of P).",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "Notation inconsistency in weight matrix definition during fine-tuning (S' vs S)",
+          "quote": "initialize the (now larger) weight matrix \\mathbf{W} 2 \\_ [\\prime] [\\in] \\_ R \\_ [D][S][\\prime][\\times][S][\\prime] \\_ [with a block-diagonal matrix containing copies of] \\mathbf{ [ W] } [2] [on its] diagonal.",
+          "explanation": "In the preceding sentence, the authors introduce the weight matrix as $\\mathbf{W}_1 \\in \\mathbb{R}^{D_S \\times S}$. When describing the resizing operation, the text refers to $\\mathbf{W}_2'_\\prime \\in \\mathbb{R}^{D_S^\\prime \\times S^\\prime}$, but the subscript index suddenly shifts to '2'. Given the previous context, this is likely an OCR error or a manuscript inconsistency where the index should remain '1' (corresponding to the $\\mathbf{W}_1$ weight matrix of the token-mixing MLP being resized). This could confuse a reader trying to implement the initialization scheme, as '$\\mathbf{W}_2$' was never defined in this context.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Mathematical inconsistency in patch resolution scaling",
+          "quote": "This particular scheme only allows for $S' = K^2 S$ with $K \\in \\mathbb{N}$.",
+          "explanation": "The text states that the fine-tuning resolution adjustment requires $S' = K^2 S$. However, if fine-tuning is performed at a higher resolution (e.g., $H' \\times W'$), the number of patches $S'$ is defined by $(H'W')/P^2$. Since $S = HW/P^2$, then $S'/S = (H'W')/(HW)$. The requirement $S'/S = K^2$ implies that the total number of pixels must increase by a perfect square factor, which is a constraint on the image resolution relative to the patch size, not merely an arbitrary flexibility. While the authors define this as the allowed case, it is a significant restriction on the fine-tuning resolution that could be misinterpreted as a general mechanism for any resolution change. Given the context of fixed $P$, this is a rigorous constraint, not just a procedural choice.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Notation conflict for weight matrix W2",
+          "quote": "initialize the (now larger) weight matrix $\\mathbf{W}_2' \\in \\mathbb{R}^{D_S' \\times S'}$ with a block-diagonal matrix",
+          "explanation": "In Section 2, the layer-wise token-mixing mapping is defined as $R^S \\to R^S$ and the weight matrices involved in the MLP are generally denoted as $W$ or derived from the MLP linear layers. In this specific passage, the authors introduce $\\mathbf{W}_2'$ as the weight matrix for the token-mixing MLP after resolution scaling. However, the dimensions $D_S' \\times S'$ suggest this is a linear transformation from the spatial dimension back to itself (or hidden space). This is slightly opaque because the token-mixing MLP was previously described as having hidden width $D_S$. It is unclear if $\\mathbf{W}_2'$ refers to the second weight matrix of the MLP (which maps from $D_S$ back to $S$) or the entire block. Based on the context of 'initialize... with a block-diagonal matrix', it seems to refer to the weights within the mixer block, but the notation $\\mathbf{W}_2$ was not strictly defined previously in terms of its dimensions, creating a mild ambiguity for the reader trying to verify the architectural modification.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistent formulation of token-mixing mapping",
+          "quote": "it acts on columns of X (i.e. it is applied to a transposed input table X^T), maps R^S \u21a6 R^S, and is shared across all columns.",
+          "explanation": "In Section 2, the authors define the input as X \u2208 R^{S\u00d7C}. For the token-mixing MLP, if it operates on columns (individual spatial locations), it maps R^S to R^S. However, the text says the MLP is applied to the transposed input table X^T (which would be R^{C\u00d7S}), meaning it acts on the rows of the transposed matrix. While this is mathematically equivalent to column-mixing on the original table, the notation R^S \u21a6 R^S is slightly ambiguous because it does not explicitly clarify the action on the C channels. Furthermore, in the mixer layer equation, the map is applied to X^T and later transposed back, which implies the operation is performed on vectors of length S. This is a common source of confusion in tensor-based architectures; while the implementation is clear, the formal mapping notation R^S \u21a6 R^S feels underspecified regarding the role of C across that transformation.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_6",
+          "title": "Ambiguity in weight matrix notation for variable-length fine-tuning",
+          "quote": "initialize the (now larger) weight matrix W_2' \u2208 R^{D_S' \u00d7 S'} with a block-diagonal matrix containing copies of W_2 on its diagonal.",
+          "explanation": "The text states that when changing the patch count from S to S', the weight matrix W_2 (which maps R^S to R^S) is replaced by W_2'. The claim is that they are initialized by placing copies of W_2 onto the diagonal. If W_2 is of size D_S \u00d7 S (actually, it should be S \u00d7 S for a linear projection of tokens, or D_S \u00d7 S if it involves hidden dimension D_S), placing it into a block-diagonal matrix for a new dimension S' = K^2 S requires that K^2 is an integer (which is satisfied by K \u2208 N). However, if W_2 acts as a linear transformation on the sequence length, a block-diagonal expansion is a specific interpolation strategy. The text lacks detail on how the 'D_S' (hidden width) dimension is reconciled with the new S' vs S, as the hidden width D_S is also described as scaling to D_S'. This description is slightly underspecified for a reader trying to implement the resize logic.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_7",
+          "title": "Questionable claim on parameter tying and memory savings",
+          "quote": "The parameter tying... leads to significant memory savings. Surprisingly, this choice does not affect the empirical performance, see Supplementary A.1.",
+          "explanation": "The authors claim parameter tying leads to 'significant memory savings' and that performance is unaffected 'surprisingly'. In the context of modern vision architectures, parameter tying (or weight sharing across spatial positions) is the standard definition of a convolution (as they themselves concede in the same section). Labeling this as a unique choice that 'surprises' in terms of performance seems to be an overstatement, as this is precisely the inductive bias that makes convolutions successful. The claim is slightly misleading in its novelty; the performance is generally expected to hold, not surprising to the academic community.",
+          "comment_type": "logical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_8",
+          "title": "Inconsistency in LaTeX/OCR notation for matrix operations",
+          "quote": "The first one is the token-mixing MLP: it acts on columns of X (i.e. it is applied to a transposed input table X[\u22a4]), maps R[S] \u2192 R[S], and is shared across all columns. The second one is the channel-mixing MLP: it acts on rows of X , maps R[C] \u2192 R[C], and is shared across all rows.",
+          "explanation": "The OCR-corrected text uses \"X[\\top]\" and \"R[S] \u2192 R[S]\" with unusual characters (). While the context clear (transposition and mapping from dimension S to S), the mix of standard LaTeX and corrupted characters creates ambiguity in the formal description. Given this is a foundational definition of the architecture's operation, the character corruption for the mapping arrow is a technical error.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_9",
+          "title": "Unclear handling of fine-tuning resolution scaling regarding matrix dimensions",
+          "quote": "For this, we increase the hidden layer width from DS to DS' in proportion to the number of patches and initialize the (now larger) weight matrix W2'[\u2208]R[DS'][\u00d7][DS'] with a block-diagonal matrix containing copies of W2 on its diagonal.",
+          "explanation": "The text states that the channel-mixing MLP operates on rows of length C, but the fine-tuning logic described here discusses scaling DS (the hidden dimension of the token-mixing MLP). The text describes scaling W2 (a component of the token-mixing MLP) when changing S (patch count). The notation W2 is used throughout this paragraph, but the token-mixing MLP is defined by the mapping R^S -> R^S. The description of the initialization and scaling is slightly opaque due to the mixing of variables (DS vs C) and the unconventional OCR of matrix dimensions. It is technically consistent with the intent of scaling token-mixing parameters, but the prose is quite difficult to parse due to OCR artifacts.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_10",
+          "title": "Mathematical Notation Error in Token-mixing Mapping",
+          "quote": "maps $R^S \\to R^S$",
+          "explanation": "In Section 2, the authors define the token-mixing mapping. The text states it 'maps $R^S \\to R^S$'. However, the input is a table $X \\in R^{S \\times C}$. The token-mixing MLP acts on columns (of length $S$). While a single column vector belongs to $R^S$, the mapping described in Eq (1) involves a learned weight matrix applied to the sequence of tokens. The symbol '$\\to$' usually denotes a function map, but the use of the '$\\to$' symbol here (appearing to be a garbled version of $\\mapsto$ or simply a typo for the dimension) is technically confusing given that the input is a matrix $X$ and the operation is applied across $C$ channels. It seems to be an OCR misread or a notation inconsistency where the dimensionality of the transformation is conflated with the input space $R^S$.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_11",
+          "title": "Inconsistent Variable Notation in Fine-tuning Section",
+          "quote": "initialize the (now larger) weight matrix $W_2' \\in R^{D_S' \\times S'} \\in R^{D_S' \\times S'}$",
+          "explanation": "The text describes resizing the weight matrix $W_2$ to $W_2'$ to accommodate a new number of patches $S'$. The passage contains the string '$W_2' \\in R^{D_S' \\times S'} \\in R^{D_S' \\times S'}$'. This is a clear duplication error likely introduced during OCR. While the context (increasing hidden layer width and using a block-diagonal matrix) makes the intent clear, the formal definition of the weight matrix is mangled.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_12",
+          "title": "Ambiguity in 'Isotropic' Definition regarding MLP widths",
+          "quote": "$D_S$ and $D_C$ are tunable hidden widths in the token-mixing and channel-mixing MLPs, respectively. Note that $D_S$ is selected independently of the number of input patches.",
+          "explanation": "The text claims $D_S$ is independent of the number of patches $S$. However, in the very next section (and in the fine-tuning description), it is explicitly stated that $D_S$ is adjusted proportionally to the number of patches $S'$ during resolution scaling. Thus, the 'independence' holds only for a specific architecture configuration during pre-training, but the growth factor is tied. While not a logical error in the *current* layer, a careful reader might be confused by the 'independence' claim followed immediately by a 'proportionate scaling' requirement.",
+          "comment_type": "logical",
+          "paragraph_index": 14,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0325,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 81598,
+      "completion_tokens": 8074
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The manuscript introduces a conceptually elegant and well-motivated architecture that cleanly decouples spatial and channel-wise feature mixing into independent MLP blocks, offering a compelling, minimalist alternative to convolutional and attention-based vision models. The writing is generally clear and logically structured, with an intuitive explanation of the token- and channel-mixing mechanism, and the accompanying figure effectively anchors the architectural description. Nevertheless, the most significant issues lie in the framing of theoretical claims and their practical grounding: the provocative assertion that neither convolutions nor attention are necessary understates the role of established inductive biases in sample efficiency, generalization, and robustness, which warrants deeper empirical or theoretical justification. Additionally, while the linear complexity claim relative to patch count is mathematically correct, it lacks discussion of memory access patterns, hardware utilization, and how plain matrix multiplications compare in practice to highly optimized attention kernels or separable convolutions. Minor inconsistencies in mathematical notation, the abrupt truncation of the equation section, and the absence of early ablation or comparative baselines further reduce the scholarly rigor of the opening sections; addressing these points with more nuanced complexity analysis, explicit inductive bias discussion, and preliminary empirical validation would substantially strengthen the manuscript\u2019s impact and clarity.",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Inconsistent matrix reference in fine-tuning scaling method",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal.",
+          "explanation": "Initially, I was confused by the abrupt switch from discussing adjustments to **W**\u2081 to initializing **W**\u2082. I checked the token-mixing MLP structure: it consists of two fully-connected layers, first projecting $S \\to D_S$ (**W**\u2081) and then $D_S \\to S$ (**W**\u2082). The text specifies the dimension $D_S' \\times S'$, which matches **W**\u2081, not **W**\u2082 (which would typically be $S' \\times D_S'$). Since the hidden width $D_S'$ belongs to the first layer, the authors almost certainly meant **W**\u2081' but typo'd **W**\u2082. As written, it is unclear which layer's weights are actually block-diagonally initialized, which could hinder exact reproduction of the resolution-scaling procedure. The dimensional mismatch and label inconsistency remain problematic even assuming the most plausible intended symbol.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Ambiguous transition when contrasting parameter tying strategies",
+          "quote": "Tying the parameters of the channel-mixing MLPs (within each layer) is a natural choice\u2014it provides positional invariance, a prominent feature of convolutions. However, tying parameters across channels is much less common. For example, separable convolutions [9, 40], used in some CNNs, apply convolutions to each channel independently of the other channels. However, in separable convolutions, a different convolutional kernel is applied to each channel unlike the token-mixing MLPs in Mixer that share the same kernel (of full receptive field) for all of the channels.",
+          "explanation": "I initially wondered whether the authors were still discussing channel-mixing MLPs when they introduced the phrase 'tying parameters across channels'. Contextually, this clearly refers to the *token-mixing* MLPs (which share weights across the channel dimension), but the transition is slightly jarring. A careful reader might momentarily conflate the two MLP types, especially since the previous sentence ends on positional invariance and the next clause contrasts with separable convolutions. The subsequent clause does clarify the reference to 'token-mixing MLPs in Mixer', but the initial phrasing lacks an explicit anchor. This is a minor clarity issue that does not undermine the technical claim but could cause a momentary misreading.",
+          "comment_type": "logical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Table 2 caption incorrectly claims rows are sorted by throughput",
+          "quote": "Table 2: Transfer performance, inference throughput, and training cost. The rows are sorted by inference throughput (fifth column).",
+          "explanation": "The caption states that rows are sorted by the 'Throughput' column, but the table actually groups models by their pre-training dataset (ImageNet-21k, JFT-300M, and proprietary/unlabelled data). Within each group, throughput values are not monotonically ordered (e.g., Group 1: 120, 105, 32, 26; Group 2: 46, 40, 26, 15). This misleads readers into expecting a sorted ranking when the structure is actually categorical. While it does not undermine the scientific results, it creates a formatting contradiction that could confuse readers scanning the table.",
+          "comment_type": "logical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Numerical discrepancy in accuracy comparison claims",
+          "quote": "In particular, Mixer-H/14 achieves 87.94% top-1 accuracy on ImageNet, which is 0.5% better than BiTResNet152x4 and only 0.5% lower than ViT-H/14.",
+          "explanation": "According to Table 2, Mixer-H/14 achieves 87.94% ImNet top-1. BiT-R152x4 (JFT) achieves 87.54%, making the difference 0.40%, not 0.5%. ViT-H/14 (JFT) achieves 88.55%, making the difference 0.61%, not 0.5%. While rounding to one decimal place is common, the text consistently rounds both differences to exactly 0.5%, which masks the actual values and could mislead a careful reader checking the table. It is a minor factual imprecision rather than a methodological error.",
+          "comment_type": "logical",
+          "paragraph_index": 31,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Sentence fragment with missing antecedents due to PDF extraction",
+          "quote": "fine-tuning. While the former affects both pre-training compute and test-time throughput, the latter only affects the throughput.",
+          "explanation": "The passage begins abruptly with this sentence, clearly truncating the preceding clause (likely 'Increasing the input image resolution when'). As a result, the referents for 'the former' and 'the latter' are temporarily ambiguous to a reader encountering this exact string, requiring them to backtrack to the previous column/page to resolve what is being discussed. While resolvable from broader context, this extraction artifact momentarily disrupts logical flow and clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Speculative theoretical claim presented without empirical backing",
+          "quote": "One could speculate and explain it again with the difference in inductive biases: self-attention layers in ViT lead to certain properties of the learned functions that are _less compatible_ with the true underlying distribution than those discovered with Mixer architecture.",
+          "explanation": "Although explicitly introduced as speculation, the authors make a strong theoretical assertion that self-attention's inductive bias is inherently 'less compatible with the true underlying distribution' of natural images compared to Mixer's architecture. This goes beyond what the empirical scaling experiments (Figure 2 right) can demonstrate. Scaling performance differences can arise from many factors (e.g., optimization dynamics, data efficiency, or architectural priors not strictly tied to 'true distribution' compatibility). Framing this as a likely explanation risks leading readers to accept a contested theoretical hypothesis as a derived insight, which could misguide future architectural choices or interpretations of scaling laws.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_6",
+          "title": "Compute costs for smaller datasets are extrapolated rather than measured",
+          "quote": "(\u2020) Extrapolated from the numbers reported for the same models pre-trained on JFT-300M without extra regularization.",
+          "explanation": "The TPUv3 core-days values for models pre-trained on ImageNet or ImageNet-21k are not directly measured but extrapolated from JFT-300M runs. While transparently noted in the table footnote, this introduces a layer of estimation that may not perfectly capture hardware scaling effects, batch size differences, optimization schedules, or the impact of different regularization techniques (e.g., RandAugment, mixup) on actual wall-clock time. Reproducibility and precise cost comparisons would be strengthened by reporting directly measured compute or clearly stating the scaling factor/assumptions used for the extrapolation.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1159,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 80126,
+      "completion_tokens": 79507
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The manuscript introduces a conceptually elegant and well-motivated architecture that cleanly decouples spatial and channel-wise feature mixing into independent MLP blocks, offering a compelling, minimalist alternative to convolutional and attention-based vision models. The writing is generally clear and logically structured, with an intuitive explanation of the token- and channel-mixing mechanism, and the accompanying figure effectively anchors the architectural description. Nevertheless, the most significant issues lie in the framing of theoretical claims and their practical grounding: the provocative assertion that neither convolutions nor attention are necessary understates the role of established inductive biases in sample efficiency, generalization, and robustness, which warrants deeper empirical or theoretical justification. Additionally, while the linear complexity claim relative to patch count is mathematically correct, it lacks discussion of memory access patterns, hardware utilization, and how plain matrix multiplications compare in practice to highly optimized attention kernels or separable convolutions. Minor inconsistencies in mathematical notation, the abrupt truncation of the equation section, and the absence of early ablation or comparative baselines further reduce the scholarly rigor of the opening sections; addressing these points with more nuanced complexity analysis, explicit inductive bias discussion, and preliminary empirical validation would substantially strengthen the manuscript\u2019s impact and clarity.",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Inconsistent matrix reference in fine-tuning scaling method",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal.",
+          "explanation": "Initially, I was confused by the abrupt switch from discussing adjustments to **W**\u2081 to initializing **W**\u2082. I checked the token-mixing MLP structure: it consists of two fully-connected layers, first projecting $S \\to D_S$ (**W**\u2081) and then $D_S \\to S$ (**W**\u2082). The text specifies the dimension $D_S' \\times S'$, which matches **W**\u2081, not **W**\u2082 (which would typically be $S' \\times D_S'$). Since the hidden width $D_S'$ belongs to the first layer, the authors almost certainly meant **W**\u2081' but typo'd **W**\u2082. As written, it is unclear which layer's weights are actually block-diagonally initialized, which could hinder exact reproduction of the resolution-scaling procedure. The dimensional mismatch and label inconsistency remain problematic even assuming the most plausible intended symbol.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Ambiguous transition when contrasting parameter tying strategies",
+          "quote": "Tying the parameters of the channel-mixing MLPs (within each layer) is a natural choice\u2014it provides positional invariance, a prominent feature of convolutions. However, tying parameters across channels is much less common. For example, separable convolutions [9, 40], used in some CNNs, apply convolutions to each channel independently of the other channels. However, in separable convolutions, a different convolutional kernel is applied to each channel unlike the token-mixing MLPs in Mixer that share the same kernel (of full receptive field) for all of the channels.",
+          "explanation": "I initially wondered whether the authors were still discussing channel-mixing MLPs when they introduced the phrase 'tying parameters across channels'. Contextually, this clearly refers to the *token-mixing* MLPs (which share weights across the channel dimension), but the transition is slightly jarring. A careful reader might momentarily conflate the two MLP types, especially since the previous sentence ends on positional invariance and the next clause contrasts with separable convolutions. The subsequent clause does clarify the reference to 'token-mixing MLPs in Mixer', but the initial phrasing lacks an explicit anchor. This is a minor clarity issue that does not undermine the technical claim but could cause a momentary misreading.",
+          "comment_type": "logical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Table 2 caption incorrectly claims rows are sorted by throughput",
+          "quote": "Table 2: Transfer performance, inference throughput, and training cost. The rows are sorted by inference throughput (fifth column).",
+          "explanation": "The caption states that rows are sorted by the 'Throughput' column, but the table actually groups models by their pre-training dataset (ImageNet-21k, JFT-300M, and proprietary/unlabelled data). Within each group, throughput values are not monotonically ordered (e.g., Group 1: 120, 105, 32, 26; Group 2: 46, 40, 26, 15). This misleads readers into expecting a sorted ranking when the structure is actually categorical. While it does not undermine the scientific results, it creates a formatting contradiction that could confuse readers scanning the table.",
+          "comment_type": "logical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Notation inconsistency in fine-tuning weight adaptation description",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal.",
+          "explanation": "The text explicitly states that the input is multiplied by $\\mathbf{W}_1$, implying that $\\mathbf{W}_1$ must be the weight matrix adapted to the new sequence length $S'$. However, the sentence immediately pivots to describing the initialization of $\\mathbf{W}_2'$. It is unclear whether $\\mathbf{W}_2$ refers to the second layer of the token-mixing MLP (suggesting the authors only adapt the second layer, which is architecturally unusual for MLPs where both layers typically depend on the sequence dimension), or if this is a typographical error where $\\mathbf{W}_1'$ was intended. This sudden switch in notation creates ambiguity about exactly which parameters are resized during resolution adaptation.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Numerical discrepancy in accuracy comparison claims",
+          "quote": "In particular, Mixer-H/14 achieves 87.94% top-1 accuracy on ImageNet, which is 0.5% better than BiTResNet152x4 and only 0.5% lower than ViT-H/14.",
+          "explanation": "According to Table 2, Mixer-H/14 achieves 87.94% ImNet top-1. BiT-R152x4 (JFT) achieves 87.54%, making the difference 0.40%, not 0.5%. ViT-H/14 (JFT) achieves 88.55%, making the difference 0.61%, not 0.5%. While rounding to one decimal place is common, the text consistently rounds both differences to exactly 0.5%, which masks the actual values and could mislead a careful reader checking the table. It is a minor factual imprecision rather than a methodological error.",
+          "comment_type": "logical",
+          "paragraph_index": 31,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Sentence fragment with missing antecedents due to PDF extraction",
+          "quote": "fine-tuning. While the former affects both pre-training compute and test-time throughput, the latter only affects the throughput.",
+          "explanation": "The passage begins abruptly with this sentence, clearly truncating the preceding clause (likely 'Increasing the input image resolution when'). As a result, the referents for 'the former' and 'the latter' are temporarily ambiguous to a reader encountering this exact string, requiring them to backtrack to the previous column/page to resolve what is being discussed. While resolvable from broader context, this extraction artifact momentarily disrupts logical flow and clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Speculative theoretical claim presented without empirical backing",
+          "quote": "One could speculate and explain it again with the difference in inductive biases: self-attention layers in ViT lead to certain properties of the learned functions that are _less compatible_ with the true underlying distribution than those discovered with Mixer architecture.",
+          "explanation": "Although explicitly introduced as speculation, the authors make a strong theoretical assertion that self-attention's inductive bias is inherently 'less compatible with the true underlying distribution' of natural images compared to Mixer's architecture. This goes beyond what the empirical scaling experiments (Figure 2 right) can demonstrate. Scaling performance differences can arise from many factors (e.g., optimization dynamics, data efficiency, or architectural priors not strictly tied to 'true distribution' compatibility). Framing this as a likely explanation risks leading readers to accept a contested theoretical hypothesis as a derived insight, which could misguide future architectural choices or interpretations of scaling laws.",
+          "comment_type": "logical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_7",
+          "title": "Compute costs for smaller datasets are extrapolated rather than measured",
+          "quote": "(\u2021) Extrapolated from the numbers reported for the same models pre-trained on JFT-300M without extra regularization.",
+          "explanation": "The TPUv3 core-days values for models pre-trained on ImageNet or ImageNet-21k are not directly measured but extrapolated from JFT-300M runs. While transparently noted in the table footnote, this introduces a layer of estimation that may not perfectly capture hardware scaling effects, batch size differences, optimization schedules, or the impact of different regularization techniques (e.g., RandAugment, mixup) on actual wall-clock time. Reproducibility and precise cost comparisons would be strengthened by reporting directly measured compute or clearly stating the scaling factor/assumptions used for the extrapolation.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1159,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 80126,
+      "completion_tokens": 79507
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a conceptually elegant and technically rigorous exploration into a pure Multi-Layer Perceptron (MLP) architecture, successfully demystifying the components by strictly separating spatial (token-mixing) and feature (channel-mixing) interactions. The writing is highly effective in establishing the motivation, offering a sharp critique of the current reliance on convolutions and self-attention while providing a clear mathematical formulation and computational complexity analysis that highlights its linear efficiency compared to Transformers. However, a significant issue arises from the stark contrast between the theoretical presentation and the bold empirical claims made in the abstract; asserting that the architecture reaches \"competitive scores\" and \"near state-of-the-art\" performance without presenting any data or preliminary results in the introduction sets an exceptionally high bar that requires substantial validation in the later sections of the paper to avoid unsubstantiated hyperbole.",
+      "comments": [
+        {
+          "id": "progressive__glm-4.7-flash_0",
+          "title": "Incorrect LaTeX/Notation for patch area",
+          "quote": "S = HW/P_[2]",
+          "explanation": "The text defines the patch resolution as $(P, P)$, which implies the area of a patch is $P^2$. However, the formula for the number of patches is written as $S = HW/P_2$. In the context of extracted PDF text, `[2]` suggests a subscript notation ($P_2$) rather than a superscript square ($P^2$). $P_2$ is not defined in the provided text (only $P$ is), and treating it as a subscript would suggest a variable entirely different from the patch resolution size $P$. The correct formula should be $S = HW/P^2$ (or $S = \frac{HW}{P^2}$). This is a typographical error in the equation rendering (likely a formatting artifact where the exponent was not rendered correctly or was treated as a subscript in source). While the intended meaning is clear from the context of patch resolution, the formula as written is mathematically ambiguous and technically incorrect notation.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_1",
+          "title": "Corrupted Mathematical Description of Token-Mixing MLP Adaptation",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal. This particular scheme only allows for _S[\u2032]_ = _K_[2] _S_ with _K \u2208_ N.",
+          "explanation": "The mathematical description of how to adapt the token-mixing MLP to higher resolutions is heavily corrupted by OCR errors. The weight matrix dimensions are rendered as `[D][S][\u00d7][S]` and `[D][S][\u2032][\u00d7][S][\u2032]` instead of standard LaTeX notation like `R^{D_S \times S}`. Furthermore, the constraint `_S[\u2032]_ = _K_[2] _S_` is ambiguous; `K_[2]` could be a typo for `K` (indicating integer scaling), a superscript `K^2` (indicating quadratic scaling), or a forward reference to a constant defined in Supplementary C. Without readable formulas, it is impossible to verify if the adaptation scheme (block-diagonal initialization) is mathematically valid for the stated constraints.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_2",
+          "title": "Inconsistent matrix dimension for fine-tuning input projection",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix $W_1 \\in \\mathbb{R}^{D_S \\times S}$ and this operation has to be adjusted when changing the input dimension $S$.",
+          "explanation": "The context clearly states that fine-tuning occurs at a higher resolution, changing the input dimension from $S$ to $S'$ ($S' = K^2 S$). The notation $W_1 \\in \\mathbb{R}^{D_S \\times S}$ suggests the matrix size remains fixed at the pre-training dimension, which contradicts the description of adjusting the operation for a changed input dimension $S'$. Furthermore, the paper's summary defines the fine-tuning input projection weight matrix $W_1$ as mapping the input to the new sequence length $S'$, i.e., $W_1 \\in \\mathbb{R}^{D_S \\times S'}$. The text uses dimensions that are inconsistent with both the experimental procedure described (changing $S$) and the paper's own provided summary definition.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_3",
+          "title": "OCR artifacts disrupting text flow",
+          "quote": "_\u223c Remarkably, when globally permuting the pixels, Mixer\u2019s performance drops much less ( 45% drop) _\u223c compared to the ResNet ( 75% drop).",
+          "explanation": "The characters '_\u223c' appear to be artifacts from the PDF-to-text conversion process. They likely originate from margin markers, indices, or stray symbols in the source document. While they do not obscure the mathematical content or the numerical results (45% and 75%), they are nonsensical characters in the final readable text. The sentence is grammatically and technically correct without them.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_4",
+          "title": "Ambiguous phrasing regarding ResNet invariance",
+          "quote": "On the other hand, ResNet\u2019s strong inductive bias relies on a particular order of pixels within an image and its performance drops significantly when the patches are permuted.",
+          "explanation": "There is a slight logical ambiguity in the phrasing. While ResNets are indeed sensitive to spatial order, stating that their inductive bias relies on 'pixels' but that they drop when 'patches' are permuted creates a non-sequitur, as ResNets do not inherently process 'patches' as input tokens. The intended meaning is likely that ResNet's performance drops when the spatial order (whether measured in pixels or patches) is disrupted. This is a minor clarification issue that might mislead a reader not familiar with the context of localizing invariance tests.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0383,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 75614,
+      "completion_tokens": 83274
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a conceptually elegant and technically rigorous exploration into a pure Multi-Layer Perceptron (MLP) architecture, successfully demystifying the components by strictly separating spatial (token-mixing) and feature (channel-mixing) interactions. The writing is highly effective in establishing the motivation, offering a sharp critique of the current reliance on convolutions and self-attention while providing a clear mathematical formulation and computational complexity analysis that highlights its linear efficiency compared to Transformers. However, a significant issue arises from the stark contrast between the theoretical presentation and the bold empirical claims made in the abstract; asserting that the architecture reaches \"competitive scores\" and \"near state-of-the-art\" performance without presenting any data or preliminary results in the introduction sets an exceptionally high bar that requires substantial validation in the later sections of the paper to avoid unsubstantiated hyperbole.",
+      "comments": [
+        {
+          "id": "progressive_original__glm-4.7-flash_0",
+          "title": "Incorrect LaTeX/Notation for patch area",
+          "quote": "S = HW/P_[2]",
+          "explanation": "The text defines the patch resolution as $(P, P)$, which implies the area of a patch is $P^2$. However, the formula for the number of patches is written as $S = HW/P_2$. In the context of extracted PDF text, `[2]` suggests a subscript notation ($P_2$) rather than a superscript square ($P^2$). $P_2$ is not defined in the provided text (only $P$ is), and treating it as a subscript would suggest a variable entirely different from the patch resolution size $P$. The correct formula should be $S = HW/P^2$ (or $S = \frac{HW}{P^2}$). This is a typographical error in the equation rendering (likely a formatting artifact where the exponent was not rendered correctly or was treated as a subscript in source). While the intended meaning is clear from the context of patch resolution, the formula as written is mathematically ambiguous and technically incorrect notation.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_1",
+          "title": "Corrupted Mathematical Description of Token-Mixing MLP Adaptation",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix **W** 1 _\u2208_ R _[D][S][\u00d7][S]_ and this operation has to be adjusted when changing the input dimension _S_ . For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal. This particular scheme only allows for _S[\u2032]_ = _K_[2] _S_ with _K \u2208_ N.",
+          "explanation": "The mathematical description of how to adapt the token-mixing MLP to higher resolutions is heavily corrupted by OCR errors. The weight matrix dimensions are rendered as `[D][S][\u00d7][S]` and `[D][S][\u2032][\u00d7][S][\u2032]` instead of standard LaTeX notation like `R^{D_S \times S}`. Furthermore, the constraint `_S[\u2032]_ = _K_[2] _S_` is ambiguous; `K_[2]` could be a typo for `K` (indicating integer scaling), a superscript `K^2` (indicating quadratic scaling), or a forward reference to a constant defined in Supplementary C. Without readable formulas, it is impossible to verify if the adaptation scheme (block-diagonal initialization) is mathematically valid for the stated constraints.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_2",
+          "title": "Inconsistent matrix dimension for fine-tuning input projection",
+          "quote": "Formally, the input in Eq. (1) is left-multiplied by a weight matrix $W_1 \\in \\mathbb{R}^{D_S \\times S}$ and this operation has to be adjusted when changing the input dimension $S$.",
+          "explanation": "The context clearly states that fine-tuning occurs at a higher resolution, changing the input dimension from $S$ to $S'$ ($S' = K^2 S$). The notation $W_1 \\in \\mathbb{R}^{D_S \\times S}$ suggests the matrix size remains fixed at the pre-training dimension, which contradicts the description of adjusting the operation for a changed input dimension $S'$. Furthermore, the paper's summary defines the fine-tuning input projection weight matrix $W_1$ as mapping the input to the new sequence length $S'$, i.e., $W_1 \\in \\mathbb{R}^{D_S \\times S'}$. The text uses dimensions that are inconsistent with both the experimental procedure described (changing $S$) and the paper's own provided summary definition.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_3",
+          "title": "OCR artifacts disrupting text flow",
+          "quote": "_\u223c Remarkably, when globally permuting the pixels, Mixer\u2019s performance drops much less ( 45% drop) _\u223c compared to the ResNet ( 75% drop).",
+          "explanation": "The characters '_\u223c' appear to be artifacts from the PDF-to-text conversion process. They likely originate from margin markers, indices, or stray symbols in the source document. While they do not obscure the mathematical content or the numerical results (45% and 75%), they are nonsensical characters in the final readable text. The sentence is grammatically and technically correct without them.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_4",
+          "title": "Ambiguous phrasing regarding ResNet invariance",
+          "quote": "On the other hand, ResNet\u2019s strong inductive bias relies on a particular order of pixels within an image and its performance drops significantly when the patches are permuted.",
+          "explanation": "There is a slight logical ambiguity in the phrasing. While ResNets are indeed sensitive to spatial order, stating that their inductive bias relies on 'pixels' but that they drop when 'patches' are permuted creates a non-sequitur, as ResNets do not inherently process 'patches' as input tokens. The intended meaning is likely that ResNet's performance drops when the spatial order (whether measured in pixels or patches) is disrupted. This is a minor clarification issue that might mislead a reader not familiar with the context of localizing invariance tests.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0383,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 75614,
+      "completion_tokens": 83274
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents a conceptually clean and well-written architecture that demonstrates competitive vision performance using only MLPs, and the exposition of the design (token-mixing vs. channel-mixing) is clear and logically motivated. However, several significant issues temper the contribution. First, the claimed \"simplicity\" is somewhat overstated given that the token-mixing MLP is mathematically equivalent to a depthwise convolution with a full receptive field and tied weights, making the architecture a constrained CNN rather than a fundamentally new paradigm. Second, the empirical results show that Mixer only matches state-of-the-art under large-scale pre-training (~100M images) or heavy regularization; on moderate-scale data it falls short of specialized CNNs, raising doubts about its practical generality. Third, the paper does not provide a compelling theoretical or empirical explanation for *why* such an all-MLP design works, leaving the reader with the impression that it is more a demonstration of the power of large datasets and regularization than a genuine architectural breakthrough. Finally, the complexity analysis (linear in patches, vs. ViT\u2019s quadratic) is a valid point, but CNNs already achieve linear complexity, so the advantage over existing strong baselines is limited. Overall, while the paper is clearly written and the idea is interesting, its novelty and practical impact are narrower than the abstract suggests.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Inconsistent dataset name: ILSVRC2021 instead of ILSVRC2012",
+          "quote": "We pre-train our models on two public datasets: ILSVRC2021 ImageNet, and ImageNet-21k",
+          "explanation": "The standard ImageNet dataset for supervised pre-training is ILSVRC2012. The year '2021' is likely an OCR error (e.g., '2012' misread as '2021'). While many readers will recognize the intended dataset, the error could confuse those less familiar with the literature and introduces a factual inaccuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Ambiguous and potentially inconsistent description of token\u2011mixing MLP weight resizing for fine\u2011tuning at higher resolution",
+          "quote": "For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208][R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal.",
+          "explanation": "According to Eq.\u202f(1), the token\u2011mixing MLP has two weight matrices: W\u2081 \u2208 \u211d^{DS\u202f\u00d7\u202fS} and W\u2082 \u2208 \u211d^{S\u202f\u00d7\u202fDS}. The text only describes resizing W\u2082 to a matrix of shape DS\u2032\u202f\u00d7\u202fS\u2032 (instead of S\u2032\u202f\u00d7\u202fDS\u2032), and does not mention how W\u2081 is handled. The proportion by which DS\u2032 is increased is not specified, and the block\u2011diagonal initialization is unclear when S\u2032 \u2260 DS\u2032. Although the supplement (C) may clarify, the presented description is insufficient for reproducibility and dimensionally inconsistent with the earlier equations.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Numerical inaccuracy in stated accuracy differences",
+          "quote": "Mixer-H/14 achieves 87.94% top-1 accuracy on ImageNet, which is 0.5% better than BiTResNet152x4 and only 0.5% lower than ViT-H/14.",
+          "explanation": "From Table 2, BiT-R152x4 scores 87.54%, so the difference to 87.94% is 0.40 percentage points, not 0.5%. ViT-H/14 scores 88.55%, so the difference is 0.61 points, not 0.5%. While the use of '0.5%' may be intended as an approximation, the text presents it as a precise comparison using numbers from the same table, making it a factual error.",
+          "comment_type": "technical",
+          "paragraph_index": 31,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_3",
+          "title": "Overstated throughput ratios for ViT and BiT",
+          "quote": "Remarkably, Mixer-H/14 runs 2.5 times faster than ViT-H/14 and almost twice as fast as BiT.",
+          "explanation": "From Table 2, throughputs are: Mixer-H/14 40, ViT-H/14 15, BiT-R152x4 26. The ratio for ViT is 40/15 \u2248 2.67, which should be reported as 'about 2.7 times' rather than '2.5 times'. For BiT, the ratio is 40/26 \u2248 1.54, which is not 'almost twice as fast' (that would require a ratio close to 2, e.g. \u22651.8). This overstatement of speed advantages could mislead readers about the relative efficiency.",
+          "comment_type": "logical",
+          "paragraph_index": 31,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_4",
+          "title": "Contradictory claims about invariance to token order",
+          "quote": "Mixer is invariant to the order of patches and pixels within the patches (the blue and green curves match perfectly).",
+          "explanation": "Earlier in Section 2, the authors state that 'Mixer does not use position embeddings because the token-mixing MLPs are sensitive to the order of the input tokens.' This explicitly claims sensitivity to token order. However, in Section 3.4, they claim invariance to the order of patches (which are the tokens). The experimental setup compares two different transformations: (1) shuffling patches and permuting pixels within each patch, and (2) global pixel permutation. The blue and green curves refer to these two transformations; their matching shows that both transformations degrade accuracy equally, not that the model is invariant to patch order. The phrase 'invariant to the order of patches' is therefore misleading and directly contradicts the earlier design justification. A careful reader would be confused about whether the token-mixing MLP is sensitive to token order or not.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0184,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 74558,
+      "completion_tokens": 28583
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents a conceptually clean and well-written architecture that demonstrates competitive vision performance using only MLPs, and the exposition of the design (token-mixing vs. channel-mixing) is clear and logically motivated. However, several significant issues temper the contribution. First, the claimed \"simplicity\" is somewhat overstated given that the token-mixing MLP is mathematically equivalent to a depthwise convolution with a full receptive field and tied weights, making the architecture a constrained CNN rather than a fundamentally new paradigm. Second, the empirical results show that Mixer only matches state-of-the-art under large-scale pre-training (~100M images) or heavy regularization; on moderate-scale data it falls short of specialized CNNs, raising doubts about its practical generality. Third, the paper does not provide a compelling theoretical or empirical explanation for *why* such an all-MLP design works, leaving the reader with the impression that it is more a demonstration of the power of large datasets and regularization than a genuine architectural breakthrough. Finally, the complexity analysis (linear in patches, vs. ViT\u2019s quadratic) is a valid point, but CNNs already achieve linear complexity, so the advantage over existing strong baselines is limited. Overall, while the paper is clearly written and the idea is interesting, its novelty and practical impact are narrower than the abstract suggests.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Inconsistent dataset name: ILSVRC2021 instead of ILSVRC2012",
+          "quote": "We pre-train our models on two public datasets: ILSVRC2021 ImageNet, and ImageNet-21k",
+          "explanation": "The standard ImageNet dataset for supervised pre-training is ILSVRC2012. The year '2021' is likely an OCR error (e.g., '2012' misread as '2021'). While many readers will recognize the intended dataset, the error could confuse those less familiar with the literature and introduces a factual inaccuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Ambiguous and potentially inconsistent description of token\u2011mixing MLP weight resizing for fine\u2011tuning at higher resolution",
+          "quote": "For this, we increase the hidden layer width from _DS_ to _DS\u2032_ in proportion to the number of patches and initialize the (now larger) weight matrix **W** 2 _[\u2032][\u2208]_[R] _[D][S][\u2032][\u00d7][S][\u2032]_[with a block-diagonal matrix containing copies of] **[ W]**[2][on its] diagonal.",
+          "explanation": "According to Eq.\u202f(1), the token\u2011mixing MLP has two weight matrices: W\u2081 \u2208 \u211d^{DS\u202f\u00d7\u202fS} and W\u2082 \u2208 \u211d^{S\u202f\u00d7\u202fDS}. The text only describes resizing W\u2082 to a matrix of shape DS\u2032\u202f\u00d7\u202fS\u2032 (instead of S\u2032\u202f\u00d7\u202fDS\u2032), and does not mention how W\u2081 is handled. The proportion by which DS\u2032 is increased is not specified, and the block\u2011diagonal initialization is unclear when S\u2032 \u2260 DS\u2032. Although the supplement (C) may clarify, the presented description is insufficient for reproducibility and dimensionally inconsistent with the earlier equations.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Numerical inaccuracy in stated accuracy differences",
+          "quote": "Mixer-H/14 achieves 87.94% top-1 accuracy on ImageNet, which is 0.5% better than BiTResNet152x4 and only 0.5% lower than ViT-H/14.",
+          "explanation": "From Table 2, BiT-R152x4 scores 87.54%, so the difference to 87.94% is 0.40 percentage points, not 0.5%. ViT-H/14 scores 88.55%, so the difference is 0.61 points, not 0.5%. While the use of '0.5%' may be intended as an approximation, the text presents it as a precise comparison using numbers from the same table, making it a factual error.",
+          "comment_type": "technical",
+          "paragraph_index": 31,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Overstated throughput ratios for ViT and BiT",
+          "quote": "Remarkably, Mixer-H/14 runs 2.5 times faster than ViT-H/14 and almost twice as fast as BiT.",
+          "explanation": "From Table 2, throughputs are: Mixer-H/14 40, ViT-H/14 15, BiT-R152x4 26. The ratio for ViT is 40/15 \u2248 2.67, which should be reported as 'about 2.7 times' rather than '2.5 times'. For BiT, the ratio is 40/26 \u2248 1.54, which is not 'almost twice as fast' (that would require a ratio close to 2, e.g. \u22651.8). This overstatement of speed advantages could mislead readers about the relative efficiency.",
+          "comment_type": "logical",
+          "paragraph_index": 31,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_4",
+          "title": "Contradictory claims about invariance to token order",
+          "quote": "Mixer is invariant to the order of patches and pixels within the patches (the blue and green curves match perfectly).",
+          "explanation": "Earlier in Section 2, the authors state that 'Mixer does not use position embeddings because the token-mixing MLPs are sensitive to the order of the input tokens.' This explicitly claims sensitivity to token order. However, in Section 3.4, they claim invariance to the order of patches (which are the tokens). The experimental setup compares two different transformations: (1) shuffling patches and permuting pixels within each patch, and (2) global pixel permutation. The blue and green curves refer to these two transformations; their matching shows that both transformations degrade accuracy equally, not that the model is invariant to patch order. The phrase 'invariant to the order of patches' is therefore misleading and directly contradicts the earlier design justification. A careful reader would be confused about whether the token-mixing MLP is sensitive to token order or not.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_5",
+          "title": "Parameter count in Table 1 is nearly identical for S/32 and S/16 models despite different patch resolutions",
+          "quote": "|Specifcation|S/32|S/16|B/32|B/16|L/32|L/16|H/14|\n|Parameters (M)|19|18|60|59|206|207|431|",
+          "explanation": "At first glance, it seems surprising that the S/32 model (patch size 32, so S=49 patches) has 19M parameters while the S/16 model (patch size 16, S=196 patches) has 18M parameters \u2014 the S/16 model has 4\u00d7 more tokens and larger token-mixing weight matrices (W_1 \u2208 \u211d^{DS\u00d7S}) should grow quadratically? Wait, the hidden width DS is fixed per model scale, so the token-mixing first layer is DS\u00d7S, not S\u00d7S. The second layer is S\u00d7DS. So total token-mixing parameters = 2*DS*S. For S/32: DS=256, S=49 \u2192 2*256*49=25,088; for S/16: DS=256, S=196 \u2192 2*256*196=100,352. That's a 75k difference, yet the total model sizes differ by only 1M (19 vs 18). This suggests the channel-mixing MLP (which is larger: input C=512, hidden DC=2048 \u2192 about 2*(512*2048+2048*512) \u2248 4.2M) dominates, and the 75k token-mixing difference is within rounding or other minor variations. Context resolves this: the parameter counts are plausible given the dominant channel-mixing parameters. No error.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_6",
+          "title": "Number of patches formula appears truncated in LaTeX",
+          "quote": "then the number of patches is \\(S = HW/P\\)[2]",
+          "explanation": "The extracted text shows \\(S = HW/P\\)[2], which likely originated from a LaTeX error or OCR artifact. The intended formula should be \\(S = HW/P^2\\) (total pixels divided by patch area). The paper summary confirms this: 'S = HW/P\u00b2'. This is a clear OCR/LaTeX rendering issue. The context resolves it, and the correct formula is available in the summary. Not flagging as an error.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0184,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 74558,
+      "completion_tokens": 28583
+    }
+  }
+}

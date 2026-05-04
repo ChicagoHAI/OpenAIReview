@@ -1,0 +1,614 @@
+{
+  "slug": "iclr2021-St1giarC-denoising-diffusion-implicit-models",
+  "title": "DENOISING DIFFUSION IMPLICIT MODELS [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## DENOISING DIFFUSION IMPLICIT MODELS\n\n## **Jiaming Song, Chenlin Meng & Stefano Ermon**"
+    },
+    {
+      "index": 1,
+      "text": "Stanford University\n\n_{_ tsong,chenlin,ermon _}_ @cs.stanford.edu\n\n## ABSTRACT\n\nDenoising diffusion probabilistic models (DDPMs) have achieved high quality image generation without adversarial training, yet they require simulating a Markov chain for many steps in order to produce a sample. To accelerate sampling, we present denoising diffusion implicit models (DDIMs), a more efficient class of iterative implicit probabilistic models with the same training procedure as DDPMs. In DDPMs, the generative process is defined as the reverse of a particular Markovian diffusion process. We generalize DDPMs via a class of non-Markovian diffusion processes that lead to the same training objective. These non-Markovian processes can correspond to generative processes that are deterministic, giving rise to implicit models that produce high quality samples much faster. We empirically demonstrate that DDIMs can produce high quality samples 10 _\u00d7_ to 50 _\u00d7_ faster in terms of wall-clock time compared to DDPMs, allow us to trade off computation for sample quality, perform semantically meaningful image interpolation directly in the latent space, and reconstruct observations with very low error."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nDeep generative models have demonstrated the ability to produce high quality samples in many domains (Karras et al., 2020; van den Oord et al., 2016a). In terms of image generation, generative adversarial networks (GANs, Goodfellow et al. (2014)) currently exhibits higher sample quality than likelihood-based methods such as variational autoencoders (Kingma & Welling, 2013), autoregressive models (van den Oord et al., 2016b) and normalizing flows (Rezende & Mohamed, 2015; Dinh et al., 2016). However, GANs require very specific choices in optimization and architectures in order to stabilize training (Arjovsky et al., 2017; Gulrajani et al., 2017; Karras et al., 2018; Brock et al., 2018), and could fail to cover modes of the data distribution (Zhao et al., 2018)."
+    },
+    {
+      "index": 3,
+      "text": "Recent works on iterative generative models (Bengio et al., 2014), such as denoising diffusion probabilistic models (DDPM, Ho et al. (2020)) and noise conditional score networks (NCSN, Song & Ermon (2019)) have demonstrated the ability to produce samples comparable to that of GANs, without having to perform adversarial training. To achieve this, many denoising autoencoding models are trained to denoise samples corrupted by various levels of Gaussian noise. Samples are then produced by a Markov chain which, starting from white noise, progressively denoises it into an image. This generative Markov Chain process is either based on Langevin dynamics (Song & Ermon, 2019) or obtained by reversing a forward _diffusion process_ that progressively turns an image into noise (Sohl-Dickstein et al., 2015)."
+    },
+    {
+      "index": 4,
+      "text": "A critical drawback of these models is that they require many iterations to produce a high quality sample. For DDPMs, this is because that the generative process (from noise to data) approximates the reverse of the forward _diffusion process_ (from data to noise), which could have thousands of steps; iterating over all the steps is required to produce a single sample, which is much slower compared to GANs, which only needs one pass through a network. For example, it takes around 20 hours to sample 50k images of size 32 _\u00d7_ 32 from a DDPM, but less than a minute to do so from a GAN on a Nvidia 2080 Ti GPU. This becomes more problematic for larger images as sampling 50k images of size 256 _\u00d7_ 256 could take nearly 1000 hours on the same GPU."
+    },
+    {
+      "index": 5,
+      "text": "To close this efficiency gap between DDPMs and GANs, we present denoising diffusion implicit models (DDIMs). DDIMs are implicit probabilistic models (Mohamed & Lakshminarayanan, 2016) and are closely related to DDPMs, in the sense that they are trained with the same objective function."
+    },
+    {
+      "index": 6,
+      "text": "1\n\nPublished as a conference paper at ICLR 2021\n\nFigure 1: Graphical models for diffusion (left) and non-Markovian (right) inference models."
+    },
+    {
+      "index": 7,
+      "text": "In Section 3, we generalize the forward _diffusion process_ used by DDPMs, which is Markovian, to _non-Markovian_ ones, for which we are still able to design suitable reverse generative Markov chains. We show that the resulting variational training objectives have a shared surrogate objective, which is _exactly_ the objective used to train DDPM. Therefore, we can freely choose from a large family of generative models using the same neural network simply by choosing a different, _nonMarkovian_ diffusion process (Section 4.1) and the corresponding reverse generative Markov Chain. In particular, we are able to use _non-Markovian_ diffusion processes which lead to \u201dshort\u201d generative Markov chains (Section 4.2) that can be simulated in a small number of steps. This can massively increase sample efficiency only at a minor cost in sample quality."
+    },
+    {
+      "index": 8,
+      "text": "In Section 5, we demonstrate several empirical benefits of DDIMs over DDPMs. _First_ , DDIMs have superior sample generation quality compared to DDPMs, when we accelerate sampling by 10 _\u00d7_ to 100 _\u00d7_ using our proposed method. _Second_ , DDIM samples have the following \u201cconsistency\u201d property, which does not hold for DDPMs: if we start with the same initial latent variable and generate several samples with Markov chains of various lengths, these samples would have similar high-level features. _Third_ , because of \u201cconsistency\u201d in DDIMs, we can perform semantically meaningful image interpolation by manipulating the initial latent variable in DDIMs, unlike DDPMs which interpolates near the image space due to the stochastic generative process."
+    },
+    {
+      "index": 9,
+      "text": "## 2 BACKGROUND\n\nGiven samples from a data distribution _q_ ( _**x**_ 0), we are interested in learning a model distribution _p\u03b8_ ( _**x**_ 0) that approximates _q_ ( _**x**_ 0) and is easy to sample from. Denoising diffusion probabilistic models (DDPMs, Sohl-Dickstein et al. (2015); Ho et al. (2020)) are latent variable models of the form"
+    },
+    {
+      "index": 10,
+      "text": "where _**x**_ 1 _, . . . ,_ _**x** T_ are latent variables in the same sample space as _**x**_ 0 (denoted as _X_ ). The parameters _\u03b8_ are learned to fit the data distribution _q_ ( _**x**_ 0) by maximizing a variational lower bound:"
+    },
+    {
+      "index": 11,
+      "text": "where _q_ ( _**x**_ 1: _T |_ _**x**_ 0) is some inference distribution over the latent variables. Unlike typical latent variable models (such as the variational autoencoder (Rezende et al., 2014)), DDPMs are learned with a fixed (rather than trainable) inference procedure _q_ ( _**x**_ 1: _T |_ _**x**_ 0), and latent variables are relatively high dimensional. For example, Ho et al. (2020) considered the following Markov chain with Gaussian transitions parameterized by a decreasing sequence _\u03b1_ 1: _T \u2208_ (0 _,_ 1] _[T]_ :"
+    },
+    {
+      "index": 12,
+      "text": "where the covariance matrix is ensured to have positive terms on its diagonal. This is called the _forward process_ due to the autoregressive nature of the sampling procedure (from _**x**_ 0 to _**x** T_ ). We call the latent variable model _p\u03b8_ ( _**x**_ 0: _T_ ), which is a Markov chain that samples from _**x** T_ to _**x**_ 0, the _generative process_ , since it approximates the intractable _reverse process q_ ( _**x** t\u2212_ 1 _|_ _**x** t_ ). Intuitively, the forward process progressively adds noise to the observation _**x**_ 0, whereas the generative process progressively denoises a noisy observation (Figure 1, left)."
+    },
+    {
+      "index": 13,
+      "text": "A special property of the forward process is that\n\n2\n\nPublished as a conference paper at ICLR 2021\n\nso we can express _**x** t_ as a linear combination of _**x**_ 0 and a noise variable _\u03f5_ :"
+    },
+    {
+      "index": 14,
+      "text": "When we set _\u03b1T_ sufficiently close to 0, _q_ ( _**x** T |_ _**x**_ 0) converges to a standard Gaussian for all _**x**_ 0, so it is natural to set _p\u03b8_ ( _**x** T_ ) := _N_ ( **0** _,_ _**I**_ ). If all the conditionals are modeled as Gaussians with trainable mean functions and fixed variances, the objective in Eq. (2) can be simplified to[1] :"
+    },
+    {
+      "index": 15,
+      "text": "where _\u03f5\u03b8_ := _{\u03f5_[(] _\u03b8[t]_[)] _[}] t[T]_ =1[is a set of] _[ T]_[functions, each] _[ \u03f5]_[(] _\u03b8[t]_[)] : _X \u2192X_ (indexed by _t_ ) is a function with trainable parameters _\u03b8_[(] _[t]_[)] , and _\u03b3_ := [ _\u03b3_ 1 _, . . . , \u03b3T_ ] is a vector of positive coefficients in the objective that depends on _\u03b1_ 1: _T_ . In Ho et al. (2020), the objective with _\u03b3_ = **1** is optimized instead to maximize generation performance of the trained model; this is also the same objective used in noise conditional score networks (Song & Ermon, 2019) based on score matching (Hyv\u00a8arinen, 2005; Vincent, 2011). From a trained model, _**x**_ 0 is sampled by first sampling _**x** T_ from the prior _p\u03b8_ ( _**x** T_ ), and then sampling _**x** t\u2212_ 1 from the generative processes iteratively."
+    },
+    {
+      "index": 16,
+      "text": "The length _T_ of the forward process is an important hyperparameter in DDPMs. From a variational perspective, a large _T_ allows the reverse process to be close to a Gaussian (Sohl-Dickstein et al., 2015), so that the generative process modeled with Gaussian conditional distributions becomes a good approximation; this motivates the choice of large _T_ values, such as _T_ = 1000 in Ho et al. (2020). However, as all _T_ iterations have to be performed sequentially, instead of in parallel, to obtain a sample _**x**_ 0, sampling from DDPMs is much slower than sampling from other deep generative models, which makes them impractical for tasks where compute is limited and latency is critical."
+    },
+    {
+      "index": 17,
+      "text": "## 3 VARIATIONAL INFERENCE FOR NON-MARKOVIAN FORWARD PROCESSES\n\nBecause the generative model approximates the reverse of the inference process, we need to rethink the inference process in order to reduce the number of iterations required by the generative model. Our key observation is that the DDPM objective in the form of _L\u03b3_ only depends on the marginals[2] _q_ ( _**x** t|_ _**x**_ 0), but not directly on the joint _q_ ( _**x**_ 1: _T |_ _**x**_ 0). Since there are many inference distributions (joints) with the same marginals, we explore alternative inference processes that are non-Markovian, which leads to new generative processes (Figure 1, right). These non-Markovian inference process lead to the same surrogate objective function as DDPM, as we will show below. In Appendix A, we show that the non-Markovian perspective also applies beyond the Gaussian case."
+    },
+    {
+      "index": 18,
+      "text": "## 3.1 NON-MARKOVIAN FORWARD PROCESSES\n\nLet us consider a family _Q_ of inference distributions, indexed by a real vector _\u03c3 \u2208_ R _[T] \u2265_ 0[:]"
+    },
+    {
+      "index": 19,
+      "text": "where _q\u03c3_ ( _**x** T |_ _**x**_ 0) = _N_ ( _[\u221a] \u03b1T_ _**x**_ 0 _,_ (1 _\u2212 \u03b1T_ ) _**I**_ ) and for all _t >_ 1,"
+    },
+    {
+      "index": 20,
+      "text": "The mean function is chosen to order to ensure that _q\u03c3_ ( _**x** t|_ _**x**_ 0) = _N_ ( _[\u221a] \u03b1t_ _**x**_ 0 _,_ (1 _\u2212 \u03b1t_ ) _**I**_ ) for all _t_ (see Lemma 1 of Appendix B), so that it defines a joint inference distribution that matches the \u201cmarginals\u201d as desired. The forward process[3] can be derived from Bayes\u2019 rule:"
+    },
+    {
+      "index": 21,
+      "text": "> 1Please refer to Appendix C.2 for details.\n\n> 2 We slightly abuse this term (as well as joints) when only conditioned on _**x**_ 0."
+    },
+    {
+      "index": 22,
+      "text": "> 3We overload the term \u201cforward process\u201d for cases where the inference model is not a diffusion.\n\n3"
+    },
+    {
+      "index": 23,
+      "text": "Published as a conference paper at ICLR 2021\n\nwhich is also Gaussian (although we do not use this fact for the remainder of this paper). Unlike the diffusion process in Eq. (3), the forward process here is no longer Markovian, since each _**x** t_ could depend on both _**x** t\u2212_ 1 and _**x**_ 0. The magnitude of _\u03c3_ controls the how stochastic the forward process is; when _\u03c3 \u2192_ **0** , we reach an extreme case where as long as we observe _**x**_ 0 and _**x** t_ for some _t_ , then _**x** t\u2212_ 1 become known and fixed."
+    },
+    {
+      "index": 24,
+      "text": "## 3.2 GENERATIVE PROCESS AND UNIFIED VARIATIONAL INFERENCE OBJECTIVE\n\nNext, we define a trainable generative process _p\u03b8_ ( _**x**_ 0: _T_ ) where each _p_[(] _\u03b8[t]_[)][(] _**[x]**[t][\u2212]_[1] _[|]_ _**[x]**[t]_[)][ leverages knowl-] edge of _q\u03c3_ ( _**x** t\u2212_ 1 _|_ _**x** t,_ _**x**_ 0). Intuitively, given a noisy observation _**x** t_ , we first make a prediction[4] of the corresponding _**x**_ 0, and then use it to obtain a sample _**x** t\u2212_ 1 through the reverse conditional distribution _q\u03c3_ ( _**x** t\u2212_ 1 _|_ _**x** t,_ _**x**_ 0), which we have defined."
+    },
+    {
+      "index": 25,
+      "text": "For some _**x**_ 0 _\u223c q_ ( _**x**_ 0) and _\u03f5t \u223cN_ ( **0** _,_ _**I**_ ), _**x** t_ can be obtained using Eq. (4). The model _\u03f5_[(] _\u03b8[t]_[)][(] _**[x]**[t]_[)][ then] attempts to predict _\u03f5t_ from _**x** t_ , without knowledge of _**x**_ 0. By rewriting Eq. (4), one can then predict the _denoised observation_ , which is a prediction of _**x**_ 0 given _**x** t_ :"
+    },
+    {
+      "index": 26,
+      "text": "We can then define the generative process with a fixed prior _p\u03b8_ ( _**x** T_ ) = _N_ ( **0** _,_ _**I**_ ) and"
+    },
+    {
+      "index": 27,
+      "text": "where _q\u03c3_ ( _**x** t\u2212_ 1 _|_ _**x** t, f\u03b8_[(] _[t]_[)][(] _**[x]**[t]_[))][is][defined][as][in][Eq.][(][7][)][with] _**[x]**_[0][replaced][by] _[f] \u03b8_[ (] _[t]_[)][(] _**[x]**[t]_[)][.][We][add][some] Gaussian noise (with covariance _\u03c3_ 1[2] _**[I]**_[) for the case of] _[ t]_[=][1][ to ensure that the generative process is] supported everywhere."
+    },
+    {
+      "index": 28,
+      "text": "We optimize _\u03b8_ via the following variational inference objective (which is a functional over _\u03f5\u03b8_ ):"
+    },
+    {
+      "index": 29,
+      "text": "where we factorize _q\u03c3_ ( _**x**_ 1: _T |_ _**x**_ 0) according to Eq. (6) and _p\u03b8_ ( _**x**_ 0: _T_ ) according to Eq. (1)."
+    },
+    {
+      "index": 30,
+      "text": "From the definition of _J\u03c3_ , it would appear that a different model has to be trained for every choice of _\u03c3_ , since it corresponds to a different variational objective (and a different generative process). However, _J\u03c3_ is equivalent to _L\u03b3_ for certain weights _\u03b3_ , as we show below."
+    },
+    {
+      "index": 31,
+      "text": "**Theorem 1.** _For all \u03c3 >_ **0** _, there exists \u03b3 \u2208_ R _[T] >_ 0 _[and][ C][\u2208]_[R] _[, such that][ J][\u03c3]_[=] _[ L][\u03b3]_[+] _[ C][.]_"
+    },
+    {
+      "index": 32,
+      "text": "The variational objective _L\u03b3_ is special in the sense that if parameters _\u03b8_ of the models _\u03f5_[(] _\u03b8[t]_[)] are not shared across different _t_ , then the optimal solution for _\u03f5\u03b8_ will not depend on the weights _\u03b3_ (as global optimum is achieved by separately maximizing each term in the sum). This property of _L\u03b3_ has two implications. On the one hand, this justified the use of _L_ **1** as a surrogate objective function for the variational lower bound in DDPMs; on the other hand, since _J\u03c3_ is equivalent to some _L\u03b3_ from Theorem 1, the optimal solution of _J\u03c3_ is also the same as that of _L_ **1** . Therefore, if parameters are not shared across _t_ in the model _\u03f5\u03b8_ , then the _L_ **1** objective used by Ho et al. (2020) can be used as a surrogate objective for the variational objective _J\u03c3_ as well."
+    },
+    {
+      "index": 33,
+      "text": "## 4 SAMPLING FROM GENERALIZED GENERATIVE PROCESSES\n\nWith _L_ **1** as the objective, we are not only learning a generative process for the Markovian inference process considered in Sohl-Dickstein et al. (2015) and Ho et al. (2020), but also generative processes for many non-Markovian forward processes parametrized by _\u03c3_ that we have described. Therefore, we can essentially use pretrained DDPM models as the solutions to the new objectives, and focus on finding a generative process that is better at producing samples subject to our needs by changing _\u03c3_ ."
+    },
+    {
+      "index": 34,
+      "text": "> 4Learning a distribution over the predictions is also possible, but empirically we found little benefits of it."
+    },
+    {
+      "index": 35,
+      "text": "4\n\nPublished as a conference paper at ICLR 2021\n\nFigure 2: Graphical model for accelerated generation, where _\u03c4_ = [1 _,_ 3]."
+    },
+    {
+      "index": 36,
+      "text": "## 4.1 DENOISING DIFFUSION IMPLICIT MODELS\n\nFrom _p\u03b8_ ( _**x**_ 1: _T_ ) in Eq. (10), one can generate a sample _**x** t\u2212_ 1 from a sample _**x** t_ via:"
+    },
+    {
+      "index": 37,
+      "text": "where _\u03f5t \u223cN_ ( **0** _,_ _**I**_ ) is standard Gaussian noise independent of _**x** t_ , and we define _\u03b1_ 0 := 1. Different choices of _\u03c3_ values results in different generative processes, all while using the same model _\u03f5\u03b8_ , so re-training the model is unnecessary. When _\u03c3t_ = \ufffd(1 _\u2212 \u03b1t\u2212_ 1) _/_ (1 _\u2212 \u03b1t_ ) ~~\ufffd~~ 1 _\u2212 \u03b1t/\u03b1t\u2212_ 1 for all _t_ , the forward process becomes Markovian, and the generative process becomes a DDPM."
+    },
+    {
+      "index": 38,
+      "text": "We note another special case when _\u03c3t_ = 0 for all _t_[5] ; the forward process becomes deterministic given _**x** t\u2212_ 1 and _**x**_ 0, except for _t_ = 1; in the generative process, the coefficient before the random noise _\u03f5t_ becomes zero. The resulting model becomes an implicit probabilistic model (Mohamed & Lakshminarayanan, 2016), where samples are generated from latent variables with a fixed procedure (from _**x** T_ to _**x**_ 0). We name this the _denoising diffusion implicit model_ (DDIM, pronounced /d:Im/), because it is an implicit probabilistic model trained with the DDPM objective (despite the forward process no longer being a diffusion)."
+    },
+    {
+      "index": 39,
+      "text": "## 4.2 ACCELERATED GENERATION PROCESSES\n\nIn the previous sections, the generative process is considered as the approximation to the reverse process; since of the forward process has _T_ steps, the generative process is also forced to sample _T_ steps. However, as the denoising objective _L_ **1** does not depend on the specific forward procedure as long as _q\u03c3_ ( _**x** t|_ _**x**_ 0) is fixed, we may also consider forward processes with lengths smaller than _T_ , which accelerates the corresponding generative processes without having to train a different model."
+    },
+    {
+      "index": 40,
+      "text": "Let us consider the forward process as defined not on all the latent variables _**x**_ 1: _T_ , but on a subset _{_ _**x** \u03c4_ 1 _, . . . ,_ _**x** \u03c4S }_ , where _\u03c4_ is an increasing sub-sequence of [1 _, . . . , T_ ] of length _S_ . In particular, we define the sequential forward process over _**x** \u03c4_ 1 _, . . . ,_ _**x** \u03c4S_ such that _q_ ( _**x** \u03c4i|_ _**x**_ 0) = _N_ ( _[\u221a] \u03b1\u03c4i_ _**x**_ 0 _,_ (1 _\u2212 \u03b1\u03c4i_ ) _**I**_ ) matches the \u201cmarginals\u201d (see Figure 2 for an illustration). The generative process now samples latent variables according to reversed( _\u03c4_ ), which we term _(sampling) trajectory_ . When the length of the sampling trajectory is much smaller than _T_ , we may achieve significant increases in computational efficiency due to the iterative nature of the sampling process."
+    },
+    {
+      "index": 41,
+      "text": "Using a similar argument as in Section 3, we can justify using the model trained with the _L_ **1** objective, so no changes are needed in training. We show that only slight changes to the updates in Eq. (12) are needed to obtain the new, faster generative processes, which applies to DDPM, DDIM, as well as all generative processes considered in Eq. (10). We include these details in Appendix C.1."
+    },
+    {
+      "index": 42,
+      "text": "In principle, this means that we can train a model with an arbitrary number of forward steps but only sample from some of them in the generative process. Therefore, the trained model could consider many more steps than what is considered in (Ho et al., 2020) or even a continuous time variable _t_ (Chen et al., 2020). We leave empirical investigations of this aspect as future work."
+    },
+    {
+      "index": 43,
+      "text": "> 5Although this case is not covered in Theorem 1, we can always approximate it by making _\u03c3t_ very small."
+    },
+    {
+      "index": 44,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\n## 4.3 RELEVANCE TO NEURAL ODES\n\nMoreover, we can rewrite the DDIM iterate according to Eq. (12), and its similarity to Euler integration for solving ODEs becomes more apparent:"
+    },
+    {
+      "index": 45,
+      "text": "We can reparameterize ( _[\u221a]_ 1 _\u2212 \u03b1/[\u221a] \u03b1_ ) with _\u03bb_ and ( _**x** /[\u221a] \u03b1_ ) with _H_ ( _\u03bb_ ) then sampling _**x**_ 0 with Equation (13) can be treated as integration over the following ODE:"
+    },
+    {
+      "index": 46,
+      "text": "for some very large _M_ (which corresponds to the case of _\u03b1 \u2248_ 0). This suggests that with enough _T_ (discretization steps), the we can also reverse the generation process (going from _t_ = 0 to _T_ ), which encodes _**x**_ 0 to _**x** T_ and simulates the reverse of the ODE in Eq. (14). This suggests that unlike DDPM, we can use DDIM to obtain encodings of the observations (as the form of _**x** T_ ), which might be useful for other downstream applications that requires latent representations of a model."
+    },
+    {
+      "index": 47,
+      "text": "## 5 EXPERIMENTS\n\nIn this section, we show that DDIMs outperform DDPMs in terms of image generation when fewer iterations are considered, giving speed ups of 10 _\u00d7_ to 100 _\u00d7_ over the original DDPM generation process. Moreover, unlike DDPMs, once the initial latent variables _**x** T_ are fixed, DDIMs retain highlevel image features regardless of the generation trajectory, so they are able to perform interpolation directly from the latent space. DDIMs can also be used to encode samples that reconstruct them from the latent code, which DDPMs cannot do due to the stochastic sampling process."
+    },
+    {
+      "index": 48,
+      "text": "For each dataset, we use the **same trained model** with _T_ = 1000 and the objective being _L\u03b3_ from Eq. (5) with _\u03b3_ = **1** ; as we argued in Section 3, no changes are needed with regards to the training procedure. The only changes that we make is **how we produce samples from the model** ; we achieve this by controlling _\u03c4_ (which controls how fast the samples are obtained) and _\u03c3_ (which interpolates between the deterministic DDIM and the stochastic DDPM)."
+    },
+    {
+      "index": 49,
+      "text": "We consider different sub-sequences _\u03c4_ of [1 _, . . . , T_ ] and different variance hyperparameters _\u03c3_ indexed by elements of _\u03c4_ . To simplify comparisons, we consider _\u03c3_ with the form:"
+    },
+    {
+      "index": 50,
+      "text": "where _\u03b7 \u2208_ R _\u2265_ 0 is a hyperparameter that we can directly control. This includes an original DDPM generative process when _\u03b7_ = 1 and DDIM when _\u03b7_ = 0. We also consider DDPM where the random \u02c6 \u02c6 noise has a larger standard deviation than _\u03c3_ (1), which we denote as _\u03c3_ : _\u03c3\u03c4i_ = \ufffd1 _\u2212 \u03b1\u03c4i/\u03b1\u03c4i\u2212_ 1 . This is used by the implementation in Ho et al. (2020) **only to obtain the CIFAR10 samples** , but not samples of the other datasets. We include more details in Appendix D."
+    },
+    {
+      "index": 51,
+      "text": "## 5.1 SAMPLE QUALITY AND EFFICIENCY\n\nIn Table 1, we report the quality of the generated samples with models trained on CIFAR10 and CelebA, as measured by Frechet Inception Distance (FID (Heusel et al., 2017)), where we vary the number of timesteps used to generate a sample (dim( _\u03c4_ )) and the stochasticity of the process ( _\u03b7_ ). As expected, the sample quality becomes higher as we increase dim( _\u03c4_ ), presenting a tradeoff between sample quality and computational costs. We observe that DDIM ( _\u03b7_ = 0) achieves the \u02c6 best sample quality when dim( _\u03c4_ ) is small, and DDPM ( _\u03b7_ = 1 and _\u03c3_ ) typically has worse sample quality compared to its less stochastic counterparts with the same dim( _\u03c4_ ), except for the case for dim( _\u03c4_ ) = 1000 and \u02c6 _\u03c3_ reported by Ho et al. (2020) where DDIM is marginally worse. However, the sample quality of _\u03c3_ \u02c6 becomes much worse for smaller dim( _\u03c4_ ), which suggests that it is ill-suited for shorter trajectories. DDIM, on the other hand, achieves high sample quality much more consistently."
+    },
+    {
+      "index": 52,
+      "text": "In Figure 3, we show CIFAR10 and CelebA samples with the same number of sampling steps and varying _\u03c3_ . For the DDPM, the sample quality deteriorates rapidly when the sampling trajectory has"
+    },
+    {
+      "index": 53,
+      "text": "6\n\nPublished as a conference paper at ICLR 2021\n\n\u02c6 Table 1: CIFAR10 and CelebA image generation measured in FID. _\u03b7_ = 1 _._ 0 and _\u03c3_ are cases of DDPM (although Ho et al. (2020) only considered _T_ = 1000 steps, and _S < T_ can be seen as simulating DDPMs trained with _S_ steps), and _\u03b7_ = 0 _._ 0 indicates DDIM."
+    },
+    {
+      "index": 54,
+      "text": "|_S_|CIFAR10 (32_\u00d7_32)\n10\n20\n50\n100\n1000|CelebA (64_\u00d7_64)\n10\n20\n50\n100\n1000|\n|---|---|---|\n|0_._0|**13.36**\n**6.84**\n**4.67**\n**4.16**\n4.04|**17.33**\n**13.73**\n**9.17**\n**6.53**\n3.51|\n|_\u03b7_\n0.2\n0.5|14.04\n7.11\n4.77\n4.25\n4.09\n16.66\n8.35\n5.25\n4.46\n4.29|17.66\n14.11\n9.51\n6.79\n3.64\n19.86\n16.06\n11.01\n8.09\n4.28|\n|1.0|41.07\n18.36\n8.01\n5.78\n4.73|33.12\n26.03\n18.48\n13.93\n5.98|\n|\u02c6_\u03c3_|367.43\n133.37\n32.72\n9.99\n**3.17**|299.71\n183.83\n71.71\n45.20\n**3.26**|"
+    },
+    {
+      "index": 55,
+      "text": "**----- Start of picture text -----**\n\ndim( ) = 10 dim( ) = 100 dim( ) = 10 dim( ) = 100\n0.0 0.0 0.0 0.0\n0.2 0.2 0.2 0.2\n0.5 0.5 0.5 0.5\n1.0 1.0 1.0 1.0\n**----- End of picture text -----**"
+    },
+    {
+      "index": 56,
+      "text": "Figure 3: CIFAR10 and CelebA samples with dim( _\u03c4_ ) = 10 and dim( _\u03c4_ ) = 100.\n\n10 steps. For the case of \u02c6 _\u03c3_ , the generated images seem to have more noisy perturbations under short trajectories; this explains why the FID scores are much worse than other methods, as FID is very sensitive to such perturbations (as discussed in Jolicoeur-Martineau et al. (2020))."
+    },
+    {
+      "index": 57,
+      "text": "In Figure 4, we show that the amount of time needed to produce a sample scales linearly with the length of the sample trajectory. This suggests that DDIM is useful for producing samples more efficiently, as samples can be generated in much fewer steps. Notably, DDIM is able to produce samples with quality comparable to 1000 step models within 20 to 100 steps, which is a 10 _\u00d7_ to 50 _\u00d7_ speed up compared to the original DDPM. Even though DDPM could also achieve reasonable sample quality with 100 _\u00d7_ steps, DDIM requires much fewer steps to achieve this; on CelebA, the FID score of the 100 step DDPM is similar to that of the 20 step DDIM."
+    },
+    {
+      "index": 58,
+      "text": "## 5.2 SAMPLE CONSISTENCY IN DDIMS\n\nFor DDIM, the generative process is deterministic, and _**x**_ 0 would depend only on the initial state _**x** T_ . In Figure 5, we observe the generated images under different generative trajectories (i.e. different _\u03c4_ ) while starting with the same initial _**x** T_ . Interestingly, for the generated images with the same initial _**x** T_ , most high-level features are similar, regardless of the generative trajectory. In many cases, samples generated with only 20 steps are already very similar to ones generated with 1000 steps in terms of high-level features, with only minor differences in details. Therefore, it would appear that _**x** T_ alone would be an informative latent encoding of the image; and minor details that affects sample quality are encoded in the parameters, as longer sample trajectories gives better quality samples but do not significantly affect the high-level features. We show more samples in Appendix D.4."
+    },
+    {
+      "index": 59,
+      "text": "**----- Start of picture text -----**\n\nCIFAR10 Bedroom\n20 1000\n5 300\n2 100\n0.5 30\n0.2 10\n10 30 100 300 1000 10 30 100 300 1000\n# steps # steps\nHours Hours\n**----- End of picture text -----**"
+    },
+    {
+      "index": 60,
+      "text": "Figure 4: Hours to sample 50k images with one Nvidia 2080 Ti GPU and samples at different steps.\n\n7\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 61,
+      "text": "**----- Start of picture text -----**\n\n10\n20\n50\n100\n1000\n10\n100\n10\n100\nsample timesteps\nsample timesteps\nsample timesteps\n**----- End of picture text -----**"
+    },
+    {
+      "index": 62,
+      "text": "Figure 5: Samples from DDIM with the same random _**x** T_ and different number of steps.\n\n- 5.3 INTERPOLATION IN DETERMINISTIC GENERATIVE PROCESSES"
+    },
+    {
+      "index": 63,
+      "text": "Figure 6: Interpolation of samples from DDIM with dim( _\u03c4_ ) = 50.\n\nSince the high level features of the DDIM sample is encoded by _**x** T_ , we are interested to see whether it would exhibit the semantic interpolation effect similar to that observed in other implicit probabilistic models, such as GANs (Goodfellow et al., 2014). This is different from the interpolation procedure in Ho et al. (2020), since in DDPM the same _**x** T_ would lead to highly diverse _**x**_ 0 due to the stochastic generative process[6] . In Figure 6, we show that simple interpolations in _**x** T_ can lead to semantically meaningful interpolations between two samples. We include more details and samples in Appendix D.5. This allows DDIM to control the generated images on a high level directly through the latent variables, which DDPMs cannot."
+    },
+    {
+      "index": 64,
+      "text": "## 5.4 RECONSTRUCTION FROM LATENT SPACE\n\nAs DDIM is the Euler integration for a particular ODE, it would be interesting to see whether it can encode from _**x**_ 0 to _**x** T_ (reverse of Eq. (14)) and reconstruct _**x**_ 0 from the resulting _**x** T_ (forward"
+    },
+    {
+      "index": 65,
+      "text": "> 6Although it might be possible if one interpolates all _T_ noises, like what is done in Song & Ermon (2020)."
+    },
+    {
+      "index": 66,
+      "text": "8\n\nPublished as a conference paper at ICLR 2021\n\nTable 2: Reconstruction error with DDIM on CIFAR-10 test set, rounded to 10 _[\u2212]_[4] ."
+    },
+    {
+      "index": 67,
+      "text": "|_S_|10\n20\n50\n100\n200\n500\n1000|\n|---|---|\n|||\n|Error|0.014\n0.0065\n0.0023\n0.0009\n0.0004\n0.0001\n0_._0001|"
+    },
+    {
+      "index": 68,
+      "text": "of Eq. (14))[7] . We consider encoding and decoding on the CIFAR-10 test set with the CIFAR-10 model with _S_ steps for both encoding and decoding; we report the per-dimension mean squared error (scaled to [0 _,_ 1]) in Table 2. Our results show that DDIMs have lower reconstruction error for larger _S_ values and have properties similar to Neural ODEs and normalizing flows. The same cannot be said for DDPMs due to their stochastic nature."
+    },
+    {
+      "index": 69,
+      "text": "## 6 RELATED WORK\n\nOur work is based on a large family of existing methods on learning generative models as transition operators of Markov chains (Sohl-Dickstein et al., 2015; Bengio et al., 2014; Salimans et al., 2014; Song et al., 2017; Goyal et al., 2017; Levy et al., 2017). Among them, denoising diffusion probabilistic models (DDPMs, Ho et al. (2020)) and noise conditional score networks (NCSN, Song & Ermon (2019; 2020)) have recently achieved high sample quality comparable to GANs (Brock et al., 2018; Karras et al., 2018). DDPMs optimize a variational lower bound to the log-likelihood, whereas NCSNs optimize the score matching objective (Hyv\u00a8arinen, 2005) over a nonparametric Parzen density estimator of the data (Vincent, 2011; Raphan & Simoncelli, 2011)."
+    },
+    {
+      "index": 70,
+      "text": "Despite their different motivations, DDPMs and NCSNs are closely related. Both use a denoising autoencoder objective for many noise levels, and both use a procedure similar to Langevin dynamics to produce samples (Neal et al., 2011). Since Langevin dynamics is a discretization of a gradient flow (Jordan et al., 1998), both DDPM and NCSN require many steps to achieve good sample quality. This aligns with the observation that DDPM and existing NCSN methods have trouble generating high-quality samples in a few iterations."
+    },
+    {
+      "index": 71,
+      "text": "DDIM, on the other hand, is an implicit generative model (Mohamed & Lakshminarayanan, 2016) where samples are uniquely determined from the latent variables. Hence, DDIM has certain properties that resemble GANs (Goodfellow et al., 2014) and invertible flows (Dinh et al., 2016), such as the ability to produce semantically meaningful interpolations. We derive DDIM from a purely variational perspective, where the restrictions of Langevin dynamics are not relevant; this could partially explain why we are able to observe superior sample quality compared to DDPM under fewer iterations. The sampling procedure of DDIM is also reminiscent of neural networks with continuous depth (Chen et al., 2018; Grathwohl et al., 2018), since the samples it produces from the same latent variable have similar high-level visual features, regardless of the specific sample trajectory."
+    },
+    {
+      "index": 72,
+      "text": "## 7 DISCUSSION\n\nWe have presented DDIMs \u2013 an implicit generative model trained with denoising auto-encoding / score matching objectives \u2013 from a purely variational perspective. DDIM is able to generate highquality samples much more efficiently than existing DDPMs and NCSNs, with the ability to perform meaningful interpolations from the latent space. The non-Markovian forward process presented here seems to suggest continuous forward processes other than Gaussian (which cannot be done in the original diffusion framework, since Gaussian is the only stable distribution with finite variance). We also demonstrated a discrete case with a multinomial forward process in Appendix A, and it would be interesting to investigate similar alternatives for other combinatorial structures."
+    },
+    {
+      "index": 73,
+      "text": "Moreover, since the sampling procedure of DDIMs is similar to that of an neural ODE, it would be interesting to see if methods that decrease the discretization error in ODEs, including multistep methods such as Adams-Bashforth (Butcher & Goodwin, 2008), could be helpful for further improving sample quality in fewer steps (Queiruga et al., 2020). It is also relevant to investigate whether DDIMs exhibit other properties of existing implicit models (Bau et al., 2019)."
+    },
+    {
+      "index": 74,
+      "text": "> 7 Since _**x** T_ and _**x**_ 0 have the same dimensions, their compression qualities are not our immediate concern."
+    },
+    {
+      "index": 75,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n## REFERENCES\n\nMartin Arjovsky, Soumith Chintala, and L\u00b4eon Bottou. Wasserstein GAN. _arXiv preprint arXiv:1701.07875_ , January 2017."
+    },
+    {
+      "index": 76,
+      "text": "- David Bau, Jun-Yan Zhu, Jonas Wulff, William Peebles, Hendrik Strobelt, Bolei Zhou, and Antonio Torralba. Seeing what a gan cannot generate. In _Proceedings of the IEEE International Conference on Computer Vision_ , pp. 4502\u20134511, 2019."
+    },
+    {
+      "index": 77,
+      "text": "- Yoshua Bengio, Eric Laufer, Guillaume Alain, and Jason Yosinski. Deep generative stochastic networks trainable by backprop. In _International Conference on Machine Learning_ , pp. 226\u2013234, January 2014."
+    },
+    {
+      "index": 78,
+      "text": "- Christopher M Bishop. _Pattern recognition and machine learning_ . springer, 2006.\n\n- Andrew Brock, Jeff Donahue, and Karen Simonyan. Large scale GAN training for high fidelity natural image synthesis. _arXiv preprint arXiv:1809.11096_ , September 2018."
+    },
+    {
+      "index": 79,
+      "text": "- John Charles Butcher and Nicolette Goodwin. _Numerical methods for ordinary differential equations_ , volume 2. Wiley Online Library, 2008."
+    },
+    {
+      "index": 80,
+      "text": "- Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and William Chan. WaveGrad: Estimating gradients for waveform generation. _arXiv preprint arXiv:2009.00713_ , September 2020."
+    },
+    {
+      "index": 81,
+      "text": "- Ricky T Q Chen, Yulia Rubanova, Jesse Bettencourt, and David Duvenaud. Neural ordinary differential equations. _arXiv preprint arXiv:1806.07366_ , June 2018."
+    },
+    {
+      "index": 82,
+      "text": "- Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using real NVP. _arXiv preprint arXiv:1605.08803_ , May 2016."
+    },
+    {
+      "index": 83,
+      "text": "- Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio. Generative adversarial nets. In _Advances in neural information processing systems_ , pp. 2672\u20132680, 2014."
+    },
+    {
+      "index": 84,
+      "text": "- Anirudh Goyal, Nan Rosemary Ke, Surya Ganguli, and Yoshua Bengio. Variational walkback: Learning a transition operator as a stochastic recurrent net. In _Advances in Neural Information Processing Systems_ , pp. 4392\u20134402, 2017."
+    },
+    {
+      "index": 85,
+      "text": "- Will Grathwohl, Ricky T Q Chen, Jesse Bettencourt, Ilya Sutskever, and David Duvenaud. FFJORD: Free-form continuous dynamics for scalable reversible generative models. _arXiv preprint arXiv:1810.01367_ , October 2018."
+    },
+    {
+      "index": 86,
+      "text": "- Ishaan Gulrajani, Faruk Ahmed, Martin Arjovsky, Vincent Dumoulin, and Aaron C Courville. Improved training of wasserstein gans. In _Advances in Neural Information Processing Systems_ , pp. 5769\u20135779, 2017."
+    },
+    {
+      "index": 87,
+      "text": "- Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. GANs trained by a two Time-Scale update rule converge to a local nash equilibrium. _arXiv preprint arXiv:1706.08500_ , June 2017."
+    },
+    {
+      "index": 88,
+      "text": "- Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. _arXiv preprint arXiv:2006.11239_ , June 2020."
+    },
+    {
+      "index": 89,
+      "text": "- Aapo Hyv\u00a8arinen. Estimation of Non-Normalized statistical models by score matching. _Journal of Machine Learning Researc h_ , 6:695\u2013709, 2005."
+    },
+    {
+      "index": 90,
+      "text": "- Alexia Jolicoeur-Martineau, R\u00b4emi Pich\u00b4e-Taillefer, R\u00b4emi Tachet des Combes, and Ioannis Mitliagkas. Adversarial score matching and improved sampling for image generation. September 2020."
+    },
+    {
+      "index": 91,
+      "text": "- Richard Jordan, David Kinderlehrer, and Felix Otto. The variational formulation of the fokker\u2013 planck equation. _SIAM journal on mathematical analysis_ , 29(1):1\u201317, 1998.\n\n10"
+    },
+    {
+      "index": 92,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper presents a solid theoretical generalization of Denoising Diffusion Probabilistic Models (DDPMs) into a non-Markovian framework, leading to the Denoising Diffusion Implicit Model (DDIM). The mathematical derivation connecting the non-Markovian forward process to the standard DDPM objective is elegant and well-supported. The primary issues identified are localized: a minor notation inconsistency regarding time indices in Eq. (12) and (13), and a slight overclaim regarding the 'deterministic' nature of the forward process in Section 4.1. Overall, the methodology is sound, reproducible, and provides a significant contribution to accelerating sampling in diffusion models.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Index mismatch in DDIM update and ODE discretization",
+          "quote": "\\mathbf{x}_{t-1} = \\sqrt{\\alpha_{t-1}} \\left( \\frac{\\mathbf{x}_t - \\sqrt{1 - \\alpha_t} \\epsilon_\\theta^{(t)}(\\mathbf{x}_t)}{\\sqrt{\\alpha_t}} \\right) + \\sqrt{1 - \\alpha_{t-1} - \\sigma_t^2} \\cdot \\epsilon_\\theta^{(t)}(\\mathbf{x}_t) + \\sigma_t \\epsilon_t",
+          "explanation": "In Equation (12), the authors define the update for $\\mathbf{x}_{t-1}$ given $\\mathbf{x}_t$. However, when they transition to the ODE interpretation in Section 4.3 and Equation (13), they describe the rule as a discretization of an ODE. A careful reader might notice that in standard Euler discretization for an ODE $dx/dt = f(x,t)$, the step size and indices must align strictly. In Equation (13), the term $\\epsilon_\\theta$ is indexed by $t$, but the result is $\\mathbf{x}_{t-1}$. While this matches the 'reverse' time flow of diffusion models, the mapping to the ODE $d\\mathbf{x}/dt$ requires a more rigorous treatment of the direction of $t$ (e.g., $t$ as continuous time $0 \\to 1$ vs discrete steps $T \\to 0$). The text treats $t$ as a discrete index and a continuous variable simultaneously without defining the change of variables $(t \\to T-t)$ explicitly. This is resolvable but creates temporary confusion about the sign of the 'velocity' in the ODE.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Ambiguity in 'deterministic forward process' claim",
+          "quote": "when $\\sigma_t = 0$ for all $t$; the forward process becomes deterministic given $\\mathbf{x}_{t-1}$ and $\\mathbf{x}_0$",
+          "explanation": "In Section 4.1, the authors claim the forward process becomes deterministic when $\\sigma = 0$. While Equation (7) shows that the distribution $q_\\sigma(\\mathbf{x}_{t-1} | \\mathbf{x}_t, \\mathbf{x}_0)$ collapses to a Dirac delta (making the reverse process deterministic), the *forward* marginal $q(\\mathbf{x}_t | \\mathbf{x}_0)$ defined in Equation (4) remains stochastic due to the injection of $\\epsilon$. The wording 'forward process becomes deterministic' is slightly misleading; the authors likely mean the *mapping* between $\\mathbf{x}_t$ and $\\mathbf{x}_{t-1}$ (the bridge) becomes deterministic relative to the endpoints, but the trajectory from $\\mathbf{x}_0$ to $\\mathbf{x}_T$ still involves sampling noise. This is a subtle distinction but important for understanding the 'implicit model' nature.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Potential numerical inconsistency in reconstruction error units",
+          "quote": "we report the per-dimension mean squared error (scaled to $[0, 1]$) in Table 2. ... 0.0001",
+          "explanation": "In Section 5.4 and Table 2, the authors report reconstruction errors. For $S=1000$, the error is cited as $0.0001$. Given that images are typically normalized to $[-1, 1]$ or $[0, 1]$, and $\\mathbf{x}_T$ is standard Gaussian, a reconstruction error this low after 1000 steps of Euler integration is highly impressive but lacks a description of the 'encoding' ODE integration parameters (e.g., did they use the same discretization as the generative process?). If the encoding is the exact reverse of the decoding (as suggested by the ODE symmetry), the error should theoretically be zero in the limit, but floating-point drift and discretization errors usually dominate. The text states the error is rounded to $10^{-4}$, which makes the $0.0001$ and $0.0001$ for $S=500$ and $S=1000$ looks like a floor. A reader might find it difficult to reproduce these exact values without knowing the specific ODE solver tolerance or if fixed-point arithmetic was used.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.009,
+      "prompt_tokens": 10927,
+      "completion_tokens": 1189
+    },
+    "zero_shot__glm-4.6": {
+      "label": "Zero Shot (glm-4.6)",
+      "model": "z-ai/glm-4.6",
+      "overall_feedback": "This paper presents DDIMs as a significant improvement over DDPMs for faster sampling while maintaining sample quality. The theoretical foundation is generally sound, showing how non-Markovian processes can lead to deterministic sampling. However, there are some mathematical issues that need clarification, particularly around the generative update equation and ODE formulation. The empirical results are compelling but contain some inconsistencies in reporting.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.6_0",
+          "title": "Potential negative value in square root of generative update",
+          "quote": "x_{t-1} = \u221a\u03b1_{t-1} * f_\u03b8^{[t]}(x_t) + \u221a(1-\u03b1_{t-1} - \u03c3_t^2) * \u03b5_\u03b8^{[t]}(x_t) + \u03c3_t * \u03b5_t",
+          "explanation": "The term \u221a(1-\u03b1_{t-1} - \u03c3_t^2) in Equation (12) could potentially be negative if \u03c3_t^2 > 1-\u03b1_{t-1}. Since \u03b1_t is decreasing, \u03b1_{t-1} > \u03b1_t, but \u03c3_t is a hyperparameter that could be set arbitrarily large. The authors should clarify the constraints on \u03c3_t to ensure this term remains non-negative, or explain how they handle cases where it becomes negative.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__glm-4.6_1",
+          "title": "Inconsistent performance claim between text and Table 1",
+          "quote": "DDIM is marginally worse [than DDPM at S=1000]",
+          "explanation": "The text claims DDIM is 'marginally worse' than DDPM at S=1000 steps, but Table 1 shows DDIM (\u03b7=0.0) achieving FID=4.04 while DDPM (\u03b7=1.0) has FID=4.73 on CIFAR10. DDIM actually performs better, not worse. This inconsistency needs to be resolved - either the table values are incorrect or the text claim is wrong.",
+          "comment_type": "logical",
+          "paragraph_index": 4,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_2",
+          "title": "Unclear ODE reparameterization",
+          "quote": "We can reparameterize (\u221a(1-\u03b1)/\u221a\u03b1) with \u03bb and (x/\u221a\u03b1) with H(\u03bb)",
+          "explanation": "The reparameterization from Equation (13) to (14) is not sufficiently explained. The relationship between the discrete variables (\u03b1, x) and continuous variables (\u03bb, H) is unclear. Specifically, how \u03bb relates to \u03b1 and why H(\u03bb) = x/\u221a\u03b1 needs more mathematical justification. This connection is crucial for the ODE interpretation.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_3",
+          "title": "Suspiciously low reconstruction error",
+          "quote": "Error|0.014|0.0065|0.0023|0.0009|0.0004|0.0001|0_._0001",
+          "explanation": "Table 2 shows reconstruction error of 0.0001 for S=1000 steps, which seems unrealistically low for CIFAR-10 images. This could be a typographical error (extra decimal point) or needs verification. Such perfect reconstruction would be remarkable and worth emphasizing if correct.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_4",
+          "title": "Ambiguous \u03c3 definition in Equation (15)",
+          "quote": "\u03c3_\u03c4i = \u03b7 * \u221a(1-\u03b1_\u03c4i/\u03b1_{\u03c4i-1})",
+          "explanation": "The definition of \u03c3_\u03c4i appears to have a typo. Given that \u03b1_t is decreasing (\u03b1_{\u03c4i-1} > \u03b1_{\u03c4i}), the ratio (1-\u03b1_\u03c4i/\u03b1_{\u03c4i-1}) could be greater than 1, making \u03c3_\u03c4i > \u03b7. Based on the context and typical DDIM implementations, it should likely be \u221a(1-\u03b1_{\u03c4i-1}/\u03b1_{\u03c4i}) instead.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0087,
+      "prompt_tokens": 10649,
+      "completion_tokens": 2382
+    },
+    "zero_shot__qwen3-235b-a22b-2507": {
+      "label": "Zero Shot (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a significant and well-motivated advance in diffusion-based generative modeling by introducing DDIMs, which generalize DDPMs through non-Markovian forward processes. The derivation is conceptually elegant, tightly connected to variational inference, and empirically well-supported. The key insight\u2014decoupling training from sampling via marginal-preserving inference processes\u2014is sound and impactful. Most technical elements are clearly defined and consistent across sections. A few minor issues in notation and one moderate concern about a formula's correctness were identified, but they do not undermine the core contributions. The empirical results convincingly demonstrate speedups and new capabilities like interpolation and reconstruction.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_0",
+          "title": "Incorrect expression for deterministic DDIM case in Eq. (12)",
+          "quote": "When $\\sigma_t = 0$ for all $t$[5] ; the forward process becomes deterministic given $\\mathbf{x}_{t-1}$ and $\\mathbf{x}_0$, except for $t = 1$; in the generative process, the coefficient before the random noise $\\epsilon_t$ becomes zero.",
+          "explanation": "The text claims that setting $\\sigma_t = 0$ removes the noise term in the generative process, which aligns with the idea of a deterministic DDIM. However, in Eq. (12), the noise coefficient is $\\sigma_t \\sqrt{1 - \\alpha_{t-1}/\\alpha_t}$, so setting $\\sigma_t = 0$ indeed eliminates the noise. This is consistent. But later in Section 5.1 and Table 1, $\\eta = 0$ corresponds to $\\sigma_{\\tau_i} = \\eta \\tilde\\sigma_{\\tau_i}$, implying $\\sigma = 0$, which matches. However, the quote suggests this case is not covered by Theorem 1, but the generative update remains well-defined. The issue is minor: while the expression in Eq. (12) is correct under $\\sigma_t=0$, the surrounding discussion could more clearly state that the sampling equation reduces to a purely deterministic recurrence in that case, which it eventually does in Section 4.1.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_1",
+          "title": "Ambiguous definition of $\\alpha$ sequence indices in generative update",
+          "quote": "where $\\epsilon_t \\sim \\mathcal{N}(\\mathbf{0}, \\mathbf{I})$ is standard Gaussian noise independent of $\\mathbf{x}_t$, and we define $\\alpha_0 := 1$.",
+          "explanation": "The definition $\\alpha_0 := 1$ appears in the context of Eq. (12), the generative update. While this is natural because $\\sqrt{\\alpha_0} = 1$ corresponds to no noise on the initial data, the sequence $\\alpha_1:T$ was previously introduced without explicit reference to $\\alpha_0$. The assignment $\\alpha_0 = 1$ is correct and standard (used in later papers), but its sudden introduction here could confuse a reader about whether it's consistent with earlier definitions. Upon checking, Eq. (4) defines $\\mathbf{x}_t = \\sqrt{\\alpha_t} \\mathbf{x}_0 + \\sqrt{1 - \\alpha_t} \\epsilon$, and for $t=0$, we would want $\\mathbf{x}_0 = \\mathbf{x}_0$, so $\\alpha_0 = 1$ is necessary. The context resolves it, but the definition would be clearer if placed alongside the initial introduction of $\\alpha_t$ in Eq. (3) or explicitly justified.",
+          "comment_type": "logical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_2",
+          "title": "Inconsistency between text and formula in accelerated sampling trajectory description",
+          "quote": "Let us consider the forward process as defined not on all the latent variables $\\mathbf{x}_{1:T}$, but on a subset $\\{\\mathbf{x}_{\\tau_1}, ..., \\mathbf{x}_{\\tau_S}\\}$, where $\\tau$ is an increasing sub-sequence of [1, ..., T] of length $S$.",
+          "explanation": "The text describes $\\tau$ as a subsequence of [1, ..., T], but in the sampling update (Eq. 12), the indices depend on $\\alpha_t$ and $\\alpha_{t-1}$, so skipping steps requires careful reindexing. The paper handles this correctly in Appendix C.1 (not shown here), so this is likely a forward reference. The concern is whether $\\alpha_{\\tau_i}$ and $\\alpha_{\\tau_{i-1}}$ are used appropriately in the update. Given that the authors mention 'slight changes' and reference the appendix, the omission is acceptable. However, a careful reader might initially worry whether the update in Eq. (12) applies directly to subsampled indices. The context resolves it via the forward reference, so no actual error.",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_3",
+          "title": "Misleading claim about DDIM achieving superior sample quality",
+          "quote": "_First_, DDIMs have superior sample generation quality compared to DDPMs, when we accelerate sampling by 10 $\\times$ to 100 $\\times$ using our proposed method.",
+          "explanation": "The claim of 'superior sample quality' is too broad. From Table 1, DDIM (\u03b7=0) outperforms DDPM (\u03b7=1) only at small step counts (e.g., S=10,20). At S=1000, DDPM outperforms DDIM on CIFAR-10 and CelebA by a small margin. The intended point is that DDIM performs better under **accelerated** sampling, which is supported. However, the unconditional statement misrepresents the results. A careful reader might conclude DDIM is universally better, which is not claimed in the experiments. This is a mild overstatement, but consistent with the empirical section which frames the results accurately.",
+          "comment_type": "logical",
+          "paragraph_index": 8,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_4",
+          "title": "Potential sign error in ODE reparameterization",
+          "quote": "We can reparameterize ( $\\sqrt{1 - \\alpha}/\\sqrt{\\alpha}$ ) with $\\lambda$ and ( $\\mathbf{x}/\\sqrt{\\alpha}$ ) with $H(\\lambda)$ then sampling $\\mathbf{x}_0$ with Equation (13) can be treated as integration over the following ODE: $$ \\frac{dH}{d\\lambda} = f(H, \\lambda). $$",
+          "explanation": "The reparameterization from discrete DDIM steps to an ODE is heuristic. The direction of integration matters: in generation, $\\alpha$ decreases from near 1 to near 0, so $\\lambda = \\sqrt{1-\\alpha}/\\sqrt{\\alpha} \\to \\infty$ as $\\alpha \\to 0$. Thus, integrating from large $\\lambda$ to small corresponds to generating samples. The ODE $dH/d\\lambda = f(H,\\lambda)$ suggests forward integration in $\\lambda$, but generation proceeds as $\\lambda$ increases. This implies the sign might need to be flipped for correct time alignment. However, since this is an informal connection meant to motivate the continuous limit (and similar reparameterizations appear in later works like Song et al., 2021), the direction is often handled implicitly. The issue is resolvable from context and not strictly erroneous.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.001,
+      "prompt_tokens": 11103,
+      "completion_tokens": 1690
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper presents a compelling extension to DDPMs by relaxing the Markovian constraint of the reverse diffusion process, leading to the DDIM framework. The empirical results demonstrate significant speed-ups and beneficial interpolation properties. However, the notation in the background section (Section 2) contains a critical inconsistency where the parameter $\\alpha_t$ is defined as the step variance of the Markov chain in the text, but the formula for the marginal distribution $x_t$ uses $\\alpha_t$ as the cumulative variance coefficient. This confuses the mathematical foundations. Additionally, the description of the ODE reformulation in Section 4.3 is slightly vague regarding the limiting behavior.",
+      "comments": [],
+      "cost_usd": 0.012,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 21258,
+      "completion_tokens": 24349
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a significant and well-executed contribution to the field of diffusion-based generative models. By generalizing the standard Markovian diffusion process to a non-Markovian one, the authors elegantly demonstrate that the training objective remains identical, effectively decoupling the training procedure from the specific sampling trajectory. This insight allows for the development of Denoising Diffusion Implicit Models (DDIMs), which provide a bridge to deterministic sampling and ODE-based latent variable modeling. The mathematical derivations are coherent, and the experimental results convincingly demonstrate the efficiency gains in sampling speed and the improved latent space properties compared to original DDPMs. The paper is logically structured and provides a clear theoretical justification for the proposed method.",
+      "comments": [],
+      "cost_usd": 0.0039,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10928,
+      "completion_tokens": 780
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces a well-motivated and impactful extension of DDPMs (DDIM) that enables significantly faster sampling by generalizing to non-Markovian forward processes and leveraging deterministic generative trajectories. The variational derivation is conceptually sound, and the empirical results clearly demonstrate the trade-off between sampling speed and quality. However, the manuscript contains notable notation inconsistencies and logical misstatements regarding the definition of the generative conditional and the Markovian properties of the forward/reverse processes. Additionally, the mathematical formulation for the variance schedule that recovers DDPM is garbled by OCR artifacts and appears to miss a critical factor needed for general noise schedules. These issues, while fixable, currently introduce ambiguity around the precise mathematical mechanics of the method and could mislead readers attempting to reproduce the generative steps or variance settings.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Notation mismatch between function and distribution in generative process definition",
+          "quote": "where q\u03c3(x_{t\u22121} | x_t, f\u03b8(x_t)) is defined as in Eq. (7) with x0 replaced by f\u03b8(x_t).",
+          "explanation": "In Section 3.2, the authors define the generative process step using the notation $q_\\sigma(x_{t-1} | x_t, f_\\theta(x_t))$. However, Eq. (7) exclusively defines $f_\\theta(x_t)$ as a deterministic function that predicts the denoised observation $\\hat{x}_0$ given $x_t$. The generative update, by contrast, requires a conditional probability distribution over $x_{t-1}$. The text should reference the Gaussian transition kernel from the non-Markovian forward process definition (around Eq. 6) and specify that the distribution is evaluated at the predicted $\\hat{x}_0 = f_\\theta(x_t)$. Mixing a deterministic function notation with a distribution notation creates a logical gap that makes it unclear how the generative step is mathematically formalized.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Contradictory claim about forward process becoming Markovian",
+          "quote": "When \u03c3t = (1 \u2212 \u03b1t\u22121) / (1 \u2212 \u03b1t) ~~~~ 1 \u2212 \u03b1t/\u03b1t\u22121 for all t , the forward process becomes Markovian, and the generative process becomes a DDPM.",
+          "explanation": "In Section 3.1, the non-Markovian forward process is explicitly constructed to depend on both $x_{t-1}$ and $x_0$ via Bayes' rule, inherently making it non-Markovian. Setting the variance parameter $\\sigma_t$ to a specific schedule does not change the structural dependency on $x_0$ in the forward process. What actually becomes Markovian is the *reverse* (generative) process, which then matches the DDPM reverse transition. The statement that 'the forward process becomes Markovian' directly contradicts the formal definition established earlier and confuses the directionality of the process. It should read that the *generative* process becomes Markovian and coincides with DDPM.",
+          "comment_type": "logical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Incomplete/ambiguous formula for the DDPM-matching variance schedule",
+          "quote": "When \u03c3t = (1 \u2212 \u03b1t\u22121) / (1 \u2212 \u03b1t) ~~~~ 1 \u2212 \u03b1t/\u03b1t\u22121 for all t , the forward process becomes Markovian...",
+          "explanation": "The formula provided for $\\sigma_t$ is heavily distorted by OCR artifacts, but even reconstructing the intended expression reveals a mathematical gap. The standard DDPM reverse variance schedule (Ho et al., 2020) for $t > 1$ includes the factor $(1 - \\bar{\\alpha}_t / \\bar{\\alpha}_{t-1})$. The provided expression appears to omit this term entirely, which would only be valid under a highly specific noise schedule (e.g., strictly linear $\\alpha_t$) or only for the final step. Without the complete general formula or an explicit assumption about the schedule for $\\alpha$, the method's boundary conditions and variance settings are underspecified, hindering precise reproduction of the DDPM baseline comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0103,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 11133,
+      "completion_tokens": 8852
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper introduces DDIMs, a non-Markovian generalization of DDPMs that enables much faster sampling while using the same trained model. The theoretical framing via variational inference with a family of forward processes is clever, and the empirical results convincingly demonstrate significant speedups and useful properties like latent-space interpolation and reconstruction. The main weaknesses are an incomplete derivation of the neural ODE connection due to a missing equation and a minor theoretical gap in the justification for using the L1 objective with shared parameters. Overall, the contributions are solid and clearly presented.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Missing ordinary differential equation (ODE) in Section 4.3",
+          "quote": "we can reparameterize ( _[\u221a]_ 1 _\u2212 \u03b1/[\u221a] \u03b1_ ) with _\u03bb_ and ( _**x** /[\u221a] \u03b1_ ) with _H_ ( _\u03bb_ ) then sampling _**x**_ 0 with Equation (13) can be treated as integration over the following ODE: for some very large _M_ (which corresponds to the case of _\u03b1 \u2248_ 0).",
+          "explanation": "The paragraph claims that the DDIM iteration approximates Euler integration of an ODE, but the ODE itself is never written. This leaves a key step in the derivation of the neural ODE connection and the encoding/reconstruction argument unspecified. Even if the intended ODE is standard (e.g., dH/d\u03bb = ...), its absence makes the reasoning incomplete and the subsequent claim about reversing the generation process ambiguous. A reader cannot verify the correctness of the ODE or the interpretation without the equation.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Surrogate objective justification relies on non-shared parameters",
+          "quote": "Therefore, if parameters are not shared across t in the model \u03f5\u03b8, then the L1 objective can be used as a surrogate objective for the variational objective J\u03c3 as well.",
+          "explanation": "The theorem and subsequent argument assume that each timestep has its own independent parameters. In practice, the model uses a single network with a time embedding, so parameters are shared across timesteps. The optimal solution for the shared case may differ from the independent case, so the theoretical justification for using L1 as a surrogate for J\u03c3 is not directly applicable. This is a minor gap, as the same L1 objective is widely used in DDPMs and yields good empirical results, but the paper could acknowledge this more explicitly.",
+          "comment_type": "logical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0032,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10268,
+      "completion_tokens": 6545
+    }
+  }
+}

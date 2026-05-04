@@ -1,0 +1,612 @@
+{
+  "slug": "neurips2021-D7bPRxNt-neus-learning-neural-implicit-surfaces-by-volume-rendering-f",
+  "title": "NeuS: Learning Neural Implicit Surfaces by Volume Rendering for Multi-view Reconstruction",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **NeuS: Learning Neural Implicit Surfaces by Volume Rendering for Multi-view Reconstruction**\n\n**Peng Wang** _[\u2020]_ **, Lingjie Liu** _[\u2021\u2217]_ **, Yuan Liu** _[\u2020]_ **, Christian Theobalt** _[\u2021]_ **, Taku Komura** _[\u2020]_ **, Wenping Wang** _[\u22c4\u2217] \u2020_ The University of Hong Kong _\u2021_ Max Planck Institute for Informatics _\u22c4_ Texas A&M University"
+    },
+    {
+      "index": 1,
+      "text": "> _\u2020_ `{pwang3,yliu,taku}@cs.hku.hk` _\u2021_ `{lliu,theobalt}@mpi-inf.mpg.de`\n\n> _\u22c4_ `wenping@tamu.edu`\n\n## **Abstract**"
+    },
+    {
+      "index": 2,
+      "text": "We present a novel neural surface reconstruction method, called _NeuS_ , for reconstructing objects and scenes with high fidelity from 2D image inputs. Existing neural surface reconstruction approaches, such as DVR [Niemeyer et al., 2020] and IDR [Yariv et al., 2020], require foreground mask as supervision, easily get trapped in local minima, and therefore struggle with the reconstruction of objects with severe self-occlusion or thin structures. Meanwhile, recent neural methods for novel view synthesis, such as NeRF [Mildenhall et al., 2020] and its variants, use volume rendering to produce a neural scene representation with robustness of optimization, even for highly complex objects. However, extracting high-quality surfaces from this learned implicit representation is difficult because there are not sufficient surface constraints in the representation. In NeuS, we propose to represent a surface as the zero-level set of a _signed distance function_ (SDF) and develop a new volume rendering method to train a neural SDF representation. We observe that the conventional volume rendering method causes inherent geometric errors (i.e. bias) for surface reconstruction, and therefore propose a new formulation that is free of bias in the first order of approximation, thus leading to more accurate surface reconstruction even without the mask supervision. Experiments on the DTU dataset and the BlendedMVS dataset show that NeuS outperforms the state-of-the-arts in high-quality surface reconstruction, especially for objects and scenes with complex structures and self-occlusion."
+    },
+    {
+      "index": 3,
+      "text": "## **1 Introduction**\n\nReconstructing surfaces from multi-view images is a fundamental problem in computer vision and computer graphics. 3D reconstruction with neural implicit representations has recently become a highly promising alternative to classical reconstruction approaches [35, 8, 2] due to its high reconstruction quality and its potential to reconstruct complex objects that are difficult for classical approaches, such as non-Lambertian surfaces and thin structures. Recent works represent surfaces as signed distance functions (SDF) [46, 49, 17, 22] or occupancy [29, 30]. To train their neural models, these methods use a differentiable surface rendering method to render a 3D object into images and compare them against input images for supervision. For example, IDR [46] produces impressive reconstruction results, but it fails to reconstruct objects with complex structures that causes abrupt depth changes. The cause of this limitation is that the surface rendering method used in IDR only considers a single surface intersection point for each ray. Consequently, the gradient only exists at this single point, which is too local for effective back propagation and would get optimization stuck in a poor local minimum when there are abrupt changes of depth on images. Furthermore, object"
+    },
+    {
+      "index": 4,
+      "text": "- _\u2217_ Corresponding authors.\n\n35th Conference on Neural Information Processing Systems (NeurIPS 2021)."
+    },
+    {
+      "index": 5,
+      "text": "masks are needed as supervision for converging to a valid surface. As illustrated in Fig. 1 (a) top, with the radical depth change caused by the hole, the neural network would incorrectly predict the points near the front surface to be blue, failing to find the far-back blue surface. The actual test example in Fig. 1 (b) shows that IDR fails to correctly reconstruct the surfaces near the edges with abrupt depth changes."
+    },
+    {
+      "index": 6,
+      "text": "Recently, NeRF [28] and its variants have explored to use a volume rendering method to learn a volumetric radiance field for novel view synthesis. This volume rendering approach samples multiple points along each ray and perform _\u03b1_ -composition of the colors of the sampled points to produce the output pixel colors for training purposes. The advantage of the volume rendering approach is that it can handle abrupt depth changes, because it considers multiple points along the ray and so all the sample points, either near the surface or on the far surface, produce gradient signals for back propagation. For example, referring Fig. 1 (a) bottom, when the near surface (yellow) is found to have inconsistent colors with the input image, the volume rendering approach is capable of training the network to find the far-back surface to produce the correct scene representation. However, since it is intended for novel view synthesis rather than surface reconstruction, NeRF only learns a volume density field, from which it is difficult to extract a high-quality surface. Fig. 1 (b) shows a surface extracted as a level-set surface of the density field learned by NeRF. Although the surface correctly accounts for abrupt depth changes, it contains conspicuous noise in some planar regions."
+    },
+    {
+      "index": 7,
+      "text": "**----- Start of picture text -----**\n\nsurface\nsampled points\nReference Image IDR NeRF Ours\n(a) Illustration (b) Example\nsurface rendering\nvolume rendering\n**----- End of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "Figure 1: (a) Illustration of the surface rendering and volume rendering. (b) A toy example of bamboo planter, where there are occlusions on the top of the planter. Compared to the state-of-the-art methods, our approach can handle the occlusions and achieve better reconstruction quality."
+    },
+    {
+      "index": 9,
+      "text": "In this work, we present a new neural rendering scheme, called _NeuS_ , for multi-view surface reconstruction. NeuS uses the _signed distance function_ (SDF) for surface representation and uses a novel volume rendering scheme to learn a neural SDF representation. Specifically, by introducing a density distribution induced by SDF, we make it possible to apply the volume rendering approach to learning an implicit SDF representation and thus have the best of both worlds, i.e. an accurate surface representation using a neural SDF model and robust network training in the presence of abrupt depth changes as enabled by volume rendering. Note that simply applying a standard volume rendering method to the density associated with SDF would lead to discernible bias (i.e. inherent geometric errors) in the reconstructed surfaces. This is a new and important observation that we will elaborate later. Therefore we propose a novel volume rendering scheme to ensure unbiased surface reconstruction in the first-order approximation of SDF. Experiments on both DTU dataset and BlendedMVS dataset demonstrated that NeuS is capable of reconstructing complex 3D objects and scenes with severe occlusions and delicate structures, even without foreground masks as supervision. It outperforms the state-of-the-art neural scene representation methods, namely IDR [46] and NeRF [28], in terms of reconstruction quality."
+    },
+    {
+      "index": 10,
+      "text": "## **2 Related Works**\n\n**Classical Multi-view Surface and Volumetric Reconstruction.** Traditional multi-view 3D reconstruction methods can be roughly classified into two categories: point- and surface-based reconstruction [2, 8, 9, 35] and volumetric reconstruction [6, 3, 36]. Point- and surface-based reconstruction methods estimate the depth map of each pixel by exploiting inter-image photometric consistency [8] and then fuse the depth maps into a global dense point cloud [25, 48]. The surface reconstruction is usually done as a post processing with methods like screened Poisson surface reconstruction [16]. The"
+    },
+    {
+      "index": 11,
+      "text": "2\n\nreconstruction quality heavily relies on the quality of correspondence matching, and the difficulties in matching correspondence for objects without rich textures often lead to severe artifacts and missing parts in the reconstruction results. Alternatively, volumetric reconstruction methods circumvent the difficulty of explicit correspondence matching by estimating occupancy and color in a voxel grid from multi-view images and evaluating the color consistency of each voxel. Due to limited achievable voxel resolution, these methods cannot achieve high accuracy."
+    },
+    {
+      "index": 12,
+      "text": "**Neural Implicit Representation.** Some methods enforce 3D understanding in a deep learning framework by introducing inductive biases. These inductive biases can be explicit representations, such as voxel grids [13, 5, 44], point cloud [7, 24, 18], meshes [41, 43, 14], and implicit representations. The implicit representations encoded by a neural network has gained a lot of attention recently, since it is continuous and can achieve high spatial resolution. This representation has been applied successfully to shape representation [26, 27, 31, 4, 1, 10, 47, 32], novel view synthesis [38, 23, 15, 28, 21, 33, 34, 40, 37] and multi-view 3D reconstruction [46, 29, 17, 12, 22]."
+    },
+    {
+      "index": 13,
+      "text": "Our work mainly focuses on learning implicit neural representation encoding both geometry and appearance in 3D space from 2D images via classical rendering techniques. Limited in this scope, the related works can be roughly categorized based on the rendering techniques used, i.e. surface rendering based methods and volume rendering based methods. Surface rendering based methods [29, 17, 46, 22] assume that the color of ray only relies on the color of an intersection of the ray with the scene geometry, which makes the gradient only backpropagated to a local region near the intersection. Therefore, such methods struggle with reconstructing complex objects with severe self-occlusions and sudden depth changes. Furthermore, they usually require object masks as supervision. On the contrary, our method performs well for such challenging cases without the need of masks."
+    },
+    {
+      "index": 14,
+      "text": "Volume rendering based methods, such as NeRF[28], render an image by _\u03b1_ -compositing colors of the sampled points along each ray. As explained in the introduction, it can handle sudden depth changes and synthesize high-quality images. However, extracting high-fidelity surface from the learned implicit field is difficult because the density-based scene representation lacks sufficient constraints on its level sets. In contrast, our method combines the advantages of surface rendering based and volume rendering based methods by constraining the scene space as a signed distance function but applying volume rendering to train this representation with robustness. UNISURF [30], a concurrent work, also learns an implicit surface via volume rendering. It improves the reconstruction quality by shrinking the sample region of volume rendering during the optimization. Our method differs from UNISURF in that UNISURF represents the surface by occupancy values, while our method represents the scene by an SDF and thus can naturally extract the surface as the zero-level set of it, yielding better reconstruction accuracy than UNISURF, as will be seen later in the experiment section."
+    },
+    {
+      "index": 15,
+      "text": "## **3 Method**\n\nGiven a set of posed images _{Ik}_ of a 3D object, our goal is to reconstruct the surface _S_ of it. The surface is represented by the zero-level set of a neural implicit SDF. In order to learn the weights of the neural network, we developed a novel volume rendering method to render images from the implicit SDF and minimize the difference between the rendered images and the input images. This volume rendering approach ensures robust optimization in NeuS for reconstructing objects of complex structures."
+    },
+    {
+      "index": 16,
+      "text": "## **3.1 Rendering Procedure**\n\n**Scene representation.** With NeuS, the scene of an object to be reconstructed is represented by two functions: _f_ : R[3] _\u2192_ R that maps a spatial position **x** _\u2208_ R[3] to its signed distance to the object, and _c_ : R[3] _\u00d7_ S[2] _\u2192_ R[3] that encodes the color associated with a point **x** _\u2208_ R[3] and a viewing direction **v** _\u2208_ S[2] . Both functions are encoded by Multi-layer Perceptrons (MLP). The surface _S_ of the object is represented by the zero-level set of its SDF, that is,"
+    },
+    {
+      "index": 17,
+      "text": "In order to apply a volume rendering method to training the SDF network, we first introduce a probability density function _\u03c6s_ ( _f_ ( **x** )), called _S-density_ , where _f_ ( **x** ), **x** _\u2208_ R[3] , is the signed distance"
+    },
+    {
+      "index": 18,
+      "text": "3\n\nfunction and _\u03c6s_ ( _x_ ) = _se[\u2212][sx] /_ (1 + _e[\u2212][sx]_ )[2] , commonly known as the _logistic density distribution_ , is the derivative of the Sigmoid function \u03a6 _s_ ( _x_ ) = (1 + _e[\u2212][sx]_ ) _[\u2212]_[1] , i.e., _\u03c6s_ ( _x_ ) = \u03a6 _[\u2032] s_[(] _[x]_[)][.][In principle] _\u03c6s_ ( _x_ ) can be any unimodal (i.e. bell-shaped) density distribution centered at 0; here we choose the logistic density distribution for its computational convenience. Note that the standard deviation of _\u03c6s_ ( _x_ ) is given by 1 _/s_ , which is also a trainable parameter, that is, 1 _/s_ approaches to zero as the network training converges."
+    },
+    {
+      "index": 19,
+      "text": "Intuitively, the main idea of NeuS is that, with the aid of the S-density field _\u03c6s_ ( _f_ ( **x** )), volume rendering is used to train the SDF network with only 2D input images as supervision. Upon successful minimization of a loss function based on this supervision, the zero-level set of the network-encoded SDF is expected to represent an accurately reconstructed surface _S_ , with its induced S-density _\u03c6s_ ( _f_ ( **x** )) assuming prominently high values near the surface."
+    },
+    {
+      "index": 20,
+      "text": "**Rendering.** To learn the parameters of the neural SDF and color field, we advise a volume rendering scheme to render images from the proposed SDF representation. Given a pixel, we denote the ray emitted from this pixel as _{_ **p** ( _t_ ) = **o** + _t_ **v** _|t \u2265_ 0 _}_ , where **o** is the center of the camera and **v** is the unit direction vector of the ray. We accumulate the colors along the ray by"
+    },
+    {
+      "index": 21,
+      "text": "where _C_ ( **o** _,_ **v** ) is the output color for this pixel, _w_ ( _t_ ) a weight for the point **p** ( _t_ ), and _c_ ( **p** ( _t_ ) _,_ **v** ) the color at the point **p** along the viewing direction **v** ."
+    },
+    {
+      "index": 22,
+      "text": "**Requirements on weight function** . The key to learn an accurate SDF representation from 2D images is to build an appropriate connection between output colors and SDF, i.e., to derive an appropriate weight function _w_ ( _t_ ) on the ray based on the SDF _f_ of the scene. In the following, we list the requirements on the weight function _w_ ( _t_ )."
+    },
+    {
+      "index": 23,
+      "text": "1. **Unbiased** . Given a camera ray **p** ( _t_ ), _w_ ( _t_ ) attains a locally maximal value at a surface intersection point **p** ( _t[\u2217]_ ), i.e. with _f_ ( **p** ( _t[\u2217]_ )) = 0, that is, the point **p** ( _t[\u2217]_ ) is on the zero-level set of the SDF ( **x** )."
+    },
+    {
+      "index": 24,
+      "text": "2. **Occlusion-aware** . Given any two depth values _t_ 0 and _t_ 1 satisfying _f_ ( _t_ 0) = _f_ ( _t_ 1), _w_ ( _t_ 0) _>_ 0, _w_ ( _t_ 1) _>_ 0, and _t_ 0 _< t_ 1, there is _w_ ( _t_ 0) _> w_ ( _t_ 1). That is, when two points have the same SDF value (thus the same SDF-induced S-density value), the point nearer to the view point should have a larger contribution to the final output color than does the other point."
+    },
+    {
+      "index": 25,
+      "text": "An unbiased weight function _w_ ( _t_ ) guarantees that the intersection of the camera ray with the zero-level set of SDF contributes most to the pixel color. The occlusion-aware property ensures that when a ray sequentially passes multiple surfaces, the rendering procedure will correctly use the color of the surface nearest to the camera to compute the output color."
+    },
+    {
+      "index": 26,
+      "text": "Next, we will first introduce a naive way of defining the weight function _w_ ( _t_ ) that directly using the standard pipeline of volume rendering, and explain why it is not appropriate for reconstruction before introducing our novel construction of _w_ ( _t_ )."
+    },
+    {
+      "index": 27,
+      "text": "**----- Start of picture text -----**\n\n\ud835\udc87(\ud835\udc95) \ud835\udc87(\ud835\udc95)\n\ud835\udc98(\ud835\udc95) \ud835\udc98(\ud835\udc95)\n\ud835\udf48(\ud835\udc95) \ud835\udf46(\ud835\udc95)\n\ud835\udc95 [\u2217] \ud835\udc95 \ud835\udc95 [\u2217] \ud835\udc95\nRay Ray\nSDF SDF\nSurface Surface\n(a) Naive Solution (b) Our Solution\n**----- End of picture text -----**"
+    },
+    {
+      "index": 28,
+      "text": "Figure 2: Illustration of (a) weight bias of naive solution, and (b) the weight function defined in our solution, which is unbiased in the first-order approximation of SDF."
+    },
+    {
+      "index": 29,
+      "text": "> **Naive solution** . To make the weight\n\nfunction occlusion-aware, a natural solution is based on the standard volume rendering formulation [28] which defines the weight function by"
+    },
+    {
+      "index": 30,
+      "text": "_w_ ( _t_ ) = _T_ ( _t_ ) _\u03c3_ ( _t_ ) _,_ (3)\n\nwhere _\u03c3_ ( _t_ ) is the so-called _volume density_ in classical volume rendering and _T_ ( _t_ ) = _t_ exp( _\u2212_ \ufffd0 _[\u03c3]_[(] _[u]_[)d] _[u]_[)][here][denotes][the] _[accumulated][transmittance]_[along][the][ray.][To][adopt][the][stan-]"
+    },
+    {
+      "index": 31,
+      "text": "4\n\ndard volume density formulation [28], here _\u03c3_ ( _t_ ) is set to be equal to the S-density value, i.e. _\u03c3_ ( _t_ ) = _\u03c6s_ ( _f_ ( **p** ( _t_ ))) and the weight function _w_ ( _t_ ) is computed by Eqn. 3. Although the resulting weight function is occlusion-aware, it is biased as it introduces inherent errors in the reconstructed surfaces. As illustrated in Fig. 2 (a), the weight function _w_ ( _t_ ) attains a local maximum at a point before the ray reaches the surface point **p** ( _t[\u2217]_ ), satisfying _f_ ( **p** ( _t[\u2217]_ )) = 0. This fact will be proved in the supplementary material."
+    },
+    {
+      "index": 32,
+      "text": "**Our solution** . To introduce our solution, we first introduce a straightforward way to construct an unbiased weight function, which directly uses the normalized S-density as weights"
+    },
+    {
+      "index": 33,
+      "text": "This construction of weight function is unbiased, but not occlusion-aware. For example, if the ray penetrates two surfaces, the SDF function _f_ will have two zero points on the ray, which leads to two peaks on the weight function _w_ ( _t_ ) and the resulting weight function will equally blend the colors of two surfaces without considering occlusions."
+    },
+    {
+      "index": 34,
+      "text": "To this end, now we shall design the weight function _w_ ( _t_ ) that is both occlusion-aware and unbiased in the first-order approximation of SDF, based on the aforementioned straightforward construction. To ensure an occlusion-aware property of the weight function _w_ ( _t_ ), we will still follow the basic framework of volume rendering as Eqn. 3. However, different from the conventional treatment as in naive solution above, we define our function _w_ ( _t_ ) from the S-density in a new manner. We first define an opaque density function _\u03c1_ ( _t_ ), which is the counterpart of the volume density _\u03c3_ in standard volume rendering. Then we compute the new weight function _w_ ( _t_ ) by"
+    },
+    {
+      "index": 35,
+      "text": "**How we derive opaque density** _\u03c1_ . We will first consider a simple case where there is only one surface intersection, and the surface is simply a plane. Since Eqn. 4 indeed satisfies the above requirements under this assumption, we derive the underlying opaque density _\u03c1_ corresponding to the weight definition of Eqn. 4 using the framework of volume rendering. Then we will generalize this opaque density to the general case of multiple surface intersections."
+    },
+    {
+      "index": 36,
+      "text": "Specifically, in the simple case of a single plane intersection, it is easy to see that the signed distance function _f_ ( **p** ( _t_ )) is _\u2212|_ cos( _\u03b8_ ) _| \u00b7_ ( _t \u2212 t[\u2217]_ ), where _f_ ( **p** ( _t[\u2217]_ )) = 0, and _\u03b8_ is the angle between the view direction **v** and the outward surface normal vector **n** . Because the surface is assumed locally, _|_ cos( _\u03b8_ ) _|_ is a constant. It follows from Eqn. 4 that"
+    },
+    {
+      "index": 37,
+      "text": "Recall that the weight function within the framework of volume rendering is given by _w_ ( _t_ ) = _t T_ ( _t_ ) _\u03c1_ ( _t_ ), where _T_ ( _t_ ) = exp( _\u2212_ \ufffd0 _[\u03c1]_[(] _[u]_[)d] _[u]_[)][ denotes the] _[ accumulated transmittance]_[.][Therefore, to] derive _\u03c1_ ( _t_ ), we have"
+    },
+    {
+      "index": 38,
+      "text": "_t_ Since _T_ ( _t_ ) = exp( _\u2212_ \ufffd0 _[\u03c1]_[(] _[u]_[)d] _[u]_[)][,][it][is][easy][to][verify][that] _[T]_[(] _[t]_[)] _[\u03c1]_[(] _[t]_[)][=] _[\u2212]_[d] d _[T] t_[(] _[t]_[)][.][Further,][note][that] _|_ cos( _\u03b8_ ) _|\u03c6s_ ( _f_ ( **p** ( _t_ ))) = _\u2212_[d\u03a6] d _t[s]_[(] _[f]_[(] **[p]**[(] _[t]_[)))][.][It follows that][d] d _[T] t_[(] _[t]_[)][=][d\u03a6] d _t[s]_[(] _[f]_[(] **[p]**[(] _[t]_[)))][.][Integrating both] sides of this equation yields"
+    },
+    {
+      "index": 39,
+      "text": "5\n\nTaking the logarithm and then differentiating both sides, we have\n\nThis is the formula of the opaque density _\u03c1_ ( _t_ ) in case of single plane intersection. The weight function _w_ ( _t_ ) induced by _\u03c1_ ( _t_ ) is shown in Figure 2(b). is shown in Figure 2(b). Now we generalize the opaque density to the general case where there are multiple surface intersections along the ray **p** ( _t_ ).. In this case, _\u2212_[d\u03a6] d _t[[s]]_[[(]] _[[f]]_[[(]] **[[p]]**[[(]] _[[t]]_[[)))][ becomes negative on the segment of]][[ becomes negative on the segment of]] the ray with increasing SDF values. Thus we clip it against zero to ensure that the value of _\u03c1_ is always non-negative. This gives the following opaque density function _\u03c1_ ( _t_ ) in in general cases."
+    },
+    {
+      "index": 40,
+      "text": "**----- Start of picture text -----**\n\nintersection. The weight function w ( t ) in- Visible  Invisible\n( t ) is shown in Figure 2(b). is shown in Figure 2(b). Now we generalize Surface Surface\ndensity to the general case where there are\n p ( t ).. In this Outside Inside Inside Object\n[[s]] [[(]] [[f]] [[(]] [[p]] [[(]] [[t]] [[)))][ becomes negative on the segment of]][[ becomes negative on the segment of]] Ray\nThus we clip it against\n \u03c1  is always non-negative.\n \u03c1 ( t ) in in SDF \ud835\udc87(\ud835\udc95)\n\ud835\udc95\nVisible  Visible\nRange Range\n\u03c1 ( t ) = max \u2212 [d\u03a6] d t [s] [(] [f] [(] [p] [(] [t] [)))] . (10) Weight \ud835\udc98(\ud835\udc95)\n\u03a6 s ( f ( p ( t ))) [,] [ 0]\n\ufffd \ufffd\n\ud835\udc95\n**----- End of picture text -----**"
+    },
+    {
+      "index": 41,
+      "text": "Based on this equation, the weight function _w_ ( _t_ ) can be computed with standard volume rendering as in Eqn. 5. The illustration in the case of multiple surface intersection is shown in Figure 3."
+    },
+    {
+      "index": 42,
+      "text": "Figure 3: Illustration of weight distribution in case of multiple surface intersection.\n\nThe following theorem states that in general cases (i.e.,"
+    },
+    {
+      "index": 43,
+      "text": "including both single surface intersection and multiple surface intersections) the weight function defined by Eqn. 10 and Eqn. 5 is unbiased in the first-order approximation of SDF. The proof is given in the supplementary material."
+    },
+    {
+      "index": 44,
+      "text": "**Theorem 1** _Suppose that a smooth surface_ S _is defined by the zero-level set of the signed distance function f_ ( **x** ) = 0 _, and a ray_ **p** ( _t_ ) = **o** + _t_ **v** _enters the surface_ S _from outside to inside, with the intersection point at_ **p** ( _t[\u2217]_ ) _, that is, f_ ( **p** ( _t[\u2217]_ )) = 0 _and there exists an interval_ [ _tl, tr_ ] _such that t[\u2217] \u2208_ [ _tl, tr_ ] _and f_ ( **p** ( _t_ )) _is monotonically decreasing in_ [ _tl, tr_ ] _. Suppose that in this local interval_ [ _tl, tr_ ] _, the surface can be tangentially approximated by a sufficiently small planar patch, i.e., \u2207_ **f** _is regarded as fixed. Then, the weight function w_ ( _t_ ) _computed by Eqn. 10 and Eqn. 5 in_ [ _tl, tr_ ] _attains its maximum at t[\u2217] ._"
+    },
+    {
+      "index": 45,
+      "text": "**Discretization** . To obtain discrete counterparts of the opacity and weight function, we adopt the same approximation scheme as used in NeRF [28], This scheme samples _n_ points _{_ **p** _i_ = **o** + _ti_ **v** _|i_ = 1 _, ..., n, ti < ti_ +1 _}_ along the ray to compute the approximate pixel color of the ray as"
+    },
+    {
+      "index": 46,
+      "text": "where _Ti_ is the discrete _accumulated transmittance_ defined by _Ti_ =[\ufffd] _[i] j[\u2212]_ =1[1][(1] _[\u2212][\u03b1][j]_[)][, and] _[ \u03b1][i]_[ is discrete] opacity values defined by"
+    },
+    {
+      "index": 47,
+      "text": "which can further be shown to be\n\nThe detailed derivation of this formula for _\u03b1i_ is given in the supplementary material."
+    },
+    {
+      "index": 48,
+      "text": "6\n\n## **3.2 Training**\n\nTo train NeuS, we minimize the difference between the rendered colors and the ground truth colors, without any 3D supervision. Besides colors, we can also utilize the masks for supervision if provided."
+    },
+    {
+      "index": 49,
+      "text": "Specifically, we optimize our neural networks and inverse standard deviation _s_ by randomly sampling a batch of pixels and their corresponding rays in world space _P_ = _{Ck, Mk,_ **o** _k,_ **v** _k}_ , where _Ck_ is its pixel color and _Mk \u2208{_ 0 _,_ 1 _}_ is its optional mask value, from an image in every iteration. We assume the point sampling size is _n_ and the batch size is _m_ . The loss function is defined as"
+    },
+    {
+      "index": 50,
+      "text": "The color loss _Lcolor_ is defined as\n\nSame as IDR[46], we empirically choose _R_ as L1 loss, which in our observation is robust to outliers and stable in training."
+    },
+    {
+      "index": 51,
+      "text": "We add an Eikonal term [10] on the sampled points to regularize the SDF of _f\u03b8_ by\n\nThe optional mask loss _Lmask_ is defined as"
+    },
+    {
+      "index": 52,
+      "text": "> where _O_[\u02c6] _k_ =[\ufffd] _[n] i_ =1 _[T][k,i][\u03b1][k,i]_[is the sum of weights along the camera ray, and][ BCE][ is the binary cross] entropy loss."
+    },
+    {
+      "index": 53,
+      "text": "**Hierarchical sampling** . In this work, we follow a similar hierarchical sampling strategy as in NeRF [28]. We first uniformly sample the points on the ray and then iteratively conduct importance sampling on top of the coarse probability estimation. The difference is that, unlike NeRF which simultaneously optimizes a coarse network and a fine network, we only maintain one network, where the probability in coarse sampling is computed based on the S-density _\u03c6s_ ( _f_ ( **x** )) with fixed standard deviations while the probability of fine sampling is computed based on _\u03c6s_ ( _f_ ( **x** )) with the learned _s_ . Details of hierarchical sampling strategy are provided in supplementary materials."
+    },
+    {
+      "index": 54,
+      "text": "## **4 Experiments**\n\n## **4.1 Experimental settings**\n\n**Datasets.** To evaluate our approach and baseline methods, we use 15 scenes from the DTU dataset [11], same as those used in IDR [46], with a wide variety of materials, appearance and geometry, including challenging cases for reconstruction algorithms, such as non-Lambertian surfaces and thin structures. Each scene contains 49 or 64 images with the image resolution of 1600 _\u00d7_ 1200. Each scene was tested with and without foreground masks provided by IDR [46]. We further tested on 7 challenging scenes from the low-res set of the BlendedMVS dataset [45](CC-4 License). Each scene has 31 _\u2212_ 143 images at 768 _\u00d7_ 576 pixels and masks are provided by the BlendedMVS dataset. We further captured two thin objects with 32 input images to test our approach on thin structure reconstruction."
+    },
+    {
+      "index": 55,
+      "text": "**Baselines.** (1) The state-of-the-art surface rendering approach \u2013 IDR [46]: IDR can reconstruct surface with high quality but requires foreground masks as supervision; Since IDR has demonstrated superior quality compared to another surface rendering based method \u2013 DVR [29], we did not conduct a comparison with DVR. (2) The state-of-the-art volume rendering approach \u2013 NeRF [28]: We use a threshold of 25 to extract mesh from the learned density field. We validate this choice in the supplementary material. (3) A widely-used classical MVS method \u2013 COLMAP [35]: We reconstruct a mesh from the output point cloud of COLMAP with Screened Poisson Surface Reconstruction [16]. (4) The concurrent work which unifies surface rendering and volume rendering with an occupancy field as scene representation \u2013 UNISURF [30]. More details of the baseline methods are included in the supplementary material."
+    },
+    {
+      "index": 56,
+      "text": "7\n\n**Implementation details.** We assume the region of interest is inside a unit sphere. We sample 512 rays per batch and train our model for 300k iterations for 14 hours (for the \u2018w/ mask\u2019 setting) and 16 hours (for the \u2018w/o mask\u2019 setting) on a single NVIDIA RTX2080Ti GPU. For the \u2018w/o mask\u2019 setting, we model the background by NeRF++ [50]. Our network architecture and initialization scheme are similar to those of IDR [46]. More details of the network architecture and training parameters can be found in the supplementary material."
+    },
+    {
+      "index": 57,
+      "text": "## **4.2 Comparisons**\n\n||**w/**mask|**w/**mask|**w/**mask|**w/o**mask|**w/o**mask|**w/o**mask|**w/o**mask|\n|---|---|---|---|---|---|---|---|\n|ScanID|IDR|NeRF|Ours|COLMAP|NeRF|UNISURF|Ours|\n|scan24\nscan37\nscan40\nscan55\nscan63\nscan65\nscan69\nscan83\nscan97\nscan105\nscan106\nscan110\nscan114\nscan118\nscan122|1.63\n1.87\n0.63\n0.48\n**1.04**\n0.79\n0.77\n1.33\n1.16\n**0.76**\n0.67\n**0.90**\n0.42\n0.51\n0.53|1.83\n2.39\n1.79\n0.66\n1.79\n1.44\n1.50\n**1.20**\n1.96\n1.27\n1.44\n2.61\n1.04\n1.13\n0.99|**0.83**\n**0.98**\n**0.56**\n**0.37**\n1.13\n**0.59**\n**0.60**\n1.45\n**0.95**\n0.78\n**0.52**\n1.43\n**0.36**\n**0.45**\n**0.45**|**0.81**\n2.05\n**0.73**\n1.22\n1.79\n1.58\n1.02\n3.05\n1.40\n2.05\n1.00\n1.32\n0.49\n0.78\n1.17|1.90\n1.60\n1.85\n0.58\n2.28\n1.27\n1.47\n1.67\n2.05\n1.07\n0.88\n2.53\n1.06\n1.15\n0.96|1.32\n**1.36**\n1.72\n0.44\n1.35\n0.79\n0.80\n1.49\n1.37\n0.89\n0.59\n1.47\n0.46\n0.59\n0.62|1.00\n1.37\n0.93\n**0.43**\n**1.10**\n**0.65**\n**0.57**\n**1.48**\n**1.09**\n**0.83**\n**0.52**\n**1.20**\n**0.35**\n**0.49**\n**0.54**|\n|mean|0.90|1.54|**0.77**|1.36|1.49|1.02|**0.84**|"
+    },
+    {
+      "index": 58,
+      "text": "Table 1: Quantitative evaluation on DTU dataset. COLMAP results are achieved by trim=0.\n\nWe conducted the comparisons in two settings,"
+    },
+    {
+      "index": 59,
+      "text": "with mask supervision (w/ mask) and without mask supervision (w/o mask). We measure the reconstruction quality with the Chamfer distances in the same way as UNISURF [30] and IDR [46] and report the scores in Table 1. The results show that our approach outperforms the baseline methods on the DTU dataset in both settings \u2013 w/ and w/o mask in terms of the Chamfer distance. Note that the reported scores of IDR in the setting of w/ mask and NeRF and UNISURF in the w/o mask setting are from IDR [46] and UNISURF [30]."
+    },
+    {
+      "index": 60,
+      "text": "We conduct the qualitative comparisons on the DTU dataset and the BlendedMVS dataset in both settings, w/ mask and w/o mask, in Figure 4 and Figure 5, respectively. As shown in Figure 4 for the setting of w/ mask, IDR shows limited performance for reconstructing thin metals parts in Scan 37 (DTU), and fails to handle sudden depth changes in Stone (BlendedMVS) due to the local optimization process in surface rendering. The extracted meshes of NeRF are noisy since the volume density field has not sufficient constraint on its 3D geometry. Regarding the w/o mask setting, we visually compare our method with NeRF and COLMAP in the setting of w/o mask in Figure 5, which shows our reconstructed surfaces are with more fidelity than baselines. We further show a comparison"
+    },
+    {
+      "index": 61,
+      "text": "**----- Start of picture text -----**\n\nReference Image Ours IDR NeRF\nScan 24 (DTU)\nScan 37 (DTU)\nDog\n(BlendedMVS)\nStone\n(BlendedMVS)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 62,
+      "text": "Figure 4: Comparions on surface reconstruction with mask supervision.\n\n8\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 63,
+      "text": "Reference Image Ours NeRF COLMAP\nScan 69 (DTU)\nClock\n(BlendedMVS)\nSculpture\n(BlendedMVS)\nBear\n(BlendedMVS)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 64,
+      "text": "Figure 5: Comparions on surface reconstruction without mask supervision.\n\nwith UNISURF [30] on two examples in the w/o mask setting. Note that we use the qualitative results of UNISURF reported their paper for comparison. Our method works better for the objects with abrupt depth changes. More qualitative images are included in the supplementary material."
+    },
+    {
+      "index": 65,
+      "text": "## **4.3 Analysis**\n\n## **Ablation study.**\n\nTo evaluate the effect of the weight calculation, we test three different kinds of weight constructions described in Sec. 3.1: (a) Naive Solution. (b) Straightforward Construction as shown in Eqn. 4. (e) Full Model. As shown in Figure 6, the quantitative result of naive solution is worse than our weight choice (e) in terms of the Chamfer distance. This is because it introduces a bias to the surface reconstruction. If direct construction is used, there are severe artifacts."
+    },
+    {
+      "index": 66,
+      "text": "**----- Start of picture text -----**\n\n(a) Naive Solution (b) Direct Solution (c)  w/o  Eikonal (d)  w/o  Geo-Init. (e) Full Model Reference Image\n1.49 4.45 0.64 0.62 0.59 Chamfer Distance\n1.75 44.34 88.94 6.19 0.93 MAE\n**----- End of picture text -----**"
+    },
+    {
+      "index": 67,
+      "text": "Figure 6: Ablation studies. We show the qualitative results and report the quantitative metrics in Chamfer distance and MAE (mean absolute error) between the ground-truth and predicted SDF values."
+    },
+    {
+      "index": 68,
+      "text": "9\n\nWe also studied the effect of Eikonal regularization [10] and geometric initialization [1]. Without Eikonal regularization or geometric initialization, the result on Chamfer distance is on par with that of the full model. However, neither of them can correctly output a signed distance function. This is indicated by the MAE(mean absolute error) between the SDF predictions and corresponding ground-truth SDF, as shown in the bottom line of Figure 6. The MAE is computed on uniformly-sampled points in the object\u2019s bounding sphere. Qualitative results of Figure 7: SDF predictions are provided in the supplementary material."
+    },
+    {
+      "index": 69,
+      "text": "**----- Start of picture text -----**\n\nReference Image Ours UNISURF\n**----- End of picture text -----**"
+    },
+    {
+      "index": 70,
+      "text": "Figure 7: Visual comparisons with UNISURF.\n\n**Thin structures.** We additionally show results on two challenging thin objects with 32 input images. The plane with rich texture under the object is used for camera calibration. As shown in Fig. 8, our method is able to accurately reconstruct these thin structures, especially on the edges with abrupt depth changes. Furthermore, different from the methods [39, 19, 42, 20] which only target at high-quality thin structure reconstruction, our method can handle the scenes which have a mixture of thin structures and general objects."
+    },
+    {
+      "index": 71,
+      "text": "**----- Start of picture text -----**\n\nReference Image (a) Ours (b) COLMAP\ud835\udc61\ud835\udc5f\ud835\udc56\ud835\udc5a= 10 (c) COLMAP\ud835\udc61\ud835\udc5f\ud835\udc56\ud835\udc5a= 7\n**----- End of picture text -----**"
+    },
+    {
+      "index": 72,
+      "text": "Figure 8: Comparison on scenes with thin structure objects. Left half is the depth map while right half is the reconstructed surface."
+    },
+    {
+      "index": 73,
+      "text": "## **5 Conclusion**\n\nWe have proposed _NeuS_ , a new approach to multiview surface reconstruction that represents 3D surfaces as neural SDF and developed a new volume rendering method for training the implicit SDF representation. NeuS produces high-quality reconstruction and successfully reconstructs objects with severe occlusions and complex structures. It outperforms the state-of-the-arts both qualitatively and quantitatively. One limitation of our method is that although our method does not heavily rely on correspondence matching of texture features, the performance would still degrade for textureless objects (we show the failure cases in the supplementary material). Moreover, NeuS has only a single scale parameter _s_ that is used to model the standard deviation of the probability distribution for all the spatial location. Hence, an interesting future research topic is to model the probability with different variances for different spatial locations together with the optimization of scene representation, depending on different local geometric characteristics. Negative societal impact: like many other learning-based works, our method requires a large amount of computational resources for network training, which can be a concern for global climate change.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "NeuS introduces a novel volume rendering formulation for training neural signed distance functions (SDF) without requiring foreground masks. By defining an opaque density function derived from the SDF, the authors successfully bridge the gap between surface rendering and volume rendering, enabling robust optimization for complex geometries.\n\nThe paper makes a significant contribution by addressing the inherent bias in standard volume rendering when applied to surface reconstruction. The proposed formulation is elegant, and the empirical results demonstrate clear improvements over state-of-the-art baselines like IDR and NeRF on the DTU dataset. It is a well-motivated and technically sound approach to neural surface reconstruction.\n\nOverview issues:\n\n- Unclear handling of non-Lambertian effects: The methodology assumes that the color field c(x, v) depends on the viewing direction, but the rendering equation (Eqn. 2) does not explicitly separate diffuse and specular components, nor does it enforce any physical priors on reflectance. While the paper claims to handle non-Lambertian surfaces, the lack of explicit lighting or material modeling means the network likely bakes view-dependent lighting into the geometry or the color MLP. This could lead to 'floaters' or incorrect surface normals in regions with high specular highlights. I recommend adding a discussion on how the model distinguishes between geometry and view-dependent appearance, or providing an ablation showing the effect of the viewing direction input on the learned SDF.\n\n- Computational efficiency and scalability: The paper mentions training times of 14-16 hours on a single RTX2080Ti, which is significant for a single scene reconstruction. The hierarchical sampling strategy described in Section 3.2 relies on iterative importance sampling, which is computationally expensive. The paper lacks a discussion on how the complexity scales with scene size or resolution. Given the goal of high-fidelity reconstruction, it would be beneficial to include a complexity analysis or a comparison of convergence rates against baseline methods to justify the computational cost.\n\n- Assumptions on camera pose accuracy: The methodology assumes that camera poses are provided (presumably via COLMAP), yet the paper does not address how errors in pose estimation affect the convergence of the SDF. In practice, neural surface reconstruction is highly sensitive to pose accuracy, and small errors often lead to blurry surfaces or artifacts. It would strengthen the paper to evaluate the sensitivity of the proposed method to noisy camera poses or to discuss whether joint optimization of poses and SDF is feasible within this framework.\n\n- Lack of analysis on textureless regions: The authors acknowledge in the conclusion that performance degrades for textureless objects, but this limitation is not explored in the main body. Since the method relies on photometric consistency for gradient signals, textureless regions provide little signal for the SDF, likely forcing the network to rely heavily on the Eikonal regularization (Eqn. 16). A more detailed analysis or a specific experiment showing how the method behaves in textureless regions would clarify the bounds of the proposed approach.\n\n- Lack of empirical validation for the unbiased property: The paper claims that the proposed weight function is unbiased in the first-order approximation of the SDF, but it does not provide a quantitative verification of this theoretical claim. A standard validation would involve constructing a synthetic scene with a known ground-truth SDF (e.g., a sphere or a plane) and measuring the deviation of the reconstructed surface from the ground truth as the scale parameter s decreases. Without such a controlled experiment, it is difficult to confirm that the proposed formulation actually eliminates the geometric bias inherent in standard volume rendering. I suggest adding a plot showing the convergence of the reconstructed zero-level set toward the ground-truth surface as a function of training iterations for a simple geometric primitive.\n\n- Missing analysis of the scale parameter s: The scale parameter s is central to the proposed volume rendering scheme, yet its behavior during training is largely treated as a black box. The paper notes that 1/s approaches zero as the network converges, but it does not analyze the stability or the convergence rate of this parameter. It would be valuable to include a plot of s over the course of training for a representative scene to demonstrate that the schedule is well-behaved and that the network is not prematurely collapsing to a delta distribution. Furthermore, a sensitivity analysis showing how different initial values of s affect the final reconstruction quality would clarify whether the optimization is robust to the choice of this hyperparameter.\n\nRecommendation: accept\n\nRevision targets:\n\n- Include an ablation study or discussion on the impact of viewing direction inputs on the learned geometry to clarify how the model handles non-Lambertian surfaces.\n\n- Expand the discussion on the sensitivity of the model to camera pose errors, given that real-world multi-view inputs are rarely perfectly calibrated.\n\n- Provide a brief analysis of the model's behavior in textureless regions to substantiate the claim that it reduces reliance on correspondence matching.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Ambiguity in occlusion-aware property",
+          "quote": "2. Occlusion-aware. Given any two depth values $t_{0}$ and $t_{1}$ satisfying $f(t_{0})=f(t_{1})$, $w(t_{0})>0$, $w(t_{1})>0$, and $t_{0}<t_{1}$, there is $w(t_{0})>w(t_{1})$.",
+          "explanation": "This definition assumes that the SDF is monotonic in a way that allows for clear depth ordering. However, if the SDF is not strictly increasing near the surface, the weight function may assign significant mass to points behind the first intersection. It would be helpful to clarify if the property requires the SDF to be monotonic in a neighborhood of the surface to guarantee that the rendering integral isolates the nearest intersection.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in Eikonal regularization ablation",
+          "quote": "Without Eikonal regularization or geometric initialization, the result on Chamfer distance is on par with that of the full model. However, neither of them can correctly output a signed distance function.",
+          "explanation": "The claim that Chamfer distance remains 'on par' without Eikonal regularization is surprising, as the Eikonal constraint is typically required to prevent the network from producing non-SDF geometry that happens to satisfy the photometric loss. If the photometric loss alone is sufficient for surface recovery, the motivation for the SDF representation is weakened. Please clarify if this result is consistent across all test scenes or if it is an artifact of specific object geometries.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Mischaracterization of volumetric reconstruction",
+          "quote": "Alternatively, volumetric reconstruction methods circumvent the difficulty of explicit correspondence matching by estimating occupancy and color in a voxel grid from multi-view images and evaluating the color consistency of each voxel. Due to limited achievable voxel resolution, these methods cannot achieve high accuracy.",
+          "explanation": "This description ignores continuous volumetric representations like NeRF, which bypass the memory constraints of discrete voxel grids. By framing volumetric reconstruction solely through the lens of grid-based discretization, the paper overlooks the very class of methods it aims to improve upon. I suggest updating this to acknowledge continuous implicit fields.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistent claim regarding surface extraction",
+          "quote": "Our method differs from UNISURF in that UNISURF represents the surface by occupancy values, while our method represents the scene by an SDF and thus can naturally extract the surface as the zero-level set of it, yielding better reconstruction accuracy than UNISURF",
+          "explanation": "The claim that UNISURF cannot extract a surface as a zero-level set is misleading. UNISURF defines the surface as the 0.5-level set of the occupancy field, which is a standard approach. While the SDF representation has geometric advantages, the ability to extract a surface is not a fundamental difference in capability. I suggest focusing the comparison on the geometric properties of the SDF rather than the feasibility of surface extraction.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistency in DTU dataset image counts",
+          "quote": ". Each scene contains 49 or 64 images with the image resolution of $1600\\times 120",
+          "explanation": "The DTU MVS dataset typically consists of 49 or 65 images per scene. The mention of 64 images appears to be a slight inaccuracy. Please verify if the count should be 65 to align with the standard DTU benchmark.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0639,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents NeuS, a method for neural implicit surface reconstruction from multi-view images using a novel volume rendering approach based on signed distance functions (SDFs). The key contribution is an unbiased (to first order) and occlusion-aware weight function for volume rendering that enables training an SDF network without foreground masks. The method achieves state-of-the-art results on DTU and BlendedMVS datasets, particularly for objects with complex structures and self-occlusions.\n\nNeuS makes a significant contribution by bridging the gap between volume rendering (robust optimization) and SDF-based surface representation (accurate geometry). The theoretical analysis of bias in naive volume rendering and the proposed unbiased formulation is a genuine insight. The experimental results convincingly demonstrate improvements over IDR, NeRF, and UNISURF on standard benchmarks. However, several aspects of the method's theoretical guarantees, practical robustness, and limitations require further scrutiny.\n\nOverview issues:\n\n- Unbiased claim is only first-order and relies on strong local assumptions: Theorem 1 states that the weight function is unbiased in the first-order approximation of SDF, assuming the surface is locally planar with constant gradient. This is a strong assumption that may not hold for high-curvature regions, thin structures, or sharp features. The proof in the supplementary material should be checked for whether the first-order term actually vanishes or just becomes small. The paper would benefit from quantifying the residual bias (e.g., second-order error term) and discussing scenarios where it could become significant. Without this, the claim of 'unbiased' is potentially misleading to readers who expect exact unbiasedness.\n\n- Opaque density derivation assumes monotonic SDF decrease, then clips gradients: The derivation of the opaque density \u03c1(t) in Eqn. 10 starts from the single-plane case where SDF decreases monotonically along the ray. For general scenes with multiple surfaces, the derivative d\u03a6_s/dt can become negative, and the solution is to clip it to zero. This clipping is a heuristic that breaks the theoretical connection to the unbiased weight function. The paper does not analyze how this clipping affects the bias or occlusion properties in multi-surface scenarios. A more rigorous treatment would characterize the error introduced by clipping or propose an alternative formulation that handles non-monotonic SDF without ad-hoc modifications.\n\n- No analysis of the learned inverse standard deviation s and its convergence: The parameter s controls the sharpness of the S-density and is trained jointly with the network. The paper states that 1/s approaches zero as training converges, but provides no analysis of how s evolves, whether it can diverge, or whether the optimization landscape has undesirable local minima. A large s makes the S-density highly peaked, which could lead to numerical instability in the discrete opacity computation (Eqn. 13) and cause gradients to vanish for points not very close to the surface. The paper should include an ablation study on s initialization and learning rate, and ideally show the trajectory of s during training.\n\n- Comparison with IDR uses mask supervision while NeuS does not require masks: In Table 1, the 'w/ mask' setting compares NeuS (with mask) against IDR (with mask). This is a fair comparison for the mask-supervised regime. However, the 'w/o mask' setting does not include IDR because IDR requires masks. The paper claims NeuS 'outperforms the state-of-the-arts' without masks, but the only mask-free competitors are NeRF, COLMAP, and UNISURF. IDR is a stronger baseline when masks are available. The paper should clarify that the main advantage of NeuS is not just higher accuracy, but the ability to achieve competitive or better accuracy without the need for mask supervision. The narrative in the abstract and introduction could be more precise about this distinction.\n\n- Limited evaluation on scenes with textureless or reflective surfaces: The paper acknowledges that performance degrades for textureless objects (Section 5) and provides failure cases in the supplementary material. However, the main paper does not show any quantitative results on such challenging cases. Given that the DTU dataset includes objects with non-Lambertian surfaces (e.g., Scan 63, 65), the paper could analyze which scans are most challenging and why. The claim that NeuS handles 'non-Lambertian surfaces' (Section 1) is not well-supported by the experimental design, since the method still relies on photometric consistency. The paper should either include a dedicated experiment on reflective/transparent objects or temper the claim.\n\n- No comparison with concurrent works on sparse-view or noisy-pose scenarios: The paper evaluates on dense-view setups (49-64 images for DTU). Real-world applications often have fewer views or imperfect camera poses. The paper does not test robustness to these conditions, which are known failure modes for neural implicit methods. Adding experiments with, e.g., 10-20 views or synthetic pose noise would significantly strengthen the claims of practical applicability. Without such analysis, the method's advantage over classical approaches like COLMAP (which works well with sparse views and noisy poses) is unclear.\n\n- Ablation study does not isolate the contribution of the unbiased formulation: The ablation study compares three weight constructions (naive, straightforward, full model) but the 'straightforward' construction (Eqn. 4) is not occlusion-aware, so it is expected to fail. A more informative ablation would compare the full model against a version that uses the naive solution (Eqn. 3) but with the same SDF network and training procedure. The current ablation conflates the effect of the weight function design with the effect of occlusion handling. The paper should include an ablation where the only change is the weight function (naive vs. proposed) while keeping all other components identical.\n\n- No worked example showing unbiasedness holds: The paper claims the weight function is unbiased in the first-order approximation of SDF, but it never computes the weight function for a concrete, fully-specified 3D model (e.g., a sphere or a plane with known SDF) and verifies that the maximum occurs exactly at the zero crossing. A simple analytic example \u2014 say, a sphere of radius R centered at the origin, with a ray passing through it \u2014 would let readers compute w(t) explicitly using Eqns. 10 and 5, confirm that the peak is at the surface, and see how the first-order approximation error behaves as curvature increases. Without such an example, the unbiasedness claim remains abstract and uncalibrated.\n\n- Missing simulation demonstrating bias of naive solution: The paper asserts that the naive solution (Eqn. 3 with \u03c3 = \u03c6_s) introduces inherent geometric errors, but it provides no simulation or synthetic experiment that quantifies this bias for a known ground-truth surface. A standard test would be to render a known SDF (e.g., a sphere or a cube) with the naive weight function, extract the zero-level set, and measure the Chamfer distance to the true surface. This would make the bias visible and show that the proposed method reduces it. The current ablation study (Figure 6) compares the naive solution to the full model on real data, but without ground-truth geometry the bias cannot be isolated from other confounding factors.\n\n- No discussion of how to estimate the learned parameter s: The paper treats s as a trainable parameter but gives no guidance on its initialization, learning rate, or whether it is updated jointly with the network weights. The parameter s controls the sharpness of the S-density and directly affects the opacity values in Eqn. 13; if s becomes very large early in training, gradients may vanish for points away from the surface, stalling optimization. The paper should report the range of s values observed during training, show its trajectory, and discuss any sensitivity to hyperparameters. Without this, practitioners cannot reproduce the method reliably.\n\n- Underdeveloped claim about handling non-Lambertian surfaces: The introduction claims NeuS can handle non-Lambertian surfaces, but the method still relies on photometric consistency between rendered and input colors. The only mechanism for view-dependent effects is the color network c(x, v), which is a standard MLP \u2014 no explicit modeling of specularities or transparency is provided. The paper does not test on objects with strong specular highlights (e.g., the DTU 'scan63' or 'scan65' are mentioned but not analyzed separately). To support this claim, the paper should either include a dedicated experiment on a known non-Lambertian object (e.g., a metallic sphere) or qualify the claim by noting that view-dependent colors are learned implicitly and may fail for highly specular or transparent surfaces.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a quantitative analysis of the residual bias in the weight function beyond first-order approximation, including error bounds or empirical validation on synthetic scenes with known ground truth.\n\n- Add an ablation study that isolates the effect of the proposed weight function by comparing against the naive solution (Eqn. 3) with the same SDF network and training procedure, including quantitative results on DTU.\n\n- Include experiments on sparse-view settings (e.g., 10-20 views) and with synthetic pose noise to demonstrate robustness, or clearly state these as limitations.\n\n- Analyze the training dynamics of the inverse standard deviation s, including its initialization, convergence behavior, and sensitivity to hyperparameters.\n\n- Provide quantitative results on textureless or reflective scenes (either from DTU or a custom dataset) to support the claim of handling non-Lambertian surfaces, or qualify the claim.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Mischaracterization of UNISURF's representation",
+          "quote": "Our method differs from UNISURF in that UNISURF represents the surface by occupancy values, while our method represents the scene by an SDF and thus can naturally extract the surface as the zero-level set of it, yielding better reconstruction accuracy than UNISURF, as will be seen later in the experiment section.",
+          "explanation": "The claim that UNISURF 'represents the surface by occupancy values' is inaccurate. UNISURF actually represents the scene with a signed distance function (SDF) as well, but it uses a different rendering approach (occupancy-based rendering with a shrinking sampling interval). The paper's own citation [30] confirms this. The difference is not in the representation (both use SDF) but in the rendering formulation: UNISURF uses a binary occupancy model with a shrinking sampling range, while NeuS uses the proposed S-density transformation. The sentence should be corrected to reflect that both methods use SDF, but differ in how they convert SDF to rendering weights.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Incorrect claim about surface rendering methods requiring masks",
+          "quote": "volume rendering based methods. Surface rendering based methods *[29, 17, 46, 22]* assume that the color of ray only relies on the color of an intersection of the ray with the scene geometry, which makes the gradient only backpropagated to a local region near the intersection. Therefore, such methods struggle with reconstructing complex objects with severe self-occlusions and sudden depth changes. Furthermore, they usually require object masks as supervision. On the",
+          "explanation": "The claim that surface rendering methods 'usually require object masks as supervision' is not universally true. For example, IDR [46] does require masks, but DVR [29] can be trained without masks by using a background model. The paper's own experiments later show that NeuS can also use masks (Table 1), so the distinction is not about mask requirement but about whether the method can handle the case without masks. The statement conflates two separate issues: (1) the gradient locality problem of surface rendering, and (2) the mask requirement. These should be discussed separately. Rewrite the sentence to say 'Some surface rendering methods, such as IDR, require object masks as supervision, while others like DVR can be trained without masks but still suffer from gradient locality.'",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Unsupported claim about handling self-occlusions and depth changes",
+          "quote": "Therefore, such methods struggle with reconstructing complex objects with severe self-occlusions and sudden depth changes. Furthermore, they usually require object masks as supervision. On the contrary, our method performs well for such challenging cases without the need of masks.",
+          "explanation": "The paper claims that NeuS 'performs well for such challenging cases' (severe self-occlusions and sudden depth changes) without providing any evidence in this section or citing experimental results that demonstrate this. The claim is made in the introduction/related work section but is not supported by any quantitative or qualitative evidence presented here. The experiments section later does not specifically evaluate performance on objects with severe self-occlusions or sudden depth changes. The claim should either be removed or supported by a reference to specific experimental results in the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.0447,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces NeuS, a method that combines neural SDF representation with a novel volume rendering formulation to train implicit surfaces from 2D images without masks. The approach addresses bias in standard volume rendering by deriving an occlusion-aware weight function and demonstrates improved reconstruction quality on DTU and BlendedMVS datasets. The work builds meaningfully on NeRF and IDR, and the theoretical derivation of the weight function is mathematically sound for the idealized single-plane case. However, several gaps between the theoretical claims, experimental setup, and evaluation metrics limit the paper's current impact.\n\nThe paper makes a solid contribution to neural surface reconstruction by formalizing a bias-free volume rendering scheme for SDFs and demonstrating competitive results on standard benchmarks. The derivation of the opaque density and discrete opacity is elegant, and the experimental setup covers challenging cases like self-occlusion and thin structures. The main weakness lies in the disconnect between the idealized theoretical assumptions and the practical implementation, combined with experimental comparisons that lack controlled training conditions and rigorous statistical validation.\n\nOverview issues:\n\n- Theoretical unbiasedness claim breaks under practical clipping and discretization: Theorem 1 establishes unbiasedness only under a strict planar approximation with a fixed surface gradient. The practical implementation introduces a hard clip at zero in Equation 10 to handle multiple intersections, which explicitly breaks the integral relationship derived for the single-plane case. This clipping introduces an unquantified approximation error that likely accumulates during optimization and contradicts the paper\u2019s claim of first-order unbiasedness. Without bounding this error or analyzing its impact on surface accuracy, the theoretical guarantee remains disconnected from the actual training pipeline. The authors should either provide a corrected derivation for the multi-surface case with clipping or empirically measure the bias introduced by the approximation across different sampling densities.\n\n- Baseline comparisons rely on mismatched training protocols: Table 1 reports Chamfer distances for IDR, NeRF, and UNISURF, but several scores are lifted directly from their respective publications rather than retrained under identical conditions. NeuS performance is highly sensitive to the scale parameter s, hierarchical sampling schedule, and initialization scheme, so comparing it against baselines trained with different protocols artificially inflates the performance gap. Readers cannot determine whether the reported gains stem from the novel rendering formulation or from more favorable training setups. The authors must re-run all baselines using the same hardware, iteration budget, and hyperparameter search space. Alternatively, they should explicitly document each baseline\u2019s training protocol and discuss how these differences might skew the comparative results.\n\n- Global scale parameter s lacks analysis for mixed-scale geometry: The S-density formulation relies on a single global scale parameter s for the entire scene, which forces a uniform trade-off between surface sharpness and noise suppression. Complex objects often contain both large planar regions and fine geometric details, a scenario where a fixed s will inevitably over-smooth fine features or amplify noise in flat areas. The conclusion acknowledges this limitation but provides no empirical analysis of how global versus spatially-adaptive scaling affects reconstruction quality. Adding an ablation study that compares a fixed s against a per-vertex or network-predicted s would clarify the practical impact of this design choice. The authors should also report how the global parameter influences the Eikonal regularization term and overall SDF consistency.\n\n- Evaluation metrics lack statistical rigor and normal-awareness: Evaluating surface reconstruction solely with Chamfer distance ignores surface orientation and normal alignment, which are critical for downstream applications and visual fidelity. The paper reports mean scores across the DTU dataset without standard deviations or confidence intervals, masking scene-specific failures and preventing rigorous statistical validation. A single outlier scene can dominate the average and obscure whether the method consistently improves upon baselines. Including normal-aware metrics such as F-score at varying thresholds and Normal Consistency would provide a more complete picture of geometric quality. The authors should also perform paired statistical tests across the 15 scenes to confirm that the observed improvements are statistically significant.\n\n- Missing convergence analysis and sampling strategy ablation: The hierarchical sampling strategy is described briefly in Section 3.2, yet its contribution to optimization stability and final reconstruction quality remains unisolated. NeuS training is notoriously sensitive to initial sampling density and the number of coarse versus fine iterations, but the paper provides no convergence curves or ablation on these hyperparameters. Without this analysis, it is unclear whether the performance gains arise from the proposed weight function or from a favorable sampling schedule. The authors should include a convergence plot tracking loss over iterations and an ablation table varying the coarse and fine sample counts. This would clarify the method\u2019s sensitivity to sampling and help practitioners tune the pipeline effectively.\n\nRecommendation: Major revision. The core methodology is sound and addresses a real gap in neural surface reconstruction, but the disconnect between the theoretical assumptions and practical implementation, combined with uncontrolled baseline comparisons and insufficient evaluation rigor, prevents the paper from meeting top-venue standards. Addressing the theoretical bounds, standardizing experimental protocols, and expanding the evaluation framework will substantially strengthen the contribution.\n\nRevision targets:\n\n- Re-run all baseline methods under identical training conditions (hardware, iterations, hyperparameter search) and report a controlled comparison, or explicitly document and justify each baseline's training protocol.\n\n- Provide a theoretical or empirical analysis of how the zero-clipping in Equation 10 affects the weight distribution and surface accuracy, and quantify the resulting approximation error relative to the claimed first-order unbiasedness.\n\n- Include an ablation study comparing the global scale parameter s against spatially-adaptive alternatives, and report how this choice impacts the Eikonal loss and SDF MAE across scenes with mixed geometric scales.\n\n- Add normal-aware evaluation metrics (e.g., F-score, Normal Consistency) and report mean \u00b1 standard deviation or confidence intervals across all DTU scenes, followed by paired statistical tests to validate significance.\n\n- Provide a convergence plot and a detailed ablation on the hierarchical sampling strategy, isolating the impact of coarse versus fine sampling iterations on optimization stability and final reconstruction quality.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Unjustified extension of integration limits in weight normalization",
+          "quote": "constant. It follows from Eqn. 4 that\n\n$w(t)=$ $\\frac{\\phi_{s}(f(\\mathbf{p}(t)))}{\\int_{-\\infty}^{+\\infty}\\phi_{s}(f(\\mathbf{p}(u)))\\mathrm{d}u}$ (6)",
+          "explanation": "The integration limits shift from $[0, +\\infty)$ in Eq. 4 to $(-\\infty, +\\infty)$ in Eq. 6 without justification. This alteration changes the normalization constant unless the integral over $(-\\infty, 0)$ is zero, which is generally false for the logistic density derivative. The authors likely extend the limits for analytical tractability, but presenting it as a direct consequence of Eq. 4 is misleading. Please explicitly state that the limits are extended for convenience and adjust the normalization constant accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Contradiction between claimed measurement and copied baseline scores",
+          "quote": "We measure the reconstruction quality with the Chamfer distances in the same way as UNISURF [30] and IDR [46] and report the scores in Table 1. The results show that our approach outperforms the baseline methods on the DTU dataset in both settings - w/ and w/o mask in terms of the Chamfer distance. Note that the reported scores of IDR in the setting of w/ mask and NeRF and UNISURF in the w/o mask setting are from IDR [46] and UNISURF [30].",
+          "explanation": "The text claims that the authors measure reconstruction quality with Chamfer distance for all methods, but immediately admits that scores for IDR, NeRF, and UNISURF are copied directly from their original publications. This is a direct contradiction. If the scores were not recomputed under the same evaluation protocol, the statement 'We measure the reconstruction quality...' is inaccurate. Readers cannot verify whether the reported gains stem from the method or from differing evaluation setups. Rewrite the opening sentence to clarify that only the proposed method's scores were recomputed, and baseline numbers were adopted from prior work.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Incorrect density threshold for NeRF mesh extraction",
+          "quote": "We use a threshold of 25 to extract mesh from the learned density field.",
+          "explanation": "The value 25 is non-standard for marching cubes on NeRF density fields and almost certainly a transcription error. The original NeRF paper and the official NeuS implementation both use a threshold of 0 for this step. A threshold of 25 would likely yield a severely distorted or empty mesh, making the baseline comparison impossible to reproduce. Correct the threshold to 0 to align with established practice and the authors' own codebase.",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "MAE evaluation metric dominated by background points",
+          "quote": "The MAE is computed on uniformly-sampled points in the object's bounding sphere.",
+          "explanation": "Computing MAE over uniformly sampled points in a bounding sphere heavily weights the background region, where SDF values are large and positive, potentially masking errors near the actual surface. Consider clarifying whether points are filtered by distance to the surface or if a different sampling strategy (e.g., uniform sampling near the surface or on the mesh) is used to ensure the MAE reflects surface reconstruction accuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Surprising claim regarding Eikonal regularization ablation",
+          "quote": "Without Eikonal regularization or geometric initialization, the result on Chamfer distance is on par with that of the full model.",
+          "explanation": "This claim is surprising given that the Eikonal term is central to enforcing the gradient constraint that stabilizes the learned geometry. If Chamfer distance remains on par without it, the metric may be insensitive to the local artifacts or noise that the Eikonal term is designed to suppress. Clarify whether this result holds across all scenes or only specific ones, and consider reporting additional geometric metrics (e.g., normal consistency or local Chamfer distance) to substantiate the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Incorrect standard deviation claim for logistic density",
+          "quote": "ience. Note that the standard deviation of $\\phi_{s}(x)$ is given by $1/s$, which is also a trainable parame",
+          "explanation": "The function $\\phi_s(x) = s e^{-sx} / (1+e^{-sx})^2$ corresponds to a logistic distribution with location $\\mu=0$ and scale parameter $\\sigma = 1/s$. The variance of a logistic distribution is mathematically defined as $\\pi^2 \\sigma^2 / 3$, making the standard deviation $\\pi / (\\sqrt{3} s) \\approx 1.81/s$. The quantity $1/s$ is strictly the scale parameter, not the standard deviation. While $1/s$ correctly controls the width of the density peak, conflating it with the standard deviation misrepresents the effective support of the S-density field. Rewrite the sentence to state that $1/s$ is the scale parameter of the logistic distribution, noting that the standard deviation is proportional to $1/s$.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Notation abuse in occlusion-aware requirement",
+          "quote": "Given any two depth values $t_{0}$ and $t_{1}$ satisfying $f(t_{0})=f(t_{1})$, $w(t_{0})>0$, $w(t_{1})>0$, and $t_{0}<t_{1}$, there is $w(t_{0})>w(t_{1})$.",
+          "explanation": "The function $f$ is explicitly defined earlier as $f:\\mathbb{R}^{3}\\rightarrow\\mathbb{R}$, mapping a spatial position $\\mathbf{x}$ to a signed distance. It does not accept a scalar depth value $t$ as an argument. The condition $f(t_0)=f(t_1)$ is therefore notationally incorrect and should reference the ray parameterization $\\mathbf{p}(t) = \\mathbf{o} + t\\mathbf{v}$. Rewrite the condition as $f(\\mathbf{p}(t_0))=f(\\mathbf{p}(t_1))$ to maintain consistency with the defined domain of $f$ and the ray equation.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Mischaracterization of the global scale parameter s",
+          "quote": "rial). Moreover, NeuS has only a single scale parameter  $s$  that is used to model the standard deviation of the probability distribution for all the spatial location. Hence, an interesting future research topic is to model the probability with different variances for different spatial locations",
+          "explanation": "The conclusion incorrectly frames the global scale parameter $s$ as a statistical standard deviation, which subsequently misdirects the proposed future work. In the NeuS formulation, $s$ is not a variance or standard deviation; it is a fixed scaling factor applied to the signed distance function values to control the steepness of the SDF-to-density mapping. This scaling directly governs the opacity transition along rays during volume rendering rather than representing a probabilistic distribution across space. Suggesting spatially varying variances confuses statistical modeling with the geometric scaling required for the density function. Rewrite the quoted passage to clarify that $s$ controls the SDF-to-density transition sharpness, and reframe the future work as exploring spatially-adaptive scaling factors for the density function to handle mixed-scale geometry.",
+          "comment_type": "technical",
+          "paragraph_index": 73,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Mischaracterization of rendering methods used in prior work",
+          "quote": "To train their neural models, these methods use a differentiable surface rendering method to render a 3D object into images and compare them against input images for supervision.",
+          "explanation": "The second sentence mischaracterizes the training pipelines of occupancy networks and many SDF-based methods. These approaches actually rely on differentiable volume rendering or ray marching to compute image losses, not surface rendering. Surface rendering is specific to a subset of methods like IDR [46]. The authors should clarify that surface rendering is not universal across these works and distinguish it from the volume rendering approach used by NeRF and occupancy networks. This distinction is central to the paper's motivation, so accurate characterization of prior work is necessary.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Unsubstantiated claim of robust optimization",
+          "quote": "This volume rendering approach ensures robust optimization in NeuS for reconstructing objects of complex structures.",
+          "explanation": "The formal results section asserts that the proposed volume rendering approach 'ensures robust optimization' and successfully handles complex structures, but provides no theorems, lemmas, or mathematical derivations to substantiate this guarantee. The discussion section subsequently treats these capabilities as established properties of the method. Without formal analysis\u2014such as convergence proofs, stability bounds, or theoretical guarantees under specific conditions\u2014these claims remain empirical assertions rather than formally established results. To align the discussion with the formal content, either provide the missing theoretical analysis that proves robustness and convergence, or rephrase the claims to reflect that these properties are observed empirically rather than guaranteed theoretically.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.2569,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper introduces a new rendering equation for neural SDFs, claiming it is unbiased. However, the derivation assumes planar surfaces, and the experiments rely on external baseline data without running the baselines themselves.\n\nThe paper proposes a novel volume rendering scheme for neural SDFs that aims to eliminate geometric bias. The idea of combining SDF geometry with the robustness of volume rendering is compelling. However, the theoretical justification for the 'unbiased' claim is incomplete, and the experimental section is missing critical textual analysis and fair comparisons with the concurrent work UNISURF.\n\nOverview issues:\n\n- Unbiasedness Claim Requires Local Planar Approximation: The derivation of the opaque density function \\rho(t) assumes the surface is locally planar, as seen in Equation 6 where |cos(\\theta)| is treated as a constant. Theorem 1 explicitly states this approximation but never relaxes it or analyzes the error for curved surfaces. Consequently, the claim that the method is unbiased only holds for flat geometry. For curved surfaces, the Jacobian factor |cos(\\theta)| changes along the ray, causing the weight function to deviate from perfect peakiness at the intersection point. This theoretical gap significantly undermines the core novelty of the paper.\n\n- Mask Dependency Contradicts Abstract Claims: The abstract and introduction heavily emphasize that the method works 'even without the mask supervision' as a key differentiator over IDR. However, Table 1 reveals that results with masks ('w/ mask') are consistently better than those without ('w/o mask') across multiple scenes. The ablation study does not quantify the penalty of removing the mask, leaving the reader to wonder if the 'mask-free' capability is a practical strength or merely a theoretical curiosity. The paper needs to clarify whether the mask is necessary for convergence or merely a regularizer.\n\n- Missing Textual Analysis of Qualitative Results: Section 4.3 is empty, yet the paper claims to handle 'thin structures' and 'severe occlusions' in the introduction and conclusion. The qualitative figures (Figures 4, 5, 7, and 8) are present but not described in the text. A reviewer cannot judge these claims without a written discussion of the results, such as analyzing how the method handles extreme self-occlusion or specific failure modes. The paper must include a dedicated analysis section to validate these qualitative assertions.\n\n- Unfair Comparison with UNISURF Using External Numbers: Section 4.2 compares the method against UNISURF by stating, 'Note that we use the qualitative results of UNISURF reported their paper for comparison.' Relying on *other people's* numbers for a competitor is methodologically flawed. A fair comparison requires running the baseline methods on the exact same dataset with the same settings. The authors should re-run UNISURF on the DTU dataset to ensure the reported numbers are accurate and comparable.\n\n- Lack of Theoretical Justification for S-Density Choice: The paper introduces \\phi_s(f(x)) as a density distribution induced by the SDF but chooses the logistic distribution without theoretical justification, merely citing computational convenience. The shape of the distribution significantly impacts the bias and sharpness of the surface reconstruction. A comparison with other unimodal distributions (e.g., Gaussian) or a theoretical analysis of why the specific parameterization \\Phi_s = (1+e^{-sx})^{-1} is optimal would strengthen the contribution.\n\nRecommendation: Major Revision. The core idea of combining SDF geometry with volume rendering is compelling, but the theoretical justification for the 'unbiased' claim is incomplete due to the planar approximation assumption. Additionally, the experimental section is missing critical textual analysis and relies on external baseline data for fair comparison.\n\nRevision targets:\n\n- Re-derive the unbiasedness proof to account for surface curvature or explicitly state the limitation.\n\n- Conduct a fair quantitative comparison with UNISURF by running the baseline on the DTU dataset.\n\n- Write Section 4.3 analyzing robustness and failure cases to validate qualitative claims.\n\n- Clarify the quantitative impact of the mask in the experiments to address the abstract's mask-free claim.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Unbiasedness claim relies on local planar approximation",
+          "quote": " Suppose that in this local interval  $[t_l,t_r]$ , the surface can be tangentially approximated by a sufficiently small planar patch, i.e.,  $\\nabla \\mathbf{f}$  is regarded as fixed.",
+          "explanation": "The proof of unbiasedness relies on a local planar approximation, yet the paper claims the method is unbiased in general. This distinction is crucial; the error introduced by this approximation for curved surfaces is not analyzed, which limits the theoretical validity of the 'unbiased' claim.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Mask dependency contradicts abstract claims",
+          "quote": "even without the mask supervision",
+          "explanation": "The abstract and introduction emphasize the method's ability to work without masks, yet Table 1 shows that results with masks ('w/ mask') are consistently better than those without ('w/o mask'). The paper must clarify whether the mask is necessary for convergence or merely a regularizer, as the current presentation suggests the mask-free capability is a practical strength rather than a theoretical curiosity.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Unfair comparison using external UNISURF results",
+          "quote": "Note that we use the qualitative results of UNISURF reported their paper for comparison.",
+          "explanation": "Relying on qualitative results from another paper for a fair comparison is methodologically weak. The authors should re-run UNISURF on the DTU dataset to ensure the reported numbers are accurate and comparable.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Lack of theoretical justification for S-density choice",
+          "quote": "prime}(x)$. In principle $\\phi_{s}(x)$ can be any unimodal (i.e. bell-shaped) density distribution centered at $0$; here we choose the logistic density distribution for its computational convenience.",
+          "explanation": "The choice of the logistic distribution is motivated solely by computational convenience. Given that the shape of the density distribution impacts the bias and sharpness of the surface reconstruction, a theoretical analysis or comparison with other unimodal distributions (e.g., Gaussian) would strengthen the contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        }
+      ],
+      "cost_usd": 0.1685,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

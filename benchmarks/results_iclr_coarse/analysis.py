@@ -10,7 +10,14 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer                                                                                                                           
 from sklearn.cluster import KMeans                                                                                                                                                   
 from sklearn.manifold import TSNE                                                                                                                                                    
-from collections import Counter                                                                                                                                                  
+from collections import Counter  
+
+model_dict = {
+    'deepseek-v4-flash': 'DeepSeek-V4-Flash',
+    'gemini-3.1-flash-lite-preview': 'Gemini-3.1-Flash-Lite',
+    'glm-4.7-flash': 'GLM-4.7-Flash',
+    'qwen3.6-35b-a3b': 'Qwen3.6-35B-A3B'
+}
                                                                                                                                                                                                                                                                                                                                            
 def load(path):                                                                                                                                                                      
   return json.loads(Path(path).read_text())   
@@ -204,7 +211,7 @@ def plot_overlap_cp(overlap_avg):
                 set_label.set_fontsize(15)
                 set_label.set_color("black")
 
-        axes[i].set_title(f"{model}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",                                                                                               
+        axes[i].set_title(f"{model_dict.get(model, model)}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",
                             fontsize=15, fontweight="bold", pad=10)
                                                                                                                                                                                         
     plt.tight_layout()                                                                                                                                                                   
@@ -366,7 +373,7 @@ def plot_overlap_all(overlap_avg):
                 set_label.set_fontsize(13)
                 set_label.set_color("black")
 
-        axes[i].set_title(f"{model}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",
+        axes[i].set_title(f"{model_dict.get(model, model)}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",
                           fontsize=15, fontweight="bold", pad=10)
 
     plt.tight_layout()

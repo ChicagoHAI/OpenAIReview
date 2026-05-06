@@ -3,7 +3,81 @@ import json
 from pathlib import Path
 
 from reviewer.parsers import parse_document                                                                                                                                          
-from reviewer.method_progressive import review_progressive 
+from reviewer.method_progressive import review_progressive, review_zero_shot
+
+# ── Zero-shot prompts (EDITED) ───────────────────────────────────────────────────────
+
+p.ZERO_SHOT_PROMPT = f"""{p.REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PAPER:
+
+{{paper_text}}
+
+---
+
+Check specifically for EXPERIMENTAL errors. This includes poor experimental design, instances of p-hacking, and incorrect interpretation of data/results. 
+                        
+{p.EXPLANATION_STYLE}
+
+{p.LENIENCY_RULES}
+
+{p.DO_NOT_FLAG_BASE}
+
+Return a JSON object with this structure:
+{{{{
+  "overall_feedback": "one paragraph high-level assessment of the paper's quality and main issues",
+  "comments": [
+    {{{{
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
+      "type": "technical" or "logical"
+    }}}}
+  ]
+}}}}
+
+Return ONLY the JSON object. No other text."""
+
+p.ZERO_SHOT_CHUNK_PROMPT = f"""{p.REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PASSAGE TO CHECK:
+
+{{chunk_text}}
+
+---
+
+Check specifically for EXPERIMENTAL errors. This includes poor experimental design, instances of p-hacking, and incorrect interpretation of data/results. 
+                        
+{p.EXPLANATION_STYLE}
+
+{p.LENIENCY_RULES}
+
+{p.DO_NOT_FLAG_CHUNKED}
+
+Return a JSON object with this structure:
+{{{{
+  "overall_feedback": "brief assessment of this section",
+  "comments": [
+    {{{{
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
+      "type": "technical" or "logical"
+    }}}}
+  ]
+}}}}
+
+Return ONLY the JSON object. No other text."""
+
+# ── Progressive prompt (EDITED) ───────────────────────────────────────────────────────
 
 p.DEEP_CHECK_PROMPT = f"""{p.REVIEWER_PREAMBLE}                                                                                                                                      
                                                                                                                                                                                        
@@ -19,16 +93,7 @@ PASSAGE TO CHECK:
                                                                                                                                                                                     
 ---
                                                                                                                                                                                     
-Check for:
-1. Mathematical correctness (e.g. wrong formulas, sign errors, missing factors, incorrect derivations, subscript or index errors)
-2. Notation inconsistencies (e.g. symbols used differently than defined, undefined notation)
-3. Definition/Theorem inconsistencies (e.g. statements that contradict formal definitions/theorems)
-4. Numerical inconsistencies (e.g. stated values contradict what can be derived from definitions, tables, or other sections)
-5. Insufficient justification (e.g. skipped non-trivial step in derivation)
-6. Overclaiming (e.g. statements that claim more than the evidence supports)
-7. Ambiguity (e.g. lack of detail/specification that could lead reader to incorrect conclusions)
-
-Pay PARTICULAR attention to EXPERIMENTAL errors (e.g. poor experimental design, p-hacking, incorrect interpretation of data)
+Check specifically for EXPERIMENTAL errors. This includes poor experimental design, instances of p-hacking, and incorrect interpretation of data/results. 
                         
 {p.EXPLANATION_STYLE}
                     
@@ -39,7 +104,7 @@ Pay PARTICULAR attention to EXPERIMENTAL errors (e.g. poor experimental design, 
 {p.JSON_ARRAY_OUTPUT}"""     
 
 
-def review_experimental(perturbations_dir, output_dir):
+def review_experimental(perturbations_dir, output_dir, method):
     output_dir.mkdir(parents=True, exist_ok=True)
                                                                                                                                                                                     
     for category_dir in perturbations_dir.iterdir():
@@ -56,22 +121,37 @@ def review_experimental(perturbations_dir, output_dir):
             md_file = md_files[0]
 
             slug = paper_dir.name
-            output_path = output_dir / f"{slug}.json"
+            output_path = output_dir / method / f"{slug}.json"
             if output_path.exists():                                                                                                                                                 
                 print(f"  Skipping {slug} (already done)")
                 continue                                                                                                                                                             
                 
             print(f"Reviewing {slug}...")
             text = md_file.read_text()
-            consolidated, _ = review_progressive(                                                                                                                                    
-                paper_slug=slug,
-                document_content=text,                                                                                                                                               
-                model="anthropic/claude-opus-4-6",
-            )
-            with open(output_path, "w") as f:                                                                                                                                        
-                json.dump(consolidated.to_dict(), f, indent=2)
+
+            if method == "progressive":
+                consolidated, _ = review_progressive(                                                                                                                                    
+                    paper_slug=slug,
+                    document_content=text,                                                                                                                                               
+                    model="anthropic/claude-opus-4-6",
+                    reasoning_effort=None,
+                    skip_nonsubstantial=False,
+                    window_size=3,
+                    ocr=False,
+                )
+                with open(output_path, "w") as f:                                                                                                                                        
+                    json.dump(consolidated.to_dict(), f, indent=2)
+            elif method == "zero_shot":
+                result = review_zero_shot(
+                    paper_slug=slug,
+                    document_content=text,                                                                                                                                               
+                    model="anthropic/claude-opus-4-6",
+                    reasoning_effort=None,
+                    ocr= False
+                )
 
 if __name__ == "__main__":
     perturbations_dir = Path("./perturbation_results")                                                                                                       
-    output_dir = Path("./experimental_comments")                                                                                                                                     
-    review_experimental(perturbations_dir, output_dir)
+    output_dir = Path("./experimental_comments")
+    method = "zero_shot"                                                                                                                                     
+    review_experimental(perturbations_dir, output_dir, method)

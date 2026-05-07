@@ -1,0 +1,853 @@
+{
+  "slug": "neurips2021-Tqx7nJp7-mauve-measuring-the-gap-between-neural-text-and-human-text-u",
+  "title": "MAUVE: Measuring the Gap Between Neural Text and Human Text using Divergence Frontiers",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "# **MAUVE: Measuring the Gap Between Neural Text and Human Text using Divergence Frontiers**\n\n**Krishna Pillutla**[1] **Swabha Swayamdipta**[2] **Rowan Zellers**[1] **John Thickstun**[3] **Sean Welleck**[1] _[,]_[2] **Yejin Choi**[1] _[,]_[2] **Zaid Harchaoui**[4]"
+    },
+    {
+      "index": 1,
+      "text": "1Paul G. Allen School of Computer Science & Engineering, University of Washington 2Allen Institute for Artificial Intelligence"
+    },
+    {
+      "index": 2,
+      "text": "3Department of Computer Science, Stanford University\n\n4Department of Statistics, University of Washington"
+    },
+    {
+      "index": 3,
+      "text": "## **Abstract**\n\nAs major progress is made in open-ended text generation, measuring how close machine-generated text is to human language remains a critical open problem. We introduce MAUVE, a comparison measure for open-ended text generation, which directly compares the learnt distribution from a text generation model to the distribution of human-written text using divergence frontiers. MAUVE scales up to modern text generation models by computing information divergences in a quantized embedding space. Through an extensive empirical study on three open-ended generation tasks, we find that MAUVE identifies known properties of generated text, scales naturally with model size, and correlates with human judgments, with fewer restrictions than existing distributional evaluation metrics."
+    },
+    {
+      "index": 4,
+      "text": "## **1 Introduction**\n\nRecent large-scale text generation models show an ability to produce human-like text of remarkable quality and coherence in open-ended generation [45, 61, 6]. In this setting, a text generation model forms a distribution over natural language sequences, induced by an autoregressive neural sequence model (e.g., GPT-3 [6]) paired with a decoding algorithm (e.g., nucleus sampling [26]). Generating text amounts to sampling from this distribution, with the goal of obtaining samples that resemble those from the \u201ctrue\u201d distribution of human-written text."
+    },
+    {
+      "index": 5,
+      "text": "To evaluate how close a generation model\u2019s distribution is to that of human-written text, we must consider two types of errors: (I) where the model assigns high probability to sequences which do _not_ resemble human-written text, and, (II) where the model distribution does not cover the human distribution, i.e., it fails to yield diverse samples. However, quantifying these aspects in a principled yet computationally tractable manner is challenging, as the text distributions are high-dimensional and discrete, accessed only through samples or expensive model evaluations [26, 58, 62]."
+    },
+    {
+      "index": 6,
+      "text": "We develop MAUVE, a comparison measure for open-ended text generation. The proposed measure is efficient, interpretable, and practical for evaluating modern text generation models. It captures both types of errors (Figure 1) by building upon _information divergence frontiers_ [49, 31, 16], so far underexplored in natural language processing. The key idea for making the proposed measure computationally tractable, yet effective, is to reduce its measurement to computing Kullback-Leibler divergences in a quantized, low-dimensional space after embedding samples from each distribution with an external language model. From an end-user\u2019s perspective, MAUVE has a simple interface: given neural text and human text, it yields a scalar measure of the gap between them."
+    },
+    {
+      "index": 7,
+      "text": "35th Conference on Neural Information Processing Systems (NeurIPS 2021).\n\n**----- Start of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "P Q\nType The time is I Error : Q P Type I just visited II Error :\nR\u03bb the time is Utqiagvik and\nthe time is Nuchalawoyya\nQ the time  \u00b7 \u00b7 \u00b7 in Alaska.\nP\nText\nProbability\n**----- End of picture text -----**"
+    },
+    {
+      "index": 9,
+      "text": "Figure 1: **Left** : MAUVE compares the machine text distribution _Q_ to that of human text _P_ by using the family of mixtures _R\u03bb_ = _\u03bbP_ +(1 _\u2212\u03bb_ ) _Q_ for _\u03bb 2_ (0 _,_ 1). **Right** : Illustration of _Type I errors_ , where _Q_ produces degenerate, repetitive text which is unlikely under _P_ , and, _Type II errors_ , where _Q_ cannot produce plausible human text due to truncation heuristics [26]. MAUVE measures these errors softly, by using the mixture distribution _R\u03bb_ . Varying _\u03bb_ in (0 _,_ 1) gives a divergence curve and captures a spectrum of soft Type I and Type II errors. MAUVE summarizes the entire divergence curve in a single scalar as the area under this curve."
+    },
+    {
+      "index": 10,
+      "text": "We summarize our contributions. First, we introduce MAUVE, a comparison measure between neural text and human text. Second, we empirically show that MAUVE is able to quantify known properties of generated text with respect to text length, model size, and decoding more correctly and with fewer restrictions than existing distributional evaluation metrics. Third, we find through a human evaluation that MAUVE better correlates with human quality judgements of text. Finally, we find that MAUVE can be highly robust to the choice of quantization, embeddings, and scaling. We open-source a pip-installable Python package to compute MAUVE.[1]"
+    },
+    {
+      "index": 11,
+      "text": "## **2 MAUVE**\n\nWe begin by discussing the basics of open-ended text generation, and then introduce MAUVE for measuring the divergence between machine generated text and human text."
+    },
+    {
+      "index": 12,
+      "text": "**Open-ended Text Generation.** A language model is an estimate _P_[\u02c6] ( _**x**_ ) of the probability distribution over sequences of text _**x**_ = ( _x_ 1 _, . . . , x|_ _**x** |_ ), consisting of tokens _xt_ belonging to a fixed vocabulary (e.g. characters, or words). Prevailing neural autoregressive language models estimate the joint distributionsequence. The open-ended text generation task asks us to output text _P_[\u02c6] ( _**x**_ ) by modeling the conditional distribution _P_[\u02c6] ( _xt_ +1 _|_ _**x**_ 1: _**x**_ \u02c6 _t_ ) _t_ over the next token in a+1: _|_ _**x** |_ in continuation of a given context _**x**_ 1: _t_ . Unlike targeted generation tasks like translation or summarization, there is no \u201ccorrect\u201d output; the main criteria for open-ended text generation are coherence, creativity, and fluency."
+    },
+    {
+      "index": 13,
+      "text": "Given a neural autoregressive language model _P_[\u02c6] , we can generate open-ended text in a serial, left-to\u02c6 \u02c6 right fashion, by sampling _xt_ +1 _\u21e0 P_[\u02c6] ( _\u00b7|_ _**x**_ 1: _t_ ), _xt_ +2 _\u21e0 P_[\u02c6] ( _\u00b7|_ _**x**_ 1: _t,_ \u02c6 _xt_ +1), etc. In practice, this simple decoding algorithm is often modified by adjusting the conditional distribution _P_[\u02c6] ( _\u00b7|_ _**x**_ 1: _t_ ) to promote more conservative outputs. The decoding algorithm and the language model taken together define a distribution _Q_ over text, which we call the _model distribution_ . Common decoding algorithms include temperature rescaling [1] and truncation [18, 26]. Note that truncation methods in particular create sparsity in _Q_ , which leads to degeneracy of some measures including test-set perplexity."
+    },
+    {
+      "index": 14,
+      "text": "**Sources of Error in Text Generation.** Our goal in this work is to measure the gap between the model distribution _Q_ and the target distribution _P_ of human text. As highlighted in Figure 1, this gap arises from two sources of error:"
+    },
+    {
+      "index": 15,
+      "text": "(Type I) _Q_ places high mass on text which is unlikely under _P_ ,\n\n(Type II) _Q_ cannot generate text which is plausible under _P_ ."
+    },
+    {
+      "index": 16,
+      "text": "The Type I errors are false positives, including the common failure case where a model generates text with semantic repetitions [15, 26, 59] that are highly unlikely to be written by humans.[2] The Type II"
+    },
+    {
+      "index": 17,
+      "text": "> 1Available from `https://github.com/krishnap25/mauve` . See Appendix B for an example of the `mauve` package in action."
+    },
+    {
+      "index": 18,
+      "text": "> 2Let text _**x**_ with _P_ ( _**x**_ ) _\u226b_ 0 be the positive class and _P_ ( _**x**_ ) _\u21e1_ 0 be the negative class. If _Q_ ( _**x**_ ) _\u226b_ 0 for some negative _**x**_ , then the model incorrectly considers it a positive, so it is a _false_ positive."
+    },
+    {
+      "index": 19,
+      "text": "2\n\nFigure 2: Divergence curves for different models (GPT-2 [45], Grover [61]) and decoding algorithms (greedy decoding, ancestral and nucleus sampling). MAUVE is computed as the area of the shaded region, and larger values of MAUVE indicate that _Q_ is closer to _P_ . In general, MAUVE indicates that generations from larger models and nucleus sampling are closer to human text. **Rightmost** : Nucleus sampling has a slightly smaller Type I error than ancestral sampling but a higher Type II error, indicating that ancestral sampling with Grover base produces more degenerate text while nucleus sampling does not effectively cover the human text distribution."
+    },
+    {
+      "index": 20,
+      "text": "errors are false negatives, which can occur, for instance, because some pieces of plausible human text cannot be generated by truncation-based decoding algorithms such as nucleus sampling [26]. The gap between _P_ and _Q_ is small only if both of these errors are small."
+    },
+    {
+      "index": 21,
+      "text": "**Quantifying the Errors.** We formalize the Type I and II errors with the Kullback-Leibler (KL) divergences KL( _Q|P_ ) and KL( _P |Q_ ), respectively. The divergence KL( _Q|P_ ) penalizes _Q_ if there exists text _**x**_ such that _Q_ ( _**x**_ ) is large but _P_ ( _**x**_ ) is small, so it quantifies the Type I error. Likewise, KL( _P |Q_ ) quantifies the Type II error."
+    },
+    {
+      "index": 22,
+      "text": "Unfortunately, one or both of the KL divergences KL( _P |Q_ ) and KL( _Q|P_ ) are infinite if the supports of _P_ and _Q_ are not identical, which is often the case in open-ended generation. This makes the KL divergence itself unsuitable as an evaluation metric. We overcome this issue by _softly_ measuring the two errors using the mixture distribution _R\u03bb_ = _\u03bbP_ + (1 _\u2212 \u03bb_ ) _Q_ for some _\u03bb 2_ (0 _,_ 1). In particular, we define the (soft) Type I error at level _\u03bb_ as KL( _Q|R\u03bb_ ) and the (soft) Type II error as KL( _P |R\u03bb_ )."
+    },
+    {
+      "index": 23,
+      "text": "**Summarizing the Errors with a Divergence Curve.** Since the mixture weight _\u03bb_ was arbitrary, we consider a family of Type I and II error values by varying _\u03bb_ between 0 and 1, in the same spirit as information divergence frontiers [49, 16]. This yields a _divergence curve_ ,"
+    },
+    {
+      "index": 24,
+      "text": "where _c >_ 0 is a hyperparameter for scaling. The divergence curve formalizes and encodes information about the trade-off between Type I and II errors.[3] Figure 2 illustrates the divergence curves for different models and decoding algorithms."
+    },
+    {
+      "index": 25,
+      "text": "Our proposed measure, **MAUVE** ( _P, Q_ ), is the area under the divergence curve _C_ ( _P, Q_ ). It provides a scalar summary of the trade-off between Type I and Type II errors. MAUVE( _P, Q_ ) lies in (0 _,_ 1], with a larger value meaning that _Q_ is closer to _P_ . Further, MAUVE( _P, Q_ ) = 1 if and only if _Q_ = _P_ . The area under the curve is a common summary of trade-off curves in machine learning [13, 11, 12, 19]."
+    },
+    {
+      "index": 26,
+      "text": "**Connections to Common Divergences.** The divergence curve encodes more information than the KL divergence KL( _P |Q_ ), which can be obtained from the second coordinate of the curve _C_ ( _P, Q_ ) as _\u03bb !_ 0, and the reverse KL divergence KL( _Q|P_ ) which can be obtained from the first coordinate of the curve _C_ ( _P, Q_ ) as _\u03bb !_ 1. Further, the Jensen-Shannon (JS) divergence JS( _P, Q_ ) = \ufffdKL( _P |R_ 1 _/_ 2) + KL( _Q|R_ 1 _/_ 2)\ufffd _/_ 2, can be obtained from the two coordinates of _C_ ( _P, Q_ ) at _\u03bb_ = 1 _/_ 2. MAUVE summarizes _all_ of the divergence curve _C_ ( _P, Q_ )."
+    },
+    {
+      "index": 27,
+      "text": "**Computing MAUVE for Open-Ended Text Generation.** Each point on the divergence curve _C_ ( _P, Q_ ) consists of a coordinate"
+    },
+    {
+      "index": 28,
+      "text": "and a similarly defined coordinate KL( _Q|R\u03bb_ ). We cannot compute the summation as written in Eq. (2), as we do not know the ground-truth probabilities _P_ ( _\u00b7_ ) and the support of a typical model"
+    },
+    {
+      "index": 29,
+      "text": "> 3More generally, the divergence curve _C_ ( _P, Q_ ) encodes the **Pareto frontier** of \ufffdKL( _P |R_ ) _,_ KL( _Q|R_ )\ufffd for all distributions _R_ , not just mixtures of the form _R\u03bb_ . We prove this in Appendix A."
+    },
+    {
+      "index": 30,
+      "text": "3\n\nFigure 3: Illustration of the quantization. **Left** : A continuous two-dimensional distribution _P_ . **Right** : A partitioning of the Euclidean plane R[2] and the corresponding quantized distribution _P_[\u02dc] ."
+    },
+    {
+      "index": 31,
+      "text": "distribution is prohibitively large, since it is the space of all sequences of tokens. As a result of these two issues, MAUVE cannot be tractably computed in closed form."
+    },
+    {
+      "index": 32,
+      "text": "We employ a Monte Carlo estimator using samples _**x** i \u21e0 P_ and _**x**[0] i[\u21e0][Q]_[to][overcome][the][fact] that ground-truth probabilities _P_ ( _\u00b7_ ) are unknown. We circumvent the intractable support size by computing MAUVE in a quantized embedding space that is sensitive to important features of text."
+    },
+    {
+      "index": 33,
+      "text": "The overall estimation procedure is as follows. First, we sample human text _**x** i \u21e0 P_ and machine text _**x**[0] i[\u21e0][Q]_[.][We then embed each text sequence using an external language model] _[ M]_[(e.g., GPT-2 [][45][])] to obtain embeddings _{M_ ( _**x** i_ ) _}[N] i_ =1[and] _[ {][M]_[(] _**[x]**[0] i_[)] _[}][N] i_ =1 _[ 0]_[.][Each embedding is now a vector] _[ M]_[(] _**[x]**_[)] _[ 2]_[ R] _[d]_[.] Next, we jointly quantize the embedded samples (e.g. with _k_ -means [36]), and count the cluster assignments to form histograms, giving low-dimensional discrete distributions that approximate each high-dimensional text distribution. In particular, the distribution _P_ of human text is approximated by the discrete distribution _P_[\u02dc] of support size _k_ , which is defined as,"
+    },
+    {
+      "index": 34,
+      "text": "where _\u03c6_ ( _**x**_ ) _2 {_ 1 _, \u00b7 \u00b7 \u00b7 , k}_ returns the cluster id of _**x**_ . The model distribution _Q_ is approximated as _Q_[\u02dc] similarly. Here, _P_[\u02dc] and _Q_[\u02dc] can be interpreted as piecewise constant approximations of _P_ and _Q_ , similar to a histogram; see Figure 3 for an illustration. Computing the divergence curve is now tractable, as each coordinate is a KL divergence between the _k_ -element discrete distributions."
+    },
+    {
+      "index": 35,
+      "text": "To recap, our proposed measure **MAUVE** ( _P, Q_ ) is the area under this divergence curve, providing a summary of all Type I and Type II errors through an efficient approximation designed for text generation. Next, we discuss how MAUVE compares to prior comparison measures for text (\u00a73), then present empirical results with MAUVE (\u00a74)."
+    },
+    {
+      "index": 36,
+      "text": "## **3 Related Work**\n\n**Divergence Measures for Text.** Prior measures of similarity/divergence between machine text and human text come in three broad categories: (a) reference-based, (b) statistics-based, and (c) language modeling. Table 1 summarizes the latter two categories, and contrasts them with MAUVE."
+    },
+    {
+      "index": 37,
+      "text": "_Reference-based measures_ evaluate generated text with respect to a (small set of) reference text sample(s), rather than comparing full sequence distributions. These include classical metrics for _n_ -gram matching [44, 32, 2], which are designed to capture similarities in the surface form of the generated text and the human references, making them fundamentally ill-suited for open-ended generation. Moreover, it has been recently shown in [42] show that these classical metrics only weakly agree with human judgments."
+    },
+    {
+      "index": 38,
+      "text": "More recent reference-based metrics are capable of comparisons in a high dimensional space [53, 63, 51, 9], thereby capturing distributional semantics beyond superficial _n_ -gram statistics. For instance, Moverscore [64] relies on the Word Mover\u2019s distance [30], and is an instance of an optimal transportation distance [57]. It computes the minimum cost of transforming the generated text to the reference text, taking into account Euclidean distance between vector representations of _n_ -grams,"
+    },
+    {
+      "index": 39,
+      "text": "4\n\n|**Type**|**Metric**|**Measures**|**Approximates**|\n|---|---|---|---|\n||Zipf Coeffcient [26]|Unigram rank-frequency statistics|\u2013|\n|Statistics|Self-BLEU [65]|N-gram diversity|\u2013|\n||Generation Perplexity|Generation quality via external|_|_E_Q_[log_R_(**_x_**)]_\u2212_E_P_[log_R_(**_x_**)]_|_|\n||[18]|model_R_|(a single point inside_C_(_P, Q_))|\n||Perplexity|Test-set perplexity|E_P_[log_Q_(**_x_**)]|\n|Language|_\"_-perplexity [39]|Perplexity w/ Laplace smoothing|E_P_[\u02dc_Q_(**_x_**)]|\n|Modeling|Sparsemax Score [39]|LM quality (sparsemax loss [38])|E_P_[\u02dc_Q_(**_x_**)]|\n||Token JS-Div. [39]|LM quality (JS divergence)|E_P_[\u02dc_Q_(**_x_**)]|\n|Divergence\nCurve|MAUVE(this work)|Quality & diversity via\nthe divergence curve|_C_(_P, Q_)at all_\u03bb_|"
+    },
+    {
+      "index": 40,
+      "text": "Table 1: Summary of automatic distributional metrics for evaluating open-ended text generation. MAUVE provides a summary of all points along the divergence curve, rather than a single point. The summary is based on comparisons in a joint embedding space, rather than a statistic computed independently on each distribution.\u02dc _Q_ informally refers to a quantity related to _Q_ ."
+    },
+    {
+      "index": 41,
+      "text": "as well as their document frequencies. The paradigm of reference-based measures is useful for targeted generation tasks such as translation and summarization where matching a set of references is paramount. It is, however, unsuitable for open-ended generation where there typically are several plausible continuations for each context and creative generations are desirable."
+    },
+    {
+      "index": 42,
+      "text": "_Statistics-based measures_ compare the model distribution _Q_ with respect to the human distribution _P_ on the basis of some statistic _T_ ( _P_ ) and _T_ ( _Q_ ). Property-specific statistics such as the amount of repetition [26, 59], verifiability [40], or termination [58] are orthogonal to MAUVE, which provides a summary of the overall gap between _P_ and _Q_ rather than focusing on an individual property. Another statistic is the generation perplexity [18, 26], which compares the perplexity of the model text _**x** \u21e0 Q_ with that of human text _**x**[0] \u21e0 P_ under an external model _R_ . By virtue of _T_ ( _\u00b7_ ) being a scalar, generation perplexity cannot trade-off the Type I and Type II errors like MAUVE. In fact, we show in Appendix A that the generation perplexity can be derived from _a single point_ enclosed between the divergence curve and the axes."
+    },
+    {
+      "index": 43,
+      "text": "_Language modeling metrics_ calculate how (un)likely human text _**x** \u21e0 P_ is under the model distribution _Q_ , for instance, using the probability _Q_ ( _**x**_ ). These metrics are related to a single point on the divergence curve, rather than a full summary. Examples include the perplexity of the test set (which is a sample from _P_ ) under the model _Q_ and its generalizations to handle sparse distributions [39]. Unlike MAUVE, these metrics never see model text samples _**x**[0] \u21e0 Q_ , so they cannot account for how likely the model text is under the human distribution _P_ . Moreover, they cannot be used for decoding algorithms such as beam search which do not define a token-level distribution."
+    },
+    {
+      "index": 44,
+      "text": "Automatic metrics have been proposed for specific domains such as generation of dialogues [55], stories [21], and others [43]. They capture task-specific properties; see the surveys [8, 48]. In contrast, MAUVE compares machine and human text in a domain-agnostic manner. Other related work has proposed metrics that rely on multiple samples for quality-diversity evaluation [7], and Bayesian approaches to compare the distribution of statistics in machine translation [17]."
+    },
+    {
+      "index": 45,
+      "text": "**Non-automatic Metrics.** HUSE [24] aims to combine human judgements of Type I errors with Type II errors measured using perplexity under _Q_ . Due to the costs of human evaluation, we consider HUSE, as well other metrics requiring human evaluation, such as single-pair evaluation, as complementary to MAUVE, which is an automatic comparison measure. As a separate technical caveat, it is unclear how to use HUSE for sparse _Q_ that assigns zero probability to a subset of text, which is the case with state-of-the-art decoding algorithms [26, 39]."
+    },
+    {
+      "index": 46,
+      "text": "**Evaluation of Generative Models.** Evaluation of generative models is an active area of research in computer vision, where generative adversarial networks [20] are commonly used. However, metrics such as Inception Score [50] are based on large-scale supervised classification tasks, and thus inappropriate for text generation. The Fr\u00e9chet Distance [25, 52] and its unbiased counterpart, the Kernel Inception Distance [5] are both used for evaluating generative models, but unlike MAUVE, do not take into account a trade-off between different kinds of errors between the learned and a"
+    },
+    {
+      "index": 47,
+      "text": "5\n\n|**Task Domain**|**Model**|**Finetuning**|**Dataset**|**Prompt**\n**Length**|**Max. Generation**\n**Length**|**Number of**\n**Generations**|\n|---|---|---|---|---|---|---|\n|Web text|GPT-2 (all sizes)|Pretrained|Webtext|35tokens|1024tokens|5000|\n|News|Grover (all sizes)|Pretrained|RealNews|varying|1024tokens|5000|\n|Stories|GPT-2 medium|Finetuned|WritingPrompts|50tokens|512tokens|5000|"
+    },
+    {
+      "index": 48,
+      "text": "Table 2: Dataset and task summary. Note that 1024 tokens correspond to _\u21e0_ 750 words on average.\n\nreference distribution. Sajjadi et al. [49] and Kynk\u00e4\u00e4nniemi et al. [31] both proposed metrics based on precision-recall curves. Djolonga et al. [16] proposed information divergence frontiers as a unified framework emcompassing both these works as special cases. MAUVE extends the above line of work, and is operationalized for open-ended text generation, applicable for data generated by large-scale neural language models. Complementary to this work, Liu et al. [33] study the theory of information divergence frontiers, proving non-asymptotic bounds on the estimation and quantization error."
+    },
+    {
+      "index": 49,
+      "text": "## **4 Experiments**\n\nWe perform three sets of experiments to validate MAUVE. 4.1) examine how known properties of generated text with respect to generation length, decoding algorithm, and model size can be identified and quantified by MAUVE. Next, in \u00a74.2 we demonstrate that MAUVE is robust to various embedding strategies, quantization algorithms, and hyperparameter settings. Finally, in \u00a74.3 we find that MAUVE correlates with human judgments. The code as well as the scripts to reproduce the experiments are available online.[4]"
+    },
+    {
+      "index": 50,
+      "text": "**Tasks.** We consider open-ended text generation using a text completion task [26, 59] in three domains: web text, news and stories. Each domain consists of a sequence dataset split into (context, \u02c6 continuation) pairs. Given a context _**x**_ 1: _k_ , the task is to generate a continuation _**x** k_ +1: _T \u21e0 Q_ ( _\u00b7 |_ _**x**_ 1: _k_ ), forming a completion. Each ground-truth completion _**x**_ 1: _T_ is considered a sample from the true distribution _P_ , while the completion ( _**x**_ 1: _k,_ \u02c6 _**x** k_ +1: _T_ ) is considered a sample from _Q_ . The datasets, context and completion lengths, and number of completions used for each domain are shown in Table 2."
+    },
+    {
+      "index": 51,
+      "text": "**Models.** As the language model _P_[\u02c6] ( _\u00b7_ ), we use GPT-2, a large-scale transformer [56] pretrained on the web text dataset (see [45]), that is representative of state-of-the-art autoregressive language models. As the embedding model _M_ ( _\u00b7_ ) we use GPT-2 Large, and compare others in \u00a74.2."
+    },
+    {
+      "index": 52,
+      "text": "**Decoding Algorithms.** We consider three common decoding algorithms: _ancestral sampling_ which samples directly from the language model\u2019s per-step distributions, _xt \u21e0 P_[\u02c6] ( _xt |_ _**x**_ 1: _t_ ), _greedy decoding_ which selects the most likely next token, _xt_ = arg max _x2V P_[\u02c6] ( _x |_ _**x**_ 1: _t_ ), as well as _nucleus sampling_ [26] which samples from top- _p_ truncated per-step distributions, _xt \u21e0 P_[\u02c6] nuc _,p_ ( _xt |_ _**x**_ 1: _t_ ),"
+    },
+    {
+      "index": 53,
+      "text": "Here, the top- _p_ vocabulary _Vp_ is the smallest set _V_ such that[P] _x2V[P]_[\u02c6][(] _[x][ |]_ _**[ x]**_[1:] _[t]_[)] _[ \u2265][p]_[.]"
+    },
+    {
+      "index": 54,
+      "text": "We also consider an adversarial sampling procedure, designed to generate low-quality text that nevertheless matches the perplexity of human text. Adversarial perplexity sampling proceeds in two phases: (1) we generate the first 15% of tokens in a sequence uniformly at random from the vocabulary, and (2) we generate the remaining tokens greedily to make the running perplexity of the generated sequence as close as possible to the perplexity of human text."
+    },
+    {
+      "index": 55,
+      "text": "## **4.1 Quantifying Properties of Generated Text**\n\nTo study MAUVE\u2019s effectiveness as a measure for comparing text distributions, we examine how MAUVE quantifies known properties of generated text: a good measure should meet expected behavior that is known from existing research on each property. Specifically, we investigate how MAUVE behaves under changes in generation length, decoding algorithm, and model size."
+    },
+    {
+      "index": 56,
+      "text": "> 4 `https://github.com/krishnap25/mauve-experiments` .\n\n6\n\nFigure 4: Generation quality versus maximum generation length according to MAUVE and three alternative measures (web text, GPT-2). MAUVE is the only comparison measure which identifies that generation quality decreases monotonically with increasing text length. The shaded area shows one standard deviation over generations from 5 random seeds."
+    },
+    {
+      "index": 57,
+      "text": "**MAUVE quality differences due to generation length.** Although large transformerbased models can generate remarkably fluent text, it has been observed that the quality of generation deteriorates with text length: as the generation gets longer, the model starts to wander, switching to unrelated topics and becoming incoherent [46]. As a result, an effective measure should indicate lower quality (e.g. lower MAUVE) as generation length increases."
+    },
+    {
+      "index": 58,
+      "text": "Figure 4 shows MAUVE as the generation length increases, along with three alternative metrics: generation perplexity, sparsemax score, and Fr\u00e9chet distance [25, 52]. MAUVE reflects the desired behavior, showing a decrease in quality (lower MAUVE) as generation length grows, with the trend consistent across model sizes. The other three metrics, however, show less favorable trends. Fr\u00e9chet distance indicates _improving_ quality as the length increases, while generation perplexity shows non-monotonic quality trends for the small and large models. Finally, language modeling metrics such as the sparsemax score [39] remain constant, since they do not depend on the samples generated."
+    },
+    {
+      "index": 59,
+      "text": "**MAUVE** Recent work has identified two clear trends in open-ended text generation with standard autoregressive models: (1) using greedy decoding results in repetitive, degenerate text [26, 59, 58]; (2) nucleus sampling (and related truncated sampling methods) yields higher quality text than ancestral sampling [18, 26].[5] An effective measure should thus indicate the quality relationship greedy _\u227a_ ancestral _\u227a_ nucleus."
+    },
+    {
+      "index": 60,
+      "text": "Table 3 summarizes MAUVE\u2019s quality measures of greedy decoding, ancestral sampling, and nucleus sampling, along with alternative automated metrics and a human quality score. MAUVE correctly identifies the expected quality relationship, assigning the lowest quality to greedy decoding ( _._ 016) followed by ancestral sampling ( _._ 882), and the highest quality to nucleus sampling ( _._ 940). Other commonly-used metrics fail to identify this relationship: generation perplexity rates the highly degenerate greedy-decoded text as better than ancestral sampling (11 _._ 324 vs. 19 _._ 284), while the language-modeling metrics (SP, JS, _\"_ -PPL) rate nucleus-decoded text as equal to or worse than greedy decoding or ancestral sampling. Further, as we show in Appendix D, MAUVE rightly identifies degeneracy of beam search, thus quantifying the qualitative observations of Holtzman et al. [26]. Finally, generation perplexity falls victim to the adversarial decoder (Adv.), unlike MAUVE.[6]"
+    },
+    {
+      "index": 61,
+      "text": "**MAUVE** Scaling the model size has been a key driver of recent advances in NLP, with larger models leading to better language modeling and higher quality generations in open-ended settings [45, 6]. An effective metric should capture the relationship between model size and generation quality, which we verify with human quality scores."
+    },
+    {
+      "index": 62,
+      "text": "Table 4 shows MAUVE\u2019s quality measures as the model size increases, along with alternatives and human quality scores. MAUVE increases as model size increases, agreeing with the human quality measure and the expectation that larger models should have higher quality generations. The widelyused generation perplexity, however, incorrectly rates the large model\u2019s text as the best. Although the language modeling metrics (SP, JS, and _\"_ -PPL) capture the size-quality relationship, they are constant with respect to length (Figure 4), and did not correctly quantify decoding algorithm quality (Table 3)."
+    },
+    {
+      "index": 63,
+      "text": "> 5In general this relationship depends on the nucleus hyperparameter _p_ and task. Here, we follow the same settings as Holtzman et al. [26], and additionally include a human-assessed measure of quality."
+    },
+    {
+      "index": 64,
+      "text": "> 6The results are consistent across model sizes and random seeds (see Appendix D).\n\n7\n\n|**Adv. Greedy Sampling Nucleus**\n**Gen. PPL**(_#_)\n**0**_._**05**\n11_._3\n19_._3\n1_._54\n**Zipf**(_#_) 0_._03\n0_._02\n0_._02\n**0**_._**01**\n**Self-BLEU**(_#_) 0_._07\n0_._03\n**0**_._**02**\n0_._03\n**SP(**_\"_**)**\n\u2013\n0_._50\n**0**_._**69**\n0_._69\n**JS(**_#_**)**\n\u2013\n**0**_._**35**\n0_._37\n0_._36\n_\"_**-PPL(**_#_**)**\n\u2013\n497\n**11**_._**4**\n13_._7\n**MAUVE (**_\"_**)** 0_._06\n0_._02\n0_._88\n**0**_._**94**\n**Human(**_\"_**)**\n\u2013\n\u2013\n9_._0\n**15**_._**7**|**Small Medium Large**\n**XL**|\n|---|---|\n||**Gen. PPL**(_#_)\n11_._2\n8_._5\n**0**_._**9**\n1_._5\n**Zipf**(_#_)\n0_._06\n**0**_._**00**\n0_._02\n0_._01\n**Self-BLEU**(_#_)\n0_._05\n**0**_._**02**\n0_._03\n0_._03\n**SP(**_\"_**)**\n0_._65\n0_._67\n0_._68\n**0**_._**69**\n**JS(**_#_**)**\n0_._41\n0_._39\n0_._37\n**0**_._**36**\n_\"_**-PPL(**_#_**)**\n25_._9\n18_._8\n14_._9\n**13**_._**7**\n**MAUVE (**_\"_**)**\n0_._878\n0_._915\n0_._936\n**0**_._**940**|\n||**Human(**_\"_**)** _\u2212_15_._9\n_\u2212_3_._4\n12_._6\n**15**_._**7**|"
+    },
+    {
+      "index": 65,
+      "text": "Table 3: Generation quality w.r.t different **decoding algorithms** (web text, GPT-2 xl) under various metrics, and humans. MAUVE correctly captures the relationship greedy _\u227a_ ancestral _\u227a_ nucleus, and rates the adversarial decoder\u2019s text as low quality. Results are consistent across model sizes and random seeds. Boldfaced/highlighted entries denote the best decoding algorithm under each metric."
+    },
+    {
+      "index": 66,
+      "text": "Table 4: Generation quality w.r.t different **model sizes** (web text, nucleus sampling) under various metrics, as well as human evaluators. MAUVE captures the relationship between model size and generation quality, agreeing with human-evaluated quality. Results are consistent across random seeds and decoding algorithms. Boldfaced/highlighted entries denote the best model size under each metric."
+    },
+    {
+      "index": 67,
+      "text": "Table 6 in Appendix D shows additional results with ancestral sampling. In this case, human evaluators rated generations from the small model as better than those from the medium model. Interestingly, MAUVE also identified this relationship, agreeing with the human ratings, in contrast to the other automatic metrics we surveyed."
+    },
+    {
+      "index": 68,
+      "text": "**Summary.** MAUVE identifies properties of generated text that a good measure should capture, related to length, decoding algorithm, and model size. In contrast, commonly used language modeling and statistical measures did not capture all of these properties. Unlike these alternatives, which capture a single statistic or relate to a single point on the divergence curve, MAUVE\u2019s summary measure incorporates type I errors that quantify the degenerate text produced by greedy decoding (recall Figure 1), while capturing distribution-level information that describes quality changes from generation length, model size, and the nuanced distinction between ancestral and nucleus sampling."
+    },
+    {
+      "index": 69,
+      "text": "## **4.2 Approximations in MAUVE**\n\nMAUVE summarizes the divergence between two text distributions with an approximation that relies on two components: an embedding model _M_ ( _**x**_ ) and a quantization algorithm _A_ (\u00a72, Eq. (3)). We study the effects of these two components."
+    },
+    {
+      "index": 70,
+      "text": "**MAUVE works with alternative embedding models.** Figure 5 (left) shows that MAUVE with features from RoBERTa- large [34] gives qualitatively similar trends across model size and decoding as MAUVE with features from GPT-2 large. Quantitatively, the Spearman rank correlation between them across all model and decoders is 0 _._ 993. We observe that RoBERTa penalizes smaller models more than GPT-2 but rates greedy decoding higher. We leave further study of inductive biases in the different embedding models to future work."
+    },
+    {
+      "index": 71,
+      "text": "**MAUVE is robust to quantization.** We compare different three different quantization algorithms:\n\n- (a) _k_ -Means: We cluster the hidden representations using _k_ -means, and represent them by their cluster membership to get a discrete distribution with size equal to the number of clusters."
+    },
+    {
+      "index": 72,
+      "text": "- (b) Deep Residual Mixture Models (DRMM): As a generalization of _k_ -means, we train a deep generative model known as DRMM [22]. We convert the soft clustering returned by DRMM into a hard clustering by assigning each point to its most likely cluster, and quantize the data using the cluster membership. We use DRMM with 3 layers and 10 components per layer for a total of 10[3] clusters, and train it for 20 epochs."
+    },
+    {
+      "index": 73,
+      "text": "- (c) Lattice Quantization: We learn a 4-dimensional feature representation of the vectors _M_ ( _**x**_ ) using a deep network which maintains the neighborhood structure of the data while encouraging the features to be uniformly distributed on the unit sphere [47]. We quantize the data on a uniform lattice into 744 bins."
+    },
+    {
+      "index": 74,
+      "text": "8\n\nFigure 5: **Left** : MAUVE computed using GPT-2 (default) and RoBERTa [34] embeddings, across model sizes and decoding algorithms; see Table 12 in the Appendix for further results. The Spearman rank correlation between the two is **0.993** across model sizes and decoding algorithms. **Right** : Effect of the scaling constant _c_ on MAUVE. Choice of _c_ does not affect the relative order of the curves but only the numerical value. We use _c_ = 5 to get interpretable values with both nucleus and greedy decoding."
+    },
+    {
+      "index": 75,
+      "text": "We compare different choices of the quantization to _k_ -means with _k_ = 500, which is our default. The Spearman rank correlation between MAUVE computed with _k_ -means for _k_ ranging from 100 to 5000 correlates nearly perfectly with that of _k_ = 500. In particular, the Spearman correlation is exactly 0 _._ 99 or 1 _._ 00. Likewise, MAUVE computed with DRMM or lattice quantization has a near-perfect Spearman correlation of at least 0 _._ 99 with _k_ -means. While the actual numerical value of MAUVE could vary with the quantization algorithm, these results show that the _rankings induced by various variants of_ MAUVE _are nearly identical_ ."
+    },
+    {
+      "index": 76,
+      "text": "**Practical recommendation for scaling parameter.** Figure 5 (right) shows the effects of adjusting the scaling parameter _c_ , which does not affect the relative order of the divergence curve, but adjusts the numerical value returned by MAUVE. As a practical recommendation, we found _c_ = 5 to yield interpretable values."
+    },
+    {
+      "index": 77,
+      "text": "## **4.3 Correlation with Human Judgments**\n\nAn effective metric should yield judgments that correlate highly with human judgments, assuming that human evaluators represent a gold-standard.[7] We evaluate how MAUVE\u2019s quality judgments correlate with human quality judgments. In our study, a quality judgment means choosing a particular (model, decoder) setting based on the resultant generations."
+    },
+    {
+      "index": 78,
+      "text": "**Evaluation Protocol.** To obtain human judgments, we employ a pairwise setup: at each round, an annotator receives a context and continuations from two different (model, decoder) settings, and selects the continuation they found more natural using a 5-point Likert scale. Our interface for collecting annotations is shown in Figure 9 of Appendix E, which also includes further details and additional results."
+    },
+    {
+      "index": 79,
+      "text": "We collect these annotations for web text generation with 8 different (model, decoder) settings plus a ninth setting for human-written continuations. Each setting is a GPT-2 model size paired with either ancestral or nucleus sampling. This gives us a total of 36 pairs of settings. Given the known difficulties with human evaluation of longer texts [28], we use a maximum completion length of 256 tokens. We obtain 90 preference ratings for each pair of settings, coming from a total of 214 crowd-workers from the Amazon Mechanical Turk platform. The evaluators were paid USD 0 _._ 40 per evaluation based on an estimated wage of USD 16 per hour."
+    },
+    {
+      "index": 80,
+      "text": "37], a parametric model used to predict the outcome of a head-to-head comparison. In particular, we obtain a score _wi_ for each setting _i_ so that the log odds of humans preferring setting _i_ to setting _j_ in a head-to-head comparison is given by the difference _wi \u2212 wj_ . For a given comparison measure, we compute the Spearman rank correlation between the comparison measure and the fitted Bradley-Terry coefficients _wi_ for each of the (model, decoder) settings. The end result is a correlation score in [ _\u2212_ 1 _,_ 1], with higher values meaning that quality judgments using the comparison measure correlate with quality judgments made by human evaluators."
+    },
+    {
+      "index": 81,
+      "text": "> 7Concurrent work has shown that human evaluation might not always be consistent [10, 29]; however human judgments continue to be the gold standard for evaluating open-ended text generation."
+    },
+    {
+      "index": 82,
+      "text": "9\n\n|**Metric**|**Task**|**Gen. PPL**|**Zipf Coef.**|**REP**|**Distinct-4**|**Self-BLEU**|**MAUVE**|\n|---|---|---|---|---|---|---|---|\n|Human-like/BT|Web text|0_._810|0_._833|_\u2212_0_._167|0_._738|0_._595|**0**_._**952**|\n|Interesting/BT|Web text|0_._643|0_._524|_\u2212_0_._143|0_._524|0_._405|**0**_._**810**|\n|Sensible/BT|Web text|0_._738|0_._690|_\u2212_0_._071|0_._595|0_._524|**0**_._**857**|\n|% Disc. Acc.|News|0_._468|0_._595|0_._792|0_._653|0_._516|**0**_._**956**|\n|% Disc. Acc.|Stories|0_._643|0_._643|0_._250|0_._750|0_._857|**0**_._**893**|"
+    },
+    {
+      "index": 83,
+      "text": "Table 5: Correlation of various similarity measures with human judgments when available, and the accuracy of a trained discriminator otherwise. \u201cBT\u201d denotes the Bradley-Terry score for a pairwise human evaluation (\u00a7 4.3). Boldfaced/highlighted numbers indicate highest correlation in each row. We observe that MAUVE has the highest correlation with human evaluation and discriminator accuracy."
+    },
+    {
+      "index": 84,
+      "text": "**MAUVE correlates with human judgments.** Table 5 shows the correlation between human judgments and five automatic evaluation metrics obtained using our evaluation protocol on the web text domain. MAUVE correlates highly with human judgments of how human-like (0 _._ 952), interesting (0 _._ 810), and sensible (0 _._ 857) the machine text is. MAUVE\u2019s correlations with human judgments are substantially higher than those for the other automated measures; for instance, the commonly-used generation perplexity has correlations that are 0 _._ 12 to 0 _._ 17 lower than MAUVE\u2019s. The results suggest that MAUVE may act as an effective, automatic surrogate for costly human judgments."
+    },
+    {
+      "index": 85,
+      "text": "**MAUVE correlates with learned discriminators.** We also measure the quality of generations by how well a trained model (a discriminator) can distinguish between real and generated text [35]. We report the test accuracy of a binary classifier trained to discriminate between machine and human text; a lower discrimination accuracy implies that the generation is harder to distinguish from human text. We report the accuracy of Grover mega as the discriminator for the news generations as it produced the highest discrimination accuracy [61] while we use GPT-2 large for the story domain. As seen in Table 5, MAUVE correlates the highest with the discrimination accuracy (0 _._ 96 for news and 0 _._ 89 for stories) among all comparison measures. Computing the discrimination accuracy for each (model, decoder) pair requires fine-tuning a separate model, which is particularly expensive for large models such as Grover-mega. MAUVE, on the other hand, does not require any training."
+    },
+    {
+      "index": 86,
+      "text": "## **5 Conclusion**\n\nWe presented MAUVE, an automatic measure of the gap between neural text and human text for open-ended text generation. MAUVE measures the area under a divergence curve, formalizing and summarizing a spectrum of errors that capture phenomena present in machine and human-generated text. MAUVE correlated with human judgments and identified quality differences due to generation length, decoding algorithm, and model size, which prior metrics struggle to capture. Automated metrics have driven advances in computer vision and many other machine learning domains. MAUVE\u2019s principled foundation and strong empirical performance offers a similar path forward for open-ended text generation systems. Extensions of MAUVE to closed-ended tasks, such as summarization and translation, where generations must be compared to a fixed set of gold-standard references, are promising directions for future work."
+    },
+    {
+      "index": 87,
+      "text": "**Broader Impacts Statement** MAUVE rewards model text which resembles human-authored text. However, we acknowledge the risks of rewarding systems that try to mimic humans [4], which is the ultimate goal of open-ended text generation. While our research is important for developing better language generators, we also encourage the community to pay attention to the development of technology that can reliably distinguish between human and machine text. We leave the extension of our method towards building such systems to future work."
+    },
+    {
+      "index": 88,
+      "text": "**Acknowledgments** Part of this work was done while Zaid Harchaoui was visiting the Simons Institute for the Theory of Computing, and while John Thickstun was at the University of Washington. This work was supported by NSF DMS-2134012, NSF CCF-2019844, NSF DMS-2023166, the DARPA MCS program through NIWC Pacific (N66001-19-2-4031), the CIFAR \u201cLearning in Machines & Brains\u201d program, a Qualcomm Innovation Fellowship, and faculty research awards.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper introduces MAUVE, a metric for open-ended text generation that uses divergence frontiers in a quantized embedding space to compare model and human distributions. It aims to address the limitations of existing metrics by capturing both precision (Type I) and recall (Type II) errors.\n\nThe paper makes a strong contribution by introducing a principled, distribution-based metric that addresses the failure modes of existing n-gram and perplexity-based measures. The empirical results demonstrate that MAUVE correlates well with human judgments and captures known model behaviors. It is a significant step forward for evaluating generative models.\n\nOverview issues:\n\n- Sensitivity to Embedding Model Bias: The metric relies on an external language model (e.g., GPT-2) to compute embeddings. Section 4.2 shows that using RoBERTa instead of GPT-2 results in a high rank correlation, but this does not rule out systematic biases where the metric favors models that share the same architecture or training objective as the embedding model. If the embedding model is itself a language model, it may inherently favor distributions that align with its own pre-training, potentially penalizing models that use different tokenization or architectural inductive biases. The authors should perform a sensitivity analysis using an embedding model that is fundamentally different from the generative models being evaluated to ensure the metric is not merely measuring 'architectural similarity'.\n\n- Quantization Stability and Interpretability: The use of k-means clustering to map high-dimensional embeddings into a discrete support space is a core step for tractability, yet the choice of k and the clustering algorithm remains somewhat arbitrary. While the authors demonstrate that results are stable across different k values, there is no formal discussion of how the quantization process might discard information about the 'tails' of the distribution. If the clusters are not representative of the full semantic space of the human reference set, the Type II error estimation could be severely biased. A more rigorous justification for the quantization method\u2014perhaps showing that the divergence frontier is invariant to the choice of clustering under reasonable conditions\u2014would strengthen the theoretical foundation.\n\n- Dependence on Reference Distribution Quality: The metric assumes that the reference human dataset $P$ is a perfect proxy for the 'true' distribution of human text. However, human-written text is often multi-modal and highly variable depending on the genre, prompt, and style. If the reference sample is not sufficiently large or representative, the estimated divergence will reflect the limitations of the reference set rather than the quality of the generative model. The paper lacks a discussion on the sample complexity requirements for $P$ to ensure the estimated divergence frontier is statistically consistent. Providing a brief analysis of how MAUVE scores behave as the size of the reference dataset varies would help users understand the minimum data requirements for valid evaluation.\n\n- Lack of Theoretical Guarantees for Divergence Frontier Estimation: Section 3 defines the divergence curve using KL divergences between mixture distributions, but the practical implementation relies on a Monte Carlo estimator over a quantized space. There is no proof or simulation demonstrating that the approximation error introduced by quantization and sampling is bounded or that the estimator converges to the true divergence frontier. Without such a guarantee, it is difficult to determine if the 'gap' measured is a property of the distributions or an artifact of the estimation procedure. A small simulation study using known synthetic distributions where the ground truth divergence is computable would provide the necessary evidence that the proposed estimator is reliable.\n\n- Lack of simulation on synthetic distributions with known ground truth: The paper lacks a controlled validation step where MAUVE is applied to synthetic distributions (e.g., Gaussian mixtures or categorical distributions) where the true divergence frontier is analytically computable. While the empirical results on text data are compelling, they do not prove that the estimator converges to the intended theoretical object. A simulation comparing the estimated area under the curve to the ground truth across varying sample sizes and quantization parameters would provide the necessary evidence that the proposed estimator is reliable and not merely an artifact of the embedding space.\n\n- Missing analysis of sample complexity for the reference distribution: The metric relies on a reference dataset to approximate the human distribution P, yet the paper provides no guidance on the required sample size for this reference set to achieve a stable score. If the reference set is too small, the estimated divergence frontier will be noisy or biased toward the specific samples provided. A brief empirical analysis showing how the MAUVE score stabilizes as a function of the number of reference samples would be highly beneficial for practitioners to understand the minimum data requirements for a valid evaluation.\n\nRecommendation: minor revision. The paper is well-motivated and provides a useful tool for the community, but it requires a more rigorous treatment of the potential biases introduced by the embedding model and a deeper discussion on the statistical properties of the estimation procedure. Addressing these points will clarify the limitations of the metric and improve its adoption.\n\nRevision targets:\n\n- Conduct a sensitivity analysis using an embedding model that is not a standard transformer-based language model to test for architectural bias.\n\n- Include a small simulation study using synthetic distributions where the ground-truth divergence is analytically computable to validate the accuracy of the Monte Carlo estimator.\n\n- Add a discussion on the sample complexity of the reference dataset $P$ and provide guidance on the minimum number of samples required for a stable score.\n\n- Clarify the theoretical relationship between the quantized divergence frontier and the true divergence frontier in the limit of infinite samples and clusters.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Circular definition of nucleus sampling",
+          "quote": "\\hat {P} _ {\\mathrm {n u c}, p} (x _ {t} \\mid \\boldsymbol {x} _ {1: t}) \\propto \\left\\{ \\begin{array}{l l} \\hat {P} _ {\\mathrm {n u c}, p} (x _ {t} \\mid \\boldsymbol {x} _ {1: t}), & \\text {i f} x _ {t} \\in V _ {p}, \\\\ 0, & \\text {e l s e}. \\end{array} \\right.",
+          "explanation": "The definition of the nucleus sampling distribution is circular. The left-hand side uses the notation for the truncated distribution, but the right-hand side uses the same notation inside the proportionality, effectively defining the distribution in terms of itself. The right-hand side should refer to the original, untruncated language model distribution. Please rewrite the right-hand side to use the base model distribution to avoid this self-referential definition.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in error type definitions",
+          "quote": " text.\n\nTo evaluate how close a generation model\u2019s distribution is to that of human-written text, we must consider two types of errors: (I) where the model assigns high probability to sequences which do *not* resemble human-written text, and, (II) where the model distribution does not cover the human distribution, i.e., it fails to yield diverse samples. However, quantifying th",
+          "explanation": "The definition of Type I and Type II errors in the introduction is inconsistent with the description in Figure 1. The text defines Type I as assigning high probability to non-human sequences, whereas Figure 1 describes Type I as 'degenerate, repetitive text' and Type II as 'truncation heuristics'. Furthermore, the standard information-theoretic interpretation typically maps Type I to precision and Type II to recall. Please clarify the mapping between these error types and the divergence frontier components to ensure consistency with the later technical sections.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in the divergence curve hyperparameter",
+          "quote": "where  $c > 0$  is a hyperparameter for scaling. The divergence curve formalizes and encodes information about the trade-off between Type I and II errors.",
+          "explanation": "The definition of the divergence curve in Eq. (1) relies on a hyperparameter c > 0, but the paper does not specify how this parameter affects the resulting MAUVE score. Since the area is computed over the range of \u03bb, the choice of c acts as a non-linear transformation on the KL values before integration. It is not clear if the ranking of models is invariant to the choice of c, or if c must be fixed to a specific value for the metric to be well-defined. Please clarify if c is a constant parameter or if it is tuned, and how it influences the interpretation of the area.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inaccurate characterization of HUSE limitations",
+          "quote": "As a separate technical caveat, it is unclear how to use HUSE for sparse  $Q$  that assigns zero probability to a subset of text, which is the case with state-of-the-art decoding algorithms [26, 39].",
+          "explanation": "The claim that HUSE is inapplicable to sparse distributions Q is misleading. HUSE is a hybrid metric that combines human judgments with statistical measures; it does not strictly require Q to be a dense probability distribution over the entire vocabulary. While HUSE uses perplexity under Q as one component, this can be estimated via Monte Carlo sampling from the model, which is standard practice for modern decoding algorithms. Suggesting that the metric is fundamentally incompatible with modern decoding ignores the standard workarounds used in the literature.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Unsubstantiated claim regarding closed-ended tasks",
+          "quote": "Extensions of MAUVE to closed-ended tasks, such as summarization and translation, where generations must be compared to a fixed set of gold-standard references, are promising directions for future work.",
+          "explanation": "The formal definition of MAUVE relies on the assumption that the distributions P and Q are over an open-ended space of sequences, and the estimation procedure relies on sampling to approximate the divergence curve. In closed-ended tasks, the target distribution P is typically a conditional distribution P(y|x) where y is a specific reference, often leading to a degenerate distribution that does not match the assumptions of the mixture model R_\u03bb = \u03bbP + (1-\u03bb)Q. The paper does not provide theoretical justification for why MAUVE would be appropriate for tasks where the ground truth is a single reference. Please remove this claim as the current framework is specific to open-ended generation.",
+          "comment_type": "technical",
+          "paragraph_index": 86,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistency in Table 4 human score signs",
+          "quote": "Table 4 shows MAUVE's quality measures as the model size increases, along with alternatives and human quality scores. MAUVE increases as model size increases, agreeing with the human quality measure",
+          "explanation": "Table 4 lists human quality scores for Small, Medium, Large, and XL models as -15.9, -3.4, 12.6, and 15.7. The text claims that MAUVE agrees with the human quality measure, but the human scores include negative values, which are not explained. If these are relative scores or normalized values, the text should explicitly state this to avoid confusion, as a negative quality score is counter-intuitive without a defined baseline or scale.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.0719,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces MAUVE, an automatic evaluation metric for open-ended text generation that quantifies the distributional gap between machine-generated and human-written text. It constructs a divergence curve by varying mixture weights between the two distributions and summarizes this curve as a single scalar score. The authors validate the metric through experiments on model scaling, decoding strategies, and text length, reporting strong correlations with human judgments.\n\nThe paper addresses a well-known gap in natural language processing by proposing a distributional metric that captures both quality and diversity trade-offs. The theoretical framing of divergence frontiers is sound, and the empirical results effectively demonstrate that MAUVE avoids the pitfalls of earlier perplexity-based and n-gram metrics. The work provides a practical tool that has influenced subsequent evaluation research.\n\nOverview issues:\n\n- Unaddressed bias in histogram-based KL divergence estimation: The methodology approximates continuous embedding distributions with discrete histograms via k-means clustering to compute KL divergences (Section 2, Eq. 3). KL divergence is highly sensitive to zero counts in discrete distributions. The paper does not specify how zero-probability bins are handled, such as through Laplace smoothing or additive regularization. Without a smoothing strategy, the estimated MAUVE scores can be severely biased or undefined, particularly when the cluster count $k$ approaches the sample size $N=5000$ listed in Table 2. This omission threatens the reliability of the metric, as minor fluctuations in clustering or sampling could drastically alter the divergence estimates. The authors should explicitly state the smoothing technique used and provide a sensitivity analysis showing how MAUVE scores vary with different smoothing hyperparameters.\n\n- Narrow scope of the human evaluation protocol: The claim that MAUVE correlates with human judgments relies on a pairwise evaluation setup limited to eight model and decoder configurations on web text, using only 256-token generations (Section 4.3, Table 5). The Bradley-Terry model is fitted on 90 preference ratings per pair, which introduces considerable noise given the documented difficulty humans experience when evaluating longer text coherence. Furthermore, the evaluation only compares different sizes and decoders of GPT-2, lacking a diverse set of model architectures or alternative decoding strategies. This narrow scope makes the reported Spearman correlations difficult to generalize. To substantiate the claim, the authors should expand the human study to include a wider variety of generation methods and text lengths, and report confidence intervals or inter-annotator agreement metrics.\n\n- Missing theoretical error bounds for the quantized approximation: The paper introduces divergence frontiers as a theoretically grounded framework but immediately implements them using a heavily approximated quantization step (Section 2). While the related work cites Liu et al. [33] for non-asymptotic bounds, the main text does not integrate these bounds into the MAUVE methodology or discuss how quantization error propagates to the area-under-the-curve calculation. The divergence curve is defined on continuous distributions $P$ and $Q$, but MAUVE is computed on discrete approximations $\bar{P}$ and $\bar{Q}$. The gap between the theoretical metric and the practical estimator remains unquantified. The authors should either derive or explicitly cite how quantization and sample size affect the convergence of MAUVE to the true divergence curve, and discuss the conditions under which the approximation holds.\n\n- Arbitrary scaling parameter and metric interpretability: The scaling constant $c$ in the divergence curve coordinates is set to 5 based on a practical recommendation for interpretable values (Section 4.2). The area under the curve is mathematically dependent on $c$, meaning the absolute MAUVE score lacks a fixed scale independent of this hyperparameter. The paper states that $c$ does not affect relative ordering, but this property can be distorted by quantization noise and finite sampling. Without a principled way to fix $c$, the metric becomes less comparable across different studies or embedding spaces. The authors should justify the choice of $c$ theoretically or propose a normalization procedure that makes MAUVE invariant to this scaling factor.\n\n- Overstated robustness to embedding model choice: Section 4.2 reports a Spearman correlation of 0.993 between MAUVE scores computed with GPT-2 and RoBERTa embeddings, concluding that the metric is robust to embedding choice. High rank correlation does not imply numerical equivalence or that the embeddings capture the same semantic features relevant to quality-diversity trade-offs. Different language models possess distinct inductive biases and vocabulary distributions, which can systematically shift the quantized histograms. The paper acknowledges these biases but dismisses them as minor. A more rigorous analysis would examine whether the embeddings align with human-perceived quality dimensions or if the metric merely reflects superficial distributional overlaps in the embedding space. The authors should provide a qualitative analysis of how embedding choice affects Type I versus Type II error decomposition.\n\n- Lack of sample complexity analysis for MAUVE estimation: The paper relies on N=5000 samples per distribution to compute MAUVE but never discusses how the estimate converges as N decreases. KL divergence estimation in discrete spaces is notoriously unstable with small samples, and the area-under-the-curve summary will inherit this variance. Practitioners need to know how many generations are required to obtain a stable score before committing to a full evaluation run. The authors should include a convergence plot showing MAUVE estimates across different sample sizes and report confidence intervals across multiple random seeds. This would clarify the computational trade-offs and establish a minimum sample threshold for reliable evaluation.\n\n- Missing controlled experiment on synthetic Type I and II errors: The empirical validation tests MAUVE on real language models, but it never isolates Type I and Type II errors in a controlled setting. The divergence curve is designed to capture a trade-off between these two error types, yet the paper provides no example where one is manipulated while the other is held constant. Readers cannot verify whether MAUVE actually tracks the intended geometric properties of the divergence frontiers. The authors should construct a synthetic text distribution where degeneracy or truncation is explicitly parameterized and show how MAUVE and the divergence curve respond. A simple mixture model or a truncated autoregressive process would suffice to demonstrate this sensitivity.\n\n- No discussion of high-dimensional clustering challenges: MAUVE quantizes embeddings from a 1024-dimensional GPT-2 model directly using k-means without addressing the curse of dimensionality. Clustering in high-dimensional spaces often yields empty or highly skewed bins, which distorts the histogram-based KL divergence estimates. The paper mentions using k=500 clusters but does not explain how this choice interacts with the ambient dimensionality or suggest dimensionality reduction techniques that are standard in density estimation. Without this guidance, users may encounter unstable quantization when applying MAUVE to different embedding spaces. The authors should acknowledge the high-dimensional clustering issue and recommend a preprocessing step like PCA before quantization, ideally backed by an ablation showing how dimensionality reduction affects MAUVE stability.\n\n- Absence of comparison to other embedding-based distributional metrics: The paper positions MAUVE against perplexity, n-gram statistics, and Fr\u00e9chet distance, but omits comparison to other embedding-based distributional metrics that also operate in latent spaces. Methods like the Fr\u00e9chet Inception Distance adapted for text, or Maximum Mean Discrepancy, share the same goal of comparing distributions via embeddings but use different summary statistics. By not benchmarking against these approaches, the paper leaves a gap in understanding whether MAUVE's divergence frontier approach offers a distinct advantage over simpler moment-matching or kernel-based estimators. The authors should add a comparison section evaluating MAUVE against at least one other embedding-based metric on the same tasks, clarifying the practical trade-offs in computational cost and correlation with human judgment.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Explicitly detail the smoothing strategy for zero-count bins in histogram-based KL estimation and provide a sensitivity analysis across different smoothing hyperparameters.\n\n- Expand the human evaluation protocol to include a broader range of model architectures, decoding strategies, and text lengths, while reporting confidence intervals and inter-annotator agreement.\n\n- Integrate theoretical error bounds for the quantized approximation into the main text, clarifying how sample size and clustering parameters affect the convergence of MAUVE to the true divergence curve.\n\n- Justify the choice of the scaling parameter $c$ or develop a normalization scheme to ensure the metric remains comparable across different embedding spaces and quantization settings.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Contradiction between MAUVE definition and claimed range",
+          "quote": "Our proposed measure,  $\\mathbf{MAUVE}(P,Q)$ , is the area under the divergence curve  $\\mathcal{C}(P,Q)$ . It provides a scalar summary of the trade-off between Type I and Type II errors.  $\\mathbf{MAUVE}(P,Q)$  lies in  $(0,1]$ , with a larger value meaning that  $Q$  is closer to  $P$ . Further,  $\\mathbf{MAUVE}(P,Q) = 1$  if and only if  $Q = P$ .",
+          "explanation": "The geometric interpretation here breaks down. When $Q=P$, the mixture $R_\\lambda$ equals $P$ for all $\\lambda$, making both KL divergences zero. The curve collapses to the single point $(1,1)$. The area under a degenerate curve is zero, not one. For any $Q \\neq P$, the KL terms are positive, pushing the curve strictly inside the unit square and yielding an area less than one. The stated range and endpoint condition are mathematically inverted. You should redefine the metric as $1 - \\text{area}$ under the curve to preserve the $(0,1]$ range, or correct the claim to state that the score equals zero when the distributions match.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Ambiguous area computation for parametric curve",
+          "quote": "\n\\mathcal {C} (P, Q) = \\left\\{\\left(\\exp (- c \\operatorname {K L} (Q | R _ {\\lambda})), \\exp (- c \\operatorname {K L} (P | R _ {\\lambda}))\\right): R _ {\\lambda} = \\lambda P + (1 - \\lambda) Q, \\lambda \\in (0, 1) \\right\\}, \\tag",
+          "explanation": "The divergence curve is a parametric set in $\\mathbb{R}^2$, but the paper never specifies how to compute the \"area under the curve\" from this definition. For a parametric trajectory $(x(\\lambda), y(\\lambda))$, the area could mean $\\int y(\\lambda) |x'(\\lambda)| d\\lambda$, the region bounded by the curve and the axes, or a discrete Riemann sum over sorted points. Without a precise integration rule or a statement that the curve is strictly monotonic in one coordinate, the scalar summary is ill-defined. Add a concrete formula for the area integral immediately after defining the curve.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Hyperparameter c invalidates range and endpoint claims",
+          "quote": "where  $c > 0$  is a hyperparameter for scaling. The divergence curve formalizes and encodes information about the trade-off between Type I and II errors.",
+          "explanation": "The theoretical claims about the metric's range and endpoint behavior cannot hold for an arbitrary scaling factor $c$. If $c$ is large, $\\exp(-c \\cdot \\mathrm{KL})$ approaches zero for any non-zero divergence, collapsing the curve toward the origin and driving the area to zero. If $c$ is small, the curve stays near $(1,1)$ and the area approaches one regardless of distributional distance. The stated properties only apply to a fixed $c$. You need to either fix $c$ to a specific constant in the theoretical development or normalize the computed area by the theoretical maximum for that $c$ to ensure the range remains $(0,1]$.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Contradictory description of adversarial sampling phase 2",
+          "quote": "Adversarial perplexity sampling proceeds in two phases: (1) we generate the first  $15\\%$  of tokens in a sequence uniformly at random from the vocabulary, and (2) we generate the remaining tokens greedily to make the running perplexity of the generated sequence as close as possible to the perplexity of human text.",
+          "explanation": "Phase two describes a logical impossibility. Greedy decoding selects the highest-probability token at each step, which locally minimizes perplexity. It cannot be used to actively match a target perplexity value. The phrasing conflates the decoding strategy with an optimization objective. Clarify the exact search or optimization procedure used in phase two to align the sequence perplexity with the human baseline, or remove the claim that greedy decoding achieves this matching.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Incorrect characterization of language modeling metrics in Table 3",
+          "quote": "Other commonly-used metrics fail to identify this relationship: generation perplexity rates the highly degenerate greedy-decoded text as better than ancestral sampling (11.324 vs. 19.284), while the language-modeling metrics (SP, JS,  $\\varepsilon$ -PPL) rate nucleus-decoded text as equal to or worse than greedy decoding or ancestral sampling.",
+          "explanation": "Table 3 directly contradicts this statement. The table shows that SP, JS, and $\\varepsilon$-PPL all rank nucleus decoding strictly better than greedy decoding (SP: 0.69 > 0.50; JS: 0.36 < 0.35; $\\varepsilon$-PPL: 13.7 < 497). The metrics actually fail to capture the full greedy $\\prec$ ancestral $\\prec$ nucleus ordering because they rank nucleus equal to or worse than ancestral, but they consistently rank it better than greedy. Rewrite the sentence to accurately reflect that these metrics miss the distinction between ancestral and nucleus sampling, rather than claiming they misrank nucleus against greedy.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Unclarified directionality for inverse-quality metrics",
+          "quote": "for instance, the commonly-used generation perplexity has correlations that are 0.12 to 0.17 lower than MAUVE's.",
+          "explanation": "Table 5 reports positive Spearman correlations for Generation PPL and Self-BLEU, yet both metrics are conventionally defined such that lower values indicate higher quality. Computing a standard Spearman correlation between raw scores and human preference ratings (where higher is better) would yield negative correlations. The positive values imply you inverted these metrics or used negative ranks before computing the correlation, but the methodology section does not state this preprocessing step. Explicitly describe how directionality was handled so readers can verify the calculations and interpret the sign convention correctly.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Overstatement regarding applicability of LM metrics to beam search",
+          "quote": "Moreover, they cannot be used for decoding algorithms such as beam search which do not define a token-level distribution.",
+          "explanation": "This claim mischaracterizes standard practice in the literature. Perplexity and related language modeling metrics are routinely computed on sequences generated by beam search, despite beam search not sampling from the model's true distribution. The metric itself is well-defined for any fixed sequence, and numerous studies report perplexity scores for beam-searched outputs. Clarify that while perplexity does not capture distributional properties of beam search, it remains widely used and applicable to such decoding strategies.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Circular definition in nucleus sampling equation",
+          "quote": "{P} _ {\\mathrm {n u c}, p} (x _ {t} \\mid \\boldsymbol {x} _ {1: t}) \\propto \\left\\{ \\begin{array}{l l} \\hat {P} _ {\\mathrm {n u c}, p} (x _ {t} \\mid \\boldsymbol {x} _ {1: t}), & \\text {i f} x _ {t} \\in V _ {p}, \\\\ 0, & \\text {e l s e}. \\end{array} \\right.\n$$\n\nHere",
+          "explanation": "The equation defines the nucleus sampling distribution in terms of itself on the right-hand side. The intended formulation should truncate and renormalize the original model distribution. This typo obscures the actual sampling procedure. Rewrite the right-hand side to use $\\hat{P}(x_t \\mid \\boldsymbol{x}_{1:t})$ instead of $\\hat{P}_{\\mathrm{nuc}, p}(x_t \\mid \\boldsymbol{x}_{1:t})$.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Clarify direction and metric for human judgment correlation",
+          "quote": "Through an extensive empirical study on three open-ended generation tasks, we find that Mauve identifies known properties of generated text, scales naturally with model size, and correlates with human judgments, with fewer restrictions than existing distributional evaluation metrics.",
+          "explanation": "The abstract claims that Mauve correlates with human judgments but omits the direction and statistical measure. This phrasing leaves readers uncertain whether higher scores indicate better or worse alignment with human quality. Specifying the correlation coefficient and its sign would immediately ground the claim in the empirical results. Rewrite 'correlates with human judgments' as 'positively correlates with human judgments (Spearman $\\rho = 0.XX$)' to remove ambiguity about the metric's practical utility.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        }
+      ],
+      "cost_usd": 0.2089,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper introduces MAUVE, a distributional metric for comparing neural and human text using divergence frontiers. Its main strengths are a principled framework based on information divergence frontiers, strong empirical correlations with human judgments, and robustness to several implementation choices. The paper is well-written and represents a meaningful contribution to the evaluation of open-ended text generation.\n\nOverview issues:\n\n- Unvalidated sensitivity to quantization and embedding choices: MAUVE relies on quantizing embeddings from a pretrained language model (GPT-2 Large by default) into a finite number of clusters. While the paper reports high Spearman rank correlations across different quantization algorithms and numbers of clusters (Section 4.2), these correlations measure only rank consistency, not absolute score stability. Two different quantization choices could produce nearly identical rankings but very different numerical MAUVE scores, which would be problematic if the metric is used to compare results across papers or to set thresholds. The paper does not report the variance of MAUVE scores across repeated runs with different random seeds for k-means or different embedding models. A more rigorous analysis would include confidence intervals or standard deviations for MAUVE scores under repeated sampling and different hyperparameter choices.\n\n- Limited validation of correlation with human judgments: The human evaluation in Section 4.3 is conducted only on the web text domain with GPT-2 models, using a single evaluation protocol (pairwise comparisons with 5-point Likert scale). The paper reports high correlations (0.952 for human-like, 0.857 for sensible), but does not demonstrate that these correlations hold across other domains (news, stories) or other model families (e.g., Grover, GPT-3). Moreover, the human evaluation uses a maximum completion length of 256 tokens, while the main experiments use up to 1024 tokens. It is unclear whether the correlation would persist for longer generations, where quality degradation is more pronounced. The paper should include human evaluation results for at least one additional domain or model type to support the claim that MAUVE 'correlates with human judgments' more broadly.\n\n- Lack of analysis of the divergence curve's added value over simpler divergences: MAUVE is motivated as a summary of the full divergence curve, which captures a trade-off between Type I and Type II errors. However, the paper does not empirically demonstrate that this curve provides information beyond what simpler divergences (e.g., Jensen-Shannon divergence at a single \u03bb, or the two KL divergences separately) would provide. The ablation study in Section 4.2 focuses on quantization and embedding choices, but does not compare MAUVE to its own components (e.g., using only KL(P|R_0.5) or the area under a curve based on a different divergence). Without such an ablation, it is unclear whether the complexity of computing the full divergence curve is justified, or whether a simpler summary would suffice.\n\n- Assumption that the embedding space is sufficiently discriminative is untested: MAUVE computes divergences in a quantized space derived from GPT-2 Large embeddings. The paper assumes that this embedding space captures the relevant semantic and syntactic differences between human and neural text. However, the paper does not test whether MAUVE's rankings change when using embeddings from models trained on different data or with different architectures (e.g., BERT, T5, or even non-contextual embeddings like GloVe). The single comparison with RoBERTa (Section 4.2) shows high rank correlation, but this is a single alternative model from the same family. A more thorough investigation would include embeddings from models with fundamentally different training objectives or from models that are not transformer-based, to assess whether MAUVE's conclusions are robust to the choice of embedding space.\n\n- No discussion of failure cases or scenarios where MAUVE disagrees with human judgment: The paper presents MAUVE as a metric that correlates well with human judgments, but does not discuss any cases where it fails or where its scores diverge from human intuition. For example, the adversarial perplexity sampling method (Section 4) is designed to generate low-quality text that matches human perplexity; MAUVE correctly assigns it a low score (0.06), but the paper does not analyze what specific properties of the generated text cause this low score. More importantly, the paper does not identify any scenarios where MAUVE might overestimate or underestimate quality relative to human judgment. A discussion of limitations and potential failure modes would strengthen the paper and guide future users.\n\n- Incomplete treatment of statistical significance and variability: The paper reports MAUVE scores and correlations without providing measures of uncertainty. For instance, Table 3 and Table 4 report single values for each metric without confidence intervals or standard errors. The correlation with human judgments (Table 5) is reported as a single number without a p-value or confidence interval. Given that MAUVE is computed from finite samples (5000 generations per setting), the scores are subject to sampling variability. The paper should include bootstrap confidence intervals or similar uncertainty quantification to allow readers to assess whether observed differences between models or decoding algorithms are statistically significant. This is particularly important for the claims about MAUVE's ability to distinguish between ancestral and nucleus sampling (Table 3), where the difference is small (0.882 vs. 0.940).\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide confidence intervals or standard deviations for MAUVE scores across repeated runs and different random seeds for k-means quantization.\n\n- Include human evaluation results for at least one additional domain (e.g., news or stories) to demonstrate that MAUVE's correlation with human judgments generalizes beyond web text.\n\n- Add an ablation study comparing MAUVE to simpler summaries of the divergence curve (e.g., area under the curve using only a subset of \u03bb values, or using a single divergence like JS at \u03bb=0.5) to justify the complexity of the full curve.\n\n- Test MAUVE with at least two fundamentally different embedding models (e.g., a non-contextual embedding like GloVe and a different contextual model like BERT) and report the effect on rankings and absolute scores.\n\n- Discuss at least two specific failure cases or scenarios where MAUVE might not align with human judgment, and provide guidance on when the metric should be used with caution.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Abstract claim about three tasks conflicts with later text",
+          "quote": "Through an extensive empirical study on three open-ended generation tasks, we find that Mauve identifies known properties of generated text, scales naturally with model size, and correlates with human judgments, with fewer restrictions than existing distributional evaluation metrics.",
+          "explanation": "The abstract states that the empirical study covers 'three open-ended generation tasks,' but the paper's main experiments (Sections 4.1\u20134.3) only evaluate on the web text (WebText) domain using GPT-2 models. No other generation task (e.g., news, stories, dialogue) is studied. This is a factual inconsistency between the abstract and the paper's actual content. The authors should either add experiments on two additional tasks or revise the abstract to say 'one open-ended generation task' or 'a single open-ended generation task.'",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Mischaracterization of Type II errors in Figure 1 caption",
+          "quote": "Type II errors, where  $Q$  cannot produce plausible human text due to truncation heuristics [26].",
+          "explanation": "The caption describes Type II errors as occurring 'where Q cannot produce plausible human text due to truncation heuristics.' This conflates a specific cause (truncation heuristics) with the general definition of Type II error in the divergence frontier framework. In the paper's own setup, Type II errors are defined as the model distribution failing to cover the human distribution \u2014 i.e., missing modes or diversity \u2014 which can arise from many causes beyond truncation heuristics (e.g., model capacity limits, training data bias, decoding temperature). The caption should either define Type II errors generically as coverage failure, or if it intends to give an example, it should say 'for instance, due to truncation heuristics.' Rewrite the quoted text as 'Type II errors, where Q fails to cover the human distribution P, e.g., due to truncation heuristics [26] that limit diversity.'",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Contradiction between abstract and introduction on tractability",
+          "quote": "The key idea for making the proposed measure computationally tractable, yet effective, is to reduce its measurement to computing Kullback-Leibler divergences in a quantized, low-dimensional space after embedding samples from each distribution with an external language model.",
+          "explanation": "The abstract states that 'MAUVE cannot be tractably computed in closed form,' yet the introduction claims the key idea for tractability is the quantization and embedding approach. These statements are not contradictory per se \u2014 the abstract may mean that without the quantization trick, MAUVE is intractable. However, the phrasing in the introduction ('making the proposed measure computationally tractable') implies that the measure itself is now tractable, while the abstract says it 'cannot be tractably computed in closed form.' This creates confusion: is MAUVE tractable or not? The authors should reconcile these statements. If MAUVE requires Monte Carlo estimation and is not closed-form, the introduction should say 'making the measure practically computable' or 'tractable in practice' rather than 'computationally tractable.'",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Grammatical error and overstatement about n-gram metrics",
+          "quote": "Moreover, it has been recently shown in *[42]* show that these classical metrics only weakly agree with human judgments.",
+          "explanation": "The sentence 'it has been recently shown in *[42]* show that these classical metrics only weakly agree with human judgments' contains a grammatical error ('show' should be 'shows' or restructure the sentence). More importantly, the claim that n-gram overlap metrics are 'fundamentally ill-suited for open-ended generation' is too strong and not universally accepted. While these metrics have limitations for open-ended generation, they are still widely used and can capture certain aspects of quality; the paper should acknowledge that they are limited rather than fundamentally ill-suited, and provide evidence for this strong claim.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Misleading comparison between generation perplexity and MAUVE",
+          "quote": "By virtue of  $T(\\cdot)$  being a scalar, generation perplexity cannot trade-off the Type I and Type II errors like MAUVE. In fact, we show in Appendix A that the generation perplexity can be derived from a single point enclosed between the divergence curve and the axes.",
+          "explanation": "The claim that generation perplexity 'cannot trade-off the Type I and Type II errors like MAUVE' is misleading. Generation perplexity is a scalar that summarizes model quality, but it does not aim to trade off Type I and Type II errors in the same way as MAUVE's divergence curve. The statement implies that generation perplexity is deficient because it cannot perform a trade-off that it was never designed to perform. The paper should clarify that generation perplexity serves a different purpose and is not intended to capture the precision-recall trade-off.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Incorrect claim about language modeling metrics and model text",
+          "quote": "Unlike MAUVE, these metrics never see model text samples  $\\pmb{x}' \\sim Q$ , so they cannot account for how likely the model text is under the human distribution  $P$ .",
+          "explanation": "This claim is factually incorrect. Language modeling metrics such as perplexity do evaluate the model distribution Q on human text samples from P, but they do not directly evaluate how likely model text is under the human distribution P. The statement 'they cannot account for how likely the model text is under the human distribution P' is true, but the reason given ('never see model text samples') is misleading. Perplexity does see model text samples if one computes the perplexity of model-generated text under a human language model, which is a common practice. The paper should clarify that these metrics typically evaluate human text under the model distribution, not the reverse.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Inaccurate claim about beam search and token-level distribution",
+          "quote": "Moreover, they cannot be used for decoding algorithms such as beam search which do not define a token-level distribution.",
+          "explanation": "The claim that language modeling metrics 'cannot be used for decoding algorithms such as beam search which do not define a token-level distribution' is inaccurate. Beam search does define a token-level distribution during decoding; it selects the most likely sequence based on the model's probabilities. The issue is that beam search may produce sequences with high probability under the model but low quality, but the metric can still be computed. The paper should clarify that the limitation is not that the metric cannot be computed, but that the model distribution may not reflect the true generation process when using beam search.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Inaccurate description of HUSE limitations for sparse Q",
+          "quote": "As a separate technical caveat, it is unclear how to use HUSE for sparse  $Q$  that assigns zero probability to a subset of text, which is the case with state-of-the-art decoding algorithms [26, 39].",
+          "explanation": "The claim that HUSE cannot be used for sparse distributions is misleading. HUSE combines human judgments of Type I errors with Type II errors measured using perplexity under Q. Even if Q assigns zero probability to some texts, perplexity can still be computed on the support of Q. The issue of sparsity affects many metrics, but the paper should provide a more precise explanation of why HUSE is problematic for sparse Q, rather than stating it is 'unclear how to use HUSE' in such cases.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "MAUVE score increase from Large to XL is very small",
+          "quote": "Table 4 shows MAUVE's quality measures as the model size increases, along with alternatives and human quality scores. MAUVE increases as model size increases, agreeing with the human quality measure and the expectation that larger models should have higher quality generations.",
+          "explanation": "The claim that MAUVE 'increases as model size increases' is supported by the sequence 0.878, 0.915, 0.936, 0.940, which is monotonic. However, the increase from Large (0.936) to XL (0.940) is only 0.004, which may be within estimation noise. The paper does not provide confidence intervals or standard errors for these MAUVE estimates, so the statistical significance of this final increment is unclear. The authors should either add bootstrap confidence intervals to Table 4 or qualify the claim by noting the small magnitude of the increase for larger models.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Human quality scale and negative values unexplained",
+          "quote": "Table 4: Generation quality w.r.t different model sizes (web text, nucleus sampling) under various metrics, as well as human evaluators. MAUVE captures the relationship between model size and generation quality, agreeing with human-evaluated quality.",
+          "explanation": "The human quality scores in Table 4 are Small=-15.9, Medium=-3.4, Large=12.6, XL=15.7. The text states that MAUVE 'agrees with the human quality measure', but the human scores are negative for Small and Medium, while MAUVE scores are all positive (0.878 to 0.940). The paper does not explain what the human quality scale is or whether negative values are meaningful. Without a clear definition of the human evaluation scale and its interpretation, the claim of agreement is ambiguous. The authors should clarify the human quality scale (e.g., is it a z-score, a difference from a baseline, or a raw rating?) and explain how negative values should be interpreted in relation to MAUVE's positive scale.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Generation perplexity computation needs clarification",
+          "quote": "Table 4: Generation quality w.r.t different model sizes (web text, nucleus sampling) under various metrics, as well as human evaluators. MAUVE captures the relationship between model size and generation quality, agreeing with human-evaluated quality.",
+          "explanation": "In Table 4, the generation perplexity (Gen. PPL) for the Large model is 0.9, which is lower than the XL model's 1.5. The text states that 'generation perplexity, however, incorrectly rates the large model's text as the best.' However, the paper does not explain why a perplexity of 0.9 for the Large model is considered incorrect. If perplexity is measured on the generated text using the same model that generated it, a lower perplexity for a smaller model could indicate that the model is simply assigning higher probability to its own repetitive or degenerate outputs. The paper should clarify how generation perplexity is computed (e.g., using the generating model or a separate reference model) and why the observed pattern is considered incorrect. Without this clarification, the claim that MAUVE is superior to generation perplexity in this case is not fully supported.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "No statistical significance for MAUVE differences in Table 3",
+          "quote": "Table 3 summarizes MAUVE's quality measures of greedy decoding, ancestral sampling, and nucleus sampling, along with alternative automated metrics and a human quality score. MAUVE correctly identifies the expected quality relationship, assigning the lowest quality to greedy decoding (.016) followed by ancestral sampling (.882), and the highest quality to nucleus sampling (.940).",
+          "explanation": "The MAUVE scores in Table 3 are 0.016 (greedy), 0.882 (ancestral), and 0.940 (nucleus). While the ordering matches the expected relationship, the paper does not provide confidence intervals or standard errors for these estimates. Without uncertainty quantification, it is impossible to determine whether the difference between ancestral (0.882) and nucleus (0.940) is statistically significant. The authors should add bootstrap confidence intervals or standard errors to Table 3 to support the claim that MAUVE 'correctly identifies the expected quality relationship' with statistical rigor.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Unproven invariance of divergence curve order to c",
+          "quote": "Figure 5 (right) shows the effects of adjusting the scaling parameter  $c$ , which does not affect the relative order of the divergence curve, but adjusts the numerical value returned by MAUVE. As a practical recommendation, we found  $c = 5$  to yield interpretable values.",
+          "explanation": "The first-pass reviewer questions whether the scaling parameter c truly leaves the relative order of the divergence curve unchanged. The divergence curve is defined in Eq. (3) of the paper as a parametric curve of KL divergences. Changing c rescales one axis, which could alter the ordering of points along the curve if the curve is not monotonic. The paper provides no proof or empirical demonstration of this invariance. The authors should either provide a mathematical argument (e.g., showing that the curve is a monotonic transformation of a c-independent curve) or include a figure demonstrating that the ordering of points is preserved across a range of c values. Add a proof or empirical evidence after the quoted sentence.",
+          "comment_type": "technical",
+          "paragraph_index": 76,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Ambiguous Spearman correlation reporting for k-means",
+          "quote": "We compare different choices of the quantization to  $k$ -means with  $k = 500$ , which is our default. The Spearman rank correlation between MAUVE computed with  $k$ -means for  $k$  ranging from 100 to 5000 correlates nearly perfectly with that of  $k = 500$ . In particular, the Spearman correlation is exactly 0.99 or 1.00.",
+          "explanation": "The first-pass reviewer correctly identifies ambiguity in the phrase 'exactly 0.99 or 1.00'. It is unclear whether the correlation is exactly 1.00 for some k and 0.99 for others, or whether the reported values are rounded. Additionally, no confidence intervals or p-values are provided, and the sample size (number of model-decoder combinations) is not stated. A correlation of 1.00 with a small sample size could be misleading. The authors should provide a table or figure showing the exact correlation for each k, along with confidence intervals or at least the sample size. Replace the ambiguous sentence with a table or a figure showing correlation values for each k.",
+          "comment_type": "technical",
+          "paragraph_index": 75,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Missing justification for default k=500 in k-means",
+          "quote": "We compare different choices of the quantization to  $k$ -means with  $k = 500$ , which is our default.",
+          "explanation": "The paper states that k=500 is the default for k-means but does not justify why this specific value was chosen. While the subsequent analysis shows that rankings are stable across k from 100 to 5000, the choice of 500 as the default is arbitrary. The authors should provide a rationale for selecting k=500, such as a trade-off between granularity and computational cost, or a sensitivity analysis showing that the numerical values of MAUVE stabilize around k=500. Add a sentence explaining the rationale for choosing k=500 as the default.",
+          "comment_type": "technical",
+          "paragraph_index": 75,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Correlation with discriminator is not a validation of quality",
+          "quote": "We also measure the quality of generations by how well a trained model (a discriminator) can distinguish between real and generated text [35]. We report the test accuracy of a binary classifier trained to discriminate between machine and human text; a lower discrimination accuracy implies that the generation is harder to distinguish from human text. We report the accuracy of Grover mega as the discriminator for the news generations as it produced the highest discrimination accuracy [61] while we use GPT-2 large for the story domain. As seen in Table 5, MAUVE correlates the highest with the discrimination accuracy (0.96 for news and 0.89 for stories) among all comparison measures.",
+          "explanation": "The first-pass reviewer correctly notes that high correlation with a discriminator does not validate MAUVE as a quality metric, because both MAUVE and the discriminator measure distinguishability from human text. This is circular reasoning: MAUVE is designed to quantify the gap between model and human distributions, and a discriminator does the same. Agreement between them merely confirms they capture similar information, not that MAUVE captures quality. The paper should reframe this subsection as a sanity check showing consistency with an alternative distinguishability measure, not as evidence of quality. Rewrite the subsection title and text to avoid implying that discriminator agreement validates MAUVE.",
+          "comment_type": "technical",
+          "paragraph_index": 85,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Table 5 reports correlations without uncertainty measures",
+          "quote": "Table 5: Correlation of various similarity measures with human judgments when available, and the accuracy of a trained discriminator otherwise. \"BT\" denotes the Bradley-Terry score for a pairwise human evaluation (\u00a7 4.3). Boldfaced/highlighted numbers indicate highest correlation in each row. We observe that MAUVE has the highest correlation with human evaluation and discriminator accuracy.",
+          "explanation": "The first-pass reviewer correctly points out that Spearman correlations are reported as point estimates without confidence intervals or p-values. With only 9 settings (8 model/decoder pairs plus human), the sample is very small, and a single outlier could substantially change the correlation. For example, the 0.952 correlation for human-like/BT could be driven by one or two data points. The paper should include bootstrap confidence intervals or at least p-values to allow readers to assess statistical significance and whether differences between metrics are meaningful. Without this, the claim that MAUVE 'correlates highly' is not properly supported. Add bootstrap confidence intervals (e.g., 95% CI) for each correlation in Table 5.",
+          "comment_type": "technical",
+          "paragraph_index": 83,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_17",
+          "title": "Human evaluation uses 256 tokens, main experiments use up to 1024",
+          "quote": "Given the known difficulties with human evaluation of longer texts [28], we use a maximum completion length of 256 tokens.",
+          "explanation": "The first-pass reviewer correctly identifies a scope mismatch: human validation uses 256-token completions, while main experiments (e.g., Table 3, Table 4) evaluate generations up to 1024 tokens. The paper does not address whether MAUVE's correlation with human judgments holds for longer texts, where quality degradation is more pronounced (as noted in Section 4.1). This is a significant gap because the metric is intended for various lengths, but validation only covers short texts. The paper should either provide evidence that correlation persists at longer lengths (e.g., by conducting a smaller human evaluation at 1024 tokens) or explicitly limit the claim of correlation to short generations. Add a discussion of this limitation and, if possible, a supplementary experiment at longer lengths.",
+          "comment_type": "technical",
+          "paragraph_index": 79,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_18",
+          "title": "Human evaluation limited to one domain and one model family",
+          "quote": "We collect these annotations for web text generation with 8 different (model, decoder) settings plus a ninth setting for human-written continuations. Each setting is a GPT-2 model size paired with either ancestral or nucleus sampling.",
+          "explanation": "The first-pass reviewer correctly notes that the human evaluation covers only web text and GPT-2 models. The paper claims that MAUVE 'correlates with human judgments' broadly, but the evidence only supports correlation for GPT-2 on web text. The paper does not test other domains (e.g., news, stories) or model families (e.g., Grover, GPT-3). Without such validation, the claim of general correlation is unsupported. The paper should either add human evaluation results for additional domains/models or temper the claim to reflect the limited scope. Rewrite the claim to state: 'MAUVE correlates with human judgments for GPT-2 models on web text' and add a discussion of generalizability limitations.",
+          "comment_type": "technical",
+          "paragraph_index": 79,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_19",
+          "title": "Bradley-Terry model fit details and goodness-of-fit not reported",
+          "quote": "We convert these pairwise preferences to a ranking by fitting a Bradley-Terry model [37], a parametric model used to predict the outcome of a head-to-head comparison. In particular, we obtain a score  $w_{i}$  for each setting  $i$  so that the log odds of humans preferring setting  $i$  to setting  $j$  in a head-to-head comparison is given by the difference  $w_{i} - w_{j}$ .",
+          "explanation": "The paper does not report any diagnostics for the Bradley-Terry model fit, such as goodness-of-fit statistics, standard errors of the estimated scores, or whether the model assumptions (e.g., transitivity, no ties) are satisfied. With only 9 settings and 90 ratings per pair, the model may not converge or may produce unreliable estimates. The paper should report the number of comparisons that were consistent with the model, the standard errors of the w_i estimates, and a measure of model fit (e.g., likelihood ratio test). Add a brief paragraph in Appendix E describing the Bradley-Terry model fit quality.",
+          "comment_type": "technical",
+          "paragraph_index": 80,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_20",
+          "title": "Overclaiming correlation with human judgments",
+          "quote": "MAUVE correlated with human judgments and identified quality differences due to generation length, decoding algorithm, and model size, which prior metrics struggle to capture.",
+          "explanation": "The claim that MAUVE 'correlated with human judgments' is stated as a general fact, but the human evaluation in Section 4.3 was conducted only on the web text domain with GPT-2 models, using a single evaluation protocol and a maximum completion length of 256 tokens. The paper does not demonstrate that this correlation holds across other domains (e.g., news, stories) or other model families (e.g., Grover, GPT-3). Moreover, the claim that prior metrics 'struggle to capture' quality differences due to generation length, decoding algorithm, and model size is not supported by a systematic comparison with a broad set of prior metrics in those specific scenarios. The paper only compares MAUVE to a few metrics (e.g., perplexity, Zipf coefficient, self-BLEU) under limited settings. Rewrite the sentence to qualify the scope of the correlation and the comparison with prior metrics, e.g., 'In our experiments on web text with GPT-2 models, MAUVE correlated with human judgments and identified quality differences due to generation length, decoding algorithm, and model size, which several prior metrics did not capture.'",
+          "comment_type": "technical",
+          "paragraph_index": 86,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_21",
+          "title": "Unsupported claim about extensions to closed-ended tasks",
+          "quote": "Extensions of MAUVE to closed-ended tasks, such as summarization and translation, where generations must be compared to a fixed set of gold-standard references, are promising directions for future work.",
+          "explanation": "This statement suggests that MAUVE can be extended to closed-ended tasks, but the paper does not provide any analysis or evidence that the divergence frontier framework is suitable for such tasks. In closed-ended tasks, the reference set is typically small and fixed, whereas MAUVE was designed for comparing two distributions (human and neural text) in open-ended generation. The paper does not discuss how the divergence curve would be computed or interpreted when the reference set is small, nor does it address potential issues like overfitting to a small reference set or the need for different quantization strategies. The claim is speculative and not supported by any preliminary experiments or theoretical justification in the paper. Remove the sentence or replace it with a more cautious statement that acknowledges the challenges, e.g., 'Whether MAUVE can be adapted to closed-ended tasks such as summarization and translation, where the reference set is typically small and fixed, remains an open question for future work.'",
+          "comment_type": "technical",
+          "paragraph_index": 86,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_22",
+          "title": "Mischaracterization of MAUVE's principled foundation",
+          "quote": "MAUVE's principled foundation and strong empirical performance offers a similar path forward for open-ended text generation systems.",
+          "explanation": "The phrase 'principled foundation' overstates the theoretical grounding of MAUVE. While MAUVE is based on the divergence frontier, the paper does not provide any theoretical guarantees (e.g., consistency, convergence rates, or robustness properties) for the estimator used in practice. The metric relies on quantized embeddings from a pretrained language model and finite sample estimates, which introduce approximations that are not analyzed theoretically. The paper also does not prove that the area under the divergence curve is a consistent estimator of any population quantity. The claim of a 'principled foundation' is misleading without such analysis. Rewrite the sentence to reflect the empirical nature of the contribution, e.g., 'MAUVE's divergence-frontier-based formulation and strong empirical performance suggest it could play a role similar to that of automated metrics in other domains.'",
+          "comment_type": "technical",
+          "paragraph_index": 86,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 23
+        }
+      ],
+      "cost_usd": 0.0463,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

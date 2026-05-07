@@ -1,0 +1,779 @@
+{
+  "slug": "neurips2021--JJy-Hw8-viser-video-specific-surface-embeddings-for-articulated-3d-s",
+  "title": "ViSER: Video-Specific Surface Embeddings for Articulated 3D Shape Reconstruction [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **ViSER: Video-Specific Surface Embeddings for Articulated 3D Shape Reconstruction**\n\n**Gengshan Yang**[1] **Deqing Sun**[2] **Varun Jampani**[2] **Daniel Vlasic**[2] **Forrester Cole**[2] **Ce Liu**[4] _[\u2217]_ **Deva Ramanan**[1] _[,]_[3] 1Carnegie Mellon University 2Google Research 3Argo AI 4Microsoft Azure AI ViSER-webpage"
+    },
+    {
+      "index": 1,
+      "text": "## **Abstract**\n\nWe introduce ViSER, a method for recovering articulated 3D shapes and dense 3D trajectories from monocular videos. Previous work on high-quality reconstruction of dynamic 3D shapes typically relies on multiple synchronized cameras, strong category-specific priors, or 2D keypoint supervision. We show that none of these are required if one can reliably estimate long-range correspondences in a video, making use of only 2D object masks and two-frame optical flow as inputs. ViSER infers correspondences by matching 2D pixels to a canonical, deformable 3D mesh via _video-specific surface embeddings_ that capture the view-independent appearance features of each surface point. These embeddings behave as a continuous set of keypoint descriptors defined over the mesh surface, which can be used to establish dense long-range correspondences across pixels. The surface embeddings are implemented as coordinate-based MLPs that are fit to each video via self-supervised losses. Experimental results show that ViSER compares favorably against prior work on challenging videos of humans with loose clothing and unusual poses as well as animal videos from DAVIS and YTVOS."
+    },
+    {
+      "index": 2,
+      "text": "## **1 Introduction**\n\nReconstructing the world from a sequence of monocular frames is a long-standing task in computer vision. While there has been tremendous progress in reconstructing rigid scenes (via SfM and SLAM [7, 39, 43], or recent techniques based on neural rendering [28]), reconstructing _dynamic_ scenes with articulated objects remains elusive. For example, given a monocular video, it is still challenging to reconstruct an everyday scene of a moving person with loose clothing. In this work, we tackle the problem of estimating the deforming mesh of articulated objects given a segmented monocular video of that object. Our method avoids the use of any mesh templates or category-specific priors and generalizes to unknown deformable articulated objects in the wild."
+    },
+    {
+      "index": 3,
+      "text": "Nonrigid shape recovery is highly under-constrained due to fundamental ambiguities between shape, appearance, and time-varying deformation. Current approaches for addressing these challenges fall into two camps: better data \u201clikelihoods\u201d or better \u201cpriors\u201d. The first camp extracts richer sensor data, via multi-camera studio setups [15] or depth sensors [30], but requires substantial efforts to work in the wild. The second camp makes use of category-level priors over object shapes [18, 20] and is particularly effective for human reconstruction. However, building such models requires considerable offline efforts in the form of registered 3D scans [26] or manual keypoint annotations [12], both of which are difficult to scale to arbitrary object categories."
+    },
+    {
+      "index": 4,
+      "text": "- _\u2217_ Work done at Google.\n\n35th Conference on Neural Information Processing Systems (NeurIPS 2021)."
+    },
+    {
+      "index": 5,
+      "text": "**----- Start of picture text -----**\n\n(\ud835\udc15, \ud835\udc05) [+]\nVertex &\ntopology\n\ud835\udc05\ud835\udc12 = MLP#$%&(\ud835\udc15) [+]\nEmbedding\nmatching\nPixel embeddings\n\ud835\udc05\ud835\udc08 = CNN(\ud835\udc08)\nShape Trajectory Parts\n**----- End of picture text -----**"
+    },
+    {
+      "index": 6,
+      "text": "Figure 1: Given a long video (or multiple short videos), ViSER jointly learns articulated 3D shapes (represented as a mesh with vertices **V[\u00af]** and faces **F** ) and joint pixel-surface embeddings (including a surface embedding **FS** and a pixel embedding **FI** ) that establishes dense long-range pixel correspondences over time. As a result, ViSER produces accurate shapes, long term trajectories and meaningful part segmentation."
+    },
+    {
+      "index": 7,
+      "text": "In this work, we use a practical but less explored variant of the data-likelihood camp: we use _multiple frames_ of a video rather than multiple cameras or depth sensors. This considerably complicates analysis for dynamic, non-rigid scenes. Nonrigid structure-from-motion (NRSfM) [4, 38] attempts to constrain the problem by relying on motion correspondences such as 2D point tracks. While 2D correspondences over short time scales (i.e., optical flow) are relatively robust to extract, correspondences over long time scales are notoriously difficult to estimate because of appearance variations arising from viewpoint changes, occlusion and fast motion. In practice, this limits the applicability of NRSfM methods to controlled lab sequences."
+    },
+    {
+      "index": 8,
+      "text": "We propose ViSER (Video-Specific Surface Embeddings for Reconstruction), which establishes long-range correspondence and reconstructs articulated 3D shapes from a monocular video. Fig. 1 shows a sample outdoor video and the corresponding ViSER results. The key insight behind ViSER is to force long-range video pixel correspondences to be consistent with an underlying canonical 3D mesh through the use of video-specific embeddings that capture the pixel appearance of each surface point. These embeddings behave as a continuous set of keypoint descriptors defined over the surface mesh, learned with coordinate-based MLPs that are fit to each video via self-supervised losses. ViSER simultaneously optimizes the image CNN, surface MLP, and 3D shape so as to fit the observed video frames. It reconstructs state-of-the-art articulated 3D shape and 3D trajectories without using category-specific priors, making it easily scalable to diverse videos including humans with challenging clothing and poses as well as animals. Lastly, we demonstrate that ViSER recovers meaningful part segmentation and blend skinning weights from videos, which typically require considerable manual effort from 3D artists."
+    },
+    {
+      "index": 9,
+      "text": "## **2 Related Work**\n\n**Low-level correspondence.** Optical flow is a well-studied representation for short-term correspondence between adjacent frames of a video. After decades of research, recent CNN models [40, 42, 48] for optical flow have achieved an impressive level of accuracy as evidenced by the Sintel and KITTI benchmarks [5, 9]. However, it is challenging to concatenate optical flow for reliable long-range correspondence due to occlusions and strong appearance changes [33, 37, 41]. ViSER does not concatenate optical flow but use it as a constraint to establishes long-range correspondence."
+    },
+    {
+      "index": 10,
+      "text": "The layered approach [6, 14, 45] segments a video into different moving objects with coherent motion, thereby establishing long-range correspondence for every frames through the shared layers. Early layered methods assume parameter motion for each layer and can only handle limited scenes. Unwrap Mosiacs [32] uses a dense 2D-to-2D mapping from a texture map to every input frame, and editing operations on the texture map naturally transfers to each individual frame. However, the 2D representation cannot flexibly model complex 3D phenomena, such as occlusions."
+    },
+    {
+      "index": 11,
+      "text": "2\n\nFigure 2: We learn a joint pixel-surface embedding space for dense correspondence between pixels in video frames _It_ and points on a canonical 3D surface ( **V[\u00af]** _,_ **F** ). Such embedding space is optimized through \u201ctop-down\u201d differentiable rendering _R_ ( _\u00b7_ ) and \u201cbottom-up\u201d correspondence matching **S**[\u02c6] [ _x, y_ ] (Sec 3.2). We introduce a 3D matching loss to optimize the embeddings, where the matched surface locations are encouraged to be close to the rendered surface locations. The embedding further enables articulated shape optimization through a 2D-3D-2D cycle reprojection: pixel [ _x, y_ ] _\u2192_ matched surface **S[\u02c6]** [ _x, y_ ] _\u2192_ re-projected pixel _\u03c0_ ( **S[\u02c6]** [ _x, y_ ]) (Sec. 3.3)."
+    },
+    {
+      "index": 12,
+      "text": "**Dense pose and surface mappings.** DensePose [12] directly maps pixels to the 3D surface of a human body model. It requires large amounts of training data with annotated image-to-surface correspondence and is hard to generalize to other categories. Articulation-aware Canonical Surface Mapping (A-CSM) [20] uses geometric cycle consistency for learning to map pixels to corresponding points on a template shape without using keypoint annotations. However, it requires a pre-defined template shape for each category. Continuous Surface Embeddings (CSE) [29] establishes dense correspondences between image pixels and 3D object geometry by predicting an embedding vector of the corresponding vertex in the object mesh for each pixel in a 2D image. While applicable to multiple categories, CSE requires annotations and only applies to categories in the training set. ViSER requires neither a template shape nor annotations to work on categories in the wild."
+    },
+    {
+      "index": 13,
+      "text": "**Nonrigid shape reconstruction.** One way to accurately reconstruct articulated shapes is to rely on rich sensor data, _e.g_ ., multi-view [15] or depth sensors [30], which requires substantial efforts to setup and reconstruct objects in the wild. For monocular videos/images, one popular approach is to adopt strong 3D shape and pose priors [18, 26, 35, 36, 53, 54] but it works well only on limited categories, whose 3D data are easy to collect. To deal with more nonrigid object categories, a recent trend is to learn a category-level 3D shape model from a collection of images or videos with 2D annotations, such as keypoints and object silhouettes [10, 16, 20, 22, 23, 44, 46, 50]. Although they are able to reconstruct more object categories, such as birds and quadruped animals, the reconstruction usually lacks details, and the level of deformation recovered tends to be low."
+    },
+    {
+      "index": 14,
+      "text": "Category-agnostic methods, such as nonrigid structure from motion (NRSfM) methods [4, 11, 19, 38] reconstruct nonrigid 3D shapes from a set of 2D point trajectories. However, due to the difficulty in obtaining accurate long-range correspondences [37, 41] they do not work well for videos in the wild. A recent work, LASR [49], uses two-frame optical flow to reconstruct articulate shapes from a monocular video with differentiable rendering. Despite the promising results, LASR does not reason about long-range correspondences and can only reliably reconstruct what is visible in a short video. ViSER establishes reliable long-range correspondence that are robust to moderate shape variations and appearance changes. Thus, ViSER can obtain much higher-quality reconstruction by using either a long video or several videos of a category."
+    },
+    {
+      "index": 15,
+      "text": "## **3 Approach**\n\nFig. 2 provides an overview of our approach, which follows a typical framework of differentiable rendering [16, 25]. Borrowing the notation from LASR [49], we formalize our task as follows. Given a set of video observations including RGB pixel color, segmentation masks, and optical flow estimates _{It, St, ut}t_ = _{_ 0 _,...,T }_ , our goal is to recover a set of shape and motion parameters _{_ **S** _,_ **D** _t}_ that produce reconstructions _{I_[\u02c6] _t, S_[\u02c6] _t,_ \u02c6 _ut}t_ = _{_ 0 _,...,T }_ that match the video observations. We refer to supplementary material for a complete list of notations defined in the paper."
+    },
+    {
+      "index": 16,
+      "text": "3\n\n## **3.1 Preliminaries**\n\nWe represent an object\u2019s shape as a triangular mesh **S** = _{_ **V[\u00af]** _,_ **F** _}_ with canonical vertices **V[\u00af]** _\u2208_ R[3] _[\u00d7][N]_ and a fixed topology (edge connectivity) **F** _\u2208_ R[3] _[\u00d7][M]_ . To render an object, we displace mesh vertices with motion parameters **D** _t_ , apply a perspective projection with camera intrinsics **K** _t_ , and rasterize."
+    },
+    {
+      "index": 17,
+      "text": "We model vertex motion with root body transformations **G** 0 and object articulations _{_ **G1** _, \u00b7 \u00b7 \u00b7 ,_ **GB** _}_ using linear blend skinning (LBS) [20, 21]. LBS constrains vertex motion by linearly blending _B_ rigid \u201cbone\u201d transformations with a skinning weight matrix **W** _\u2208_ R _[B][\u00d7][N]_ , transforming the canonical shape into frame _t_ as"
+    },
+    {
+      "index": 18,
+      "text": "where _i_ is the vertex index, _b_ is the bone index. Similar to LASR, the root body and bone transformations are represented as the outputs of a pose CNN given an input image, ( **G0** _, \u00b7 \u00b7 \u00b7 ,_ **GB** ) = _\u03c8p_ ( _It_ )."
+    },
+    {
+      "index": 19,
+      "text": "We define a set of surface properties for rendering, including vertex 3D coordinates, textures and features, and rasterize them in a differentiable manner [25]. We denote the differentiable rendering function that renders the property **C** defined on a canonical surface to an image as _R_ ( **C** ; **V** _,_ **W** _,_ **G** ), which executes the blending skinning function in Eq. (1) and softly blends the surface property based on their depth and barycentric coordinates [25]. For simplicity, we omit the shape, skinning, and motion parameters parameters and write the differentiable rendering function as _R_ ( **C** ). To render optical flow, we rasterize and project vertex coordinates in two consecutive frames and compute their 2D displacements [49]. Such renderings are compared against video observations to compute gradients for updating model parameters."
+    },
+    {
+      "index": 20,
+      "text": "## **3.2 Video-specific Surface Embedding**\n\n**Pixel-surface embeddings.** We learn pixel and surface embeddings that map corresponding pixels in different frames to the same point on a canonical 3D surface. Intuitively, consider a particular region on the canonical surface mesh that is the \u201cnose\u201d of an articulated human. The surface embedding captures a descriptor for the nose, which can then be matched to pixel-level descriptors at each frame."
+    },
+    {
+      "index": 21,
+      "text": "Given an input image _It_ , the pixel-wise descriptor embedding is computed by a U-Net [34] encoder:"
+    },
+    {
+      "index": 22,
+      "text": "**FI** [ _x, y, t_ ] = _\u03c8e_ ( _It_ )[ _x, y_ ] _\u2208_ R[16] _,_ (2)\n\nwhere [ _x, y, t_ ] are pixel locations at frame _t_ . The surface embedding is computed by a positionencoded MLP:"
+    },
+    {
+      "index": 23,
+      "text": "**FS** ( _X, Y, Z_ ) = _\u03c6e_ ( _X, Y, Z_ ) _\u2208_ R[16] _,_ (3)\n\nwhere _\u03c6e_ ( _\u00b7_ ) is an MLP defined over 3D points ( _X, Y, Z_ ) in the canonical space, augmented with Fourier positional encoding [28]. The two embeddings are optimized on test videos such that pixels representing the same surface location in different frames are mapped to the same canonical surface point [20]."
+    },
+    {
+      "index": 24,
+      "text": "**Correspondence via soft-argmax regression.** Given the pixel and surface embeddings, we construct a per-frame cost volume _D_ ( **FI** _,_ **FS** ) of size _H \u00d7W \u00d7Ns_ over pixels and surface points (we randomly sample _Ns_ = 200 surface points at each step) by considering their cosine feature distances,"
+    },
+    {
+      "index": 25,
+      "text": "Normalizing the cost volume over the surface point dimension yields a softmax \u201cheatmap\u201d over surface points that potentially match to pixel ( _x, y_ ), as shown in Fig. 3 (Left):"
+    },
+    {
+      "index": 26,
+      "text": "where _\u03c4_ is a temperature scaling parameter that is jointly optimized with the feature embeddings. To output a single surface point for pixel ( _x, y_ ), we can compute a \u201csoft\u201d argmax [17, 48] by taking the expectation of the softmax distribution over the 3D locations of the points samples,"
+    },
+    {
+      "index": 27,
+      "text": "where ( _Xi, Yi, Zi_ ) is the i-th sampled surface point and _\u03c3_ ( _x, y_ )[ _i_ ] is the matching probability of pixel ( _x, y_ ) over the sampled points _i \u2208{_ 1 _,_ 2 _, . . . , Ns}_ ."
+    },
+    {
+      "index": 28,
+      "text": "4\n\nFigure 3: Pixel-surface embeddings establish a continuous mapping between pixels and points on a canonical surface. **Left:** Given a query pixel at (x,y), we match it to a set of canonical surface points, where the matching distribution is used to regress a continuous mapping to the canonical surface. **Right:** Given a query surface point (X,Y,Z), a matching distribution over pixels can be computed. Warm color indicates high matching probability."
+    },
+    {
+      "index": 29,
+      "text": "We can also normalize the _H \u00d7W \u00d7Ns_ cost volume over spatial positions to capture a distribution of pixel locations that match to each surface point ( _Xi, Yi, Zi_ ):"
+    },
+    {
+      "index": 30,
+      "text": "and compute a similar soft argmax mapping of surface points to pixels, as shown in Fig. 3 (Right).\n\n**Relation to keypoints.** The output of classic keypoint detectors are often represented as _K_ -channel heatmaps over the pixel grid, where _K_ is the number of keypoints. To define dense keypoints, one may increase the number of channels, which is computationally heavy. Similar to CSE [29], we represent dense keypoints as low-dimensional pixel-surface embeddings, which establishes a mapping between pixels and a canonical 3D surface, but far more efficiently. DensePose [12] and CSM [20] use an alternative pixel-to-surface mapping that regresses a surface coordinate at every pixel. In contrast, our pixel-surface embedding captures multimodal uncertainties over keypoints; for example, _\u03c3_ ( _x,y_ )[ _i_ ] can capture the fact that a particular pixel matches well to both the left and right ankle, as visualized in Fig. 3, while a regressor may \u201cregress\u201d to the mean of the two surface coordinates."
+    },
+    {
+      "index": 31,
+      "text": "## **3.3 Learning Embeddings and Articulated Shapes**\n\nNext we will introduce the loss functions that enable learning both embeddings and articulated shapes from monocular videos without a pre-defined shape template or annotated correspondence. To learn non-degenerate embeddings and overcome the local optima issue in differertiable renderers, we carefully construct a 3D matching loss and a 2D cycle loss."
+    },
+    {
+      "index": 32,
+      "text": "**3D match loss.** Arguably, the simplest loss to learn embeddings is to minimize the difference between the rendered surface features and the observed pixel features:"
+    },
+    {
+      "index": 33,
+      "text": "where cos( _\u00b7_ ) denotes the inner product between two normalized vectors, and _R_ ( **FS** ) is the differentiably rendered surface descriptors. However, the feature consistency loss admits a trivial solution, where all pixel and surface features are the same constant (yielding zero error). To address this, we introduce a 3D matching loss that ensures pixel embeddings only match to surface embeddings rendered at the pixel location:"
+    },
+    {
+      "index": 34,
+      "text": "where _R_ ( **V**[\u00af] ) is the rendered 3D surface location and **S**[\u02c6] [ _x, y_ ] is the estimated pixel-to-surface mapping from Eq. (6), computed through sampling and computing the softmax distributions _\u03c3_ [ _i_ ] over surface points [17]. To minimize the loss, the embeddings of surface points that do not project to ( _x, y_ ) will be pulled away from the pixel embedding of ( _x, y_ ) in a contrastive way [13]."
+    },
+    {
+      "index": 35,
+      "text": "**2D cycle loss.** The match loss aims to learn pixel-surface embeddings that are consistent over video frames and discriminative over difference surface locations. However for articulation optimization, the match loss suffers from bad local optima issue similar to other losses based on differentiable rendering [25]. For instance, when the rendering of a body part is outside the ground-truth object silhouette, a gradient update of articulation parameters would likely not incur a lower loss."
+    },
+    {
+      "index": 36,
+      "text": "5\n\nTo guide articulated 3D shape learning using the learned pixel-surface embeddings, we further define a cycle-based re-projection loss, inspired by prior approaches in 3D model fitting with keypoints [3] and canonical surface mappings [20]. Given an input image, we establish a 2D-3D mapping by extracting a pixel embedding and matching it to surface embedding. Then, we compute the expected surface coordinate **S[\u02c6]** [ _x, y_ ] at every pixel using Eq. (6), and ensure the differentiably rendered canonical surface coordinate lands back on the original pixel coordinate ( _x, y_ ),"
+    },
+    {
+      "index": 37,
+      "text": "**Reconstruction loss.** Finally, we make use of reconstruction losses to ensure that generated images, masks, and flows match their estimated counterparts:"
+    },
+    {
+      "index": 38,
+      "text": "where _{\u03b2_ 1 _, \u00b7 \u00b7 \u00b7 , \u03b2_ 4 _}_ are weights empirically chosen, _\u03c3t_ is the normalized confidence map for flow measurement, and pdist( _\u00b7, \u00b7_ ) is the perceptual distance [51] measured by an ImageNet-pretrained AlexNet. The reconstruction losses ensure the match between rendered and observed optical flow, texture and silhouette images."
+    },
+    {
+      "index": 39,
+      "text": "**Regularization.** To avoid degenerate shapes, we use mesh Laplacian regularization [16, 49] to enforce the recovered shape to be smooth, and as-rigid-as-possible (ARAP) regularization to enforce the deformation to be locally rigid [44]. Different from prior work that only preserves the length of edges after articulation, we encourage both the area and length of faces to be the same after articulation. The area preserving term is defined as"
+    },
+    {
+      "index": 40,
+      "text": "where _|E|_ is the number of edges and _Ni_ the indices of neighbouring edges.\n\n## **3.4 Representing Surface Properties with MLPs**"
+    },
+    {
+      "index": 41,
+      "text": "By extending surface embedding MLPs with additional dimensions, we can model other surface properties including textures and even surface-based geometric deformations. Compared to explicitly defined textures, such continuous implicit representations have the capacity to encode arbitrary amount of details and are empirically easier to optimize."
+    },
+    {
+      "index": 42,
+      "text": "**Surface appearance.** The appearance of the object is represented by a coordinate-MLP queried at points on the canonical mesh surface. To handle view-dependent appearance (such as shadow and lighting), we further concatenate the Fourier features of the ( _X, Y, Z_ ) coordinates with a frame appearance code, as the input to the texture MLP,"
+    },
+    {
+      "index": 43,
+      "text": "**Ci** _,_ **t** = _\u03c6tex_ ( _F_ ( **V**[\u00af] _i_ ) _, \u03c9t_ ) _\u2208_ R[3] _,_ (13)\n\nwhere **V**[\u00af] _i_ is the i-th canonical mesh vertex, which is passed through a Fourier encoder _F_ ( _\u00b7_ ) as used in NeRF [28], and concatenated with _\u03c9t_ , a 64-dimensional frame appearance code associated each image frame _t_ , predicted from a ResNet-18, as _\u03c9t_ = _\u03c8tex_ ( _It_ )."
+    },
+    {
+      "index": 44,
+      "text": "**Instance shape deformation fields.** To deal with videos of multiple instances of the same category, as experiments in Sec. 4.3, we model shape variations across instances by a continuous surface deformation field defined on the canonical surface. Similar to the surface texture, we represent the surface deformation field by a shape MLP,"
+    },
+    {
+      "index": 45,
+      "text": "where **Vk** is the rest shape of instance _k_ and _\u03b1k_ is a video-specific 64-dimensional shape code that is randomly initialized and optimized together with the shape MLP."
+    },
+    {
+      "index": 46,
+      "text": "## **4 Experiments**\n\nWe evaluate ViSER in three different scenarios where objects are highly articulating, making it challenging to reconstruct and estimate long-range correspondences. First, we consider long human"
+    },
+    {
+      "index": 47,
+      "text": "6\n\nTable 1: 2D Keypoint transfer accuracy on athletic videos. Methods with _[\u2217]_ use keypoint annotations to train. Best results are in bold."
+    },
+    {
+      "index": 48,
+      "text": "|Best results are in bold.|||||||||\n|---|---|---|---|---|---|---|---|---|\n|Method|break-1|break-2|dance|parkour|ballet-1|ballet-2|ballet-3|Ave.|\n|_\u2217_DensePose CSE [29]|56.0|13.2|77.2|**85.9**|45.6|49.0|64.5|55.9|\n|_\u2217_VIBE+SMPLify [18]|37.1|8.2|70.4|83.8|**55.4**|53.0|**78.8**|55.2|\n|LASR [49]|29.1|18.1|56.6|49.8|44.5|47.4|48.6|42.0|\n|ViSER (Ours)|**70.5**|**22.5**|**80.7**|62.9|52.7|**56.1**|59.9|**57.9**|"
+    },
+    {
+      "index": 49,
+      "text": "Table 2: 2D Keypoint transfer acTable 3: 2D Keypoint transfer accuracy on BADJA dataset. Best results curacy on multiple elephant videos. are in bold. Best results are in bold."
+    },
+    {
+      "index": 50,
+      "text": "|es resus are n o.\nMethod\ninner\nacross\nCSE [29]\n55.7\n52.2\nFlow-VCN [48]\n51.1\n41.2\nLASR [49]\n57.8\n-\nViSER (Ours)\n**80.4**\n**68.9**|Method\ncamel\ndog\ncows\nhorse\nbear\nAve.|\n|---|---|\n||CSE [29]\n48.8\n38.6\n63.8\n60.2\n76.6\n57.6\nFlow-VCN [48]\n47.9\n25.7\n60.7\n14.4\n63.8\n42.5|\n||N-NRSfM [38]\n67.8\n17.9\n70.0\n8.7\n60.2\n44.9\nLASR [49]\n**81.9**\n65.8\n**83.7**\n49.3\n85.1\n73.2\nViSER (Ours)\n80.1\n**73.8**\n82.9\n**76.3**\n**87.3**\n**80.1**|"
+    },
+    {
+      "index": 51,
+      "text": "videos with loose clothing and unusual poses. Next, we evaluate on videos of articulated animals for which accurate shape templates are missing. Finally, we analyze a multi-video variant of ViSER that learns a single model from multiple videos of the same category. All scenarios require jointly establishing long-range correspondences and reconstructing articulated 3D shapes at the same time."
+    },
+    {
+      "index": 52,
+      "text": "**Optimization details** We use the AdamW [27] optimizer with a batch of 4 consecutive image pairs. We reconstruct a long video sequence in an incremental manner similar to classic SfM. First, we use an initial set of around 20 consecutive frames to initialize the shape and pixel surface embeddings. The initial set is selected such that the viewpoint coverage is large enough. Then we gradually add in new frames. When a new frame is added, we first apply the 2D cycle loss _Lreproj_ to optimize its articulations, and then jointly optimize all frames with all losses. Empirically, simultaneously optimizing all the video frames produces unstable results of root body poses (or equivalently camera poses)."
+    },
+    {
+      "index": 53,
+      "text": "## **4.1 Athletic Video Reconstruction**\n\n**Dataset.** To evaluate ViSER on long-videos, we construct an athletic video dataset that is challenging due to loose clothing and unusual body poses. It consists of four videos from DAVIS [31] and three ballet videos. All videos are segmented and manually annotated with keypoints following the MSCOCO format [24]. We only use keypoint annotations for evaluation purposes."
+    },
+    {
+      "index": 54,
+      "text": "**Metrics.** Due to the lack of ground-truth 3D data for challenging athletic human videos, we use 2D keypoint transfer as a proxy metric [2, 52]. Given any two frames from a video, the goal is to transfer an annotated 2D keypoint from one frame to another. The accuracy is measured by percentage of correctly transferred keypoints over all T(T-1) pairs of frames in a T-frame video. A transferred keypoint is marked as correct when its distance to the ground-truth annotation is lower than _dth_ = 0 _._ 2\ufffd _|S|_ , where _|S|_ is the area of the ground-truth silhouette [2]. In general, a more accurate reconstruction leads to a higher transfer accuracy."
+    },
+    {
+      "index": 55,
+      "text": "**Baselines.** To compare with template-based approaches for video human reconstruction, we use VIBE with SMPLify temporal smoothing [18]. To compare with template-free methods, we use LASR [49], which also reconstructs articulated shapes using the same input setting as ours. To transfer keypoints from a reference frame to a target frame, we back-project the annotated keypoint in the reference frame to the canonical surface, and then project the intersected 3D point to the target frame. We also compare against Densepose CSE [29], which produces dense pixel-to-surface correspondences for a given category, but does not produce 3D reconstructions. To transfer keypoints for Densepose CSE, we compute pixelwise surface mappings for both frames and find the best matching w.r.t.geodesic distance on the surface. We further qualitatively compare against a state-ofthe-art human reconstruction method, PiFUHD [36] in Fig. 4, which only produces reconstruction, but not correspondence."
+    },
+    {
+      "index": 56,
+      "text": "7\n\n**----- Start of picture text -----**\n\nReference image VIBE+SMPLify PIFuHD LASR Ours Alternate viewpoint\n**----- End of picture text -----**"
+    },
+    {
+      "index": 57,
+      "text": "Figure 4: Qualitative comparisons for athletic video articulated shape reconstruction. Compared to methods that uses shape and pose priors (VIBE+SMPLify and PiFUHD), our method achieves comparable performance for common appearance and poses, and does much better on unusual poses such as break-dancers."
+    },
+    {
+      "index": 58,
+      "text": "**----- Start of picture text -----**\n\nReference image LASR Alternate view Ours multi-video Alternate view\n**----- End of picture text -----**"
+    },
+    {
+      "index": 59,
+      "text": "Figure 5: Qualitative comparisons for elephant shape reconstruction from multiple videos. Notice that ViSER is able to take advantage of multiple videos to improve the category-level shape reconstruction but also reconstruct instance-specific details (as shown in red circles)."
+    },
+    {
+      "index": 60,
+      "text": "Figure 6: Part segmentation results. Colors are determined by hard-assigning vertices to the closest rigid bones."
+    },
+    {
+      "index": 61,
+      "text": "8\n\n**----- Start of picture text -----**\n\nReference image  Ours-single video Ours-multi video\n**----- End of picture text -----**"
+    },
+    {
+      "index": 62,
+      "text": "Figure 7: Comparison between single video ViSER and multi-video ViSER in terms of reconstructing YTVOS elephants. We find using multiple videos helps reconstructing the body parts that may be occluded in a single video. While single-video ViSER reconstructs a flattened shape and misses the hidden rear leg of the elephant, multiple video ViSER reconstructs a more plausible shape and recovers both the two rear limbs."
+    },
+    {
+      "index": 63,
+      "text": "**Results.** Fig. 4 shows visual reconstruction results on sample videos and for different techniques. ViSER estimates reconstructions that are more faithful to the input than the baselines, especially when the humans have unusual poses like in the first two rows. The accurate long-range correspondence enables ViSER to reconstruct finer details than LASR that does not explicitly try to estimate longrange correspondences. We summarize quantitative comparisons in Tab. 1. There is a moderate performance gap between ViSER and template-based methods when the input fits the latter, such as parkour with tight clothing and usual pose. Note that the supervised Densepose CSE and OpenPose methods fail on breakdance videos due to the novel pose, and also do not work well on ballet dancers due to loose clothing. As a result, template-based approaches that rely on accurate pose recognition, such as VIBE [18] fails. In contrast. our method does not suffer from such poor out-of-distribution generalization. By establishing long-range correspondences, ViSER achieves higher keypoint transfer accuracy and better 3D reconstruction than LASR."
+    },
+    {
+      "index": 64,
+      "text": "## **4.2 Reconstructing Animals from a Video**\n\nWe use BADJA [2] to evaluate ViSER on animal videos including camel, cow, dog, bear and horse. Similar to the athletic human video dataset, we compare against template-free methods such as LASR and neural-dense-NRSfM (N-NRSfM) [38]. Similar to LASR and our setup, N-NRSfM learns a video-specific model for object shape, deformation and camera parameters from multi-frame optical flow estimations [8]. We further report performance comparison with dense correspondence methods such as CSE and an optical flow method, VCN. We use the CSE model trained on corresponding animal categories (except that we use the horse model for camel), and the \u201crobust\u201d model of VCN [1], which is the input to our method. As shown in Tab. 3, ViSER achieves better or similar accuracy on all five animal videos compared to LASR and N-NRSfM. While the input optical flow is not robust at estimating long-range correspondences, our method integrates local optical flow to a dense long-range correspondences via a canonical shape, and achieves much better keypoint transfer accuracy. Note that CSE performs well for categories it has been trained on, such as cow, horse and bear, but performs poorly on novel animal categories, such as camel and a novel breed of dog."
+    },
+    {
+      "index": 65,
+      "text": "## **4.3 Multi-video Shape and Correspondence**\n\nWe curate a set of seven videos of different elephants from YTVOS [47] for multi-video shape and correspondence recovery. The annotations will be released for further research. We treat multiple videos as a single long video with strong appearance changes and shape variations. In the multi-video setup, We evaluate keypoint transfer accuracy on both the same instance (with video frames) and over different instances (across video frames), as denoted by \u201cinner\u201d and \u201cacross\u201d. Quantitative results in Tab. 2 shows that ViSER is more accurate than the baseline methods in both cross-video keypoint transfer and inner-video keypoint transfer by a large margin, without using any keypoint annotations or pre-defined shape templates. Fig. 5 show visual result comparisons. While LASR recovers the visible surfaces in a video, it cannot infer the invisible parts. In contrast, our method is able to take advantage of multiple videos from the same category and produce a much better shape reconstruction. Note that LASR cannot handle multiple videos as it requires optical flow computed between every adjacent frame pairs. ViSER, on the other hand, also uses correspondences via estimated 3D shape, thereby allowing the use of multiple videos even when the optical flow is missing across videos."
+    },
+    {
+      "index": 66,
+      "text": "9\n\nTable 4: Ablation study on keypoint transfer. Best results are in bold.\n\n|Method|break-1|elephants-inner|elephants-cross|\n|---|---|---|---|\n|Full|**70.5**|**80.4**|**68.9**|\n|w/o matching loss_Lmatching_, Eq. (9)|36.2|51.3|42.6|\n|w/o reprojection loss_Lreproj_, Eq. (10)|38.3|80.1|62.5|\n|CSM regression [20]|47.1|77.4|63.3|"
+    },
+    {
+      "index": 67,
+      "text": "**Benefit of Using Multiple Videos.** To examine the benefits of using multiple videos, we further compare multi-video ViSER with single-video ViSER, as shown in Fig. 7. We find using multiple videos helps reconstructing the body parts that may be occluded in a single video."
+    },
+    {
+      "index": 68,
+      "text": "## **4.4 Part Discovery and Ablations**\n\n**Part discovery.** ViSER can discover detailed 3D part segmentation without any manual annotation, as shown in Fig. 6. After training either on a collection of videos or a long video, ViSER can segment the 3D shape into meaningful parts, such as the trunk of the elephants and the feet of the dancer."
+    },
+    {
+      "index": 69,
+      "text": "**Ablation study.** We perform an ablation study on break-1 and elephants, as shown in Tab. 4. Without the contrastive matching loss, the pixel-surface embedding converges to a trivial solution with a significant decrease of accuracy. Removing the re-projection loss leads to much lower keypoint transfer (KPT) accuracy on the breakdance-1 sequence and cross-video KPT accuracy on the elephant videos. Likely the surface reprojection loss plays an important role in learning correct articulation that follows the bottom-up dense keypoint predictions. This may effectively avoid the local minimum issue for the differentiable rendering optimization. Finally, replacing the pixel-surface embedding with direct CSM regression [20] does not reason about distribution of possible matches and results in worse performance."
+    },
+    {
+      "index": 70,
+      "text": "**Limitations.** We find ViSER to be sensitive to the random initialization of network parameters. We run optimization with different random seeds for initializing the network parameters and find some perform considerably worse than the others, due to the convergence to bad local optima. Although in practice, one could spot the convergence to a bad local optimum by visualizing the articulated shapes and re-run the optimization with a different random seed, an automatic method for selecting the best model parameters over different trials is desired. We leave how to make the optimization of ViSER robust for future research."
+    },
+    {
+      "index": 71,
+      "text": "ViSER also relies on optical flow to kick-start with a reasonable initial shape and pose for learning pixel-surface embeddings. Although recent optical flow models generalize well in many scenarios, they may fail when a video is of low resolution or contains significant motion blur. In such challenging cases, using category shape and pose priors to initialize ViSER would be a promising direction."
+    },
+    {
+      "index": 72,
+      "text": "## **5 Conclusions**\n\nWe have introduced ViSER, a method to reconstruct articulate shapes, dense trajectories, and object parts from monocular videos. ViSER establishes long-range correspondence by matching 2D pixels to a canonical 3D mesh via learned video-specific surface embeddings. Experimental results show that ViSER, without a template shape or keypoint annotations, compares favorably against prior work on challenging human and animal videos. ViSER shows that it could be fruitful to reconstruct articulate shapes for categories in the wild, and we hope to see more work in this direction."
+    },
+    {
+      "index": 73,
+      "text": "**Broader impact.** ViSER has many potential applications, _e.g_ ., in robotics, AR/VR, and film industry, but may be used for malicious purposes, _e.g_ ., producing fake videos or extracting bio-metric information without prior consent. ViSER is only suitable to offline applications as it takes about several hours to process a 80-frame video on one NVIDIA P100 GPU."
+    },
+    {
+      "index": 74,
+      "text": "## **Acknowledgments**\n\nThis work was supported by Google Cloud Platform (GCP) awards received from Google and the CMU Argo AI Center for Autonomous Vehicle Research. We thank William T. Freeman and many others from CMU and Google for valuable feedback.\n\n10"
+    },
+    {
+      "index": 75,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__claude-opus-4.7": {
+      "label": "Progressive (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "## High-Level Feedback\n\nThis paper presents ViSER, a method for reconstructing articulated 3D shapes and dense long-range correspondences from monocular videos using video-specific surface embeddings implemented as coordinate-based MLPs, trained with only mask and optical flow supervision. The work addresses a genuinely important and challenging problem\u2014template-free nonrigid reconstruction in the wild\u2014and the central idea of using learned continuous surface descriptors to enforce long-range correspondence consistency against a canonical deformable mesh is elegant and well-motivated. The introduction is clearly written and effectively positions the contribution between the \"better data\" and \"better priors\" camps of nonrigid reconstruction, and the promise of generalizing beyond humans to arbitrary articulated categories (animals, loosely clothed humans) is compelling. That said, several concerns stand out even from this opening: (1) the novelty relative to closely related concurrent work on neural deformable scene representations (e.g., Nerfies, NR-NeRF, LASR) is not yet sharply articulated, and readers will want a clearer delineation of what uniquely distinguishes the surface-embedding formulation; (2) the claim of no category-specific priors should be scrutinized, since the pipeline still presumes a single articulated foreground object, segmentation masks, and a canonical mesh topology, which are themselves non-trivial assumptions; (3) the figure captions reference key technical components (differentiable rendering, 2D-3D-2D cycle reprojection, 3D matching loss) whose formulation will need to be rigorously justified to convince readers that the self-supervised objective does not admit degenerate solutions; and (4) evaluation on \"challenging\" in-the-wild videos like DAVIS/YTVOS raises the question of ground-truth\u2014how quantitative claims of state-of-the-art are substantiated without 3D annotations will be a central point for assessment. Overall, the paper appears promising and the presentation is polished, but the technical contribution and its empirical validation will need to be examined carefully in the remainder.",
+      "comments": [
+        {
+          "id": "progressive__claude-opus-4.7_0",
+          "title": "3D match loss contrastive claim is asserted without derivation",
+          "quote": "To minimize the loss, the embeddings of surface points that do not project to ( _x, y_ ) will be pulled away from the pixel embedding of ( _x, y_ ) in a contrastive way [13].",
+          "explanation": "Reading the 3D match loss as described, the loss penalizes the distance between \u015c[x,y] (the soft-argmax of surface points weighted by matching probability) and R(V\u0304)[x,y] (the rendered 3D location at that pixel). This is a geometric loss on 3D coordinates, not directly a contrastive loss on embeddings. The claim that non-matching surface embeddings get 'pulled away' in a contrastive manner requires that the gradient through the softmax reduces \u03c3(x,y)[i] for surface points i whose 3D location is far from R(V\u0304)[x,y]. This is plausible (the soft-argmax will shift probability mass toward surface points closer to the rendered location, which in turn requires their embeddings to align better with the pixel embedding), but the contrastive interpretation is non-trivial and would benefit from at least a sentence of justification. A careful reader might be confused about why this avoids the trivial constant-embedding solution \u2014 the answer is that with constant embeddings, \u03c3(x,y)[i] becomes uniform over sampled points, so \u015c[x,y] becomes the centroid of the sampled surface points, which generally won't equal R(V\u0304)[x,y], creating a loss signal. This should be stated.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_1",
+          "title": "ARAP area-preserving term equation not shown/uninterpretable",
+          "quote": "The area preserving term is defined as\n\nwhere _|E|_ is the number of edges and _Ni_ the indices of neighbouring edges.",
+          "explanation": "The authors introduce a novel modification to ARAP regularization, claiming they preserve both area and length of faces (rather than just edge lengths as in prior work). They then say 'The area preserving term is defined as' followed by... nothing visible in the extracted text, then a 'where' clause defining |E| and N_i. Even accounting for OCR loss of the equation itself, the definitions given reference 'edges' (|E|) and 'neighbouring edges' (N_i), but the claim is about preserving the area of *faces*. An area-preserving regularizer should naturally involve face areas (triangles), not edges. This mismatch between the prose claim ('area and length of faces') and the variables defined ('edges', 'neighbouring edges') is suspicious even before considering the missing equation. A reader trying to reproduce this term cannot determine whether the area is computed per-face or via some edge-based proxy, making the method underspecified at this point.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_2",
+          "title": "Keypoint transfer threshold formula appears garbled",
+          "quote": "its distance to the ground-truth annotation is lower than _dth_ = 0 _._ 2 _|S|_ , where _|S|_ is the area of the ground-truth silhouette",
+          "explanation": "The threshold is written as '0 . 2 |S|' which looks like OCR corruption. Given |S| is described as an area, and this metric is standard (following BADJA [2]), the intended formula is almost certainly d_th = 0.2\u00b7sqrt(|S|). As written, a reader unfamiliar with the BADJA convention might interpret this as 0.2\u00b7|S| (linearly proportional to area), which would give an implausibly large threshold for typical silhouette pixel counts. This is a real ambiguity in the passage even though the intended meaning is standard \u2014 the square root symbol appears to have been dropped by OCR. Flagging as minor since the standard convention resolves it for readers familiar with BADJA.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_3",
+          "title": "Claim of 'much better 3D reconstruction' based on 2D proxy metric",
+          "quote": "By establishing long-range correspondences, ViSER achieves higher keypoint transfer accuracy and better 3D reconstruction than LASR.",
+          "explanation": "The authors explicitly noted earlier that 'Due to the lack of ground-truth 3D data for challenging athletic human videos, we use 2D keypoint transfer as a proxy metric.' The 2D keypoint transfer accuracy is measured, but the claim about '3D reconstruction' being better than LASR is only supported qualitatively via Fig. 4. The authors hedge with 'In general, a more accurate reconstruction leads to a higher transfer accuracy,' which is a reasonable but not proven inference. The conclusion overstates what the quantitative evidence shows \u2014 higher 2D keypoint transfer accuracy does not directly imply better 3D reconstruction. This is a minor framing issue typical in this literature.",
+          "comment_type": "logical",
+          "paragraph_index": 63,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_4",
+          "title": "Incremental optimization procedure underspecified",
+          "quote": "First, we use an initial set of around 20 consecutive frames to initialize the shape and pixel surface embeddings. The initial set is selected such that the viewpoint coverage is large enough. Then we gradually add in new frames. When a new frame is added, we first apply the 2D cycle loss _Lreproj_ to optimize its articulations, and then jointly optimize all frames with all losses.",
+          "explanation": "Initially this reads as a clear SfM-style incremental scheme, but several reproduction-critical details are missing: (1) how is 'viewpoint coverage is large enough' measured/selected \u2014 is this manual or automatic? (2) how many new frames are added per step? (3) for how many iterations is Lreproj applied to a new frame before joint optimization? (4) when jointly optimizing 'all frames with all losses', are all earlier frames' pose parameters re-optimized or frozen? (5) what learning rate schedule is used? Without these, a reader cannot reproduce the pipeline even with the loss definitions. Some of this may be in supplementary material, but nothing in the passage points there for these specifics. Flagging as moderate because the incremental procedure is central to the method's stability (authors note simultaneous optimization gives 'unstable results').",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_5",
+          "title": "Claim about LASR being unable to handle multiple videos may be slightly overstated",
+          "quote": "Note that LASR cannot handle multiple videos as it requires optical flow computed between every adjacent frame pairs.",
+          "explanation": "I initially wondered whether this is a fair characterization of LASR. The claim is that LASR requires optical flow between adjacent frames, so discontinuous concatenation of multiple videos is infeasible. This is reasonable given LASR's described design (two-frame optical flow), and the authors qualify the statement with a concrete technical reason. However, one could in principle run LASR per-video and combine results, so 'cannot handle multiple videos' is a bit strong \u2014 it really means 'cannot jointly optimize across multiple videos in its standard pipeline'. Minor framing issue, not a real error.",
+          "comment_type": "logical",
+          "paragraph_index": 65,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_6",
+          "title": "Ablation of reprojection loss shows almost no effect on elephants-inner but big effect elsewhere \u2014 interpretation glossed over",
+          "quote": "Removing the re-projection loss leads to much lower keypoint transfer (KPT) accuracy on the breakdance-1 sequence and cross-video KPT accuracy on the elephant videos.",
+          "explanation": "Looking at Table 4: w/o L_reproj gives 38.3 on break-1 (vs 70.5 full), 80.1 on elephants-inner (vs 80.4 full \u2014 essentially unchanged), and 62.5 on elephants-cross (vs 68.9 full). The text correctly notes break-1 and elephants-cross drop, but the fact that elephants-inner is essentially unaffected by removing the reprojection loss is not explained. A careful reader would wonder why the reprojection loss matters for cross-video but not inner-video KPT on elephants. This is not an error but an unexplained asymmetry that weakens the motivation for the loss in some settings. Minor gap in discussion.",
+          "comment_type": "logical",
+          "paragraph_index": 69,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.925,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 98950,
+      "completion_tokens": 17211
+    },
+    "progressive_original__claude-opus-4.7": {
+      "label": "Progressive Original (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "## High-Level Feedback\n\nThis paper presents ViSER, a method for reconstructing articulated 3D shapes and dense long-range correspondences from monocular videos using video-specific surface embeddings implemented as coordinate-based MLPs, trained with only mask and optical flow supervision. The work addresses a genuinely important and challenging problem\u2014template-free nonrigid reconstruction in the wild\u2014and the central idea of using learned continuous surface descriptors to enforce long-range correspondence consistency against a canonical deformable mesh is elegant and well-motivated. The introduction is clearly written and effectively positions the contribution between the \"better data\" and \"better priors\" camps of nonrigid reconstruction, and the promise of generalizing beyond humans to arbitrary articulated categories (animals, loosely clothed humans) is compelling. That said, several concerns stand out even from this opening: (1) the novelty relative to closely related concurrent work on neural deformable scene representations (e.g., Nerfies, NR-NeRF, LASR) is not yet sharply articulated, and readers will want a clearer delineation of what uniquely distinguishes the surface-embedding formulation; (2) the claim of no category-specific priors should be scrutinized, since the pipeline still presumes a single articulated foreground object, segmentation masks, and a canonical mesh topology, which are themselves non-trivial assumptions; (3) the figure captions reference key technical components (differentiable rendering, 2D-3D-2D cycle reprojection, 3D matching loss) whose formulation will need to be rigorously justified to convince readers that the self-supervised objective does not admit degenerate solutions; and (4) evaluation on \"challenging\" in-the-wild videos like DAVIS/YTVOS raises the question of ground-truth\u2014how quantitative claims of state-of-the-art are substantiated without 3D annotations will be a central point for assessment. Overall, the paper appears promising and the presentation is polished, but the technical contribution and its empirical validation will need to be examined carefully in the remainder.",
+      "comments": [
+        {
+          "id": "progressive_original__claude-opus-4.7_0",
+          "title": "Dimension of canonical vertex matrix likely transposed",
+          "quote": "canonical vertices **V[\u00af]** _\u2208_ R[3] _[\u00d7][N]_ and a fixed topology (edge connectivity) **F** _\u2208_ R[3] _[\u00d7][M]_",
+          "explanation": "The authors define V\u0304 as a 3\u00d7N matrix where N is number of vertices, and F as 3\u00d7M where M is number of faces. This is a valid convention (each column is a vertex/face), though N\u00d73 is more common. Not an error \u2014 just a convention choice. No issue to flag beyond noting this is consistent with itself. Withdrawing this as non-issue.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_1",
+          "title": "3D match loss contrastive claim is asserted without derivation",
+          "quote": "To minimize the loss, the embeddings of surface points that do not project to ( _x, y_ ) will be pulled away from the pixel embedding of ( _x, y_ ) in a contrastive way [13].",
+          "explanation": "Reading the 3D match loss as described, the loss penalizes the distance between \u015c[x,y] (the soft-argmax of surface points weighted by matching probability) and R(V\u0304)[x,y] (the rendered 3D location at that pixel). This is a geometric loss on 3D coordinates, not directly a contrastive loss on embeddings. The claim that non-matching surface embeddings get 'pulled away' in a contrastive manner requires that the gradient through the softmax reduces \u03c3(x,y)[i] for surface points i whose 3D location is far from R(V\u0304)[x,y]. This is plausible (the soft-argmax will shift probability mass toward surface points closer to the rendered location, which in turn requires their embeddings to align better with the pixel embedding), but the contrastive interpretation is non-trivial and would benefit from at least a sentence of justification. A careful reader might be confused about why this avoids the trivial constant-embedding solution \u2014 the answer is that with constant embeddings, \u03c3(x,y)[i] becomes uniform over sampled points, so \u015c[x,y] becomes the centroid of the sampled surface points, which generally won't equal R(V\u0304)[x,y], creating a loss signal. This should be stated.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_2",
+          "title": "ARAP area-preserving term equation not shown/uninterpretable",
+          "quote": "The area preserving term is defined as\n\nwhere _|E|_ is the number of edges and _Ni_ the indices of neighbouring edges.",
+          "explanation": "The authors introduce a novel modification to ARAP regularization, claiming they preserve both area and length of faces (rather than just edge lengths as in prior work). They then say 'The area preserving term is defined as' followed by... nothing visible in the extracted text, then a 'where' clause defining |E| and N_i. Even accounting for OCR loss of the equation itself, the definitions given reference 'edges' (|E|) and 'neighbouring edges' (N_i), but the claim is about preserving the area of *faces*. An area-preserving regularizer should naturally involve face areas (triangles), not edges. This mismatch between the prose claim ('area and length of faces') and the variables defined ('edges', 'neighbouring edges') is suspicious even before considering the missing equation. A reader trying to reproduce this term cannot determine whether the area is computed per-face or via some edge-based proxy, making the method underspecified at this point.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_3",
+          "title": "Several numbered equations referenced in prose are missing from the passage",
+          "quote": "Arguably, the simplest loss to learn embeddings is to minimize the difference between the rendered surface features and the observed pixel features:",
+          "explanation": "Multiple equations are introduced by a colon but the formula itself appears to be missing in the OCR extract (the feature consistency loss, the 3D matching loss, the 2D cycle loss equation, the reconstruction loss equation, the instance shape deformation equation, and the area preserving term). I will not flag this as an author error since it is clearly an OCR extraction artifact \u2014 the original PDF presumably contains these equations. However, I note this because subsequent prose (e.g., the 3D matching loss description invoking contrastive behavior, and the ARAP area term) relies on these equations for verification, and some of my other concerns could not be fully resolved without them.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_4",
+          "title": "Keypoint transfer threshold formula appears garbled",
+          "quote": "its distance to the ground-truth annotation is lower than _dth_ = 0 _._ 2 _|S|_ , where _|S|_ is the area of the ground-truth silhouette",
+          "explanation": "The threshold is written as '0 . 2 |S|' which looks like OCR corruption. Given |S| is described as an area, and this metric is standard (following BADJA [2]), the intended formula is almost certainly d_th = 0.2\u00b7sqrt(|S|). As written, a reader unfamiliar with the BADJA convention might interpret this as 0.2\u00b7|S| (linearly proportional to area), which would give an implausibly large threshold for typical silhouette pixel counts. This is a real ambiguity in the passage even though the intended meaning is standard \u2014 the square root symbol appears to have been dropped by OCR. Flagging as minor since the standard convention resolves it for readers familiar with BADJA.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_5",
+          "title": "Claim of 'much better 3D reconstruction' based on 2D proxy metric",
+          "quote": "By establishing long-range correspondences, ViSER achieves higher keypoint transfer accuracy and better 3D reconstruction than LASR.",
+          "explanation": "The authors explicitly noted earlier that 'Due to the lack of ground-truth 3D data for challenging athletic human videos, we use 2D keypoint transfer as a proxy metric.' The 2D keypoint transfer accuracy is measured, but the claim about '3D reconstruction' being better than LASR is only supported qualitatively via Fig. 4. The authors hedge with 'In general, a more accurate reconstruction leads to a higher transfer accuracy,' which is a reasonable but not proven inference. The conclusion overstates what the quantitative evidence shows \u2014 higher 2D keypoint transfer accuracy does not directly imply better 3D reconstruction. This is a minor framing issue typical in this literature.",
+          "comment_type": "logical",
+          "paragraph_index": 63,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_6",
+          "title": "Incremental optimization procedure underspecified",
+          "quote": "First, we use an initial set of around 20 consecutive frames to initialize the shape and pixel surface embeddings. The initial set is selected such that the viewpoint coverage is large enough. Then we gradually add in new frames. When a new frame is added, we first apply the 2D cycle loss _Lreproj_ to optimize its articulations, and then jointly optimize all frames with all losses.",
+          "explanation": "Initially this reads as a clear SfM-style incremental scheme, but several reproduction-critical details are missing: (1) how is 'viewpoint coverage is large enough' measured/selected \u2014 is this manual or automatic? (2) how many new frames are added per step? (3) for how many iterations is Lreproj applied to a new frame before joint optimization? (4) when jointly optimizing 'all frames with all losses', are all earlier frames' pose parameters re-optimized or frozen? (5) what learning rate schedule is used? Without these, a reader cannot reproduce the pipeline even with the loss definitions. Some of this may be in supplementary material, but nothing in the passage points there for these specifics. Flagging as moderate because the incremental procedure is central to the method's stability (authors note simultaneous optimization gives 'unstable results').",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_7",
+          "title": "Ablation table reference to match loss uses different equation number than main text",
+          "quote": "w/o matching loss_Lmatching_, Eq. (9)",
+          "explanation": "The passage refers to the matching loss as Eq. (9) and the reprojection loss as Eq. (10). In the main text earlier, the 3D match loss was introduced after showing the naive feature consistency loss, and the cycle loss equation follows. The summary indicates Eq. (10) for 2D cycle loss is consistent, but I cannot fully verify Eq. (9) vs (8) for the match loss from the given excerpt. This is a minor cross-reference concern rather than a substantive error, and likely correct given the numbering in the full paper.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_8",
+          "title": "Claim about LASR being unable to handle multiple videos may be slightly overstated",
+          "quote": "Note that LASR cannot handle multiple videos as it requires optical flow computed between every adjacent frame pairs.",
+          "explanation": "I initially wondered whether this is a fair characterization of LASR. The claim is that LASR requires optical flow between adjacent frames, so discontinuous concatenation of multiple videos is infeasible. This is reasonable given LASR's described design (two-frame optical flow), and the authors qualify the statement with a concrete technical reason. However, one could in principle run LASR per-video and combine results, so 'cannot handle multiple videos' is a bit strong \u2014 it really means 'cannot jointly optimize across multiple videos in its standard pipeline'. Minor framing issue, not a real error.",
+          "comment_type": "logical",
+          "paragraph_index": 65,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_9",
+          "title": "Ablation of reprojection loss shows almost no effect on elephants-inner but big effect elsewhere \u2014 interpretation glossed over",
+          "quote": "Removing the re-projection loss leads to much lower keypoint transfer (KPT) accuracy on the breakdance-1 sequence and cross-video KPT accuracy on the elephant videos.",
+          "explanation": "Looking at Table 4: w/o L_reproj gives 38.3 on break-1 (vs 70.5 full), 80.1 on elephants-inner (vs 80.4 full \u2014 essentially unchanged), and 62.5 on elephants-cross (vs 68.9 full). The text correctly notes break-1 and elephants-cross drop, but the fact that elephants-inner is essentially unaffected by removing the reprojection loss is not explained. A careful reader would wonder why the reprojection loss matters for cross-video but not inner-video KPT on elephants. This is not an error but an unexplained asymmetry that weakens the motivation for the loss in some settings. Minor gap in discussion.",
+          "comment_type": "logical",
+          "paragraph_index": 69,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.925,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 98950,
+      "completion_tokens": 17211
+    },
+    "progressive__gpt-5.5": {
+      "label": "Progressive (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper presents a compelling and timely approach to monocular articulated 3D reconstruction, with a clear high-level motivation: replacing category-specific priors and multi-view capture with video-specific dense surface embeddings learned from masks and optical flow. The introduction is generally well structured, situating the work effectively relative to NRSfM, optical flow, DensePose-style supervision, and category-prior methods, and the core idea of using a canonical deformable mesh with learned surface/pixel embeddings is interesting and potentially significant. However, the beginning also raises several important concerns that should be addressed carefully in the full paper: the claim of avoiding strong priors may be somewhat overstated, since the method still appears to depend on reliable masks, optical flow, mesh topology/initialization, differentiable rendering assumptions, and likely regularization or deformation priors; the severe ambiguities of monocular nonrigid reconstruction are acknowledged but not yet convincingly resolved from the description; and it is unclear how robust the method is under occlusion, textureless regions, topology changes, fast motion, or poor segmentation/flow. The clarity is mostly good, but some writing in the related work is rough, with grammatical errors and slightly imprecise claims, and the method overview would benefit from more explicit explanation of what is optimized per video, what is learned across videos if anything, and how the canonical surface is initialized. The most significant issues to scrutinize are whether the recovered 3D shape is genuinely accurate rather than merely reprojection-consistent, whether the learned embeddings avoid degenerate correspondences, and whether the experimental evaluation includes sufficiently strong baselines, ablations, quantitative 3D metrics, and failure cases to support the broad claims of category-agnostic reconstruction in the wild.",
+      "comments": [
+        {
+          "id": "progressive__gpt-5.5_0",
+          "title": "Input and supervision claims need to distinguish RGB video from external masks/annotations",
+          "quote": "We show that none of these are required if one can reliably estimate long-range correspondences in a video, making use of only 2D object masks and two-frame optical flow as inputs. / ViSER requires neither a template shape nor annotations to work on categories in the wild.",
+          "explanation": "These claims are easy to overread. The method formulation later includes RGB pixel color, segmentation masks, and optical flow as observations; the pixel embedding network takes the image as input, and reconstruction losses include texture/perceptual image terms. Thus the method is not literally using only masks and flow: it also uses monocular RGB video. Separately, saying the method requires no annotations is ambiguous because segmentation masks are required inputs and may themselves be annotations in the ordinary dataset sense. The underlying point is valid if the authors mean that no template shape, category-specific 3D prior, keypoint labels, or image-to-surface correspondence annotations are required beyond RGB video, masks, and flow. The paper should state that distinction explicitly.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_1",
+          "title": "Ambiguous reuse of S for masks, shape, and surface correspondences",
+          "quote": "Given a set of video observations including RGB pixel color, segmentation masks, and optical flow estimates _{It, St, ut}t_ = _{_ 0 _,...,T }_ , our goal is to recover a set of shape and motion parameters _{_ **S** _,_ **D** _t}_ that produce reconstructions _{I_[\u02c7] _t, S_[\u02c7] _t,_ \u02c7 _ut}t_ = _{_ 0 _,...,T }_ that match the video observations.",
+          "explanation": "The notation overload is recoverable from context but unnecessarily confusing. S_t denotes segmentation masks, bold S denotes the recovered 3D shape, rendered masks are written as S-hat_t, and later matched surface locations are also written using S-hat[x,y]. A reader has to infer from subscript, boldface, and context whether S denotes a silhouette, a mesh, or a surface coordinate map. This is localized and fixable by using separate notation such as M_t for masks and a distinct calligraphic symbol for the mesh/surface.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_2",
+          "title": "Random surface sampling distribution is underspecified",
+          "quote": "Given the pixel and surface embeddings, we construct a per-frame cost volume _D_ ( **FI** _,_ **FS** ) of size _H \u00d7W \u00d7Ns_ over pixels and surface points (we randomly sample _Ns_ = 200 surface points at each step) by considering their cosine feature distances,",
+          "explanation": "The method avoids evaluating embeddings over all continuous surface points by sampling 200 surface points, but the paper does not specify the sampling distribution. For a triangular mesh, uniformly sampling vertices, uniformly sampling faces, or sampling area-weighted points on the surface can produce different correspondence priors, especially with nonuniform tessellation. Because the sampled points define both the softmax correspondence distribution and the expected 3D coordinate, this affects reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_3",
+          "title": "Learned softmax temperature needs an unstated positivity constraint",
+          "quote": "where _\u03c4_ is a temperature scaling parameter that is jointly optimized with the feature embeddings.",
+          "explanation": "A learned temperature is reasonable, but a softmax temperature must remain positive. If optimized as an unconstrained scalar, \u03c4 = 0 is invalid and \u03c4 < 0 reverses the ordering of matches. The likely implementation is to optimize log \u03c4, use a softplus parameterization, or clamp \u03c4, but this is not stated. Since \u03c4 affects correspondence sharpness and training stability, the constraint should be specified for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_4",
+          "title": "Expectation-based correspondences are described more strongly than they justify",
+          "quote": "To output a single surface point for pixel ( _x, y_ ), we can compute a \u201csoft\u201d argmax [17, 48] by taking the expectation of the softmax distribution over the 3D locations of the points samples, / our pixel-surface embedding captures multimodal uncertainties over keypoints; for example, _\u03c3_ ( _x,y_ )[ _i_ ] can capture the fact that a particular pixel matches well to both the left and right ankle, / we introduce a 3D matching loss that ensures pixel embeddings only match to surface embeddings rendered at the pixel location:",
+          "explanation": "These passages share the same underlying issue: the distribution over surface samples may be multimodal, but the method then converts it to an expected 3D coordinate. That expectation is not guaranteed to lie on the mesh surface and, under a bimodal distribution, can land between plausible modes, reproducing the same mean-regression artifact the text contrasts against. Similarly, a loss on the expected coordinate can encourage mass near the rendered surface point, but it does not strictly ensure that the pixel embedding matches only that point; off-target modes can average to the correct coordinate. The paper should either qualify these claims or explain whether the full distribution is used, whether it is driven to unimodality, or whether an additional distribution-level loss is applied.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_5",
+          "title": "Ambiguity in the 2D cycle loss about whether the matched point or rendered coordinate is reprojected",
+          "quote": "Then, we compute the expected surface coordinate **S[\u02c7]** [ _x, y_ ] at every pixel using Eq. (6), and ensure the differentiably rendered canonical surface coordinate lands back on the original pixel coordinate ( _x, y_ ),",
+          "explanation": "The intended 2D-3D-2D cycle appears to be: match pixel (x,y) to a canonical surface point, transform that matched point using the current articulation/camera, and project it back to the image. However, the phrase \u201cthe differentiably rendered canonical surface coordinate lands back\u201d can also be read as referring to the top-down rendered coordinate already associated with the current pixel. Those are different operations with different gradients. The prose should make explicit which surface coordinate is reprojected.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_6",
+          "title": "Area/length regularization description mixes face and edge terminology",
+          "quote": "Different from prior work that only preserves the length of edges after articulation, we encourage both the area and length of faces to be the same after articulation. The area preserving term is defined as\n\nwhere _|E|_ is the number of edges and _Ni_ the indices of neighbouring edges.",
+          "explanation": "The regularization idea is plausible, but the description mixes quantities. Faces have areas, while lengths normally belong to edges; \u201carea and length of faces\u201d likely means \u201cface areas and edge lengths.\u201d More importantly, the explanation of the area-preserving term refers to the number of edges and neighboring edges rather than face indices, face areas, or the number of faces. As written, the area regularizer is not reproducible from the description.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_7",
+          "title": "Incremental optimization schedule is not reproducible from the description",
+          "quote": "First, we use an initial set of around 20 consecutive frames to initialize the shape and pixel surface embeddings. The initial set is selected such that the viewpoint coverage is large enough. Then we gradually add in new frames. When a new frame is added, we first apply the 2D cycle loss _Lreproj_ to optimize its articulations, and then jointly optimize all frames with all losses.",
+          "explanation": "The bootstrapping strategy is plausible, but important details are omitted: how the initial window is selected before reliable poses are known, what criterion defines sufficient viewpoint coverage, how many frames are added at a time, which variables are frozen when optimizing a new frame\u2019s articulations, how many iterations are run in each phase, and whether old frames are subsampled during joint optimization. Since the paper attributes stability and reconstruction quality to this incremental procedure, these choices are important for reproduction.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_8",
+          "title": "Keypoint-transfer evaluation protocols leave back-projection and cross-instance details ambiguous",
+          "quote": "To transfer keypoints from a reference frame to a target frame, we back-project the annotated keypoint in the reference frame to the canonical surface, and then project the intersected 3D point to the target frame. / In the multi-video setup, We evaluate keypoint transfer accuracy on both the same instance (with video frames) and over different instances (across video frames), as denoted by \u201cinner\u201d and \u201cacross\u201d.",
+          "explanation": "The evaluation idea is standard, but the precise protocol is underspecified. For same-instance transfer, a 2D annotation may fall outside the predicted silhouette, on a self-overlapping region, or on a ray intersecting multiple triangles; the paper does not say whether the z-buffered triangle is used, whether points are snapped or discarded, how occlusion is handled, or how failed intersections are counted. For cross-instance transfer, there is no physical point identity, only semantic keypoint identity, so results depend on which keypoints are annotated, how source-target video pairs are sampled or weighted, and how visibility is treated. Different reasonable choices could yield different PCK-style scores.",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_9",
+          "title": "Some claims about baseline failures are stronger than the reported numbers support",
+          "quote": "Note that the supervised Densepose CSE and OpenPose methods fail on breakdance videos due to the novel pose, and also do not work well on ballet dancers due to loose clothing. As a result, template-based approaches that rely on accurate pose recognition, such as VIBE [18] fails.",
+          "explanation": "The qualitative point is reasonable, but the wording overstates the evidence. OpenPose is not reported as a table baseline in the cited comparison. VIBE+SMPLify is not uniformly failing: it is best on some ballet sequences and close to ViSER on another, while DensePose CSE is best or competitive on several sequences. The statement should distinguish the specific breakdance cases where supervised/template methods struggle from ballet cases where the quantitative results are mixed.",
+          "comment_type": "logical",
+          "paragraph_index": 63,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_10",
+          "title": "Multi-video training and the LASR comparison overstate the implications of optical-flow boundaries",
+          "quote": "We treat multiple videos as a single long video with strong appearance changes and shape variations. / Note that LASR cannot handle multiple videos as it requires optical flow computed between every adjacent frame pairs.",
+          "explanation": "If unrelated videos were literally concatenated, the boundary between videos would create artificial adjacent frame pairs with meaningless optical flow and no temporal continuity. The intended implementation presumably skips flow/reconstruction terms at video boundaries and treats the data as disconnected sequences sharing some parameters, which is materially different from a single long video and should be stated. For the same reason, the claim that LASR cannot handle multiple videos merely because it requires adjacent-frame flow is too categorical: flow boundary pairs could be omitted or handled with separate per-video objectives. The more substantive limitation is likely that LASR lacks ViSER\u2019s mechanism for enforcing shared long-range/cross-video canonical correspondences.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_11",
+          "title": "Part discovery claim is mostly qualitative and lacks the segmentation procedure here",
+          "quote": "ViSER can discover detailed 3D part segmentation without any manual annotation, as shown in Fig. 6.",
+          "explanation": "The claim is plausible because the model learns bones and skinning weights, but the paper should specify how a part segmentation is extracted from the learned representation. Choices such as the number of bones, whether vertices are assigned by maximum skinning weight, whether clustering is used, and whether small components are merged can materially affect the visualization. Without an extraction rule or objective validation, the statement is mainly qualitative.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.1959,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 72032,
+      "completion_tokens": 33431
+    },
+    "progressive_original__gpt-5.5": {
+      "label": "Progressive Original (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper presents a compelling and timely approach to monocular articulated 3D reconstruction, with a clear high-level motivation: replacing category-specific priors and multi-view capture with video-specific dense surface embeddings learned from masks and optical flow. The introduction is generally well structured, situating the work effectively relative to NRSfM, optical flow, DensePose-style supervision, and category-prior methods, and the core idea of using a canonical deformable mesh with learned surface/pixel embeddings is interesting and potentially significant. However, the beginning also raises several important concerns that should be addressed carefully in the full paper: the claim of avoiding strong priors may be somewhat overstated, since the method still appears to depend on reliable masks, optical flow, mesh topology/initialization, differentiable rendering assumptions, and likely regularization or deformation priors; the severe ambiguities of monocular nonrigid reconstruction are acknowledged but not yet convincingly resolved from the description; and it is unclear how robust the method is under occlusion, textureless regions, topology changes, fast motion, or poor segmentation/flow. The clarity is mostly good, but some writing in the related work is rough, with grammatical errors and slightly imprecise claims, and the method overview would benefit from more explicit explanation of what is optimized per video, what is learned across videos if anything, and how the canonical surface is initialized. The most significant issues to scrutinize are whether the recovered 3D shape is genuinely accurate rather than merely reprojection-consistent, whether the learned embeddings avoid degenerate correspondences, and whether the experimental evaluation includes sufficiently strong baselines, ablations, quantitative 3D metrics, and failure cases to support the broad claims of category-agnostic reconstruction in the wild.",
+      "comments": [
+        {
+          "id": "progressive_original__gpt-5.5_0",
+          "title": "Claim of using only masks and optical flow conflicts with later use of RGB frames",
+          "quote": "We show that none of these are required if one can reliably estimate long-range correspondences in a video, making use of only 2D object masks and two-frame optical flow as inputs.",
+          "explanation": "I understand the authors' intended contrast: ViSER does not require multiview capture, category-specific 3D priors, or 2D keypoint supervision, and it relies heavily on masks and two-frame optical flow as self-supervised constraints. However, checking the method section shows that the actual observations are defined as including RGB pixel color, segmentation masks, and optical flow, and the pixel embedding network takes the image It as input. The reconstruction loss also includes texture/perceptual image terms. Thus, the method is not using only masks and flow in the literal sense; it also uses the RGB video frames. A reader could reasonably interpret this sentence as saying that RGB appearance is not an input signal, which would be inconsistent with the embedding and appearance modeling described later. This would be fixed by clarifying that masks and optical flow are the only external annotations/supervision beyond the monocular RGB video.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_1",
+          "title": "Ambiguous reuse of \\(S\\) for masks, shape, and later surface correspondences",
+          "quote": "Given a set of video observations including RGB pixel color, segmentation masks, and optical flow estimates _{It, St, ut}t_ = _{_ 0 _,...,T }_ , our goal is to recover a set of shape and motion parameters _{_ **S** _,_ **D** _t}_ that produce reconstructions _{I_[\u02c6] _t, S_[\u02c6] _t,_ \u02c6 _ut}t_ = _{_ 0 _,...,T }_ that match the video observations.",
+          "explanation": "I initially read \\(S_t\\) as the segmentation mask, which is consistent with the prose, and then \\(\\mathbf S\\) as the recovered 3D shape, which is also defined immediately afterward as a triangular mesh. The distinction is partly recoverable from the subscript \\(t\\), boldface, and context. However, the same symbol family is also used in the paper for rendered masks \\(\\hat S_t\\) and for matched surface locations \\(\\hat{\\mathbf S}[x,y]\\). Even assuming the intended typography is clearer than the OCR, this creates a real notation overload: a reader has to infer from context whether \\(S\\) denotes a silhouette/mask, a mesh/shape, or a surface point mapping. This is localized and fixable by using separate notation such as \\(M_t\\) for masks/silhouettes and \\(\\mathcal S\\) or \\(\\mathcal M\\) for the mesh.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_2",
+          "title": "Face topology is typed as a real-valued matrix",
+          "quote": "We represent an object\u2019s shape as a triangular mesh **S** = _{_ **V[\u00af]** _,_ **F** _}_ with canonical vertices **V[\u00af]** _\u2208_ R[3] _[\u00d7][N]_ and a fixed topology (edge connectivity) **F** _\u2208_ R[3] _[\u00d7][M]_ .",
+          "explanation": "The authors clearly intend \\(\\mathbf F\\) to encode triangular faces/topology, i.e., indices into the vertex array, and they even call it fixed topology/edge connectivity. Under the standard mesh convention, though, face connectivity is an integer-valued array, e.g. \\(\\mathbf F\\in\\{1,\\ldots,N\\}^{3\\times M}\\), not an element of \\(\\mathbb R^{3\\times M}\\). This is probably an imprecise type annotation rather than a substantive algorithmic error, since the topology is fixed and not optimized. Still, as written it conflicts with the stated interpretation of \\(\\mathbf F\\) as connectivity rather than a real-valued geometric variable.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_3",
+          "title": "Soft-argmax expectation is described as a surface point, but need not lie on the surface",
+          "quote": "To output a single surface point for pixel ( _x, y_ ), we can compute a \u201csoft\u201d argmax [17, 48] by taking the expectation of the softmax distribution over the 3D locations of the points samples,",
+          "explanation": "The intended operation is standard: compute a probability distribution over sampled canonical surface points and regress an expected 3D coordinate. That is a reasonable differentiable surrogate for argmax. The issue is with the phrase \u201csingle surface point.\u201d The expectation of 3D coordinates sampled on a mesh is generally not constrained to lie on the mesh surface; with multimodal probabilities it may fall in empty space, for example between left and right limbs. This matters because the following prose treats the result as a pixel-to-surface mapping and later losses compare it to rendered canonical surface locations. The surrounding text partially mitigates this by saying the distribution itself can capture multimodal uncertainty, but the moment estimate used as \\(\\hat{\\mathbf S}[x,y]\\) does not preserve that guarantee. A more precise description would call it an expected canonical 3D coordinate or explain how the method projects/regularizes it back to the surface, if it does.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_4",
+          "title": "Random surface sampling distribution is underspecified",
+          "quote": "Given the pixel and surface embeddings, we construct a per-frame cost volume _D_ ( **FI** _,_ **FS** ) of size _H \u00d7W \u00d7Ns_ over pixels and surface points (we randomly sample _Ns_ = 200 surface points at each step) by considering their cosine feature distances,",
+          "explanation": "The high-level idea is clear: avoid evaluating the embedding over all possible continuous surface points by using a sampled set. What remains underspecified is how these \\(N_s=200\\) points are sampled. For a triangular mesh, sampling uniformly over vertices, uniformly over faces, or area-weighted uniformly over the surface gives different priors over the cost volume and can bias the softmax expectation, especially on meshes with nonuniform tessellation. This is not just an implementation detail because the sampled points define both the correspondence distribution and the regressed 3D location. The concern may be resolved in supplementary material, but in the main method description a reader cannot reproduce the matching procedure unambiguously.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_5",
+          "title": "Learned softmax temperature needs a positivity constraint that is not stated",
+          "quote": "where _\u03c4_ is a temperature scaling parameter that is jointly optimized with the feature embeddings.",
+          "explanation": "It is reasonable to learn the temperature of the correspondence softmax, and this is common in contrastive or matching objectives. However, the temperature conventionally must remain positive; if optimized as an unconstrained scalar, \\(\\tau\\le 0\\) would either be invalid at zero or reverse the ordering of matches when negative. The likely intended implementation is to optimize \\(\\log\\tau\\), use a softplus parameterization, or clamp \\(\\tau\\), but this is not stated. This is a small but real reproducibility gap because the learned temperature affects the sharpness and stability of the soft-argmax correspondence.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_6",
+          "title": "\u201cNo annotations\u201d claim is ambiguous given the required segmentation masks",
+          "quote": "ViSER requires neither a template shape nor annotations to work on categories in the wild.",
+          "explanation": "In the immediate DensePose/CSE comparison, the authors likely mean that ViSER does not require annotated image-to-surface correspondences or category-level training annotations, which is an important and fair distinction. However, the method formulation just below explicitly takes segmentation masks as video observations, and the abstract also says the method uses 2D object masks and optical flow as inputs. If those masks are manually provided, they are annotations in the ordinary dataset sense. The claim would be clearer and less easily overread if it said \u201cneither a template shape nor correspondence/keypoint annotations,\u201d or otherwise clarified that object masks are still assumed as inputs.",
+          "comment_type": "logical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_7",
+          "title": "Multimodal correspondence claim is weakened by the subsequent soft-argmax expectation",
+          "quote": "In contrast, our pixel-surface embedding captures multimodal uncertainties over keypoints; for example, _\u03c3_ ( _x,y_ )[ _i_ ] can capture the fact that a particular pixel matches well to both the left and right ankle, as visualized in Fig. 3, while a regressor may \u201cregress\u201d to the mean of the two surface coordinates.",
+          "explanation": "I see the intended distinction: the matching distribution \\(\\sigma(x,y)\\) over sampled surface points can indeed be multimodal, whereas a direct coordinate regressor usually returns a single point. However, earlier in this section the method converts this distribution into \\(\\hat{\\mathbf S}[x,y]\\) by a soft-argmax/expectation over 3D coordinates, and the subsequent 3D match and 2D cycle losses are described as using this expected surface coordinate. Under a bimodal distribution over left and right ankles, that expectation can itself land near the mean of the two ankles, possibly off the mesh surface, which is exactly the failure mode attributed to regressors. The distribution representation is a real advantage if the full heatmap is used or if training drives it to become unimodal, but the text does not make that qualification clear. As written, a reader could overinterpret the method as avoiding mean-regression artifacts, when its main supervised signal appears to be applied after an expectation operation.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_8",
+          "title": "The 3D match loss is described as stricter than an expectation-based loss can guarantee",
+          "quote": "To address this, we introduce a 3D matching loss that ensures pixel embeddings only match to surface embeddings rendered at the pixel location:",
+          "explanation": "The goal is sensible: comparing the bottom-up matched canonical point to the top-down rendered canonical point should discourage the trivial constant-feature solution. I checked this against the surrounding definitions: \\(\\hat{\\mathbf S}[x,y]\\) is computed by sampling surface points, applying a softmax over feature distances, and taking the expected 3D coordinate. If the 3D match loss is the stated comparison between \\(R(\\bar{\\mathbf V})\\) and \\(\\hat{\\mathbf S}[x,y]\\), then it encourages probability mass near the rendered surface point, but it does not mathematically ensure that the pixel embedding matches only that rendered point. Multiple off-target modes can in principle average to the correct coordinate, and when the expectation is already correct the loss need not penalize all remaining probability mass. The authors\u2019 intuition that nonprojecting points are pushed away is often true through the softmax gradient when the expectation is wrong, but the wording overstates the constraint supplied by the loss. A distribution-level target, e.g. a contrastive/cross-entropy loss against the rendered surface location, would more directly justify the \u201conly match\u201d claim.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_9",
+          "title": "Ambiguity in the 2D cycle loss about whether the matched point or rendered coordinate is reprojected",
+          "quote": "Then, we compute the expected surface coordinate **S[\u02c6]** [ _x, y_ ] at every pixel using Eq. (6), and ensure the differentiably rendered canonical surface coordinate lands back on the original pixel coordinate ( _x, y_ ),",
+          "explanation": "The intended 2D-3D-2D cycle is clear from the overview: pixel \\((x,y)\\) is matched to a canonical surface point \\(\\hat{\\mathbf S}[x,y]\\), then that point should be transformed by the current articulation/camera and projected back to the image. However, the phrase \u201cthe differentiably rendered canonical surface coordinate lands back\u201d is easy to read as referring to \\(R(\\bar{\\mathbf V})[x,y]\\), i.e. the top-down rendered coordinate already associated with the current pixel, rather than the bottom-up matched point \\(\\hat{\\mathbf S}[x,y]\\). Those are different operations with different gradients. The context likely resolves this if the missing displayed equation explicitly applies \\(\\pi\\) to the matched surface point after skinning, but the prose by itself is underspecified and could mislead someone trying to reproduce the cycle loss.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_10",
+          "title": "Area/length regularization description mixes face and edge terminology",
+          "quote": "Different from prior work that only preserves the length of edges after articulation, we encourage both the area and length of faces to be the same after articulation. The area preserving term is defined as\n\nwhere _|E|_ is the number of edges and _Ni_ the indices of neighbouring edges.",
+          "explanation": "The regularization idea is reasonable: standard ARAP-style mesh regularizers often preserve local edge lengths, and adding a face-area preservation term could reduce degenerate flattening or stretching. What remains confusing is the terminology and indexing. Faces have areas, while lengths are normally associated with edges; the phrase \u201carea and length of faces\u201d likely means \u201cface areas and edge lengths.\u201d More importantly, the explanatory clause for the area-preserving term defines \\(|E|\\) as the number of edges and \\(N_i\\) as neighboring edges, rather than defining face indices, face areas, or \\(|F|\\). It is possible that the missing displayed equation, lost in extraction, contains both an edge-length term and an area term and the prose is merely compressed. But as written, the area regularizer is not reproducible from the description and appears to mix the quantities used for edge-based and face-based regularization.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_11",
+          "title": "Incremental optimization schedule is not reproducible from the description",
+          "quote": "First, we use an initial set of around 20 consecutive frames to initialize the shape and pixel surface embeddings. The initial set is selected such that the viewpoint coverage is large enough. Then we gradually add in new frames. When a new frame is added, we first apply the 2D cycle loss _Lreproj_ to optimize its articulations, and then jointly optimize all frames with all losses.",
+          "explanation": "I understand the intent: the authors are using an SfM-like bootstrapping strategy to avoid unstable joint optimization over a long monocular sequence, and the qualitative description is plausible. However, after checking the surrounding method description, several choices that materially affect the reconstruction are left implicit. It is not clear how the initial 20-frame window is selected before reliable camera/root poses are known, what criterion defines \"viewpoint coverage\" as large enough, how many frames are added at a time, whether shape/embeddings/root pose are frozen while optimizing the new frame's articulations with \\(L_{\\mathrm{reproj}}\\), how many iterations are run in each phase, or whether older frames are subsampled when \"all frames\" are jointly optimized. Because the paper later attributes stability and reconstruction quality to this incremental procedure, these details are important for reproducing the results rather than merely implementation minutiae.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_12",
+          "title": "Keypoint-transfer evaluation leaves important back-projection details ambiguous",
+          "quote": "To transfer keypoints from a reference frame to a target frame, we back-project the annotated keypoint in the reference frame to the canonical surface, and then project the intersected 3D point to the target frame.",
+          "explanation": "The described evaluation protocol is standard in spirit: use the recovered surface correspondence to move a 2D keypoint from one frame to another. The concern is not with the overall metric, but with the precise operation at the source frame. For a rendered deforming mesh, a 2D annotation may fall slightly off the predicted silhouette, on a self-overlapping region, or on a pixel where multiple triangles project along the ray. The text does not specify whether the closest z-buffered rendered triangle is used, whether annotations outside the predicted mask are discarded or snapped, how occluded keypoints are handled, or how failures to intersect the mesh are counted. These choices can noticeably affect PCK-style transfer scores, especially for methods with different silhouette quality. The context explains DensePose CSE matching separately, but the mesh-based back-projection rule remains underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_13",
+          "title": "Some claims about baseline failures are stronger than the reported numbers support",
+          "quote": "Note that the supervised Densepose CSE and OpenPose methods fail on breakdance videos due to the novel pose, and also do not work well on ballet dancers due to loose clothing. As a result, template-based approaches that rely on accurate pose recognition, such as VIBE [18] fails.",
+          "explanation": "The authors' broader point is reasonable: methods with human templates or supervised correspondence models can suffer on unusual poses and clothing, and Table 1 does show weak performance for VIBE+SMPLify on break-2 and for DensePose CSE on some sequences. However, the wording overstates the evidence. OpenPose is not listed as a reported baseline in the table, so its failure is not directly substantiated here. Also, VIBE+SMPLify is not uniformly failing: it is best on ballet-1 and ballet-3 and close to ViSER on ballet-2, while DensePose CSE is best on parkour and competitive on several sequences. A more careful statement would distinguish the specific breakdance cases where supervised/template methods struggle from the ballet cases where the quantitative results are mixed.",
+          "comment_type": "logical",
+          "paragraph_index": 63,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_14",
+          "title": "Multi-video training is described as a single long video despite optical-flow boundary issues",
+          "quote": "We treat multiple videos as a single long video with strong appearance changes and shape variations.",
+          "explanation": "I can see the authors' intent: the multi-video setting reuses the same ViSER machinery, with shared canonical correspondences and additional instance variation, rather than introducing a completely separate category-level pipeline. Earlier context also introduces instance shape deformation fields, which plausibly explains how different elephants can share a canonical surface while allowing per-instance shape changes. What remains problematic is the phrase \"single long video.\" In the stated optimization procedure, ViSER uses batches of consecutive image pairs and reconstruction losses that include two-frame optical flow. If multiple unrelated videos are literally concatenated, the last frame of one video and the first frame of the next would become an artificial adjacent pair with no meaningful optical flow or temporal continuity. The later sentence says optical flow is missing across videos, so the intended implementation presumably skips flow/reconstruction terms at video boundaries and treats the training set as several disconnected sequences sharing some parameters. That is a materially different optimization graph from a single long video, and the boundary handling is important for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_15",
+          "title": "The stated reason LASR cannot handle multiple videos seems overstated",
+          "quote": "Note that LASR cannot handle multiple videos as it requires optical flow computed between every adjacent frame pairs.",
+          "explanation": "The comparison is understandable in context: LASR relies heavily on adjacent-frame optical flow and does not have ViSER's learned long-range surface embedding mechanism, so it is not naturally designed for cross-video correspondence or shared category-level reconstruction. However, the stated reason is too strong. Requiring optical flow between adjacent frame pairs prevents naively concatenating unrelated videos into one sequence, but it does not by itself imply that LASR could not be run on multiple videos with boundary pairs omitted, separate per-video flow terms, or a straightforward multi-sequence objective. The real limitation appears to be that LASR lacks a mechanism for enforcing correspondences or shared invisible geometry across disconnected videos, not simply that adjacent optical flow is unavailable across video boundaries. As written, the baseline limitation may sound more categorical than what the method description justifies.",
+          "comment_type": "logical",
+          "paragraph_index": 65,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_16",
+          "title": "Cross-instance keypoint-transfer protocol is underdefined",
+          "quote": "In the multi-video setup, We evaluate keypoint transfer accuracy on both the same instance (with video frames) and over different instances (across video frames), as denoted by \u201cinner\u201d and \u201cacross\u201d.",
+          "explanation": "The high-level idea is clear: \"inner\" appears to mean keypoint transfer within the same elephant video, while \"across\" means transfer between different elephant videos/instances. This is a useful evaluation because cross-instance transfer tests whether the learned canonical surface has semantic consistency. Still, for a quantitative table, the protocol is underspecified in the passage and surrounding context. Across different animals there is no physical point identity, only semantic keypoint identity, so the reported number depends on details such as which keypoints were annotated, how source-target video pairs were sampled or weighted, how visibility/occlusion was handled, and whether all ordered cross-video frame pairs were used as in the earlier single-video transfer metric. The passage says annotations will be released, but release of data does not define the metric. A careful reader could reproduce several different \"across\" evaluations that yield different numbers.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_17",
+          "title": "Part discovery claim is mostly qualitative and lacks the segmentation procedure here",
+          "quote": "ViSER can discover detailed 3D part segmentation without any manual annotation, as shown in Fig. 6.",
+          "explanation": "This claim is plausible given the model: ViSER learns articulated bones and skinning weights, and a part visualization can naturally be obtained by assigning vertices to dominant bones or related learned motion components. That is a reasonable unsupervised part-discovery story. However, in this passage the actual conversion from the learned representation to a segmentation is not specified, and the evidence described is purely visual. Important choices such as the number of bones, whether parts are obtained by argmax skinning weight or another clustering rule, and whether small/unstable components are merged affect the resulting segmentation. Thus the qualitative statement is not necessarily wrong, but \"can discover detailed 3D part segmentation\" is a mild overclaim unless the paper elsewhere gives the exact extraction rule and some objective validation.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.1959,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 72032,
+      "completion_tokens": 33431
+    }
+  }
+}

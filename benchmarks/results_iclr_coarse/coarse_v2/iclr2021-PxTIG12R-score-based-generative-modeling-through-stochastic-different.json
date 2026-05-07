@@ -1,0 +1,1365 @@
+{
+  "slug": "iclr2021-PxTIG12R-score-based-generative-modeling-through-stochastic-different",
+  "title": "Score-Based Generative Modeling through Stochastic Differential Equations",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## SCORE-BASED GENERATIVE MODELING THROUGH STOCHASTIC DIFFERENTIAL EQUATIONS"
+    },
+    {
+      "index": 1,
+      "text": "**Yang Song**[\u02da] **Jascha Sohl-Dickstein** Stanford University Google Brain yangsong@cs.stanford.edu jaschasd@google.com"
+    },
+    {
+      "index": 2,
+      "text": "**Diederik P. Kingma** Google Brain durk@google.com\n\n**Abhishek Kumar Stefano Ermon Ben Poole** Google Brain Stanford University Google Brain abhishk@google.com ermon@cs.stanford.edu pooleb@google.com"
+    },
+    {
+      "index": 3,
+      "text": "## ABSTRACT\n\nCreating noise from data is easy; creating data from noise is generative modeling. We present a stochastic differential equation (SDE) that smoothly transforms a complex data distribution to a known prior distribution by slowly injecting noise, and a corresponding reverse-time SDE that transforms the prior distribution back into the data distribution by slowly removing the noise. Crucially, the reverse-time SDE depends only on the time-dependent gradient field (a.k.a., score) of the perturbed data distribution. By leveraging advances in score-based generative modeling, we can accurately estimate these scores with neural networks, and use numerical SDE solvers to generate samples. We show that this framework encapsulates previous approaches in score-based generative modeling and diffusion probabilistic modeling, allowing for new sampling procedures and new modeling capabilities. In particular, we introduce a predictor-corrector framework to correct errors in the evolution of the discretized reverse-time SDE. We also derive an equivalent neural ODE that samples from the same distribution as the SDE, but additionally enables exact likelihood computation, and improved sampling efficiency. In addition, we provide a new way to solve inverse problems with score-based models, as demonstrated with experiments on class-conditional generation, image inpainting, and colorization. Combined with multiple architectural improvements, we achieve record-breaking performance for unconditional image generation on CIFAR-10 with an Inception score of 9.89 and FID of 2.20, a competitive likelihood of 2.99 bits/dim, and demonstrate high fidelity generation of 1024 \u02c6 1024 images for the first time from a score-based generative model."
+    },
+    {
+      "index": 4,
+      "text": "## 1 INTRODUCTION\n\nTwo successful classes of probabilistic generative models involve sequentially corrupting training data with slowly increasing noise, and then learning to reverse this corruption in order to form a generative model of the data. _Score matching with Langevin dynamics_ (SMLD) (Song & Ermon, 2019) estimates the _score_ ( _i.e_ ., the gradient of the log probability density with respect to data) at each noise scale, and then uses Langevin dynamics to sample from a sequence of decreasing noise scales during generation. _Denoising diffusion probabilistic modeling_ (DDPM) (Sohl-Dickstein et al., 2015; Ho et al., 2020) trains a sequence of probabilistic models to reverse each step of the noise corruption, using knowledge of the functional form of the reverse distributions to make training tractable. For continuous state spaces, the DDPM training objective implicitly computes scores at each noise scale. We therefore refer to these two model classes together as _score-based generative models_ ."
+    },
+    {
+      "index": 5,
+      "text": "Score-based generative models, and related techniques (Bordes et al., 2017; Goyal et al., 2017; Du & Mordatch, 2019), have proven effective at generation of images (Song & Ermon, 2019; 2020; Ho et al., 2020), audio (Chen et al., 2020; Kong et al., 2020), graphs (Niu et al., 2020), and shapes (Cai"
+    },
+    {
+      "index": 6,
+      "text": "> \u02daWork partially done during an internship at Google Brain.\n\n1\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 7,
+      "text": "**----- Start of picture text -----**\n\nForward SDE (data  \u2192  noise)\nscore function\nReverse SDE (noise  \u2192  data)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "Figure 1: **Solving a reversetime SDE yields a score-based generative model.** Transforming data to a simple noise distribution can be accomplished with a continuous-time SDE. This SDE can be reversed if we know the score of the distribution at each intermediate time step, _\u2207_ **x** log _pt_ p **x** q."
+    },
+    {
+      "index": 9,
+      "text": "et al., 2020). To enable new sampling methods and further extend the capabilities of score-based generative models, we propose a unified framework that generalizes previous approaches through the lens of stochastic differential equations (SDEs)."
+    },
+    {
+      "index": 10,
+      "text": "Specifically, instead of perturbing data with a finite number of noise distributions, we consider a continuum of distributions that evolve over time according to a diffusion process. This process progressively diffuses a data point into random noise, and is given by a prescribed SDE that does not depend on the data and has no trainable parameters. By reversing this process, we can smoothly mold random noise into data for sample generation. Crucially, this reverse process satisfies a reverse-time SDE (Anderson, 1982), which can be derived from the forward SDE given the score of the marginal probability densities as a function of time. We can therefore approximate the reverse-time SDE by training a time-dependent neural network to estimate the scores, and then produce samples using numerical SDE solvers. Our key idea is summarized in Fig. 1."
+    },
+    {
+      "index": 11,
+      "text": "Our proposed framework has several theoretical and practical contributions:\n\n**Flexible sampling and likelihood computation:** We can employ any general-purpose SDE solver to integrate the reverse-time SDE for sampling. In addition, we propose two special methods not viable for general SDEs: (i) Predictor-Corrector (PC) samplers that combine numerical SDE solvers with score-based MCMC approaches, such as Langevin MCMC (Parisi, 1981) and HMC (Neal et al., 2011); and (ii) deterministic samplers based on the probability flow ordinary differential equation (ODE). The former _unifies and improves_ over existing sampling methods for score-based models. The latter allows for _fast adaptive sampling_ via black-box ODE solvers, _flexible data manipulation_ via latent codes, a _uniquely identifiable encoding_ , and notably, _exact likelihood computation_ ."
+    },
+    {
+      "index": 12,
+      "text": "**Controllable generation:** We can modulate the generation process by conditioning on information not available during training, because the conditional reverse-time SDE can be efficiently estimated from _unconditional_ scores. This enables applications such as class-conditional generation, image inpainting, colorization and other inverse problems, all achievable using a single unconditional score-based model without re-training."
+    },
+    {
+      "index": 13,
+      "text": "**Unified framework:** Our framework provides a unified way to explore and tune various SDEs for improving score-based generative models. The methods of SMLD and DDPM can be amalgamated into our framework as discretizations of two separate SDEs. Although DDPM (Ho et al., 2020) was recently reported to achieve higher sample quality than SMLD (Song & Ermon, 2019; 2020), we show that with better architectures and new sampling algorithms allowed by our framework, the latter can catch up\u2014it achieves new state-of-the-art Inception score (9.89) and FID score (2.20) on CIFAR-10, as well as high-fidelity generation of 1024 \u02c6 1024 images for the first time from a score-based model. In addition, we propose a new SDE under our framework that achieves a likelihood value of 2.99 bits/dim on uniformly dequantized CIFAR-10 images, setting a new record on this task."
+    },
+    {
+      "index": 14,
+      "text": "## 2 BACKGROUND\n\n2.1 DENOISING SCORE MATCHING WITH LANGEVIN DYNAMICS (SMLD)\n\n\u02dc \u02dc \u02dc \u02dc Let _p\u03c3_ p **x** | **x** q :\u201c _N_ p **x** ; **x** _, \u03c3_[2] **I** q be a perturbation kernel, and _p\u03c3_ p **x** q :\u201c \u015f _p_ datap **x** q _p\u03c3_ p **x** | **x** qd **x** , where _p_ datap **x** q denotes the data distribution. Consider a sequence of positive noise scales _\u03c3_ min \u201c _\u03c3_ 1 \u0103 _\u03c3_ 2 \u0103 \u00a8 \u00a8 \u00a8 \u0103 _\u03c3N_ \u201c _\u03c3_ max. Typically, _\u03c3_ min is small enough such that _p\u03c3_ minp **x** q \u00ab _p_ datap **x** q, and _\u03c3_ max is"
+    },
+    {
+      "index": 15,
+      "text": "2\n\nPublished as a conference paper at ICLR 2021\n\nlarge enough such that _p\u03c3_ maxp **x** q \u00ab _N_ p **x** ; **0** _, \u03c3_ max[2] **[I]**[q][.][Song & Ermon][ (][2019][) propose to train a Noise] Conditional Score Network (NCSN), denoted by **s** _**\u03b8**_ p **x** _, \u03c3_ q, with a weighted sum of denoising score matching (Vincent, 2011) objectives:"
+    },
+    {
+      "index": 16,
+      "text": "Given sufficient data and model capacity, the optimal score-based model **s** _**\u03b8**_ \u02dap **x** _, \u03c3_ q matches _\u2207_ **x** log _p\u03c3_ p **x** q almost everywhere for _\u03c3_ P t _\u03c3i_ u _[N] i_ \u201c1[.][For sampling,][ Song & Ermon][ (][2019][) run] _[ M]_[steps] of Langevin MCMC to get a sample for each _p\u03c3i_ p **x** q sequentially:"
+    },
+    {
+      "index": 17,
+      "text": "where _\u03f5i_ \u0105 0 is the step size, and **z** _[m] i_[is standard normal.][The above is repeated for] _[ i]_[\u201c] _[N, N]_[\u00b4] 1 _,_ \u00a8 \u00a8 \u00a8 _,_ 1 in turn with **x**[0] _N_[\u201e] _[ N]_[p] **[x]**[ |] **[ 0]** _[, \u03c3]_ max[2] **[I]**[q][ and] **[ x]**[0] _i_[\u201c] **[ x]** _[M] i_ `1[when] _[ i]_[ \u0103] _[ N]_[.][As] _[ M]_[\u00d1 8][ and] _[ \u03f5][i]_[\u00d1][ 0] for all _i_ , **x** _[M]_ 1[becomes an exact sample from] _[ p][\u03c3]_ min[p] **[x]**[q \u00ab] _[ p]_[data][p] **[x]**[q][ under some regularity conditions.]"
+    },
+    {
+      "index": 18,
+      "text": "## 2.2 DENOISING DIFFUSION PROBABILISTIC MODELS (DDPM)\n\nSohl-Dickstein et al. (2015); Ho et al. (2020) consider a sequence of positive noise scales 0 \u0103 _\u03b2_ 1 _, \u03b2_ 2 _,_ \u00a8 \u00a8 \u00a8 _, \u03b2N_ \u0103 1. For each training data point **x** 0 \u201e _p_ datap **x** q, a discrete Markov chain t **x** 0 _,_ **x** 1 _,_ \u00a8 \u00a8 \u00a8 _,_ **x** _N_ u is constructed such that _p_ p **x** _i_ | **x** _i_ \u00b41q \u201c _N_ p **x** _i_ ;[?] 1 \u00b4 _\u03b2i_ **x** _i_ \u00b41 _, \u03b2i_ **I** q, and therefore _p\u03b1i_ p **x** _i_ | **x** 0q \u201c _N_ p **x** _i_ ;[?] _\u03b1i_ **x** 0 _,_ p1 \u00b4 _\u03b1i_ q **I** q, where _\u03b1i_ :\u201c[\u015b] _[i] j_ \u201c1[p][1][ \u00b4] _[ \u03b2][j]_[q][.][Similar to SMLD, we can] \u02dc \u02dc denote the perturbed data distribution as _p\u03b1i_ p **x** q :\u201c \u015f _p_ datap **x** q _p\u03b1i_ p **x** | **x** qd **x** . The noise scales are prescribed such that **x** _N_ is approximately distributed according to _N_ p **0** _,_ **I** q. A variational Markov chain 1 in the reverse direction is parameterized with _p_ _**\u03b8**_ p **x** _i_ \u00b41| **x** _i_ q \u201c _N_ p **x** _i_ \u00b41; ~~?~~ 1\u00b4 _\u03b2i_[p] **[x]** _[i]_[`] _[\u03b2][i]_ **[s]** _**[\u03b8]**_[p] **[x]** _[i][, i]_[qq] _[, \u03b2][i]_ **[I]**[q][,] and trained with a re-weighted variant of the evidence lower bound (ELBO):"
+    },
+    {
+      "index": 19,
+      "text": "After solving Eq. (3) to get the optimal model **s** _**\u03b8**_ \u02dap **x** _, i_ q, samples can be generated by starting from **x** _N_ \u201e _N_ p **0** _,_ **I** q and following the estimated reverse Markov chain as below"
+    },
+    {
+      "index": 20,
+      "text": "We call this method _ancestral sampling_ , since it amounts to performing ancestral sampling from the graphical model[\u015b] _[N] i_ \u201c1 _[p]_ _**[\u03b8]**_[p] **[x]** _[i]_[\u00b4][1][|] **[ x]** _[i]_[q][.][The objective Eq. (][3][) described here is] _[ L]_[simple][ in][ Ho et al.] (sum of denoising score matching objectives, which implies that the optimal model,2020), written in a form to expose more similarity to Eq. (1). Like Eq. (1), Eq. (3) is also a weighted **s** _**\u03b8**_ \u02dap **x** \u02dc _, i_ q, matches the score of the perturbed data distribution, _\u2207_ **x** log _p\u03b1i_ p **x** q. Notably, the weights of the _i_ -th summand in Eq. (1) and Eq. (3), namely _\u03c3i_[2][and][ p][1][\u00b4] _[\u03b1][i]_[q][, are related to corresponding perturbation kernels in the] same functional form: _\u03c3i_[2][9][1][{][E][r] _[\u2225\u2207]_ **[x]**[ log] _[ p][\u03c3] i_[p] **[x]**[\u02dc][ |] **[ x]**[q] _[\u2225]_[2] 2[s][ and][ p][1][ \u00b4] _[ \u03b1][i]_[q9][1][{][E][r] _[\u2225\u2207]_ **[x]**[ log] _[ p][\u03b1][i]_[p] **[x]**[\u02dc][ |] **[ x]**[q] _[\u2225]_[2] 2[s][.]"
+    },
+    {
+      "index": 21,
+      "text": "## 3 SCORE-BASED GENERATIVE MODELING WITH SDES\n\nPerturbing data with multiple noise scales is key to the success of previous methods. We propose to generalize this idea further to an infinite number of noise scales, such that perturbed data distributions evolve according to an SDE as the noise intensifies. An overview of our framework is given in Fig. 2."
+    },
+    {
+      "index": 22,
+      "text": "## 3.1 PERTURBING DATA WITH SDES\n\nOur goal is to construct a diffusion process t **x** p _t_ qu _[T] t_ \u201c0[indexed by a continuous time variable] _[ t]_[ P r][0] _[, T]_[s][,] such that **x** p0q \u201e _p_ 0, for which we have a dataset of i.i.d. samples, and **x** p _T_ q \u201e _pT_ , for which we have a tractable form to generate samples efficiently. In other words, _p_ 0 is the data distribution and _pT_ is the prior distribution. This diffusion process can be modeled as the solution to an It\u02c6o SDE:"
+    },
+    {
+      "index": 23,
+      "text": "(5)\n\n3\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nData Forward SDE Prior Reverse SDE Data\n**----- End of picture text -----**"
+    },
+    {
+      "index": 24,
+      "text": "Figure 2: **Overview of score-based generative modeling through SDEs** . We can map data to a noise distribution (the prior) with an SDE (Section 3.1), and reverse this SDE for generative modeling (Section 3.2). We can also reverse the associated probability flow ODE (Section 4.3), which yields a deterministic process that samples from the same distribution as the SDE. Both the reverse-time SDE and probability flow ODE can be obtained by estimating the score _\u2207_ **x** log _pt_ p **x** q (Section 3.3)."
+    },
+    {
+      "index": 25,
+      "text": "where **w** is the standard Wiener process (a.k.a., Brownian motion), **f** p\u00a8 _, t_ q : R _[d]_ \u00d1 R _[d]_ is a vectorvalued function called the _drift_ coefficient of **x** p _t_ q, and _g_ p\u00a8q : R \u00d1 R is a scalar function known as the _diffusion_ coefficient of **x** p _t_ q. For ease of presentation we assume the diffusion coefficient is a scalar (instead of a _d_ \u02c6 _d_ matrix) and does not depend on **x** , but our theory can be generalized to hold in those cases (see Appendix A). The SDE has a unique strong solution as long as the coefficients are globally Lipschitz in both state and time (\u00d8ksendal, 2003). We hereafter denote by _pt_ p **x** q the probability density of **x** p _t_ q, and use _pst_ p **x** p _t_ q | **x** p _s_ qq to denote the transition kernel from **x** p _s_ q to **x** p _t_ q, where 0 \u010f _s_ \u0103 _t_ \u010f _T_ ."
+    },
+    {
+      "index": 26,
+      "text": "Typically, _pT_ is an unstructured prior distribution that contains no information of _p_ 0, such as a Gaussian distribution with fixed mean and variance. There are various ways of designing the SDE in Eq. (5) such that it diffuses the data distribution into a fixed prior distribution. We provide several examples later in Section 3.4 that are derived from continuous generalizations of SMLD and DDPM."
+    },
+    {
+      "index": 27,
+      "text": "## 3.2 GENERATING SAMPLES BY REVERSING THE SDE\n\nBy starting from samples of **x** p _T_ q \u201e _pT_ and reversing the process, we can obtain samples **x** p0q \u201e _p_ 0. A remarkable result from Anderson (1982) states that the reverse of a diffusion process is also a diffusion process, running backwards in time and given by the reverse-time SDE:"
+    },
+    {
+      "index": 28,
+      "text": "where **w** \u00af is a standard Wiener process when time flows backwards from _T_ to 0, and d _t_ is an infinitesimal negative timestep. Once the score of each marginal distribution, _\u2207_ **x** log _pt_ p **x** q, is known for all _t_ , we can derive the reverse diffusion process from Eq. (6) and simulate it to sample from _p_ 0."
+    },
+    {
+      "index": 29,
+      "text": "## 3.3 ESTIMATING SCORES FOR THE SDE\n\nThe score of a distribution can be estimated by training a score-based model on samples with score matching (Hyvarinen\u00a8 , 2005; Song et al., 2019a). To estimate _\u2207_ **x** log _pt_ p **x** q, we can train a time-dependent score-based model **s** _**\u03b8**_ p **x** _, t_ q via a continuous generalization to Eqs. (1) and (3):"
+    },
+    {
+      "index": 30,
+      "text": "Here _\u03bb_ : r0 _, T_ s \u00d1 R\u01050 is a positive weighting function, _t_ is uniformly sampled over r0 _, T_ s, **x** p0q \u201e _p_ 0p **x** q and **x** p _t_ q \u201e _p_ 0 _t_ p **x** p _t_ q | **x** p0qq. With sufficient data and model capacity, score matching ensures that the optimal solution to Eq. (7), denoted by **s** _**\u03b8**_ \u02dap **x** _, t_ q, equals _\u2207_ **x** log _pt_ p **x** q for almost all 2 **x** and _t_ . As in SMLD and DDPM, we can typically choose _\u03bb_ 91{E\u201c \ufffd\ufffd _\u2207_ **x** p _t_ q log _p_ 0 _t_ p **x** p _t_ q | **x** p0qq\ufffd\ufffd2 \u2030. Note that Eq. (7) uses denoising score matching, but other score matching objectives, such as sliced"
+    },
+    {
+      "index": 31,
+      "text": "4\n\nPublished as a conference paper at ICLR 2021\n\nscore matching (Song et al., 2019a) and finite-difference score matching (Pang et al., 2020) are also applicable here."
+    },
+    {
+      "index": 32,
+      "text": "We typically need to know the transition kernel _p_ 0 _t_ p **x** p _t_ q | **x** p0qq to efficiently solve Eq. (7). When **f** p\u00a8 _, t_ q is affine, the transition kernel is always a Gaussian distribution, where the mean and variance are often known in closed-forms and can be obtained with standard techniques (see Section 5.5 in Sarkk\u00a8 a\u00a8 & Solin (2019)). For more general SDEs, we may solve Kolmogorov\u2019s forward equation (\u00d8ksendal, 2003) to obtain _p_ 0 _t_ p **x** p _t_ q | **x** p0qq. Alternatively, we can simulate the SDE to sample from _p_ 0 _t_ p **x** p _t_ q | **x** p0qq and replace denoising score matching in Eq. (7) with sliced score matching for model training, which bypasses the computation of _\u2207_ **x** p _t_ q log _p_ 0 _t_ p **x** p _t_ q | **x** p0qq (see Appendix A)."
+    },
+    {
+      "index": 33,
+      "text": "## 3.4 EXAMPLES: VE, VP SDES AND BEYOND\n\nThe noise perturbations used in SMLD and DDPM can be regarded as discretizations of two different SDEs. Below we provide a brief discussion and relegate more details to Appendix B."
+    },
+    {
+      "index": 34,
+      "text": "When using a total of _N_ noise scales, each perturbation kernel _p\u03c3i_ p **x** | **x** 0q of SMLD corresponds to the distribution of **x** _i_ in the following Markov chain:"
+    },
+    {
+      "index": 35,
+      "text": "where **z** _i_ \u00b41 \u201e _N_ p **0** _,_ **I** q, and we have introduced _\u03c3_ 0 \u201c 0 to simplify the notation. In the limit of _N_ \u00d1 8, t _\u03c3i_ u _[N] i_ \u201c1[becomes a function] _[ \u03c3]_[p] _[t]_[q][,] **[ z]** _[i]_[ becomes] **[ z]**[p] _[t]_[q][, and the Markov chain][ t] **[x]** _[i]_[u] _[N] i_ \u201c1[becomes] a continuous stochastic process t **x** p _t_ qu[1] _t_ \u201c0[, where we have used a continuous time variable] _[ t]_[ P r][0] _[,]_[ 1][s] for indexing, rather than an integer _i_ . The process t **x** p _t_ qu[1] _t_ \u201c0[is given by the following SDE]"
+    },
+    {
+      "index": 36,
+      "text": "Likewise for the perturbation kernels t _p\u03b1i_ p **x** | **x** 0qu _[N] i_ \u201c1[of DDPM, the discrete Markov chain is]"
+    },
+    {
+      "index": 37,
+      "text": "As _N_ \u00d1 8, Eq. (10) converges to the following SDE,\n\nTherefore, the noise perturbations used in SMLD and DDPM correspond to discretizations of SDEs Eqs. (9) and (11). Interestingly, the SDE of Eq. (9) always gives a process with exploding variance when _t_ \u00d1 8, whilst the SDE of Eq. (11) yields a process with a fixed variance of one when the initial distribution has unit variance (proof in Appendix B). Due to this difference, we hereafter refer to Eq. (9) as the Variance Exploding (VE) SDE, and Eq. (11) the Variance Preserving (VP) SDE."
+    },
+    {
+      "index": 38,
+      "text": "Inspired by the VP SDE, we propose a new type of SDEs which perform particularly well on likelihoods (see Section 4.3), given by"
+    },
+    {
+      "index": 39,
+      "text": "When using the same _\u03b2_ p _t_ q and starting from the same initial distribution, the variance of the stochastic process induced by Eq. (12) is always bounded by the VP SDE at every intermediate time step (proof in Appendix B). For this reason, we name Eq. (12) the sub-VP SDE."
+    },
+    {
+      "index": 40,
+      "text": "Since VE, VP and sub-VP SDEs all have affine drift coefficients, their perturbation kernels _p_ 0 _t_ p **x** p _t_ q | **x** p0qq are all Gaussian and can be computed in closed-forms, as discussed in Section 3.3. This makes training with Eq. (7) particularly efficient."
+    },
+    {
+      "index": 41,
+      "text": "## 4 SOLVING THE REVERSE SDE\n\nAfter training a time-dependent score-based model **s** _**\u03b8**_ , we can use it to construct the reverse-time SDE and then simulate it with numerical approaches to generate samples from _p_ 0."
+    },
+    {
+      "index": 42,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\nTable 1: Comparing different reverse-time SDE solvers on CIFAR-10. Shaded regions are obtained with the same computation (number of score function evaluations). Mean and standard deviation are reported over five sampling runs. \u201cP1000\u201d or \u201cP2000\u201d: predictor-only samplers using 1000 or 2000 steps. \u201cC2000\u201d: corrector-only samplers using 2000 steps. \u201cPC1000\u201d: Predictor-Corrector (PC) samplers using 1000 predictor and 1000 corrector steps."
+    },
+    {
+      "index": 43,
+      "text": "||Variance Exploding SDE (SMLD)|Variance Exploding SDE (SMLD)|Variance Exploding SDE (SMLD)|Variance Exploding SDE (SMLD)|Variance Preserving SDE (DDPM)|Variance Preserving SDE (DDPM)|Variance Preserving SDE (DDPM)|Variance Preserving SDE (DDPM)|\n|---|---|---|---|---|---|---|---|---|\n|Predictor\nFID\u00d3\nSampler|P1000|P2000|C2000|PC1000|P1000|P2000|C2000|PC1000|\n|ancestral sampling\nreverse diffusion\nprobabilityfow|4.98\u02d8.06|4.88\u02d8.06||**3.62**\u02d8**.03**|3.24\u02d8.02|3.24\u02d8.02||**3.21**\u02d8**.02**|\n||4.79\u02d8.07|4.74\u02d8.08|20.43\u02d8.07|**3.60**\u02d8**.02**|3.21\u02d8.02|3.19\u02d8.02|19.06\u02d8.06|**3.18**\u02d8**.01**|\n||15.41\u02d8.15|10.54\u02d8.08||**3.51**\u02d8**.04**|3.59\u02d8.04|3.23\u02d8.03||**3.06**\u02d8**.03**|"
+    },
+    {
+      "index": 44,
+      "text": "## 4.1 GENERAL-PURPOSE NUMERICAL SDE SOLVERS\n\nNumerical solvers provide approximate trajectories from SDEs. Many general-purpose numerical methods exist for solving SDEs, such as Euler-Maruyama and stochastic Runge-Kutta methods (Kloeden & Platen, 2013), which correspond to different discretizations of the stochastic dynamics. We can apply any of them to the reverse-time SDE for sample generation."
+    },
+    {
+      "index": 45,
+      "text": "Ancestral sampling, the sampling method of DDPM (Eq. (4)), actually corresponds to one special discretization of the reverse-time VP SDE (Eq. (11)) (see Appendix E). Deriving the ancestral sampling rules for new SDEs, however, can be non-trivial. To remedy this, we propose _reverse diffusion samplers_ (details in Appendix E), which discretize the reverse-time SDE in the same way as the forward one, and thus can be readily derived given the forward discretization. As shown in Table 1, reverse diffusion samplers perform slightly better than ancestral sampling for both SMLD and DDPM models on CIFAR-10 (DDPM-type ancestral sampling is also applicable to SMLD models, see Appendix F.)"
+    },
+    {
+      "index": 46,
+      "text": "## 4.2 PREDICTOR-CORRECTOR SAMPLERS\n\nUnlike generic SDEs, we have additional information that can be used to improve solutions. Since we have a score-based model **s** _**\u03b8**_ \u02dap **x** _, t_ q \u00ab _\u2207_ **x** log _pt_ p **x** q, we can employ score-based MCMC approaches, such as Langevin MCMC (Parisi, 1981; Grenander & Miller, 1994) or HMC (Neal et al., 2011) to sample from _pt_ directly, and correct the solution of a numerical SDE solver."
+    },
+    {
+      "index": 47,
+      "text": "Specifically, at each time step, the numerical SDE solver first gives an estimate of the sample at the next time step, playing the role of a \u201cpredictor\u201d. Then, the score-based MCMC approach corrects the marginal distribution of the estimated sample, playing the role of a \u201ccorrector\u201d. The idea is analogous to Predictor-Corrector methods, a family of numerical continuation techniques for solving systems of equations (Allgower & Georg, 2012), and we similarly name our hybrid sampling algorithms _Predictor-Corrector_ (PC) samplers. Please find pseudo-code and a complete description in Appendix G. PC samplers generalize the original sampling methods of SMLD and DDPM: the former uses an identity function as the predictor and annealed Langevin dynamics as the corrector, while the latter uses ancestral sampling as the predictor and identity as the corrector."
+    },
+    {
+      "index": 48,
+      "text": "We test PC samplers on SMLD and DDPM models (see Algorithms 2 and 3 in Appendix G) trained with original discrete objectives given by Eqs. (1) and (3). This exhibits the compatibility of PC samplers to score-based models trained with a fixed number of noise scales. We summarize the performance of different samplers in Table 1, where probability flow is a predictor to be discussed in Section 4.3. Detailed experimental settings and additional results are given in Appendix G. We observe that our reverse diffusion sampler always outperform ancestral sampling, and corrector-only methods (C2000) perform worse than other competitors (P2000, PC1000) with the same computation (In fact, we need way more corrector steps per noise scale, and thus more computation, to match the performance of other samplers.) For all predictors, adding one corrector step for each predictor step (PC1000) doubles computation but always improves sample quality (against P1000). Moreover, it is typically better than doubling the number of predictor steps without adding a corrector (P2000), where we have to interpolate between noise scales in an ad hoc manner (detailed in Appendix G) for SMLD/DDPM models. In Fig. 9 (Appendix G), we additionally provide qualitative comparison for"
+    },
+    {
+      "index": 49,
+      "text": "6\n\nPublished as a conference paper at ICLR 2021\n\nTable 2: NLLs and FIDs (ODE) on CIFAR-10.\n\nTable 3: CIFAR-10 sample quality."
+    },
+    {
+      "index": 50,
+      "text": "|Model\nNLL Test\u00d3 FID\u00d3\nRealNVP (Dinh et al.,2016)\n3.49\n-\niResNet (Behrmann et al.,2019)\n3.45\n-\nGlow (Kingma & Dhariwal,2018)\n3.35\n-\nMintNet (Song et al.,2019b)\n3.32\n-\nResidual Flow (Chen et al.,2019)\n3.28\n46.37\nFFJORD (Grathwohl et al.,2018)\n3.40\n-\nFlow++ (Ho et al.,2019)\n3.29\n-\nDDPM (_L_) (Ho et al.,2020)\n\u010f3.70*\n13.51\nDDPM (_L_simple) (Ho et al.,2020)\n\u010f3.75*\n3.17\nDDPM\n3.28\n3.37\nDDPM cont. (VP)\n3.21\n3.69\nDDPM cont. (sub-VP)\n3.05\n3.56\nDDPM++ cont. (VP)\n3.16\n3.93\nDDPM++ cont. (sub-VP)\n3.02\n3.16\nDDPM++ cont. (deep, VP)\n3.13\n3.08\nDDPM++ cont. (deep, sub-VP)\n**2.99**\n**2.92**|Model\nFID\u00d3\nIS\u00d2|\n|---|---|\n||**Conditional**|\n||BigGAN (Brock et al.,2018)\n14.73\n9.22\nStyleGAN2-ADA (Karras et al.,2020a)\n**2.42**\n**10.14**|\n||**Unconditional**|\n||StyleGAN2-ADA (Karras et al.,2020a)\n2.92\n9.83\nNCSN (Song & Ermon,2019)\n25.32 8.87\u02d8.12\nNCSNv2 (Song & Ermon,2020)\n10.87 8.40\u02d8.07\nDDPM (Ho et al.,2020)\n3.17\n9.46\u02d8.11|\n||DDPM++\n2.78\n9.64\nDDPM++ cont. (VP)\n2.55\n9.58\nDDPM++ cont. (sub-VP)\n2.61\n9.56\nDDPM++ cont. (deep, VP)\n2.41\n9.68\nDDPM++ cont. (deep, sub-VP)\n2.41\n9.57\nNCSN++\n2.45\n9.73\nNCSN++ cont. (VE)\n2.38\n9.83\nNCSN++ cont. (deep, VE)\n**2.20**\n**9.89**|"
+    },
+    {
+      "index": 51,
+      "text": "models trained with the continuous objective Eq. (7) on 256 \u02c6 256 LSUN images and the VE SDE, where PC samplers clearly surpass predictor-only samplers under comparable computation, when using a proper number of corrector steps."
+    },
+    {
+      "index": 52,
+      "text": "## 4.3 PROBABILITY FLOW AND CONNECTION TO NEURAL ODES\n\nScore-based models enable another numerical method for solving the reverse-time SDE. For all diffusion processes, there exists a corresponding _deterministic process_ whose trajectories share the same marginal probability densities t _pt_ p **x** qu _[T] t_ \u201c0[as the SDE. This deterministic process satisfies an] ODE (more details in Appendix D.1):"
+    },
+    {
+      "index": 53,
+      "text": "which can be determined from the SDE once scores are known. We name the ODE in Eq. (13) the _probability flow ODE_ . When the score function is approximated by the time-dependent score-based model, which is typically a neural network, this is an example of a neural ODE (Chen et al., 2018)."
+    },
+    {
+      "index": 54,
+      "text": "**Exact likelihood computation** Leveraging the connection to neural ODEs, we can compute the density defined by Eq. (13) via the instantaneous change of variables formula (Chen et al., 2018). This allows us to compute the _exact likelihood on any input data_ (details in Appendix D.2). As an example, we report negative log-likelihoods (NLLs) measured in bits/dim on the CIFAR-10 dataset in Table 2. We compute log-likelihoods on uniformly dequantized data, and only compare to models evaluated in the same way (omitting models evaluated with variational dequantization (Ho et al., 2019) or discrete data), except for DDPM ( _L_ / _L_ simple) whose ELBO values (annotated with *) are reported on discrete data. Main results: (i) For the same DDPM model in Ho et al. (2020), we obtain better bits/dim than ELBO, since our likelihoods are exact; (ii) Using the same architecture, we trained another DDPM model with the continuous objective in Eq. (7) ( _i.e_ ., DDPM cont.), which further improves the likelihood; (iii) With sub-VP SDEs, we always get higher likelihoods compared to VP SDEs; (iv) With improved architecture ( _i.e_ ., DDPM++ cont., details in Section 4.4) and the sub-VP SDE, we can set a new record bits/dim of 2.99 on uniformly dequantized CIFAR-10 even _without maximum likelihood training_ ."
+    },
+    {
+      "index": 55,
+      "text": "**Manipulating latent representations** By integrating Eq. (13), we can encode any datapoint **x** p0q into a latent space **x** p _T_ q. Decoding can be achieved by integrating a corresponding ODE for the reverse-time SDE. As is done with other invertible models such as neural ODEs and normalizing flows (Dinh et al., 2016; Kingma & Dhariwal, 2018), we can manipulate this latent representation for image editing, such as interpolation, and temperature scaling (see Fig. 3 and Appendix D.4)."
+    },
+    {
+      "index": 56,
+      "text": "**Uniquely identifiable encoding** Unlike most current invertible models, our encoding is _uniquely identifiable_ , meaning that with sufficient training data, model capacity, and optimization accuracy, the encoding for an input is uniquely determined by the data distribution (Roeder et al., 2020). This is because our forward SDE, Eq. (5), has no trainable parameters, and its associated probability flow"
+    },
+    {
+      "index": 57,
+      "text": "7\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nODE Evaluation Points NFE=14     NFE=86     NFE=548    Interpolation\n1.0\nPrecision\n1e-1\n1e-3\n1e-5\n0.5\n0.0\n10 [0] 10 [1] 10 [2] 10 [3]\nEvaluation number\nEvaluation timepoint\n**----- End of picture text -----**"
+    },
+    {
+      "index": 58,
+      "text": "Figure 3: **Probability flow ODE enables fast sampling** with adaptive stepsizes as the numerical precision is varied ( _left_ ), and reduces the number of score function evaluations (NFE) without harming quality ( _middle_ ). The invertible mapping from latents to images allows for interpolations ( _right_ )."
+    },
+    {
+      "index": 59,
+      "text": "ODE, Eq. (13), provides the same trajectories given perfectly estimated scores. We provide additional empirical verification on this property in Appendix D.5."
+    },
+    {
+      "index": 60,
+      "text": "**Efficient sampling** As with neural ODEs, we can sample **x** p0q \u201e _p_ 0 by solving Eq. (13) from different final conditions **x** p _T_ q \u201e _pT_ . Using a fixed discretization strategy we can generate competitive samples, especially when used in conjuction with correctors (Table 1, \u201cprobability flow sampler\u201d, details in Appendix D.3). Using a black-box ODE solver (Dormand & Prince, 1980) not only produces high quality samples (Table 2, details in Appendix D.4), but also allows us to explicitly trade-off accuracy for efficiency. With a larger error tolerance, the number of function evaluations can be reduced by over 90% without affecting the visual quality of samples (Fig. 3)."
+    },
+    {
+      "index": 61,
+      "text": "## 4.4 ARCHITECTURE IMPROVEMENTS\n\nWe explore several new architecture designs for score-based models using both VE and VP SDEs (details in Appendix H), where we train models with the same discrete objectives as in SMLD/DDPM. We directly transfer the architectures for VP SDEs to sub-VP SDEs due to their similarity. Our optimal architecture for the VE SDE, named NCSN++, achieves an FID of 2.45 on CIFAR-10 with PC samplers, while our optimal architecture for the VP SDE, called DDPM++, achieves 2.78."
+    },
+    {
+      "index": 62,
+      "text": "By switching to the continuous training objective in Eq. (7), and increasing the network depth, we can further improve sample quality for all models. The resulting architectures are denoted as NCSN++ cont. and DDPM++ cont. in Table 3 for VE and VP/sub-VP SDEs respectively. Results reported in Table 3 are for the checkpoint with the smallest FID over the course of training, where samples are generated with PC samplers. In contrast, FID scores and NLL values in Table 2 are reported for the last training checkpoint, and samples are obtained with black-box ODE solvers. As shown in Table 3, VE SDEs typically provide better sample quality than VP/sub-VP SDEs, but we also empirically observe that their likelihoods are worse than VP/sub-VP SDE counterparts. This indicates that practitioners likely need to experiment with different SDEs for varying domains and architectures."
+    },
+    {
+      "index": 63,
+      "text": "Our best model for sample quality, NCSN++ cont. (deep, VE), doubles the network depth and sets new records for both inception score and FID on unconditional generation for CIFAR-10. Surprisingly, we can achieve better FID than the previous best conditional generative model without requiring labeled data. With all improvements together, we also obtain the first set of high-fidelity samples on CelebA-HQ 1024 \u02c6 1024 from score-based models (see Appendix H.3). Our best model for likelihoods, DDPM++ cont. (deep, sub-VP), similarly doubles the network depth and achieves a log-likelihood of 2.99 bits/dim with the continuous objective in Eq. (7). To our best knowledge, this is the highest likelihood on uniformly dequantized CIFAR-10."
+    },
+    {
+      "index": 64,
+      "text": "## 5 CONTROLLABLE GENERATION\n\nThe continuous structure of our framework allows us to not only produce data samples from _p_ 0, but also from _p_ 0p **x** p0q | **y** q if _pt_ p **y** | **x** p _t_ qq is known. Given a forward SDE as in Eq. (5), we can sample"
+    },
+    {
+      "index": 65,
+      "text": "8\n\nPublished as a conference paper at ICLR 2021\n\nFigure 4: _Left_ : Class-conditional samples on 32 \u02c6 32 CIFAR-10. Top four rows are automobiles and bottom four rows are horses. _Right:_ Inpainting (top two rows) and colorization (bottom two rows) results on 256 \u02c6 256 LSUN. First column is the original image, second column is the masked/grayscale image, remaining columns are sampled image completions or colorizations."
+    },
+    {
+      "index": 66,
+      "text": "from _pt_ p **x** p _t_ q | **y** q by starting from _pT_ p **x** p _T_ q | **y** q and solving a conditional reverse-time SDE:"
+    },
+    {
+      "index": 67,
+      "text": "d **x** \u201c t **f** p **x** _, t_ q \u00b4 _g_ p _t_ q[2] r _\u2207_ **x** log _pt_ p **x** q ` _\u2207_ **x** log _pt_ p **y** | **x** qsud _t_ ` _g_ p _t_ qd \u00af **w** _._ (14)"
+    },
+    {
+      "index": 68,
+      "text": "In general, we can use Eq. (14) to solve a large family of _inverse problems_ with score-based generative models, once given an estimate of the gradient of the forward process, _\u2207_ **x** log _pt_ p **y** | **x** p _t_ qq. In some cases, it is possible to train a separate model to learn the forward process log _pt_ p **y** | **x** p _t_ qq and compute its gradient. Otherwise, we may estimate the gradient with heuristics and domain knowledge. In Appendix I.4, we provide a broadly applicable method for obtaining such an estimate without the need of training auxiliary models."
+    },
+    {
+      "index": 69,
+      "text": "We consider three applications of controllable generation with this approach: class-conditional generation, image imputation and colorization. When **y** represents class labels, we can train a time-dependent classifier _pt_ p **y** | **x** p _t_ qq for class-conditional sampling. Since the forward SDE is tractable, we can easily create training data p **x** p _t_ q _,_ **y** q for the time-dependent classifier by first sampling p **x** p0q _,_ **y** q from a dataset, and then sampling **x** p _t_ q \u201e _p_ 0 _t_ p **x** p _t_ q | **x** p0qq. Afterwards, we may employ a mixture of cross-entropy losses over different time steps, like Eq. (7), to train the time-dependent classifier _pt_ p **y** | **x** p _t_ qq. We provide class-conditional CIFAR-10 samples in Fig. 4 (left), and relegate more details and results to Appendix I."
+    },
+    {
+      "index": 70,
+      "text": "Imputation is a special case of conditional sampling. Suppose we have an incomplete data point **y** where only some subset, \u2126p **y** q is known. Imputation amounts to sampling from _p_ p **x** p0q | \u2126p **y** qq, which we can accomplish using an unconditional model (see Appendix I.2). Colorization is a special case of imputation, except that the known data dimensions are coupled. We can decouple these data dimensions with an orthogonal linear transformation, and perform imputation in the transformed space (details in Appendix I.3). Fig. 4 (right) shows results for inpainting and colorization achieved with unconditional time-dependent score-based models."
+    },
+    {
+      "index": 71,
+      "text": "## 6 CONCLUSION\n\nWe presented a framework for score-based generative modeling based on SDEs. Our work enables a better understanding of existing approaches, new sampling algorithms, exact likelihood computation, uniquely identifiable encoding, latent code manipulation, and brings new conditional generation abilities to the family of score-based generative models."
+    },
+    {
+      "index": 72,
+      "text": "While our proposed sampling approaches improve results and enable more efficient sampling, they remain slower at sampling than GANs (Goodfellow et al., 2014) on the same datasets. Identifying ways of combining the stable learning of score-based generative models with the fast sampling of implicit models like GANs remains an important research direction. Additionally, the breadth of samplers one can use when given access to score functions introduces a number of hyper-parameters. Future work would benefit from improved methods to automatically select and tune these hyperparameters, as well as more extensive investigation on the merits and limitations of various samplers."
+    },
+    {
+      "index": 73,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n## ACKNOWLEDGEMENTS\n\nWe would like to thank Nanxin Chen, Ruiqi Gao, Jonathan Ho, Kevin Murphy, Tim Salimans and Han Zhang for their insightful discussions during the course of this project. This research was partially supported by NSF (#1651565, #1522054, #1733686), ONR (N000141912145), AFOSR (FA95501910024), and TensorFlow Research Cloud. Yang Song was partially supported by the Apple PhD Fellowship in AI/ML."
+    },
+    {
+      "index": 74,
+      "text": "## REFERENCES\n\nEugene L Allgower and Kurt Georg. _Numerical continuation methods: an introduction_ , volume 13. Springer Science & Business Media, 2012."
+    },
+    {
+      "index": 75,
+      "text": "- Brian D O Anderson. Reverse-time diffusion equation models. _Stochastic Process. Appl._ , 12(3): 313\u2013326, May 1982."
+    },
+    {
+      "index": 76,
+      "text": "- Jens Behrmann, Will Grathwohl, Ricky TQ Chen, David Duvenaud, and Jorn-Henrik\u00a8 Jacobsen. Invertible residual networks. In _International Conference on Machine Learning_ , pp. 573\u2013582, 2019."
+    },
+    {
+      "index": 77,
+      "text": "- Florian Bordes, Sina Honari, and Pascal Vincent. Learning to generate samples from noise through infusion training. _arXiv preprint arXiv:1703.06975_ , 2017."
+    },
+    {
+      "index": 78,
+      "text": "- Andrew Brock, Jeff Donahue, and Karen Simonyan. Large scale gan training for high fidelity natural image synthesis. In _International Conference on Learning Representations_ , 2018."
+    },
+    {
+      "index": 79,
+      "text": "- Ruojin Cai, Guandao Yang, Hadar Averbuch-Elor, Zekun Hao, Serge Belongie, Noah Snavely, and Bharath Hariharan. Learning gradient fields for shape generation. In _Proceedings of the European Conference on Computer Vision (ECCV)_ , 2020."
+    },
+    {
+      "index": 80,
+      "text": "- Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and William Chan. Wavegrad: Estimating gradients for waveform generation. _arXiv preprint arXiv:2009.00713_ , 2020."
+    },
+    {
+      "index": 81,
+      "text": "- Ricky TQ Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary differential equations. In _Advances in neural information processing systems_ , pp. 6571\u20136583, 2018."
+    },
+    {
+      "index": 82,
+      "text": "- Ricky TQ Chen, Jens Behrmann, David K Duvenaud, and Jorn-Henrik Jacobsen.\u00a8 Residual flows for invertible generative modeling. In _Advances in Neural Information Processing Systems_ , pp. 9916\u20139926, 2019."
+    },
+    {
+      "index": 83,
+      "text": "- Laurent Dinh, Jascha Sohl-Dickstein, and Samy Bengio. Density estimation using real nvp. _arXiv preprint arXiv:1605.08803_ , 2016."
+    },
+    {
+      "index": 84,
+      "text": "- John R Dormand and Peter J Prince. A family of embedded runge-kutta formulae. _Journal of computational and applied mathematics_ , 6(1):19\u201326, 1980."
+    },
+    {
+      "index": 85,
+      "text": "- Yilun Du and Igor Mordatch. Implicit generation and modeling with energy based models. In H. Wallach, H. Larochelle, A. Beygelzimer, F. d'Alche-Buc, E. Fox, and R. Garnett (eds.),\u00b4 _Advances in Neural Information Processing Systems_ , volume 32, pp. 3608\u20133618. Curran Associates, Inc., 2019."
+    },
+    {
+      "index": 86,
+      "text": "- Bradley Efron. Tweedie\u2019s formula and selection bias. _Journal of the American Statistical Association_ , 106(496):1602\u20131614, 2011."
+    },
+    {
+      "index": 87,
+      "text": "- Ian Goodfellow, Jean Pouget-Abadie, Mehdi Mirza, Bing Xu, David Warde-Farley, Sherjil Ozair, Aaron Courville, and Yoshua Bengio. Generative adversarial nets. In _Advances in neural information processing systems_ , pp. 2672\u20132680, 2014."
+    },
+    {
+      "index": 88,
+      "text": "- Anirudh Goyal Alias Parth Goyal, Nan Rosemary Ke, Surya Ganguli, and Yoshua Bengio. Variational walkback: Learning a transition operator as a stochastic recurrent net. In _Advances in Neural Information Processing Systems_ , pp. 4392\u20134402, 2017.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3-flash-preview": {
+      "label": "Coarse (gemini-3-flash-preview)",
+      "model": "openrouter/google/gemini-3-flash-preview",
+      "overall_feedback": "This paper presents a unified continuous-time framework for score-based generative modeling using stochastic differential equations (SDEs). By generalizing discrete diffusion and score-matching methods into a single SDE-based formulation, the authors enable new sampling techniques like Predictor-Corrector methods and deterministic probability flow ODEs for exact likelihood estimation.\n\nThe paper is a significant contribution that unifies two major branches of generative modeling and provides a rigorous mathematical foundation for diffusion processes. It achieves state-of-the-art results on image generation benchmarks and introduces versatile tools like the probability flow ODE for controllable generation.\n\nOverview issues:\n\n- Discretization Bias in Reverse-Time SDE Solvers: The transition from continuous-time SDEs in Section 3 to numerical implementations in Section 4 introduces potential discretization errors that are not fully analyzed. While the paper proposes Predictor-Corrector (PC) samplers to mitigate these errors, it lacks a formal discussion on how the discretization step size affects the convergence of the generated distribution to the true data distribution. If the score network has approximation errors, these can accumulate over the 1000+ steps typically used in Table 1. The authors should provide a bound or empirical analysis of the cumulative error relative to the discretization step size to ensure that the numerical solution remains faithful to the reverse SDE's theoretical properties.\n\n- Weighting Function Heuristics and Likelihood Optimization: In Section 3.3, the weighting function lambda(t) in Equation 7 is chosen based on a heuristic proportional to the inverse of the expected squared norm of the score. While this choice is common in the literature to balance different noise scales, the paper does not theoretically justify why this specific weighting is optimal for the exact likelihood results reported in Table 2. Since the probability flow ODE allows for exact NLL computation, there is a disconnect between the score-matching training objective and the maximum likelihood evaluation metric. A more rigorous treatment would involve showing how lambda(t) relates to the variational lower bound or describing the trade-offs when the objective is not explicitly maximizing likelihood.\n\n- Score Estimation in Low-Density Regions: The framework relies on the score network accurately estimating the gradient of the log-density across the entire diffusion path. However, as noted in Section 3.2, the reverse SDE depends on the score of the perturbed data distribution, which becomes poorly defined in regions of low data density at small noise levels (t near 0). The paper assumes the score network generalizes well to these regions, but the training objective in Equation 7 is expectation-based and may under-sample these critical areas. This can lead to instabilities or 'manifold-drifting' during the final stages of sampling. The authors should include an analysis of score estimation accuracy at varying time steps, particularly for low-noise regimes.\n\n- Computational Overhead of Predictor-Corrector Framework: The Predictor-Corrector samplers introduced in Section 4.2 significantly improve sample quality but at a high computational cost, often doubling the number of function evaluations (NFEs) compared to simple SDE solvers. Table 1 shows that PC1000 outperforms P2000 in some metrics, yet the paper lacks a systematic study on the optimal ratio of predictor to corrector steps. For high-dimensional data like the 1024x1024 images mentioned in the abstract, this overhead becomes a bottleneck. The paper would be more complete with a discussion on the scaling laws of PC samplers and whether the corrector step remains efficient as the data dimension increases.\n\n- Regularity Conditions for Reverse SDE Existence: The derivation of the reverse-time SDE in Equation 6 cites Anderson (1982), which requires certain regularity conditions on the drift and diffusion coefficients, as well as the smoothness of the probability density p_t(x). In Section 3.1, the authors assume the coefficients are globally Lipschitz, but they do not explicitly verify if the data distributions encountered in deep learning (which often sit on low-dimensional manifolds) satisfy the necessary smoothness for the score to exist everywhere. If the data distribution is singular, the score is undefined. The paper should clarify the assumptions made about the support of p_0 and how the initial noise injection ensures the existence of the score for all t > 0.\n\n- Missing verification of the probability flow ODE recovery of discrete cases: The paper claims that the probability flow ODE in Equation (13) provides a deterministic process that samples from the same marginals as the SDE. While the authors state that SMLD and DDPM are discretizations of specific SDEs, they do not formally demonstrate that the probability flow ODE recovers known deterministic limits of these models, such as the Denoising Diffusion Implicit Model (DDIM). To ensure the framework is truly unified, the authors should compute the ODE for the VP SDE (Equation 11) and show that its discretization matches the DDIM update rule. This would bridge the gap between their continuous theory and the existing literature on deterministic sampling.\n\n- Lack of simulation on a toy non-Gaussian distribution: The paper relies heavily on high-dimensional image benchmarks like CIFAR-10, but lacks a controlled simulation on a low-dimensional, non-Gaussian distribution where the ground truth score is known. For a theory-heavy paper introducing a new SDE framework, it is standard to show that the reverse-time SDE and the probability flow ODE can accurately recover a simple distribution, such as a 2D mixture of Gaussians or a 'Swiss roll.' Computing the score error and the KL divergence between the generated and true distributions for these cases would confirm that the results in Table 2 are not solely due to architectural improvements in the neural networks.\n\n- Underdeveloped implementation guidance for the sub-VP SDE: The sub-VP SDE is introduced as a novel contribution that achieves record likelihoods, yet the paper provides little intuition or practical guidance on why this specific functional form (Equation 12) outperforms the standard VP SDE. The text mentions that its variance is always bounded by the VP SDE, but it does not explain how this property translates to easier score estimation or better likelihoods. The paper needs a more detailed discussion or a comparative plot of the variance schedules and their corresponding score magnitudes to help practitioners understand when to prefer sub-VP over VP.\n\n- Missing discussion on the curse of dimensionality in conditional scores: Section 5 claims that controllable generation can be achieved using the gradient of the log-likelihood of a classifier, yet it ignores the practical difficulty of estimating these gradients in high-dimensional spaces. As the dimension of x increases, the classifier p_t(y|x) is likely to become overconfident, leading to 'shattered' gradients or vanishing signals that can derail the reverse SDE. The paper should discuss how to handle the scale of the conditional gradient term in Equation (14) relative to the unconditional score, perhaps by suggesting a specific schedule for a guidance scale parameter, which is common in related conditional diffusion work.\n\nRecommendation: accept\n\nRevision targets:\n\n- Provide a formal analysis or empirical study on the relationship between discretization step size and error accumulation in the reverse SDE.\n\n- Justify the choice of the weighting function lambda(t) in Equation 7 relative to the likelihood results in Table 2.\n\n- Add a discussion on the regularity conditions of the data distribution and how the SDE framework handles potentially non-smooth or singular densities.\n\n- Include a sensitivity analysis for the Predictor-Corrector ratio to guide hyperparameter selection for different data dimensions.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3-flash-preview_0",
+          "title": "Typographical Error in sub-VP SDE Diffusion Coefficient",
+          "quote": "\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.",
+          "explanation": "The expression inside the square root for the diffusion coefficient in Equation (12) is mathematically malformed. The term involving 't' and 't_0' appears to be a typesetting error intended to represent an integral from 0 to t, likely \\int_0^t. In its current form, the variable 's' is introduced in the exponent without a binding integral operator, making the SDE ill-defined. This must be corrected to ensure the sub-VP SDE is mathematically sound and reproducible.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_1",
+          "title": "Incomplete Condition for SDE Strong Solution Existence",
+          "quote": "The SDE has a unique strong solution as long as the coefficients are globally Lipschitz in both state and time (\u00d8ksendal, 2003).",
+          "explanation": "The claim that global Lipschitz continuity is sufficient for a unique strong solution is incomplete. Standard results in stochastic calculus (e.g., \u00d8ksendal, 2003, Theorem 5.2.1) require both the Lipschitz condition and a linear growth condition: |f(x,t)| + |g(t)| <= C(1 + |x|). While Lipschitz continuity implies linear growth in the state variable x for a fixed t, it does not guarantee it across the entire time interval [0, T] unless the coefficients are bounded at a specific point for all t. Since the VE SDE involves a noise schedule that can grow rapidly, explicitly stating the linear growth requirement is necessary to ensure the solution does not explode.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_2",
+          "title": "Inconsistency in ODE Drift for General Multivariate SDEs",
+          "quote": "\\mathrm {d} \\mathbf {x} = \\left[ \\mathbf {f} (\\mathbf {x}, t) - \\frac {1}{2} g (t) ^ {2} \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {x}) \\right] \\mathrm {d} t, \\tag {13}",
+          "explanation": "The paper claims this ODE holds for 'all diffusion processes,' but Equation (13) assumes a scalar diffusion coefficient g(t). For a general multivariate SDE where the diffusion is a matrix G(t), the drift of the probability flow ODE must be f - 0.5 * G(t)G(t)^T * grad log p_t. If G(t) is not a scalar multiple of the identity, the g(t)^2 term is incorrect. The equation should be updated to the matrix form to maintain the claimed generality of the framework.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_3",
+          "title": "Incompatibility of Score Matching Loss with Classifier Training",
+          "quote": " Afterwards, we may employ a mixture of cross-entropy losses over different time steps, like Eq. (7), to train the time-dependent classifier  $p_t(\\mathbf{",
+          "explanation": "The text references Equation (7) as a template for the classifier loss, but Equation (7) is a weighted Fisher Divergence (a regression objective for vector fields). A cross-entropy loss for a classifier is a scalar-valued log-likelihood objective. While the time-weighting concept is shared, the functional form of Equation (7) does not apply to categorical labels. The sentence should be revised to clarify that the classifier uses a time-weighted cross-entropy objective rather than implying it follows the score-matching form.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_4",
+          "title": "Ambiguity in Reverse-Time SDE Differential Notation",
+          "quote": "  $\\bar{\\mathbf{w}}$  is a standard Wiener process when time flows backwards from  $T$  to 0, and  $\\mathrm{d}t$  is an infinitesimal negative timestep. Once ",
+          "explanation": "Defining dt as an 'infinitesimal negative timestep' while using the standard additive form in Equation (6) creates a sign ambiguity. In the forward SDE, dt is positive. If Equation (6) is integrated from T to 0 with dt < 0, the drift term would result in a direction opposite to the one required by the Anderson (1982) derivation. It is more standard to define the reverse SDE using a positive time increment for a forward-running auxiliary time variable, or to clarify that the integral handles the sign of the differential.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_5",
+          "title": "Inaccurate Weighting Proportionality for DDPM",
+          "quote": ")$. Notably, the weights of the $i$-th summand in Eq. (1) and Eq. (3), namely $\\sigma_{i}^{2}$ and $(1-\\alpha_{i})$, are related to corresponding perturbation kernels in the same functional",
+          "explanation": "For the DDPM kernel, the expected squared norm of the score is exactly d/(1-alpha_i). The paper's claim that the weight (1-alpha_i) is 'proportional' to this inverse expectation is an exact identity scaled by the dimension d. The phrasing 'related in the same functional form' suggests a heuristic similarity when it is a direct consequence of the Gaussian kernel variance. Highlighting this exactness would strengthen the theoretical link between the two frameworks.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__gemini-3-flash-preview_6",
+          "title": "Conceptual Ambiguity in PC Sampling for Probability Flow",
+          "quote": "|  probability flow | 15.41 \u00b1 .15 | 10.54 \u00b1 .08 |  | 3.51 \u00b1 .04 | 3.59 \u00b1 .04 | 3.23 \u00b1 .03 |  | 3.06 \u00b1 .03  |",
+          "explanation": "Table 1 includes results for 'probability flow' using the PC1000 sampler. Since the probability flow is a deterministic ODE, applying a stochastic 'Corrector' step (like Langevin MCMC) shifts the method from a deterministic solver to a hybrid stochastic sampler. The 'probability flow' label in the PC1000 column is potentially misleading because the resulting trajectories no longer follow the deterministic path of the ODE, which is the primary feature of that model.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        }
+      ],
+      "cost_usd": 0.9736,
+      "cost_method": "estimated",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3-235b-a22b-2507": {
+      "label": "Coarse (qwen3-235b-a22b-2507)",
+      "model": "openrouter/qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "This paper presents a foundational and highly influential framework that unifies score-based generative modeling and diffusion models through stochastic differential equations. It makes significant theoretical and practical contributions, including a continuous-time formulation, new sampling methods (predictor-corrector and probability flow ODE), exact likelihood computation, and extensions to controllable generation. The work is well-structured, clearly written, and has had substantial impact on subsequent research in generative modeling.\n\nOverview issues:\n\n- Insufficient justification for score estimation accuracy in low-data-density regions: The paper assumes that the score function $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$ can be accurately estimated across all time steps and data regions, particularly in low-density areas where $p_t(\\mathbf{x})$ is small. While denoising score matching is used to train the score network, the stability of these estimates\u2014especially at intermediate and late times when data is heavily corrupted\u2014is not empirically validated or theoretically bounded. This is a critical assumption because the reverse SDE (Eq. 6) depends directly on the score, and errors in low-density regions can propagate and distort the entire sampling trajectory. The paper would benefit from ablation studies or sensitivity analyses showing how score estimation error at different noise levels affects final sample quality.\n\n- Numerical stability of reverse-time SDE simulation not adequately addressed: The reverse-time SDE in Eq. (6) involves subtracting a term proportional to $g(t)^2 \\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$, which can become large when the score is poorly estimated or when $g(t)$ is large (e.g., at early stages of the reverse process). The paper does not discuss potential numerical instabilities arising from this term, nor does it provide guarantees on the well-posedness of the discretized reverse process under finite step sizes. Given that sampling quality in Table 1 varies significantly across solvers, a more detailed analysis of solver stability\u2014such as step size constraints or adaptive step selection\u2014is warranted to ensure reliable deployment.\n\n- Lack of comparison between ODE and SDE sampling trajectories in practice: The paper promotes the probability flow ODE (Eq. 13) as a deterministic alternative to the reverse SDE, enabling exact likelihoods and faster sampling. However, it does not demonstrate whether the two processes actually produce samples from the same distribution in finite-time simulations with imperfect scores. Prior work has shown gaps between ODE and SDE trajectories due to discretization and approximation errors. A direct comparison\u2014e.g., via FID or visual inspection\u2014of samples generated by both methods using the same score model would strengthen the claim that they are equivalent in practice, not just in theory.\n\n- Overlooked dependence of performance on noise schedule design: While the paper introduces VE, VP, and sub-VP SDEs, it does not systematically analyze how the choice of $\\beta(t)$ or $\\sigma(t)$ affects score estimation accuracy, sampling efficiency, or final performance. The sub-VP SDE is introduced with a complex diffusion coefficient, but no ablation is provided to isolate its contribution from architectural changes or training objectives. Given that noise scheduling is a known lever for performance in diffusion models, the paper should include a controlled study varying the noise schedule while holding other factors constant to clarify what drives the reported improvements.\n\n- Empirical evaluation lacks diversity in data modalities and inverse problem benchmarks: The experiments focus almost exclusively on image generation (CIFAR-10, LSUN, CelebA-HQ), with only qualitative results for inpainting and colorization. The claims about general controllable generation via Eq. (14) are not supported by quantitative benchmarks on standard inverse problems such as inpainting with missing rate variation, super-resolution, or compressed sensing. Including metrics like PSNR or LPIPS for reconstruction tasks would better substantiate the flexibility of the framework beyond unconditional generation.\n\n- No ablation isolating sub-VP SDE contribution: The paper claims the sub-VP SDE enables superior likelihoods, culminating in a 2.99 bits/dim result. However, the best likelihoods are achieved only after combining the sub-VP SDE with architectural changes (deeper network) and the continuous training objective. There is no ablation that isolates the effect of the sub-VP SDE itself. To validate its contribution, the authors should report bits/dim for a shallow model trained with the discrete objective using the sub-VP SDE, keeping all other factors equal to the VP SDE baseline. Without this, it is unclear whether the gains come from the SDE design or from other improvements.\n\n- Missing comparison to deterministic sampling in practice: The paper asserts that the probability flow ODE generates samples from the same distribution as the reverse-time SDE, but this equivalence is not empirically verified under realistic conditions. Readers will wonder whether discretization and score approximation errors break this equivalence. The authors should generate samples from both the ODE and SDE using the same trained score model and compute their FID scores relative to data. A large discrepancy would undermine the claim of equivalence, while close scores would strengthen it. This comparison is standard in the neural ODE literature and necessary here.\n\n- No analysis of score estimation error propagation: The reverse SDE depends critically on accurate score estimates, yet the paper does not examine how errors in score estimation\u2014especially at high noise levels or in low-density regions\u2014affect sampling trajectories. A natural diagnostic is to inject controlled noise into the score network outputs during sampling and measure the degradation in FID or visual quality. Alternatively, the authors could compute the norm of score residuals on a held-out set across time steps. This would demonstrate awareness of a key failure mode and provide insight into robustness.\n\n- Unverified claim of unified SMLD and DDPM framework: The paper states that SMLD and DDPM are discretizations of the VE and VP SDEs, but it does not verify that simulating the continuous SDEs recovers the behavior of the discrete models. To substantiate this unification claim, the authors should simulate the VE SDE with Euler-Maruyama and show that it reproduces the noise corruption process of SMLD with a fine discretization. Similarly, they should derive the ancestral sampling rule from the VP SDE and confirm it matches DDPM. Without this, the unification remains asserted, not demonstrated.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide ablation studies on score estimation accuracy across noise levels, particularly in low-density regions, and analyze its impact on sampling fidelity.\n\n- Include a stability analysis of the reverse-time SDE discretization, with discussion of step size limits and error propagation.\n\n- Add a direct comparison between samples generated by the probability flow ODE and the reverse SDE using the same trained score model, to validate their practical equivalence.\n\n- Conduct a controlled study isolating the effect of SDE type and noise schedule on performance, disentangling it from architectural improvements.\n\n- Expand empirical evaluation to include quantitative results on standard inverse problems (e.g., inpainting, super-resolution) to support claims of broad applicability.",
+      "comments": [
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_0",
+          "title": "Malformed exponent in sub-VP SDE definition",
+          "quote": "\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.",
+          "explanation": "The expression $\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s$ is mathematically ill-defined: $\\mathrm{t}^t$ is not standard notation, $\\mathrm{t}_0$ is undefined, and $\\mathrm{d}s$ appears outside an integral context. Given the intended behavior of the sub-VP SDE\u2014bounding variance relative to the VP SDE\u2014the diffusion coefficient must depend on the cumulative integral of $\\beta(s)$. The correct form should be $\\sqrt{\\beta(t)\\left(1 - e^{-2\\int_0^t \\beta(s)\\,\\mathrm{d}s}\\right)}$. This correction ensures the SDE is properly specified and its properties can be derived.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_1",
+          "title": "Incorrect proportionality in score norm weighting",
+          "quote": "Notably, the weights of the $i$-th summand in Eq. (1) and Eq. (3), namely $\\sigma_{i}^{2}$ and $(1-\\alpha_{i})$, are related to corresponding perturbation kernels in the same functional form: $\\sigma_{i}^{2}\\propto 1/\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\sigma_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}]$ and $(1-\\alpha_{i})\\propto 1/\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}]$.",
+          "explanation": "The stated proportionality is inverted. For the SMLD case, $\\mathbb{E}[\\|\\nabla_{\\mathbf{x}} \\log p_{\\sigma_i}(\\tilde{\\mathbf{x}} \\mid \\mathbf{x})\\|_2^2] = d / \\sigma_i^2$, so $\\sigma_i^2 \\propto 1 / \\mathbb{E}[\\|\\nabla \\log p\\|^2]$ is correct only if interpreted as $\\sigma_i^2 \\propto \\left(\\mathbb{E}[\\|\\nabla \\log p\\|^2]\\right)^{-1}$. However, the phrasing suggests a direct inverse proportionality that obscures the actual relationship. More critically, for DDPM, $\\mathbb{E}[\\|\\nabla \\log p\\|^2] = d \\alpha_i / (1 - \\alpha_i)$, so $1 - \\alpha_i \\propto 1 / \\mathbb{E}[\\|\\nabla \\log p\\|^2]$ only if $\\alpha_i$ is constant, which it is not. The weights are better understood as proportional to the noise variance, not inversely proportional to the expected score norm. Clarify that $\\sigma_i^2$ and $1 - \\alpha_i$ are proportional to the marginal variances of the perturbations.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_2",
+          "title": "Overstatement of reverse-time SDE dependence on score alone",
+          "quote": "Crucially, the reverse-time SDE depends only on the time-dependent gradient field (a.k.a., score) of the perturbed data distribution.",
+          "explanation": "This statement is misleading. While the score appears in the drift term, the reverse-time SDE (Eq. 6) also depends explicitly on the drift $\\mathbf{f}(\\mathbf{x}, t)$ and diffusion $g(t)$ of the forward SDE. The full dynamics are $\\mathrm{d}\\mathbf{x} = [\\mathbf{f}(\\mathbf{x}, t) - g(t)^2 \\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})] \\mathrm{d}t + g(t) \\mathrm{d}\\bar{\\mathbf{w}}$, so the coefficients $\\mathbf{f}$ and $g$ are essential components. The word \"only\" incorrectly suggests the score is the sole dependency. Revise to acknowledge that the reverse SDE depends on both the score and the forward SDE coefficients.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_3",
+          "title": "Misleading claim about ancestral sampling as SDE discretization",
+          "quote": "Ancestral sampling, the sampling method of DDPM (Eq. (4)), actually corresponds to one special discretization of the reverse-time VP SDE (Eq. (11)) (see Appendix E).",
+          "explanation": "This phrasing suggests a direct numerical correspondence, but ancestral sampling is not a standard discretization like Euler-Maruyama. It uses a fixed variance schedule and reparameterizes the reverse step using a predicted mean and pre-specified variance, which aligns with the reverse SDE only under specific modeling assumptions (e.g., perfect score estimation and matching of variance parameters). The equivalence is statistical, not numerical. A more accurate statement would be that ancestral sampling induces a reverse process that approximates the solution of the reverse-time SDE under certain conditions on the noise schedule and variance parameterization.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_4",
+          "title": "Incorrect attribution of reverse SDE form to Anderson (1982)",
+          "quote": "Crucially, this reverse process satisfies a reverse-time SDE (Anderson, 1982), which can be derived from the forward SDE given the score of the marginal probability densities as a function of time.",
+          "explanation": "Anderson (1982) derives the general form of the time-reversed diffusion process, but does not explicitly connect the reverse drift to the score $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$. That connection is critical to the method and was developed later in the context of score-based modeling (e.g., Hyv\u00e4rinen, 2005; Welling & Teh, 2011). The paper should clarify that while the general reverse process form is due to Anderson, the specific use of the marginal score for generative modeling is a later innovation.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_5",
+          "title": "Overstated claim of first 1024\u00d71024 score-based generation",
+          "quote": "as well as high-fidelity generation of  $1024 \\times 1024$  images for the first time from a score-based model.",
+          "explanation": "This claim is factually incorrect. NCSNv2 (Song & Ermon, 2020) already demonstrated $1024 \\times 1024$ image generation on CelebA-HQ using a score-based model with multi-scale architectures and annealed Langevin dynamics, prior to this work. The authors may intend to claim novelty within their SDE-based framework, but as written, the statement overreaches. Qualify the claim to specify the methodological context, e.g., \"using reverse-time SDE sampling\".",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_6",
+          "title": "Flawed justification for score matching objective",
+          "quote": "With sufficient data and model capacity, score matching ensures that the optimal solution to Eq. (7), denoted by  $\\mathbf{s}_{\\theta^*}(\\mathbf{x},t)$ , equals  $\\nabla_{\\mathbf{x}}\\log p_t(\\mathbf{x})$  for almost all  $\\mathbf{x}$  and  $t$ .",
+          "explanation": "This claim conflates the marginal score $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$ with the conditional expectation $\\mathbb{E}[\\nabla_{\\mathbf{x}(t)} \\log p_{0t}(\\mathbf{x}(t) \\mid \\mathbf{x}(0)) \\mid \\mathbf{x}(t)]$, which are not equal in general. The optimal $\\mathbf{s}_\\theta$ from Eq. (7) converges to the latter, which equals the former only under restrictive conditions (e.g., Gaussian transition kernels with constant variance). For general SDEs, this identity fails. The justification for using Eq. (7) to estimate the marginal score is therefore incomplete. Revise to clarify that the objective consistently estimates the marginal score only under additional assumptions.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_7",
+          "title": "Unjustified weighting function choice",
+          "quote": "As in SMLD and DDPM, we can typically choose  $\\lambda \\propto 1 / \\mathbb{E}\\big[\\big\\| \\nabla_{\\mathbf{x}(t)}\\log p_{0t}(\\mathbf{x}(t)\\mid \\mathbf{x}(0))\\big\\| _2^2\\big]$ .",
+          "explanation": "The proposed weighting lacks theoretical grounding. In practice, $\\lambda(t)$ is chosen to balance signal-to-noise across time steps and is typically proportional to $g(t)^2$ or $\\beta(t)$, not the inverse of the expected squared conditional score norm. For example, in the Ornstein-Uhlenbeck process, $\\mathbb{E}[\\|\\nabla \\log p_{0t}(\\cdot \\mid \\mathbf{x}(0))\\|^2]$ does not match standard choices. The justification misattributes the source of the weighting and could mislead readers. Replace with a more accurate description: $\\lambda(t)$ is often proportional to the square of the diffusion coefficient or the noise schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_8",
+          "title": "Overgeneralization of Gaussian transition kernels",
+          "quote": "When $\\mathbf{f}(\\cdot,t)$ is affine, the transition kernel is always a Gaussian distribution, where the mean and variance are often known in closed-forms and can be obtained with standard techniques (see Section 5.5 in *S\u00e1rkk\u00e4 and Solin (2019)*).",
+          "explanation": "The claim that affine drift implies Gaussian kernels 'always' is incorrect without assuming additive noise. If the diffusion coefficient $g(t, \\mathbf{x})$ is state-dependent, the solution is generally non-Gaussian. The reference to S\u00e1rkk\u00e4 and Solin (2019) applies only to linear SDEs with additive noise. The statement should be revised to require that $g(t)$ is constant in $\\mathbf{x}$ for the kernel to be Gaussian.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_9",
+          "title": "Missing regularity conditions for ODE solution existence",
+          "quote": "This deterministic process satisfies an ODE (more details in Appendix D.1):\n\n$$\n\\mathrm {d} \\mathbf {x} = \\left[ \\mathbf {f} (\\mathbf {x}, t) - \\frac {1}{2} g (t) ^ {2} \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {x}) \\right] \\mathrm {d} t, \\tag {13}\n$$",
+          "explanation": "The existence and uniqueness of solutions to Eq. (13) require the vector field to be locally Lipschitz in $\\mathbf{x}$ and continuous in $t$. While $\\mathbf{f}$ and $g(t)$ may satisfy these, $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$ is a learned function whose regularity is not guaranteed. For example, ReLU-based networks can produce non-Lipschitz gradients, violating Picard-Lindel\u00f6f conditions. The paper should state that well-posedness depends on the smoothness of the score network and reference Appendix D.1 for verification under specific architectures.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_10",
+          "title": "Inconsistent checkpoint selection undermines metric comparison",
+          "quote": "Results reported in Table 3 are for the checkpoint with the smallest FID over the course of training, where samples are generated with PC samplers. In contrast, FID scores and NLL values in Table 2 are reported for the last training checkpoint, and samples are obtained with black-box ODE solvers.",
+          "explanation": "Using different checkpoint selection criteria across tables introduces a confounding variable. Table 3 uses the best FID checkpoint, while Table 2 uses the final checkpoint, making cross-table comparisons unreliable. A model's final checkpoint may have worse FID due to overfitting, so differences in performance could reflect training dynamics rather than model design. To enable fair evaluation, all metrics should be computed on the same checkpoint. Clarify whether comparisons are valid or recompute results consistently.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_11",
+          "title": "Conflation of architectural and objective improvements",
+          "quote": "By switching to the continuous training objective in Eq. (7), and increasing the network depth, we can further improve sample quality for all models. The resulting architectures are denoted as NCSN++ cont. and DDPM++ cont. in Table 3 for VE and VP/sub-VP SDEs respectively.",
+          "explanation": "The text attributes improved performance to two changes simultaneously\u2014continuous objective and increased depth\u2014without disentangling their contributions. The naming convention (e.g., 'NCSN++ cont.') bundles both, obscuring ablation. Without separate evaluation of each factor, it is impossible to determine whether gains come from architecture, training formulation, or interaction. To support the claim, report ablation results for: (1) same depth with continuous objective; (2) increased depth with discrete objective; (3) both.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_12",
+          "title": "Overstatement of uniquely identifiable encoding",
+          "quote": "Uniquely identifiable encoding Unlike most current invertible models, our encoding is uniquely identifiable, meaning that with sufficient training data, model capacity, and optimization accuracy, the encoding for an input is uniquely determined by the data distribution (Roeder et al., 2020).",
+          "explanation": "The justification is incomplete. While the forward SDE has no trainable parameters, the reverse ODE (Eq. 13) depends on the learned score function, which has trainable weights. Different training runs could yield different encodings, violating identifiability in practice. Moreover, uniqueness requires the vector field to be locally Lipschitz, which is not verified. The claim holds only under idealized conditions of perfect score estimation and smoothness. Revise to clarify these assumptions or reference Appendix D.5 for empirical verification.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_13",
+          "title": "Misleading claim of 'exact likelihood' computation",
+          "quote": "Exact likelihood computation Leveraging the connection to neural ODEs, we can compute the density defined by Eq. (13) via the instantaneous change of variables formula (Chen et al., 2018). This allows us to compute the exact likelihood on any input data (details in Appendix D.2).",
+          "explanation": "The term 'exact likelihood' is misleading. While the change of variables formula is exact in theory, the computation depends on a neural network approximation of the score. Errors in score estimation\u2014especially at low noise levels\u2014propagate through the ODE integration, biasing the final density. The computed likelihood is model-based, not ground-truth exact. Replace 'exact likelihood' with 'model-based likelihood computation' and clarify that accuracy depends on score fidelity.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_14",
+          "title": "Incorrect conditioning in reverse-time SDE for inverse problems",
+          "quote": "erse-time SDE:\n\n$$\n\\mathrm {d} \\mathbf {x} = \\left\\{\\mathbf {f} (\\mathbf {x}, t) - g (t) ^ {2} \\left[ \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {x}) + \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {y} \\mid \\mathbf {x}) \\right] \\right\\} \\mathrm {d} t + g (t) \\mathrm {d} \\bar {\\mathbf {w}}. \\tag",
+          "explanation": "The expression adds $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})$ and $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{y} \\mid \\mathbf{x})$, implying $\\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x}, \\mathbf{y})$, but this decomposition requires regularity and consistent support. More critically, $p_t(\\mathbf{y} \\mid \\mathbf{x})$ is an external model, and its gradient may not align with the score of the generative model. This can lead to conflicting drift terms. The correct form should be $\\mathrm{d}\\mathbf{x} = \\left[ \\mathbf{f}(\\mathbf{x}, t) - g(t)^2 \\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x} \\mid \\mathbf{y}) \\right] \\mathrm{d}t + g(t) \\mathrm{d}\\bar{\\mathbf{w}}$, with the understanding that the posterior score must be consistently estimated.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        }
+      ],
+      "cost_usd": 0.2194,
+      "cost_method": "estimated",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "This paper introduces a unified framework for score-based generative modeling using stochastic differential equations (SDEs). The work unifies previous approaches (SMLD and DDPM) under a continuous-time formulation, enabling new sampling methods, exact likelihood computation, and controllable generation. The paper demonstrates state-of-the-art results on CIFAR-10 and high-fidelity 1024x1024 image generation.\n\nThe paper makes a significant theoretical contribution by unifying score-based generative modeling under the SDE framework. The mathematical derivations appear sound, and the empirical results are impressive, achieving new state-of-the-art on CIFAR-10. The framework elegantly connects to neural ODEs and enables both stochastic and deterministic sampling. The controllable generation capabilities through conditional reverse-time SDEs are particularly valuable.\n\nOverview issues:\n\n- Numerical solver stability and error accumulation: The paper extensively discusses numerical solvers for the reverse-time SDE but lacks theoretical analysis of discretization error propagation. The predictor-corrector framework helps mitigate errors, but there's no guarantee that accumulated numerical errors won't significantly affect sample quality, especially for long integration times. The paper should analyze the stability conditions for the proposed solvers and quantify how discretization errors impact the final distribution. This matters because the theoretical guarantees rely on exact integration of the reverse SDE, which is impossible in practice.\n\n- Score estimation accuracy across diffusion timeline: The paper assumes the trained score network accurately estimates scores across all time steps t \u2208 [0,T], but doesn't address the varying difficulty of score estimation at different noise levels. At early times (low noise), scores are high-frequency and hard to estimate; at late times (high noise), the signal is weak. The continuous objective in Eq. (7) weights all time steps equally via \u03bb(t), which may not be optimal. The paper should analyze score estimation error as a function of t and its impact on sample quality. This is crucial because errors in score estimation directly propagate to the reverse SDE integration.\n\n- Computational efficiency vs sample quality trade-off: While the paper demonstrates impressive sample quality, the computational cost remains high. Table 1 shows that even with 2000 steps, FID scores are still worse than GANs. The probability flow ODE offers faster sampling but requires careful tuning of error tolerance. The paper lacks a systematic analysis of the computational-accuracy trade-off across different solvers and step sizes. Readers need guidance on practical configurations for different use cases. This matters for real-world adoption where sampling speed is critical.\n\n- Boundary conditions and manifold hypothesis: The SDE framework assumes data lives in \u211d^d, but real data often lies on low-dimensional manifolds. The paper doesn't address how the SDE behaves near manifold boundaries or whether the score remains well-defined when data is perturbed off the manifold. The Gaussian prior assumption may be inappropriate for data with bounded support (e.g., normalized images). The paper should discuss these limitations and potential solutions, such as projecting back to the manifold or using alternative priors. This affects the theoretical validity of the approach for constrained data types.\n\n- Missing concrete SDE example computation: The paper introduces VE, VP, and sub-VP SDEs but never computes their key quantities for a concrete data distribution. Readers would benefit from seeing the forward SDE, reverse-time SDE, and probability flow ODE explicitly worked out for a simple case like a 2D Gaussian mixture. This would demonstrate how the score function looks at different times, how the reverse process works, and verify that the probability flow ODE indeed preserves marginals. Without such a worked example, the theoretical framework remains abstract and it's hard to build intuition about how the method behaves in practice.\n\n- No demonstration of conditional reverse SDE derivation: Section 5 claims the conditional reverse-time SDE (Eq. 14) enables controllable generation, but the paper never shows how to derive the gradient term \u2207\u2093 log p\u209c(y|x(t)) for any concrete application. For class-conditional generation, the paper mentions training a classifier but doesn't show how to compute its gradient with respect to x(t). For inpainting, the appendix is referenced but the main text lacks even a simple example showing how to derive the gradient for masking known pixels. This makes the conditional generation claims feel underdeveloped since readers cannot verify the approach without consulting appendices.\n\n- Unverified connection to discrete SMLD/DDPM: The paper claims that SMLD and DDPM are discretizations of VE and VP SDEs respectively, but never demonstrates that the discrete reverse processes (Eqs. 2 and 4) are actually obtained by discretizing the continuous reverse-time SDE (Eq. 6). A concrete derivation showing how Eq. 6 reduces to Eq. 2 for VE SDE with specific discretization choices would strengthen this claim. Similarly for DDPM. Without this verification, the unification claim remains unsubstantiated and readers cannot see exactly how the continuous framework generalizes the discrete methods.\n\n- Missing analysis of score estimation error propagation: The paper trains score networks to approximate \u2207\u2093 log p\u209c(x) but doesn't analyze how estimation errors affect the sample quality. There should be at least a simple theoretical analysis or empirical study showing how errors in the score function propagate through the reverse SDE integration. For example, one could analyze the effect of a bounded score error on the final distribution's KL divergence from the target. This matters because the entire framework depends on accurate score estimation, yet the paper provides no insight into how robust the sampling process is to score estimation errors.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add theoretical analysis of numerical solver stability and error bounds for the reverse-time SDE integration\n\n- Include empirical analysis of score estimation error across different time steps and its impact on sample quality\n\n- Provide systematic evaluation of computational efficiency vs sample quality trade-offs across different solvers\n\n- Discuss limitations related to the manifold hypothesis and bounded data support, with potential solutions",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Notation error in sub-VP SDE equation",
+          "quote": "$\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.$ (12)",
+          "explanation": "The expression $\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s$ in the exponential term is mathematically undefined. This appears to be a LaTeX rendering error. Based on the context of sub-VP SDEs, this should be an integral term. Rewrite equation (12) as $\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\int_{0}^{t}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.$",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Missing derivation for probability flow ODE marginal preservation",
+          "quote": " For all diffusion processes, there exists a corresponding deterministic process whose trajectories share the same marginal probability densities  $\\{p_t(\\mathbf{x})\\}_{t=0}^T$  as the SDE. This deterministic process satisfies an ODE (more details in Appendix D.1):\n\n$$\n\\mathrm {d} \\mathbf {x} = \\left[ \\mathbf {f} (\\mathbf {x}, t) - \\frac {1}{2} g (t) ^ {2} \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {x}) \\right] \\mathrm {d} t, \\tag {13}",
+          "explanation": "The paper provides no mathematical justification for why Eq. (13) preserves the same marginal densities as the original SDE. This is a fundamental claim that requires proof. Add the derivation: For an SDE $d\\mathbf{x} = \\mathbf{f}(\\mathbf{x},t)dt + g(t)d\\mathbf{w}$, the Fokker-Planck equation is $\\partial_t p_t = -\\nabla \\cdot (\\mathbf{f}p_t) + \\frac{1}{2}g(t)^2 \\Delta p_t$. For the ODE $d\\mathbf{x} = [\\mathbf{f} - \\frac{1}{2}g(t)^2 \\nabla \\log p_t]dt$, the continuity equation is $\\partial_t p_t = -\\nabla \\cdot ([\\mathbf{f} - \\frac{1}{2}g(t)^2 \\nabla \\log p_t]p_t) = -\\nabla \\cdot (\\mathbf{f}p_t) + \\frac{1}{2}g(t)^2 \\Delta p_t$, which matches exactly.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "Missing derivation for score relationship in DDPM",
+          "quote": "Like Eq. (1), Eq. (3) is also a weighted sum of denoising score matching objectives, which implies that the optimal model, $\\mathbf{s}_{\\bm{\\theta}^{*}}(\\tilde{\\mathbf{x}},i)$, matches the score of the perturbed data distribution, $\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\mathbf{x})$.",
+          "explanation": "Equation (3) minimizes the conditional score $\\nabla_{\\tilde{\\mathbf{x}}}\\log p_{\\alpha_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})$ but the conclusion claims the optimal model matches the marginal score $\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\mathbf{x})$. The bridge between conditional and marginal scores requires justification. Add the derivation: \"Since $\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\mathbf{x}) = \\mathbb{E}_{p_{\\text{data}}(\\mathbf{x}_0)}[\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\mathbf{x}\\mid\\mathbf{x}_0) | \\mathbf{x}]$, minimizing the weighted conditional score matching objective with weights $(1-\\alpha_{i})$ yields the optimal model $\\mathbf{s}_{\\bm{\\theta}^{*}}(\\tilde{\\mathbf{x}},i) = \\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\mathbf{x})$\" after the quoted text.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Reverse-time ODE for decoding not specified",
+          "quote": "Manipulating latent representations By integrating Eq. (13), we can encode any datapoint  $\\mathbf{x}(0)$  into a latent space  $\\mathbf{x}(T)$ . Decoding can be achieved by integrating a corresponding ODE for the reverse-time SDE.",
+          "explanation": "The reverse-time ODE for decoding is not specified. Given the forward-time probability flow ODE (Eq. 13), the reverse-time ODE should be $d\\mathbf{x} = -[\\mathbf{f}(\\mathbf{x},t) - \\frac{1}{2}g(t)^2 \\nabla_\\mathbf{x} \\log p_t(\\mathbf{x})]dt$ when integrating from $T$ to $0$. This is critical since readers cannot implement the decoding process without this explicit form. Add: \"Specifically, the reverse-time ODE is $d\\mathbf{x} = -[\\mathbf{f}(\\mathbf{x},t) - \\frac{1}{2}g(t)^2 \\nabla_\\mathbf{x} \\log p_t(\\mathbf{x})]dt$, which is integrated from $t=T$ to $t=0$ for decoding.\"",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Imputation sampling method unclear",
+          "quote": "Imputation is a special case of conditional sampling. Suppose we have an incomplete data point  $\\mathbf{y}$  where only some subset,  $\\Omega(\\mathbf{y})$  is known. Imputation amounts to sampling from  $p(\\mathbf{x}(0) \\mid \\Omega(\\mathbf{y}))$ , which we can accomplish using an unconditional model (see Appendix I.2).",
+          "explanation": "The claim that imputation uses an \"unconditional model\" is misleading. While the score model $\\nabla_x \\log p_t(x)$ is unconditional, the conditional gradient $\\nabla_x \\log p_t(y|x)$ must still be computed. For imputation, this gradient enforces known pixel constraints: $\\nabla_x \\log p_t(y|x) = \\lambda \\cdot M \\odot (x - y)$ where $M$ is a binary mask for known pixels and $\\lambda$ controls constraint strength. Replace \"unconditional model\" with \"unconditional score model\" and add: \"where the conditional gradient term enforces known pixel constraints through masking\".",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "Reverse-time SDE sign convention inconsistency",
+          "quote": "bf{x}(0) \\sim p_0$ . A remarkable result from Anderson (1982) states that the reverse of a diffusion process is also a diffusion process, running backwards in time and given by the reverse-time SDE:\n\n$$\n\\mathrm {d} \\mathbf {x} = [ \\mathbf {f} (\\mathbf {x}, t) - g (t) ^ {2} \\nabla_ {\\mathbf {x}} \\log p _ {t} (\\mathbf {x}) ] \\mathrm {d} t + g (t) \\mathrm {d} \\bar {\\mathbf {w}}, \\tag {6}\n$$\n\nwhere  $\\bar{\\mathbf{w}}$  is a standard Wiener process when time flows backwards from  $T$  to 0, and  $\\mathrm{d}t$  is an infinites",
+          "explanation": "The equation states that dt is negative when time flows backward from T to 0, but the drift term is written as if dt were positive. For a backward-time process with dt < 0, the drift should indeed be negated to maintain mathematical consistency. Rewrite Eq. (6) as $\\mathrm{d}\\mathbf{x} = [-\\mathbf{f}(\\mathbf{x}, t) + g(t)^2 \\nabla_{\\mathbf{x}} \\log p_t(\\mathbf{x})] \\mathrm{d}t + g(t) \\mathrm{d}\\bar{\\mathbf{w}}$ where $\\mathrm{d}t > 0$ represents backward time flow, or explicitly state that $\\mathrm{d}t < 0$ and keep the current drift term.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Unjustified variance relationship claim",
+          "quote": "Notably, the weights of the $i$-th summand in Eq. (1) and Eq. (3), namely $\\sigma_{i}^{2}$ and $(1-\\alpha_{i})$, are related to corresponding perturbation kernels in the same functional form: $\\sigma_{i}^{2}\\propto 1/\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\sigma_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}]$ and $(1-\\alpha_{i})\\propto 1/\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}]$.",
+          "explanation": "The proportional relationships claimed here are not derived. For DDPM, $(1-\\alpha_{i})$ is the variance of the perturbation kernel, but the claimed inverse relationship with the expected squared norm of the conditional score requires justification. Add the derivation: \"Since $\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}] = \\frac{d}{1-\\alpha_{i}}$ for $d$-dimensional Gaussian noise, we have $(1-\\alpha_{i}) \\propto 1/\\mathbb{E}[\\|\\nabla_{\\mathbf{x}}\\log p_{\\alpha_{i}}(\\tilde{\\mathbf{x}}\\mid\\mathbf{x})\\|_{2}^{2}]$\" after the quoted text.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Colorization transformation unspecified",
+          "quote": "Colorization is a special case of imputation, except that the known data dimensions are coupled. We can decouple these data dimensions with an orthogonal linear transformation, and perform imputation in the transformed space (details in Appendix I.3).",
+          "explanation": "The orthogonal transformation for colorization is not specified. In practice, colorization typically uses standard color space conversions (RGB\u2192YUV or RGB\u2192Lab) where luminance and chrominance are naturally orthogonal. Specify: \"We convert RGB images to YUV color space, where Y (luminance) is known and U,V (chrominance) are unknown. The YUV transformation matrix is orthogonal, allowing direct imputation in this space.\"",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Missing convergence conditions for discrete to continuous limit",
+          "quote": "0)\n\nAs $N\\to\\infty$, Eq. (10) converges to the following SDE,\n\n$\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)}\\;\\mathrm{d}\\mathbf{w}.$ (11)\n\nTherefore,",
+          "explanation": "The convergence from the discrete Markov chain to the continuous SDE requires specific conditions on the sequence $\\{\\beta_i\\}_{i=1}^N$ and the function $\\beta(t)$. Add the convergence condition that $\\max_{1\\leq i\\leq N} |\\beta_i - \\beta(t_i)|\\to 0$ and $\\max_i \\beta_i \\to 0$ as $N\\to\\infty$, where $t_i = i/N$.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Classifier training data assumption",
+          "quote": "Since the forward SDE is tractable, we can easily create training data  $(\\mathbf{x}(t), \\mathbf{y})$  for the time-dependent classifier by first sampling  $(\\mathbf{x}(0), \\mathbf{y})$  from a dataset, and then sampling  $\\mathbf{x}(t) \\sim p_{\\mathrm{fit}}(\\mathbf{x}(t) \\mid \\mathbf{x}(0))$ .",
+          "explanation": "The text assumes the forward SDE transition kernel is tractable for sampling, but this depends on the specific SDE choice. For general SDEs with non-linear drift, exact sampling may be intractable. Add: \"For SDEs where the transition kernel has a closed-form (e.g., VP/VE SDEs), we can sample exactly; otherwise, we approximate x(t) by numerically integrating the forward SDE from x(0) to time t.\"",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.7096,
+      "cost_method": "estimated",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a unified SDE framework for score-based generative modeling that theoretically connects SMLD and DDPM while introducing new samplers and likelihood computation methods. The theoretical foundation is sound and the empirical results on CIFAR-10 are competitive. However, several implementation details, theoretical assumptions, and experimental validations require clarification before the claims can be fully accepted.\n\nThe authors successfully unify discrete diffusion models under a continuous-time SDE formulation and demonstrate practical benefits through predictor-corrector sampling and probability flow ODEs. The framework is mathematically coherent and the CIFAR-10 benchmarks are strong. The main weaknesses lie in unverified theoretical assumptions, missing quantitative validation for inverse problems, and conflating architectural scaling with methodological novelty.\n\nOverview issues:\n\n- Malformed diffusion coefficient in the sub-VP SDE: Equation 12 in Section 3.4 contains a typographical error in the exponent of the diffusion coefficient, written as `e^{-2\frac{\text{t}^{t}}{\text{t}_{0}}\beta(s)\text{d}s})}`. The notation incorrectly mixes variable names with integral limits, rendering the expression mathematically undefined. Readers attempting to implement the sub-VP SDE will encounter immediate compilation failures. The authors should correct the exponent to clearly show the integrated variance schedule, likely `e^{-2\text{int}_0^t \beta(s) ds}`, and verify that the resulting variance bound matches the stated property in Appendix B. This correction is necessary for reproducibility and theoretical consistency.\n\n- Unquantified impact of ODE solver tolerances on likelihood claims: Section 4.3 asserts that the probability flow ODE enables exact likelihood computation, yet the implementation relies on black-box adaptive solvers with adjustable error tolerances. Figure 3 demonstrates that varying tolerances changes the number of function evaluations and visual quality, but the paper never reports how these tolerances affect the computed log-likelihood or whether the likelihood bound holds under coarse integration. Since likelihood estimation in neural ODEs is highly sensitive to adjoint solver accuracy, claiming exactness without specifying tolerances or reporting likelihood variance across tolerances is misleading. The revision should include a sensitivity analysis showing how likelihood estimates converge with tighter tolerances and clarify that the reported values are approximations contingent on solver settings.\n\n- Absence of quantitative metrics for controllable generation: Section 5 introduces a conditional reverse-time SDE for solving inverse problems like image inpainting and colorization, but the evaluation relies entirely on qualitative samples in Figure 4. The paper claims this framework provides a new way to solve inverse problems, yet it omits standard fidelity metrics such as PSNR, SSIM, or FID on the completed regions. Without quantitative measures, it is impossible to verify whether the conditional scores preserve distributional consistency or introduce artifacts. The authors should add a controlled experiment reporting these metrics on CIFAR-10 or LSUN, and explicitly measure the distributional shift between generated and ground-truth images.\n\n- Unaddressed numerical instability of neural score networks at low noise scales: Section 3.1 assumes the forward SDE coefficients are globally Lipschitz to guarantee a unique strong solution, but this assumption breaks down when the drift and diffusion are replaced by a trained neural network. Score networks typically become ill-conditioned as noise approaches zero, leading to exploding gradients and sampling divergence. The paper does not discuss practical stabilization techniques like score truncation, clipping, or adaptive step sizing that are standard in modern diffusion implementations. Readers will likely encounter unstable sampling trajectories when applying the framework to high-resolution data without these safeguards. The revision should explicitly state the stability limitations of the theoretical framework and incorporate standard score stabilization methods into the experimental protocol.\n\n- Conflation of architectural gains with the SDE framework: The abstract and introduction attribute record-breaking CIFAR-10 performance primarily to the continuous SDE framework and new samplers, yet Section 4.4 reveals that the best results come from models explicitly labeled deep, which double the network depth of prior baselines. Table 3 shows that switching from discrete to continuous objectives yields marginal FID improvements, while increasing depth drives the performance gains. The paper lacks an ablation that isolates the contribution of the SDE formulation and PC/ODE samplers from the architectural scaling. To substantiate the claim that the framework itself enables new capabilities, the authors should report results using fixed, comparable architectures across discrete and continuous training objectives.\n\n- Derivation showing recovery of ancestral sampling and Langevin dynamics: The paper claims that SMLD and DDPM are discretizations of the proposed SDE framework, yet it never explicitly derives how the general reverse-time SDE reduces to the specific update rules in Eqs. 2 and 4. Readers need to see the exact discretization choices that yield these prior methods to trust the unification claim. Compute the reverse-time SDE for the VP and VE processes using Euler-Maruyama and identity/corrector steps, then show algebraically that the resulting update matches the ancestral sampling rule and annealed Langevin dynamics. This concrete derivation would ground the theoretical unification in familiar algorithms. It would also clarify how the choice of predictor and corrector maps to the specific noise schedules used in the discrete baselines.\n\n- Discussion of trace estimation cost for high-dimensional likelihoods: Section 4.3 asserts that the probability flow ODE enables exact likelihood computation via the instantaneous change of variables formula. The paper omits any discussion of how the trace of the Jacobian is computed for high-dimensional image data. Standard neural ODE implementations rely on Hutchinson's trace estimator or similar randomized methods, which introduce variance and require additional forward passes per integration step. The authors should explain how they approximate the trace for CIFAR-10 and 1024x1024 images, report the variance of the likelihood estimates across different random seeds, and discuss the computational overhead this adds compared to standard score-based sampling. Without this, the claim of exact likelihood computation remains practically unverified.\n\n- Regularization strategy for ill-posed inverse problems in conditional sampling: Section 5 introduces a conditional reverse-time SDE for solving inverse problems like inpainting and colorization. The framework relies on the gradient of the forward process to guide generation. The paper does not address what happens when this gradient becomes ill-conditioned or diverges in highly degenerate inverse problems. Readers will wonder how the method handles cases where the observation provides little information about the latent state, potentially causing sampling trajectories to explode. The authors should discuss a regularization technique, such as clipping the likelihood gradient or scaling it by a temperature parameter, and provide a sensitivity analysis showing how the guidance strength affects sample fidelity and distributional consistency. This missing implementation detail is critical for practitioners attempting to apply the method to novel inverse problems.\n\nRecommendation: Major revision. The theoretical claims regarding exact likelihood and SDE well-posedness conflict with practical implementation details, and the empirical validation lacks necessary quantitative metrics for inverse problems and ablation for architectural contributions. Addressing these gaps is essential before the paper can meet the standards of a top venue.\n\nRevision targets:\n\n- Correct the malformed exponent in Equation 12 and verify the variance bound derivation in Appendix B.\n\n- Add a tolerance sensitivity analysis for the probability flow ODE likelihood computation, reporting how solver accuracy affects both log-likelihood and sample quality.\n\n- Include quantitative metrics (PSNR, SSIM, FID) and distributional shift analysis for the inpainting and colorization experiments in Section 5.\n\n- Provide an ablation study isolating the impact of the continuous SDE objective and PC/ODE samplers from network depth and architectural changes.\n\n- Discuss and implement standard score stabilization techniques to address numerical instability at low noise scales.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Reverse-time SDE formulation vs. abstract claim",
+          "quote": "Crucially, the reverse-time SDE depends only on the time-dependent gradient field (a.k.a., score) of the perturbed data distribution.",
+          "explanation": "The abstract's claim is mathematically incomplete. Equation 6 in Section 3.2 clearly shows the reverse drift depends on the forward drift f(x,t), the diffusion coefficient g(t)^2, and the score. Omitting the forward coefficients obscures how different forward SDEs yield different reverse trajectories even with identical scores. The authors should revise the abstract to reflect that the reverse-time SDE is constructed from the score in conjunction with the forward process's drift and diffusion parameters.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Exact likelihood computation ignores numerical integration and score approximation",
+          "quote": "We also derive an equivalent neural ODE that samples from the same distribution as the SDE, but additionally enables exact likelihood computation, and improved sampling efficiency.",
+          "explanation": "Claiming exact likelihood computation overlooks two practical constraints. First, the instantaneous change of variables formula requires computing the trace of the Jacobian, which is approximated using Hutchinson's stochastic estimator and adjoint ODE solvers with finite tolerances. Second, the score function is approximated by a trained neural network, not known analytically. Consequently, the computed likelihood is an approximation of the true data likelihood, contingent on solver settings and score estimation quality. The authors should qualify the exact claim and clarify that reported values are approximations bounded by integration tolerances and model capacity.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Conflation of architectural gains with the SDE framework",
+          "quote": "Combined with multiple architectural improvements, we achieve record-breaking performance for unconditional image generation on CIFAR-10 with an Inception score of 9.89 and FID of 2.20",
+          "explanation": "The abstract and introduction attribute record-breaking CIFAR-10 performance primarily to the continuous SDE framework and new samplers. However, Table 3 reveals that the best results come from models explicitly labeled deep, which double the network depth of prior baselines. Switching from discrete to continuous objectives yields marginal FID improvements, while increasing depth drives the performance gains. The paper lacks an ablation isolating the contribution of the SDE formulation from architectural scaling. To substantiate the claim that the framework itself enables new capabilities, the authors should report results using fixed, comparable architectures across discrete and continuous training objectives.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Derivation showing recovery of ancestral sampling and Langevin dynamics",
+          "quote": "We show that this framework encapsulates previous approaches in score-based generative modeling and diffusion probabilistic modeling, allowing for new sampling procedures and new modeling capabilities.",
+          "explanation": "The claim that SMLD and DDPM are discretizations of the proposed SDE framework requires explicit derivation. The paper never shows how the general reverse-time SDE reduces to the specific update rules in Eqs. 2 and 4. Readers need to see the exact discretization choices that yield these prior methods to trust the unification claim. Computing the reverse-time SDE for the VP and VE processes and showing algebraically that the resulting updates match ancestral sampling and annealed Langevin dynamics would ground the theoretical unification.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "DDPM reverse transition variance approximation",
+          "quote": "p_{\\bm{\\theta}}(\\mathbf{x}_{i-1}|\\mathbf{x}_{i})=\\mathcal{N}(\\mathbf{x}_{i-1};\\frac{1}{\\sqrt{1-\\beta_{i}}}(\\mathbf{x}_{i}+\\beta_{i}\\mathbf{s}_{\\bm{\\theta}}(\\mathbf{x}_{i},i)),\\beta_{i}\\mathbf{I})",
+          "explanation": "The specified reverse variance \\beta_i\\mathbf{I} deviates from the exact Bayesian reverse process derived in Ho et al. (2020), which uses \\tilde{\\beta}_i = \\frac{1-\\alpha_{i-1}}{1-\\alpha_i}\\beta_i. While this is a known approximation in the L_{simple} objective, the paper presents the transition without clarifying it as an approximation. The authors should explicitly state that \\beta_i is used as a fixed variance approximation for computational simplicity, noting that this choice prioritizes efficiency over exact Bayesian consistency.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Mischaracterization of DDPM's training tractability",
+          "quote": "n. Denoising diffusion probabilistic modeling (DDPM) (Sohl-Dickstein et al., 2015; Ho et al., 2020) trains a sequence of probabilistic models to reverse each step of the noise corruption, using knowledge of the functional form of the reverse distributions to ",
+          "explanation": "This statement inaccurately describes how DDPM achieves tractability. DDPM does not use knowledge of the reverse distributions' functional form; the true reverse process is intractable and is instead approximated by a Gaussian whose mean is parameterized by a neural network. The method's tractability stems from the known forward process and the derivation of a variational lower bound (ELBO). Rewriting this to clarify that DDPM relies on a variational bound with a Gaussian approximation would accurately reflect the prior work.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Practical limitations of general-purpose SDE solvers for score estimation",
+          "quote": "We can apply any of them to the reverse-time SDE for sample generation.",
+          "explanation": "While theoretically valid, applying arbitrary numerical solvers overlooks the specific challenges of score-based generation. The drift coefficient depends on the score function, which is approximated by a neural network. Higher-order methods like stochastic Runge-Kutta require multiple score evaluations per step, which amplifies estimation variance and computational cost without guaranteeing improved sample quality. The authors should clarify that first-order solvers are typically preferred in practice due to score estimation error, rather than implying any general-purpose solver is equally viable.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Table 2 does not contain FID scores",
+          "quote": "In contrast, FID scores and NLL values in Table 2 are reported for the last training checkpoint, and samples are obtained with black-box ODE solvers.",
+          "explanation": "Table 2 exclusively lists NLL metrics. It does not report FID scores, which are located in Table 3. The authors should delete the reference to FID scores in this sentence and clarify that Table 2 contains only likelihood values.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Likelihood comparison incorrectly attributed to Table 3",
+          "quote": "As shown in Table 3, VE SDEs typically provide better sample quality than VP/sub-VP SDEs, but we also empirically observe that their likelihoods are worse than VP/sub-VP SDE counterparts.",
+          "explanation": "Table 3 only reports FID scores and does not display likelihood values. The observation regarding likelihoods actually relies on the data presented in Table 2. The sentence should explicitly state that the likelihood comparison comes from Table 2 to eliminate cross-reference confusion.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Contradictory time domain and overstatement of variance behavior",
+          "quote": "nd (11). Interestingly, the SDE of Eq. (9) always gives a process with exploding variance when $t\\to\\infty$, whilst the SDE of Eq. (11) yields a process with a fixed variance of one when the initial distribution has unit variance (proof in",
+          "explanation": "The paragraph explicitly restricts the continuous time variable to t \\in [0,1] earlier in the text. Referencing t \\to \\infty directly contradicts this domain restriction and is almost certainly a typo for t \\to 1. Furthermore, the claim that Eq. (9) always yields exploding variance is imprecise; the variance remains finite for any bounded schedule \\sigma(t) on [0,1]. The authors should rewrite this as growing variance as t \\to 1 (dependent on the schedule \\sigma(t)).",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Closed-form claim for perturbation kernels is unjustified for general beta(t)",
+          "quote": ", VP and sub-VP SDEs all have affine drift coefficients, their perturbation kernels $p_{0t}(\\mathbf{x}(t)\\mid\\mathbf{x}(0))$ are all Gaussian and can be computed in closed-forms, as discussed in Section 3.3. This",
+          "explanation": "While linear SDEs with additive noise yield Gaussian transition kernels, asserting they can be computed in closed-forms is too strong for an arbitrary time-dependent coefficient \\beta(t). The mean and covariance require evaluating integrals of \\beta(t), which only admit elementary closed-form expressions for specific schedules. For a general schedule, the kernels are defined by definite integrals and must be computed numerically. The authors should remove in closed-forms or clarify that it applies only to specific parameterizations.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Clarify Lipschitz condition for SDE existence and uniqueness",
+          "quote": "e SDE has a unique strong solution as long as the coefficients are globally Lipschitz in both state and time (\u00d8ksendal, 2003). We herea",
+          "explanation": "Standard existence and uniqueness theorems for It\u00f4 SDEs require global Lipschitz continuity in the state variable and a linear growth condition. Continuity or Lipschitz continuity in time t is not required; measurability suffices. While assuming Lipschitz continuity in time is a valid sufficient condition, it is stronger than necessary. The authors should reflect that global Lipschitz continuity in state and linear growth are the key conditions, noting that time dependence only needs to be measurable.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Qualify approximate generation due to score estimation and discretization",
+          "quote": "E\n\nAfter training a time-dependent score-based model $\\mathbf{s_{\u03b8}}$, we can use it to construct the reverse-time SDE and then simulate it with numerical approaches to generate samples from $p_{0}$",
+          "explanation": "Using an approximate score \\mathbf{s_\\theta} and a numerical integrator means the output distribution is p_{\\theta,0}, not the true data distribution p_0. The statement should explicitly acknowledge this approximation to maintain mathematical rigor. Rewriting the sentence to say approximately generate samples from p_0 accurately reflects the theoretical limitations of score approximation and discretization.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Logical tension in C2000 computation claim",
+          "quote": " ancestral sampling, and corrector-only methods (C2000) perform worse than other competitors (P2000, PC1000) with the same computation (In fact, we need way more corrector steps per noise scale, and thus more computation, to match the performance ",
+          "explanation": "The phrasing implies a fixed-budget comparison, while the parenthetical explains that matching performance actually requires a higher budget. This clarity issue could confuse readers about the baseline comparison protocol. The authors should separate the fixed-budget observation from the convergence requirement, for example: Under a fixed computational budget, C2000 performs worse than P2000 or PC1000 because it requires significantly more corrector steps per noise scale to converge.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Overstated theoretical claim on sample quality improvement",
+          "quote": "For all predictors, adding one corrector step for each predictor step (PC1000) doubles computation but always improves sample quality (against P1000).",
+          "explanation": "The use of always presents an empirical observation as a universal guarantee. In score-based sampling, MCMC correction with approximate scores can theoretically degrade sample quality if the score model is biased or the Langevin step size is mismatched. The paper provides no theoretical proof for this monotonic improvement. The authors should qualify the claim to reflect its empirical scope, e.g., consistently improves sample quality in our experiments.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Clarify terminology for uniquely identifiable encoding",
+          "quote": "Unlike most current invertible models, our encoding is uniquely identifiable, meaning that with sufficient training data, model capacity, and optimization accuracy, the encoding for an input is uniquely determined by the data distribution (Roeder et al., 2020).",
+          "explanation": "The term uniquely identifiable risks conflating statistical identifiability of latent factors with the deterministic uniqueness of the flow map. The authors mean that the encoding map x(0) \\to x(T) is a deterministic trajectory uniquely fixed by the data distribution and the parameter-free forward SDE, contrasting with learned invertible models where the encoder is a flexible network. Clarifying this distinction will prevent misinterpretation.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Unsupported claims in contribution summary",
+          "quote": "Our work enables a better understanding of existing approaches, new sampling algorithms, exact likelihood computation, uniquely identifiable encoding, latent code manipulation, and brings new conditional generation abilities to the family of score-based generative models.",
+          "explanation": "The conclusion lists these capabilities as key contributions, yet they appear abruptly without tying back to the core SDE framework's direct role. While discussed in Sections 4.3 and 5, framing them as standalone enabled capabilities in the conclusion overstates their novelty relative to the proposed continuous-time formulation. The authors should ensure the conclusion explicitly links these features to the SDE/ODE framework's continuous structure rather than presenting them as independent additions.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 17
+        }
+      ],
+      "cost_usd": 0.4046,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a unified framework for score-based generative modeling using stochastic differential equations (SDEs), generalizing previous discrete-time diffusion models. It introduces predictor-corrector sampling, probability flow ODEs for exact likelihood computation, and achieves state-of-the-art performance on CIFAR-10 generation.\n\nThe paper provides a significant theoretical contribution by placing diffusion-based generative models into the rigorous language of SDEs, which clarifies the relationship between various existing methods. The proposed innovations, particularly the probability flow ODE and the predictor-corrector sampling, are technically sound and empirically effective. It is a high-impact paper that advances the state of the art in generative modeling.\n\nOverview issues:\n\n- Unclear Stability of Numerical SDE Solvers: Section 4.1 discusses using general-purpose numerical SDE solvers, but the paper lacks a formal analysis of the discretization error relative to the time horizon T. Because the reverse-time SDE (Eq. 6) relies on a learned score function, errors in the score approximation can propagate and amplify during numerical integration. It remains unclear if the chosen discretization schemes (Euler-Maruyama, etc.) are stable for the specific score-based drift coefficients used. The authors should provide a convergence analysis or at least a discussion of how the step size impacts the accumulation of bias in the generated samples, especially in the low-noise regime where the score function is most sensitive.\n\n- Lack of Theoretical Justification for Predictor-Corrector Convergence: The predictor-corrector framework described in Section 4.2 is empirically successful but lacks a clear theoretical convergence guarantee. Specifically, the interplay between the SDE solver (predictor) and the MCMC step (corrector) is treated as a heuristic. It is not obvious why this combination does not introduce a persistent bias into the final sample distribution. The authors should provide a brief analysis or a synthetic experiment demonstrating that the PC sampler converges to the target distribution as the step size approaches zero, or explain the conditions under which this hybrid approach remains unbiased.\n\n- Over-reliance on FID and Inception Score: The paper uses FID and Inception Score as the primary metrics for evaluating sample quality, as seen in Tables 1 and 3. While standard, these metrics are known to be sensitive to the choice of the underlying feature extractor and do not fully capture issues like mode collapse or lack of diversity in high-dimensional spaces. The paper would be stronger if it included additional metrics, such as precision and recall for distributions or multi-scale structural similarity (MS-SSIM), to better characterize the diversity of the generated images. This is particularly important given the claim of 'high fidelity' generation at 1024x1024 resolution.\n\n- Computational Trade-offs in Probability Flow ODE: While Section 4.3 highlights the probability flow ODE for exact likelihood computation and efficient sampling, the paper does not fully address the computational cost of the required ODE solver compared to standard diffusion sampling. Solving the ODE to a high precision for exact likelihoods is significantly more expensive than the approximate sampling used in DDPM or SMLD. The authors should provide a more detailed runtime comparison or a complexity analysis of the ODE-based likelihood estimation versus existing normalizing flow models, to clarify the practical utility of this approach for large-scale applications.\n\n- Missing empirical verification of the probability flow ODE's identity mapping: The paper claims that the probability flow ODE provides a uniquely identifiable encoding, meaning that the mapping from data to latent space is invertible and deterministic. While this is a strong theoretical claim, the paper lacks a concrete demonstration of the reconstruction error or the stability of this mapping for complex distributions like CIFAR-10. A simple experiment showing the reconstruction of a held-out set of images by integrating the ODE forward to the latent space and then backward to the data space would verify this claim. Without this, it is difficult to assess whether the 'uniquely identifiable' property holds in practice given the approximation errors of the neural network score estimator.\n\n- Lack of sensitivity analysis for the SDE drift and diffusion coefficients: The framework proposes a unified SDE approach, yet the empirical results rely on specific choices of drift and diffusion (VE, VP, sub-VP). The paper does not provide a systematic analysis of how the choice of these coefficients impacts the stability of the reverse-time SDE solver or the resulting sample quality. A comparative study using a simple, fully-specified model\u2014such as a mixture of Gaussians in a low-dimensional space\u2014would clarify how different drift/diffusion schedules affect the score estimation difficulty and the convergence of the reverse-time process. This would provide necessary intuition for practitioners when designing SDEs for new data domains.\n\n- Absence of computational complexity analysis for the PC framework: The predictor-corrector (PC) framework is a central contribution, but the paper only provides empirical performance tables without a formal discussion of the computational overhead. Because the corrector step requires additional score function evaluations (NFEs) per time step, the total cost of generation is significantly higher than standard diffusion models. A plot or table explicitly comparing FID versus total NFE for the PC sampler against the predictor-only baseline would demonstrate whether the quality gain is worth the increased computational cost. This information is essential for determining the practical scalability of the proposed method.\n\nRecommendation: accept\n\nRevision targets:\n\n- Include a discussion or empirical analysis of the discretization error and stability of the reverse-time SDE solvers.\n\n- Supplement the FID/IS evaluation with diversity-focused metrics like precision and recall to better substantiate the quality claims.\n\n- Provide a more detailed comparison of the computational overhead for exact likelihood computation using the probability flow ODE versus traditional methods.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency in model selection criteria",
+          "quote": "Results reported in Table 3 are for the checkpoint with the smallest FID over the course of training, where samples are generated with PC samplers. In contrast, FID scores and NLL values in Table 2 are reported for the last training checkpoint, and samples are obtained with black-box ODE solvers.",
+          "explanation": "The paper evaluates models using two different selection criteria: the best-performing checkpoint for Table 3 and the final training checkpoint for Table 2. This inconsistency makes it difficult to determine whether the reported improvements are due to the architectural changes or simply the result of model selection bias. To ensure a fair comparison, all models should be evaluated using a consistent criterion, such as the final checkpoint or a fixed validation set performance.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Unsubstantiated claim of uniquely identifiable encoding",
+          "quote": "Our work enables a better understanding of existing approaches, new sampling algorithms, exact likelihood computation, uniquely identifiable encoding, latent code manipulation, and brings new conditional generation abilities to the family of score-based generative models.",
+          "explanation": "The conclusion claims that the proposed framework enables 'uniquely identifiable encoding.' However, the paper provides no formal definition of an encoder, nor any proof demonstrating that the mapping from data to latent space is uniquely identifiable. Given that the practical implementation relies on a neural network approximation of the score function, this claim is not supported by the presented framework. Please remove this claim from the list of contributions.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Typographical error in sub-VP SDE diffusion coefficient",
+          "quote": "$\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.$ (12)",
+          "explanation": "The expression within the square root contains a notation error where the integral symbol appears to have been replaced by 't^t / t_0'. The diffusion coefficient should be defined using a standard integral, such as $\\sqrt{\\beta(t)(1 - e^{-2 \\int_0^t \\beta(s) ds})}$. Please correct this notation to ensure the diffusion coefficient is well-defined.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguity in the definition of the reverse-time Wiener process",
+          "quote": "where  $\\bar{\\mathbf{w}}$  is a standard Wiener process when time flows backwards from  $T$  to 0, and  $\\mathrm{d}t$  is an infinitesimal negative timestep.",
+          "explanation": "The use of an infinitesimal negative timestep $\\mathrm{d}t < 0$ is non-standard and complicates implementation. Defining the reverse-time SDE using a time-reversed variable $s = T - t$ and a positive differential $\\mathrm{d}s$ would be more rigorous and align better with standard numerical SDE solvers. Please rewrite the definition to use a positive time increment.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Ambiguity in the definition of the weighting function",
+          "quote": "As in SMLD and DDPM, we can typically choose  $\\lambda \\propto 1 / \\mathbb{E}\\big[\\big\\| \\nabla_{\\mathbf{x}(t)}\\log p_{0t}(\\mathbf{x}(t)\\mid \\mathbf{x}(0))\\big\\| _2^2\\big]$ .",
+          "explanation": "The notation $\\mathbb{E}[\\dots]$ is ambiguous here, as it could be confused with the outer expectation over $t$ in Eq. (7). To clarify, please explicitly denote the inner expectation as $\\mathbb{E}_{\\mathbf{x}(0), \\mathbf{x}(t)}[\\dots]$ to distinguish the weighting function's dependence on the noise level $t$ from the stochasticity of the data samples.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0879,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents a unified framework for score-based generative modeling using stochastic differential equations, extending prior work on score matching and diffusion probabilistic models. The framework enables flexible sampling, exact likelihood computation, and controllable generation. While the paper is technically strong and has had significant impact, several issues warrant attention regarding theoretical guarantees, empirical evaluation, and reproducibility.\n\nThe paper makes a substantial contribution by unifying score-based generative models and diffusion probabilistic models under a continuous-time SDE framework, introducing new sampling methods (predictor-corrector, probability flow ODE), and achieving state-of-the-art results on image generation benchmarks. The theoretical development is sound and the empirical results are impressive. However, the paper would benefit from stronger theoretical guarantees for the proposed methods and more rigorous empirical validation.\n\nOverview issues:\n\n- Lack of theoretical convergence guarantees for predictor-corrector samplers: The paper introduces predictor-corrector (PC) samplers that combine numerical SDE solvers with score-based MCMC, but provides no theoretical analysis of their convergence properties. Section 4.2 describes the method and presents empirical results, but does not establish conditions under which the corrector steps guarantee convergence to the correct marginal distribution, nor does it analyze the bias introduced by finite-step MCMC corrections. Given that the PC sampler is a core contribution, the paper should include either a convergence proof or a rigorous error bound analysis. Without this, it is unclear whether the improvements observed empirically are guaranteed or depend on specific hyperparameter choices.\n\n- Insufficient justification for the score matching objective weighting function: Equation (7) introduces a continuous-time score matching objective with a weighting function \u03bb(t). The paper states that \u03bb \u221d 1/E[||\u2207 log p_{0t}||^2] is a typical choice, but does not justify why this weighting is optimal or how it affects the quality of the learned score function. The choice of weighting function can significantly impact the quality of the score estimate, especially for different SDEs (VE, VP, sub-VP). The paper should provide theoretical guidance on selecting \u03bb(t) or at least discuss the sensitivity of results to this choice.\n\n- Unclear relationship between likelihood computation and sample quality: Section 4.3 claims that the probability flow ODE enables exact likelihood computation, but Table 2 shows that models with better likelihoods (e.g., sub-VP SDE) do not necessarily yield better sample quality (FID scores). The paper does not adequately explain this discrepancy or discuss the trade-offs between likelihood and sample quality. This is a critical omission because the paper presents likelihood computation as a key advantage, yet the results suggest that optimizing for likelihood may harm sample quality. The paper should include a discussion of why this occurs and under what conditions practitioners should prioritize one metric over the other.\n\n- Limited discussion of computational cost and scalability: The paper reports impressive results on 1024x1024 images but provides minimal analysis of the computational cost of the proposed methods. The predictor-corrector sampler doubles computation compared to predictor-only methods, and the probability flow ODE requires solving an ODE with potentially many function evaluations. The paper should include a systematic comparison of sampling time, memory usage, and number of function evaluations across different methods. Additionally, the scalability to even higher resolutions or video data is not discussed, which limits the practical impact of the work.\n\n- Incomplete ablation studies for architectural improvements: Section 4.4 introduces several architectural improvements (NCSN++, DDPM++) but does not provide ablation studies to isolate the contribution of each architectural change. The paper claims that 'with better architectures and new sampling algorithms... the latter can catch up' but does not show which specific architectural choices (e.g., attention mechanisms, normalization, skip connections) are most important. Without these ablations, it is difficult for practitioners to understand which components are essential for achieving the reported results.\n\n- Potential issues with score estimation in low-density regions: The paper assumes that the score function can be accurately estimated by a neural network for all time steps, but this assumption may be violated in regions of low data density. The forward SDE diffuses data into noise, but the score at intermediate times may be poorly estimated in regions far from the data manifold. This is a known limitation of score-based models (as noted in the literature context), but the paper does not address it or discuss how the proposed methods mitigate this issue. The paper should include a discussion of when score estimation is likely to fail and how practitioners can detect or avoid such failures.\n\n- Lack of comparison with contemporaneous methods on equal footing: While the paper compares with several baselines (BigGAN, StyleGAN2-ADA, NCSN, DDPM), the comparisons are not always on equal footing. For example, Table 3 compares unconditional generation results with conditional models like BigGAN. Additionally, the paper does not compare with other score-based methods that were contemporaneous, such as those using different noise schedules or training objectives. The paper should include a more comprehensive comparison that controls for factors like model size, training compute, and sampling compute.\n\n- No worked example for a concrete parametric model: The paper develops a general SDE framework but never computes its key quantities for a simple, fully-specified parametric data distribution. For instance, one could take the data distribution to be a one-dimensional Gaussian mixture or a simple exponential family, write down the forward SDE (e.g., the VP SDE), derive the score function analytically, and then verify that the reverse-time SDE or the probability flow ODE indeed recovers the original data distribution. Such an example would let readers calibrate intuition about how the framework works in a tractable setting and would demonstrate that the theoretical claims are not vacuous. The paper would benefit from adding a short section or appendix that works through this computation for at least one concrete model.\n\n- Missing guidance on estimating the score weighting function \u03bb(t): Equation (7) introduces a continuous-time score matching objective with a weighting function \u03bb(t), and the paper states that a typical choice is \u03bb \u221d 1/E[||\u2207 log p_{0t}||^2]. However, it provides no justification for this choice, no discussion of how it affects the learned score, and no practical guidance on how to estimate it from data. Since the weighting function can significantly influence the quality of the score estimate and thus the final samples, the paper should include a derivation or at least a heuristic for selecting \u03bb(t), along with a sensitivity analysis showing how results change with different choices. Without this, practitioners have no principled way to set this hyperparameter.\n\n- No analysis of score estimation failure in low-density regions: The paper assumes that the score function can be accurately estimated by a neural network for all time steps, but it does not address the well-known issue that score estimation is unreliable in regions of low data density. This is a critical gap because the reverse-time SDE and the probability flow ODE both rely on accurate scores everywhere in state space. The paper should include a discussion of when and why score estimation is likely to fail (e.g., far from the data manifold), and should propose practical diagnostics or mitigation strategies, such as adaptive noise schedules or importance sampling. Without this, the framework's applicability to real-world high-dimensional problems is uncertain.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide theoretical convergence guarantees or error bounds for the predictor-corrector sampler, including conditions under which it converges to the correct marginal distribution.\n\n- Include a systematic analysis of the weighting function \u03bb(t) in the score matching objective, with guidance on how to select it and its impact on score estimation quality.\n\n- Add a discussion of the trade-off between likelihood and sample quality, explaining why sub-VP SDEs yield better likelihoods but worse FIDs compared to VE SDEs.\n\n- Include computational cost analysis (sampling time, number of function evaluations) for all proposed methods, and discuss scalability to higher resolutions or video data.\n\n- Provide ablation studies for architectural improvements, showing the contribution of each component (e.g., attention, normalization, depth) to the final performance.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Unsubstantiated claim about uniquely identifiable encoding",
+          "quote": "Uniquely identifiable encoding Unlike most current invertible models, our encoding is uniquely identifiable, meaning that with sufficient training data, model capacity, and optimization accuracy, the encoding for an input is uniquely determined by the data distribution (Roeder et al., 2020). This is because our forward SDE, Eq. (5), has no trainable parameters, and its associated probability flow",
+          "explanation": "The reasoning provided does not establish the claimed property. The forward SDE having no trainable parameters only fixes the forward process, but the probability flow ODE depends on the learned score function. Even with perfectly estimated scores, the ODE solution for a given x(0) is deterministic, so the encoding x(T) is uniquely determined by x(0). However, the claim is about the encoding being 'uniquely identifiable' from the data distribution, which would require injectivity of the mapping from data to latent space. The paper does not prove injectivity, nor does it address the possibility that two different data points could map to the same latent under the ODE flow. The reference to Roeder et al. (2020) discusses identifiability in normalizing flows with a fixed prior, but the probability flow ODE is not a normalizing flow with a fixed prior\u2014it depends on the learned score. The argument is insufficient. Rewrite the paragraph to either provide a proof of injectivity or weaken the claim to state that the encoding is deterministic given the learned score model.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Inconsistent FID reporting across tables",
+          "quote": "Our optimal architecture for the VE SDE, named NCSN++, achieves an FID of 2.45 on CIFAR-10 with PC samplers, while our optimal architecture for the VP SDE, called DDPM++, achieves 2.78.",
+          "explanation": "The text quotes FID values 2.45 (NCSN++) and 2.78 (DDPM++), but Table 3 reports NCSN++ cont. (deep, VE) at 2.20 and DDPM++ cont. (deep, VP) at 2.41. The quoted values appear to be from a different configuration or earlier checkpoint, yet the text presents them as the optimal results. This discrepancy undermines the reader's ability to track which architecture is truly best. Rewrite the quoted text to either match Table 3 (e.g., 'NCSN++ cont. (deep, VE) achieves FID 2.20, and DDPM++ cont. (deep, VP) achieves 2.41') or explicitly state that the 2.45/2.78 values are from a different configuration (e.g., 'without the continuous objective or increased depth').",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Contradiction in likelihood comparison claim",
+          "quote": "VE SDEs typically provide better sample quality than VP/sub-VP SDEs, but we also empirically observe that their likelihoods are worse than VP/sub-VP SDE counterparts.",
+          "explanation": "The text claims VE SDE likelihoods are worse than VP/sub-VP counterparts, yet Table 2 shows NCSN++ cont. deep (VE) achieves 2.99 bits/dim, identical to DDPM++ cont. deep (sub-VP) and better than DDPM++ cont. deep (VP) at 3.00 bits/dim. This directly contradicts the claim. The authors should correct the statement to reflect the actual numerical results, e.g., 'VE SDEs provide comparable or slightly better likelihoods than VP/sub-VP SDEs in our experiments, though the differences are small.'",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Unsubstantiated claim about best likelihood",
+          "quote": "Our best model for likelihoods, DDPM++ cont. (deep, sub-VP), similarly doubles the network depth and achieves a log-likelihood of 2.99 bits/dim with the continuous objective in Eq. (7). To our best knowledge, this is the highest likelihood on uniformly dequantized CIFAR-10.",
+          "explanation": "The paper claims 2.99 bits/dim is the highest likelihood on uniformly dequantized CIFAR-10, but Table 2 shows the VE SDE model (NCSN++ cont. deep) also achieves 2.99 bits/dim. If two models achieve the same value, the claim of 'highest' is ambiguous. Moreover, the paper does not provide a citation or comparison to contemporaneous likelihood-based models (e.g., Glow, Flow++) to substantiate the claim. Rewrite the quoted text as 'To our best knowledge, this is among the highest likelihoods on uniformly dequantized CIFAR-10, matching the VE SDE model at 2.99 bits/dim.'",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Inconsistent comparison of likelihood values in Table 2",
+          "quote": "We compute log-likelihoods on uniformly dequantized data, and only compare to models evaluated in the same way (omitting models evaluated with variational dequantization (Ho et al., 2019) or discrete data), except for DDPM  $(L / L_{\\mathrm{simple}})$  whose ELBO values (annotated with *) are reported on discrete data.",
+          "explanation": "The comparison is inconsistent: the paper's own likelihoods are on uniformly dequantized data, while the DDPM baseline uses discrete data. Likelihood values depend on the dequantization method (uniform vs. variational vs. discrete), so comparing these numbers directly is not valid. The paper should either recompute the DDPM baseline on uniformly dequantized data or clearly state that the comparison is approximate and note the potential discrepancy. The current presentation is misleading because it implies a direct comparison that is not apples-to-apples. Rewrite the quoted text to either remove the exception or add a caveat that the comparison is approximate due to different dequantization methods.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Ambiguous claim about 90% reduction in function evaluations",
+          "quote": "With a larger error tolerance, the number of function evaluations can be reduced by over  $90\\%$  without affecting the visual quality of samples (Fig. 3).",
+          "explanation": "The claim is vague. The text does not specify the baseline NFE being reduced from, nor does it provide quantitative evidence (e.g., FID scores) to support the claim that visual quality is unaffected. Figure 3 shows a plot of NFE vs. some quality metric, but the text does not reference a specific threshold or metric. Without a clear definition of 'visual quality' and a quantitative comparison, this claim is not verifiable. The paper should specify the baseline NFE, the error tolerance used, and provide FID or similar metrics to demonstrate that quality is maintained. Rewrite the quoted text to include the baseline NFE and a quantitative quality metric (e.g., FID) that remains unchanged.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Unjustified claim about exact likelihood computation",
+          "quote": "Exact likelihood computation Leveraging the connection to neural ODEs, we can compute the density defined by Eq. (13) via the instantaneous change of variables formula (Chen et al., 2018). This allows us to compute the exact likelihood on any input data (details in Appendix D.2).",
+          "explanation": "The claim that the likelihood computed via the instantaneous change of variables formula is 'exact' is not fully justified in the main text. The formula requires the ODE flow to be invertible and the score function to be known exactly. In practice, the score is approximated by a neural network, and the ODE is solved numerically, introducing approximation errors. The paper acknowledges numerical errors elsewhere (e.g., in the context of sampling efficiency), but here it claims 'exact likelihood' without qualification. The appendix may provide details, but the main text should clarify that the likelihood is exact only in the limit of perfect score estimation and infinitesimal step size. Add a qualification such as 'exact in the limit of perfect score estimation and infinitesimal step size' after 'exact likelihood'.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Overclaim on exact likelihood computation in conclusion",
+          "quote": "We presented a framework for score-based generative modeling based on SDEs. Our work enables a better understanding of existing approaches, new sampling algorithms, exact likelihood computation, uniquely identifiable encoding, latent code manipulation, and brings new conditional generation abilities to the family of score-based generative models.",
+          "explanation": "The claim of 'exact likelihood computation' is overstated. The paper derives a probability flow ODE that, in principle, allows likelihood computation via the instantaneous change-of-variables formula. However, this requires an accurate score estimate and a sufficiently fine ODE solver discretization. In practice, the computed likelihood is approximate due to score estimation error and numerical integration error. The paper's own Table 2 shows that likelihoods vary across models and are not exact in the sense of being independent of these approximations. The claim should be qualified to reflect that the ODE enables likelihood computation that is exact only in the limit of perfect score estimation and infinitesimal step size. Rewrite as: 'enables likelihood computation via the probability flow ODE, which is exact in the limit of perfect score estimation and infinitesimal discretization.'",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Unsubstantiated claim about uniquely identifiable encoding in conclusion",
+          "quote": "We presented a framework for score-based generative modeling based on SDEs. Our work enables a better understanding of existing approaches, new sampling algorithms, exact likelihood computation, uniquely identifiable encoding, latent code manipulation, and brings new conditional generation abilities to the family of score-based generative models.",
+          "explanation": "The paper claims 'uniquely identifiable encoding' as a contribution, but this concept is not defined or demonstrated anywhere in the paper. The probability flow ODE provides a deterministic mapping from data to latent code, but uniqueness of the encoding is not established\u2014different data points could map to the same latent code if the ODE is not injective. Moreover, the paper does not discuss or prove that the encoding is identifiable in any statistical sense. This claim is not supported by the paper's content and should be removed or replaced with a precise statement about the deterministic nature of the ODE mapping.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Missing justification for SDE convergence from discrete Markov chains",
+          "quote": "In the limit of $N\\to\\infty$, $\\{\\sigma_{i}\\}_{i=1}^{N}$ becomes a function $\\sigma(t)$, $\\mathbf{z}_{i}$ becomes $\\mathbf{z}(t)$, and the Markov chain $\\{\\mathbf{x}_{i}\\}_{i=1}^{N}$ becomes a continuous stochastic process $\\{\\mathbf{x}(t)\\}_{t=0}^{1}$, where we have used a continuous time variable $t\\in[0,1]$ for indexing, rather than an integer $i$. The process $\\{\\mathbf{x}(t)\\}_{t=0}^{1}$ is given by the following SDE",
+          "explanation": "The text claims that the discrete Markov chains (8) and (10) converge to the SDEs (9) and (11) as N\u2192\u221e, but provides no justification or reference for this convergence. The step from a discrete-time additive noise process to a continuous-time SDE requires careful scaling of the noise variance and time step. For example, Eq. (8) uses a variance increment of \u03c3_i^2 - \u03c3_{i-1}^2, which must be related to the time step \u0394t = 1/N. The authors should either provide a brief derivation or cite a standard reference (e.g., the Wong\u2013Zakai theorem or the Euler\u2013Maruyama discretization) to justify the limit. Without this, the reader cannot verify the correctness of the SDE limits.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Transition kernel assumption for general SDEs is misleading",
+          "quote": "ntly solve Eq. (7). When $\\mathbf{f}(\\cdot,t)$ is affine, the transition kernel is always a Gaussian distribution, where the mean and variance are often known in closed-forms and can be obtained with standard techniques (see Section 5.5 in *S\u00e1rkk\u00e4 and Solin (2019)*). For more general SDEs, we may solve Kolmogorov\u2019s forward equation *(\u00d8ksendal, 2003)* to obtain $p_{0t}(\\mathbf{x}(t)\\mid\\mathbf{x}(0))$.",
+          "explanation": "The claim that solving Kolmogorov's forward equation yields the transition kernel for general SDEs is misleading. Kolmogorov's forward equation (Fokker-Planck) is a PDE for the marginal density $p_t(\\mathbf{x})$, not for the conditional transition kernel $p_{0t}(\\mathbf{x}(t)\\mid\\mathbf{x}(0))$. To obtain the transition kernel, one would typically need to solve the Fokker-Planck equation with a Dirac delta initial condition at $\\mathbf{x}(0)$, which is analytically intractable for most nonlinear SDEs. The paper should clarify that this is a theoretical possibility, not a practical method. Rewrite as: 'For more general SDEs, the transition kernel satisfies Kolmogorov\u2019s forward equation with a Dirac delta initial condition, but closed-form solutions are rarely available; in practice, one may simulate the SDE or use approximate methods.'",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Equation (12) contains garbled integral expression",
+          "quote": "When using the same $\\beta(t)$ and starting from the same initial distribution, the variance of the stochastic process induced by Eq. (12) is always bounded by the VP SDE at every intermediate time step (proof in Appendix B).",
+          "explanation": "The first-pass reviewer correctly identifies that the integral in Eq. (12) is garbled by OCR: `\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s` is not valid LaTeX. The intended expression is almost certainly `\\int_{0}^{t} \\beta(s) \\, ds`. This is a typesetting error, not a mathematical one, but it renders the equation unreadable. The authors should rewrite Eq. (12) as `\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\int_{0}^{t}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.` to match the standard sub-VP SDE definition and ensure the proof in Appendix B is consistent.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Ambiguous variance bound for sub-VP SDE",
+          "quote": "When using the same $\\beta(t)$ and starting from the same initial distribution, the variance of the stochastic process induced by Eq. (12) is always bounded by the VP SDE at every intermediate time step (proof in Appendix B).",
+          "explanation": "The phrase 'bounded by' is ambiguous: it could mean the sub-VP variance is always less than or equal to the VP variance, or that it is bounded above by some function of the VP variance. The intended meaning is that the sub-VP variance is always less than or equal to the VP variance (as confirmed by the standard sub-VP SDE definition). The authors should clarify the direction of the inequality, e.g., 'the variance of the sub-VP SDE is always less than or equal to that of the VP SDE'. Additionally, a brief sketch of the reasoning (e.g., comparing the diffusion coefficients) would help readers who do not consult Appendix B.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Unsubstantiated claim about reverse diffusion sampler performance",
+          "quote": "As shown in Table 1, reverse diffusion samplers perform slightly better than ancestral sampling for both SMLD and DDPM models on CIFAR-10 (DDPM-type ancestral sampling is also applicable to SMLD models, see Appendix F.)",
+          "explanation": "The claim that reverse diffusion samplers 'perform slightly better than ancestral sampling' is presented as a factual result, but the section does not provide any numerical evidence or statistical analysis to support this claim. Table 1 is not reproduced in the text, and the reader cannot verify the magnitude or significance of the improvement. Moreover, the paper does not define what metric (e.g., FID, Inception score) is used to measure performance, nor does it discuss whether the difference is statistically significant or merely due to random variation. Without this information, the claim is unsubstantiated. The authors should either include the relevant numerical results in the text or table, or qualify the claim with a reference to the table and a brief summary of the observed differences.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Missing justification for sub-VP architecture transfer",
+          "quote": "We directly transfer the architectures for VP SDEs to sub-VP SDEs due to their similarity.",
+          "explanation": "The text states that architectures for VP SDEs are directly transferred to sub-VP SDEs 'due to their similarity,' but does not specify what aspects are similar (e.g., forward SDE form, score function structure, or training objective). Without this justification, readers may question whether the transfer is valid, especially since sub-VP SDEs have a different variance evolution. Add a brief justification after the quoted text, e.g., 'because both VP and sub-VP SDEs share the same drift coefficient and differ only in the diffusion coefficient, which does not affect the architecture design.'",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Mischaracterization of GAN sampling speed comparison",
+          "quote": "While our proposed sampling approaches improve results and enable more efficient sampling, they remain slower at sampling than GANs (Goodfellow et al., 2014) on the same datasets.",
+          "explanation": "The statement that the proposed methods 'remain slower at sampling than GANs' is too vague and potentially misleading. The paper does not provide a quantitative comparison of sampling speed (e.g., wall-clock time or number of function evaluations) against GANs in the experimental section. Without such data, the claim is an unsupported qualitative assertion. Additionally, the paper does not specify which GAN variant or which dataset is being compared. The authors should either provide a concrete speed comparison from their experiments or remove this claim. If they intend to reference known speed differences from the literature, they should cite specific studies and state the approximate factor.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Imprecise claim about DDPM training objective",
+          "quote": "For continuous state spaces, the DDPM training objective implicitly computes scores at each noise scale.",
+          "explanation": "The DDPM objective trains a network to predict the added noise, which is equivalent to a scaled score only under the variance-preserving SDE discretization. The introduction states this without the necessary qualification. Add a clarifying phrase such as '...implicitly computes quantities equivalent to scores at each noise scale under the variance-preserving SDE discretization' to avoid overstatement.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_17",
+          "title": "Unsubstantiated claim about SMLD catching up to DDPM",
+          "quote": "Although DDPM (Ho et al., 2020) was recently reported to achieve higher sample quality than SMLD (Song & Ermon, 2019; 2020), we show that with better architectures and new sampling algorithms allowed by our framework, the latter can catch up\u2014it achieves new state-of-the-art Inception score (9.89) and FID score (2.20) on CIFAR-10",
+          "explanation": "The improved results are attributed to the SDE framework with architectural improvements (NCSN++), not the original SMLD method. The phrasing 'the latter can catch up' conflates the original SMLD with the enhanced version. Rewrite as '...we show that score-based models under our SDE framework, with better architectures and new sampling algorithms, can achieve competitive results\u2014achieving new state-of-the-art...' to accurately describe the source of improvement.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_18",
+          "title": "Missing justification for reverse-time SDE existence",
+          "quote": "By reversing this process, we can smoothly mold random noise into data for sample generation. Crucially, this reverse process satisfies a reverse-time SDE (Anderson, 1982), which can be derived from the forward SDE given the score of the marginal probability densities as a function of time.",
+          "explanation": "The introduction claims the reverse-time SDE exists and can be derived from the forward SDE given the score, but does not mention the regularity conditions required for Anderson's theorem (e.g., the forward SDE must have a non-degenerate diffusion coefficient, and the score must be sufficiently regular). Without these conditions, the reverse-time SDE may not exist or may not be unique. Add a brief qualification such as 'Under mild regularity conditions (e.g., non-degenerate diffusion coefficient), this reverse process satisfies a reverse-time SDE (Anderson, 1982)...' to alert readers to the necessary assumptions.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_19",
+          "title": "Score matching equality requires almost everywhere condition",
+          "quote": "With sufficient data and model capacity, score matching ensures that the optimal solution to Eq. (7), denoted by  $\\mathbf{s}_{\\theta^*}(\\mathbf{x},t)$ , equals  $\\nabla_{\\mathbf{x}}\\log p_t(\\mathbf{x})$  for almost all  $\\mathbf{x}$  and  $t$ .",
+          "explanation": "The claim is too strong without stating the standard regularity conditions (correct specification, strict convexity, positivity of \u03bb(t)). However, the paper's phrasing is a common shorthand in the score-matching literature, and the authors do cite Hyv\u00e4rinen (2005) and Song et al. (2019a) which contain the full conditions. The comment is valid but minor. Rewrite the quoted sentence as: 'Under standard regularity conditions for score matching (Hyv\u00e4rinen, 2005; Song et al., 2019a), the optimal solution to Eq. (7) equals $\\nabla_{\\mathbf{x}}\\log p_t(\\mathbf{x})$ for almost all $\\mathbf{x}$ and $t$.'",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        }
+      ],
+      "cost_usd": 0.054,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper presents a unified framework for score-based generative modeling using stochastic differential equations (SDEs), generalizing existing discrete-time methods like SMLD and DDPM. It introduces continuous-time diffusion processes, reverse-time SDEs, predictor-corrector samplers, and probability flow ODEs for exact likelihood computation. The authors demonstrate state-of-the-art performance on CIFAR-10 and CelebA-HQ.\n\nThe paper makes a significant theoretical contribution by unifying discrete diffusion models into a continuous-time SDE framework, offering new theoretical insights and practical sampling algorithms. The experimental results are strong, setting new records on CIFAR-10. However, the paper is quite dense and the theoretical derivations, while present, are not fully fleshed out in the main text, relying heavily on appendices. The connection to likelihood computation, while theoretically sound, requires careful handling of discretization errors which is not deeply explored.\n\nOverview issues:\n\n- Theoretical Derivations are Appendix-Heavy: The paper presents a sophisticated theoretical framework involving SDEs, reverse-time processes, and probability flow ODEs. However, the critical derivations\u2014such as the proof that the reverse-time SDE (Eq. 6) is correct, the derivation of the probability flow ODE (Eq. 13), and the proof of the sub-VP SDE properties\u2014are relegated to the appendices. This makes the main text difficult to follow for readers who are not experts in stochastic calculus. While the appendices are available, a top-tier venue expects the core theoretical contributions to be accessible in the main body. The paper would benefit from moving the most essential derivations and proofs into the main text, or at least providing significantly more detailed summaries and explanations in the body to guide the reader through the logical flow of the arguments.\n\n- Sampling Efficiency vs. GANs is a Critical Limitation: The paper acknowledges in the conclusion that its sampling methods remain slower than GANs. This is a fundamental limitation for a generative modeling paper. While the authors introduce the probability flow ODE as a more efficient sampler, the comparison with GANs is not rigorously quantified. The paper needs to provide a more detailed analysis of the computational cost of sampling, including the number of score function evaluations (NFE) and the wall-clock time, compared to state-of-the-art GANs on the same datasets (e.g., StyleGAN2). Without this, the practical utility of the method for large-scale generation remains questionable. A clear statement of the computational trade-offs is essential for the paper's contribution to be fully understood and accepted.\n\n- Exact Likelihood Computation Requires Careful Handling of Discretization: The paper claims to enable exact likelihood computation via the probability flow ODE. However, the likelihood is computed by integrating the neural network's output over time. Since the neural network is only trained on a discrete set of noise scales (or approximated continuously), there is a discretization error in the score function itself. The paper does not provide a rigorous analysis of how this discretization error affects the computed likelihood. Is the likelihood truly 'exact' given the discrete nature of the score function approximation? A more nuanced discussion is needed to clarify the theoretical guarantees and practical accuracy of the likelihood computation method.\n\n- Uniquely Identifiable Encoding is Not Fully Justified: The paper claims that the encoding is uniquely identifiable because the forward SDE has no trainable parameters. This is a strong claim that requires careful justification. While it is true that the forward process is fixed, the *encoding* is defined by the reverse-time ODE, which depends on the score function learned by the neural network. If the score function is not estimated perfectly, the encoding might not be uniquely identifiable. The paper provides empirical verification (Appendix D.5) but lacks a theoretical proof. A more rigorous theoretical argument or a clearer explanation of the conditions under which the encoding is uniquely identifiable is needed to support this claim.\n\n- Hyperparameter Sensitivity and Lack of Automated Selection: The paper introduces a number of new hyperparameters, such as the noise schedule $\beta(t)$, the weighting function $\beta(t)$, the number of steps in the predictor-corrector sampler, and the error tolerance for the ODE solver. The authors state that 'Future work would benefit from improved methods to automatically select and tune these hyperparameters.' However, for a paper claiming to be a unified framework, the current sensitivity to these choices is a significant practical drawback. The paper should provide more extensive ablation studies or guidelines on how to choose these hyperparameters effectively. Without this, the framework might be difficult to apply in practice, and its generality is called into question.\n\n- Demonstration that the result has bite: The paper claims to achieve record-breaking performance and new state-of-the-art results, yet it does not provide a single concrete example of a specific Data Generating Process (DGP) that violates the conditions of the proposed framework or a worked-out example where the identification or sampling procedure succeeds in a non-trivial setting. For a theoretical framework that generalizes SMLD and DDPM, readers need to see the mechanics of the proposed method in action. The paper should compute the score and the reverse-time SDE for a specific, simple parametric model (e.g., a mixture of Gaussians or a specific 2D distribution) and demonstrate that the proposed sampling procedure (predictor-corrector or probability flow) successfully generates samples that match the ground truth distribution, contrasting it with the failure of the discrete methods on this specific DGP.\n\n- Missing comparison to existing approaches: The introduction claims the framework 'encapsulates previous approaches in score-based generative modeling and diffusion probabilistic modeling,' but the main text does not formally verify that the discrete SMLD and DDPM algorithms are recovered as special cases of the continuous SDE framework. While Section 3.4 mentions the correspondence, the paper needs to explicitly show that the ancestral sampling method of DDPM (Eq. 4) and the Langevin sampling of SMLD (Eq. 2) can be derived by discretizing the continuous SDEs (Eq. 9 and Eq. 11) with specific time steps. Without this explicit demonstration, the claim of a 'unified framework' remains theoretical and lacks the necessary verification that the continuous formulation indeed generalizes the discrete ones.\n\n- Underdeveloped implications for inverse problems: The abstract and introduction promise a 'new way to solve inverse problems' with score-based models, demonstrated by experiments on class-conditional generation, inpainting, and colorization. However, the theoretical derivation of the conditional reverse-time SDE (Eq. 14) is not accompanied by a theoretical analysis of its convergence or stability. The paper presents empirical results but lacks a theoretical discussion of why this approach works for inverse problems. It should analyze the properties of the conditional score term and explain how the reverse-time SDE ensures convergence to the desired posterior distribution, rather than relying solely on visual results.\n\n- Missing inference or implementation discussion: The paper derives the probability flow ODE for exact likelihood computation but does not discuss the practical challenges of estimating this likelihood, particularly regarding the numerical integration of the neural network over time. Since the score function is estimated via a neural network, the likelihood computation involves integrating a potentially noisy function over a continuous interval. The paper should discuss the sensitivity of the computed likelihood to the choice of ODE solver, the step size, and the noise in the score function, as well as the computational cost of computing the likelihood compared to the cost of sampling. Without this guidance, the practical utility of the 'exact likelihood computation' claim is ambiguous.\n\nRecommendation: Major Revision. The paper presents a significant theoretical contribution and strong empirical results. However, the theoretical derivations are too hidden in the appendices, and the practical limitations (sampling speed, hyperparameter sensitivity) are not adequately addressed. The paper needs to be revised to make the core theory more accessible and to provide a more comprehensive analysis of the method's practicality and limitations before it can be accepted.\n\nRevision targets:\n\n- Move the most essential derivations and proofs (e.g., reverse-time SDE, probability flow ODE) into the main text, or provide significantly more detailed summaries.\n\n- Provide a detailed computational cost analysis comparing the proposed samplers to GANs on the same datasets.\n\n- Add a rigorous analysis of the discretization error in the likelihood computation and clarify the theoretical guarantees.\n\n- Provide a more thorough ablation study on the sensitivity of the method to hyperparameters and offer guidelines for selection.\n\n- Include a more rigorous theoretical justification or a clearer explanation of the conditions for uniquely identifiable encoding.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Likelihood units inconsistent with training objective",
+          "quote": "ombined with multiple architectural improvements, we achieve record-breaking performance for unconditional image generation on CIFAR-10 with an Inception score of 9.89 and FID of 2.20, a competitive likelihood of 2.99 bits/dim, and demonstrate high fidelity generation of  $1024 \\times 1024$  images for the first time from a score-based generative model.",
+          "explanation": "The paper reports a likelihood of 2.99 bits/dim, yet the training objective (Eq. 7) uses the natural logarithm. Standard practice in this field is to report log-likelihoods in nats when using the natural log. Reporting 'bits' without specifying the base or conversion is confusing. Please clarify the unit or the log base used in the reported likelihood.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Missing justification for unique strong solution",
+          "quote": "The SDE has a unique strong solution as long as the coefficients are globally Lipschitz in both state and time (\u00d8ksendal, 2003).",
+          "explanation": "The paper asserts that the SDE has a unique strong solution provided the coefficients are globally Lipschitz. While the drift terms in the proposed SDEs (VE, VP, sub-VP) are affine and thus Lipschitz, the diffusion coefficient $g(t)$ depends on $\beta(t)$. The text does not explicitly state that $\beta(t)$ is Lipschitz continuous, which is a necessary condition for the standard existence and uniqueness theorem. Please verify and state this condition explicitly.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Typo in sub-VP SDE definition",
+          "quote": "Inspired by the VP SDE, we propose a new type of SDEs which perform particularly well on likelihoods (see Section 4.3), given by\n\n$\\mathrm{d}\\mathbf{x}=-\\frac{1}{2}\\beta(t)\\mathbf{x}\\;\\mathrm{d}t+\\sqrt{\\beta(t)(1-e^{-2\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}\\beta(s)\\mathrm{d}s})}\\mathrm{d}\\mathbf{w}.",
+          "explanation": "The term $\\frac{\\mathrm{t}^{t}}{\\mathrm{t}_{0}}$ in Eq. 12 appears to be a typo. Based on the context of the sub-VP SDE and the comparison to the VP SDE, this should be the integral $\\int_{0}^{t} \\beta(s) \\mathrm{d}s$. Please correct this term to reflect the cumulative noise injection.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        }
+      ],
+      "cost_usd": 0.1841,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

@@ -1,0 +1,977 @@
+{
+  "slug": "iclr2021-QzKDLios-can-one-hear-the-shape-of-a-neural-network-snooping-the-gpu-",
+  "title": "Can one hear the shape of a neural network?: Snooping the GPU via Magnetic Side Channel",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## CAN ONE HEAR THE SHAPE OF A NEURAL NETWORK?: SNOOPING THE GPU VIA MAGNETIC SIDE CHANNEL"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nWe examine the magnetic flux emanating from a graphics processing unit\u2019s (GPU) power cable, as acquired by a cheap $3 induction sensor, and find that this signal betrays the detailed topology and hyperparameters of a black-box neural network model. The attack acquires the magnetic signal for one query with unknown input values, but known input dimension and batch size. The network reconstruction is possible due to the modular layer sequence in which deep neural networks are evaluated. We find that each layer component\u2019s evaluation produces an identifiable magnetic signal signature, from which layer topology, width, function type, and sequence order can be inferred using a suitably trained classifier and an optimization based on integer programming. We study the extent to which network specifications can be recovered, and consider metrics for comparing network similarity. We demonstrate the potential accuracy of this side channel attack in recovering the details for a broad range of network architectures, including random designs. We consider applications that may exploit this novel side channel exposure, such as adversarial transfer attacks. In response, we discuss countermeasures to protect against our method and other similar snooping techniques."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nThe Graphics Processing Unit (GPU) is a favored vehicle for executing a neural network. As it computes, it also hums\u2014electromagnetically. What can this hum tell us? Could listening to the GPU\u2019s electromagnetic (EM) radiation reveal details about the neural network? We study this question and find that magnetic induction sensing reveals a detailed network structure, including both topology and hyperparameter values, from inferences of otherwise unknown networks running on GPUs."
+    },
+    {
+      "index": 3,
+      "text": "Reverse engineering a network structure has attracted increasing research effort, motivated by several concerns. First, it has been well known that the performance of a network model hinges on its judiciously designed structure\u2014but finding an effective design is no easy task. Significant time and energy is expended in searching and fine-tuning network structures (Zoph et al., 2018). Moreover, in industry, optimized network structures are often considered confidential intellectual property. It is therefore important to understand the extent to which this valuable, privileged information can be compromised."
+    },
+    {
+      "index": 4,
+      "text": "Worse yet, a reverse engineered \u201csurrogate\u201d model also makes the black-box \u201cvictim\u201d model more susceptible to adversarial _transfer attacks_ (Papernot et al., 2017; Liu et al., 2016), in which a vulnerability identified in the surrogate is exploited on the victim. Success in the exploit is contingent on the ability of the surrogate to successfully model the vulnerabilities of the victim. Recovering accurate, detailed network topology and hyperparameters informs the modeling of a good surrogate."
+    },
+    {
+      "index": 5,
+      "text": "We examine the fluctuation of magnetic flux from the GPU\u2019s power cable, and ask whether a passive observer can glean the information needed to reconstruct neural network structure. Remarkably, we show that, through magnetic induction sensing, a passive observer can reconstruct the _complete_ network structure even for _large_ and _deep_ networks."
+    },
+    {
+      "index": 6,
+      "text": "**Threat model.** We consider an adversary that **(i)** is able to place a magnetic induction sensor in close proximity to the GPU\u2019s power cable, **(ii)** knows the dimension of the input feature vector, and **(iii)** is able to launch a query of known batch size. We also consider that our attacker uses the same deep learning framework (e.g., PyTorch, TensorFlow) as the black-box model. The adversary is otherwise weak, lacking access to the model source, binaries, training data, and underlying training data distribution; without ability to execute code on the host CPU and GPU; and without knowledge of the input values and output results of the launched queries. Not only that\u2014it also lacks direct"
+    },
+    {
+      "index": 7,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n5.0\n4.5\n4.0\n3.5\n3.0\n2.5\n0 5 10 15 20 25 ms conv BN relu MP conv BNrelu conv BNaddrelu\nvolts\n**----- End of picture text -----**"
+    },
+    {
+      "index": 8,
+      "text": "Figure 1: **Leaked magnetic signal.** (left) Our induction sensor captures a magnetic signal when a CNN is running on the GPU. We observe strong correlation between the signal and the network steps. Across two steps, the GPU has to synchronize, resulting in a sharp drop of the signal level (highlighted by selected red circles). (right) We can accurately classify the network steps and reconstruct the topology, as indicated by the labels under the _x_ -axis. Here we highlight the signal regions associated with convolutions (conv), batch-norm (BN), Relu non-linear activations (relu), max-pooling (MP), and adding steps together (add)."
+    },
+    {
+      "index": 9,
+      "text": "access to the GPU hardware, beyond the proximity to the power cable. The adversary only requires access to their own GPU hardware, matching the brand/version of the victim, e.g., as purchased on the open market."
+    },
+    {
+      "index": 10,
+      "text": "**Physical principle.** The GPU consumes energy at a variable rate that depends on operations performed. Every microprocessor instruction is driven by transistor electron flows, and different instructions require different power levels (Grochowski & Annavaram, 2006). The many compute cores of a GPU amplify the fluctuation in energy consumption, and so too the current drawn from the power cable. Current induces magnetic flux governed by the Biot-Savart law (Griffiths, 2005), and current fluctuations induce EM ripples whose propagation through the environment is governed by the Amp`ere-Maxwell law. Even a cheap, $3 magnetic induction sensor (see Fig. 2) placed within a few millimeters of the power cable suffices to record these EM ripples."
+    },
+    {
+      "index": 11,
+      "text": "**Technique and results.** To reconstruct the black-box network\u2019s structure, we propose a two-step approach. First, we estimate the network topology, such as the number and types of layers, and types of activation functions, using a suitably trained neural network classifier. Then, for each layer, we estimate its hyperparameters using another set of deep neural network (DNN) models. The individually estimated hyperparameters are then jointly optimized by solving an integer programming problem to enforce consistency between the layers. We demonstrate the potential accuracy of this side-channel attack in recovering the details for a wide range of networks, including large, deep networks such as ResNet101. We further apply this recovery approach to demonstrate black-box adversarial transfer attacks."
+    },
+    {
+      "index": 12,
+      "text": "## 1.1 RELATED WORK: MODEL EXTRACTION BY QUERIES AND SIDE-CHANNEL ANALYSIS\n\nOur work falls under the umbrella of black-box model extraction. Absent access to the model\u2019s internals, one might infer structure from observed input-output pairs. For instance, Tram`er et al. (2016) demonstrated that, for simple models such as decision trees and support vector machines hosted on a cloud, certain internal information can be extracted via a multitude of queries. This approach, which was extended to infer details of deep neural networks (Oh et al., 2019; Liu et al., 2016; Duddu & Rao, 2019), is typically able to recover certain information, such as optimization learning rate and network structure type, but has not demonstrated recovery of full structural details."
+    },
+    {
+      "index": 13,
+      "text": "A contrasting approach, side-channel analysis (SCA), extracts information gained from the _physical_ implementation of a model, rather than in the mathematical model itself. Analysis of timing (Kocher, 1996), power (Kocher et al., 1999; Luo et al., 2015), cache flushes (Yarom & Falkner, 2014), and audio (Genkin et al., 2014) have been prominently demonstrated to extract secret keys from cryptographic procedures such as the Digital Signature and Advanced Encryption Standards."
+    },
+    {
+      "index": 14,
+      "text": "SCA was recently used to infer machine learning models by observing power consumption profiles (Xiang et al., 2020; Wei et al., 2018; Dubey et al., 2019), timing information (Duddu et al., 2018) and memory/cache access (Hu et al., 2020; Hong et al., 2019; Hua et al., 2018; Yan et al., 2020). These methods placed a malware process on the machine hosting the black-box model. Our threat model does not involve introducing processes on the host."
+    },
+    {
+      "index": 15,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\nRecently, Batina et al. (2019) exploited EM radiation for network model extraction. They focused on EM radiation from embedded processors. In contrast to GPUs, embedded processors emit a relatively weak EM signal, necessitating delicate measurement devices and even mechanical opening of the chip package."
+    },
+    {
+      "index": 16,
+      "text": "**Our advance.** All these previous works are demonstrated on shallow networks (e.g., fewer than 20 layers). It remains unclear whether these methods can also extract deep network models, ones that are structurally more complex and more prevalent in practice. We demonstrate successful recovery of the full structure of deep networks, such as RetNet101 (He et al., 2016). With that, we hope to raise awareness of the GPU\u2019s EM radiation as an information-rich, easily-probed side channel."
+    },
+    {
+      "index": 17,
+      "text": "## 2 MAGNETIC SIGNALS FROM GPUS\n\nBefore getting into the weeds, let us provide our intuition: we think of the magnetic signal as the GPU\u2019s \u201cspeech.\u201d The GPU speaks a series of \u201cwords,\u201d demarcated by silence. Each word names the computational _step_ that was executed. Let us now refine this explanation further, and ground it in physical principles."
+    },
+    {
+      "index": 18,
+      "text": "We use _step_ to refer to performing a specific kind of network operation, such as a linear operation, batch normalization, pooling, activation function, etc. A _layer_ is a sequences of steps, e.g., a **(i)** linear operation, then **(ii)** pooling, then **(iii)** activation. While there may be data dependencies between steps, there are no such dependencies within a step."
+    },
+    {
+      "index": 19,
+      "text": "The parallel nature of GPU computation lends itself to a natural implementation of networks, wherein each step is executed in parallel, i.e., single instruction multiple data (SIMD) parallelism. Transitions between steps, however, are synchronized (Buck, 2007): in our example above, activation begins only after pooling completes. This cross-step synchronization allows for implementations structured into modules, or GPU _kernels_ . This modular approach is employed in widely-used deep learning frameworks such as PyTorch and TensorFlow (Paszke et al., 2019; Abadi et al., 2016)."
+    },
+    {
+      "index": 20,
+      "text": "**Signal.** Kernel execution demands transistor flips, which place electric load on the GPU processor, in turn emitting magnetic flux from its power cable. An induction sensor measures this flux and produces proportional voltage. The time-varying voltage is our acquired _signal_ (see Fig. 1)."
+    },
+    {
+      "index": 21,
+      "text": "Different steps correspond to different GPU kernels, transistor flips, electric loads, and signal characteristics, which are distinguished even by the naked eye (see Fig. 1). Cross-step synchronization involves idling, dramatically reducing electric load and signal level (see Fig. 1). These rapid sharp drops demarcate steps."
+    },
+    {
+      "index": 22,
+      "text": "We observe that signal strongly correlates to the _kind_ of GPU operations, rather than the specific _values_ of computed floating point numbers. We verify this by examining signals using both PyTorch and TensorFlow and on multiple kinds of GPUs (see Sec. 5)."
+    },
+    {
+      "index": 23,
+      "text": "The signal is also affected by the input to the network. Although the specific input data values do not influence the signal, the input data size does. When the GPU launches a network, the size of its single input (e.g., image resolution) is fixed. But the network may be provided with a batch of input data (e.g., multiple images). As the batch size increases, more GPU cores will be utilized in each step. The GPU consequently draws more power, which in turn strengthens the signal. Once all GPU cores are involved, further increase of input batch size will not increase the signal strength, but elongate the execution time until the GPU runs out of memory."
+    },
+    {
+      "index": 24,
+      "text": "Therefore, in launching a query to the black-box network model, the adversary should choose a batch size sufficiently large to activate a sufficient number of GPU cores to produce a sufficient signal-to-noise ratio. We find that the range of the proper batch sizes is often relatively large (e.g., 64 _\u223c_ 96 for ImageNet networks), loosely depending on the size of the single input\u2019s features and the parallel computing ability of the GPU. In practice, the adversary can choose the batch size by experimenting with their own GPUs under various image resolutions."
+    },
+    {
+      "index": 25,
+      "text": "Notably however, we do not require knowledge of batch size to robustly recover network topology (as opposed to hyperparameters), only that the batch size is sufficiently large enough to provide a clear signal. While we used a consumer friendly sensor with limited sampling rate (see 4.1) and corresponding signal-to-noise ratio (SNR), a sensor with high sampling rate and SNR would correspondingly require a smaller minimum batch size."
+    },
+    {
+      "index": 26,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2021\n\n## 3 SIGNAL ANALYSIS AND NETWORK RECONSTRUCTION\n\nWe prepare for the attack by training several _recovery_ DNN models; we refer to training before the attack as _pre_ training. After the attacker launches a batch query (whose input and output values are irrelevant) we recover structure from the acquired signal in two stages: **(i)** topology and **(ii)** hyperparameters. To recover topology, a pretrained DNN model associates a _step_ to every signal _sample_ . This per-sample classification partitions the signal into segments corresponding to steps. We estimate hyperparameters for each _individual_ segment in isolation, using a step-specific pretrained DNN model, and resolve inconsistencies between consecutive segments using an integer program. The pretraining of our recovery DNN models is hardware-specific, and good recovery requires pretraining on like hardware."
+    },
+    {
+      "index": 27,
+      "text": "## 3.1 TOPOLOGY RECOVERY\n\nBidirectional Long Short Term Memory (biLSTM) networks are well-suited for processing timeseries signals (Graves et al., 2005). We train a biLSTM network to classify each signal sample _**s** i_ predicting the step _C_ ( _**s** i_ ) that generated _**s** i_ (see Fig. 1-b). The training dataset consists of annotated signals constructed automatically (see Sec. 4.2). We train the biLSTM by minimizing the standard cross-entropy loss between the predicted per-sample labels and the ground-truth labels (see Appx. A for details). By identifying the sequence of steps, we recovered the layers of the network, including their _type_ (e.g., fully connected, convolution, recurrent, etc.), activation function, and any subsequent forms of pooling or batch normalization. What remains is to recover layer hyperparameters."
+    },
+    {
+      "index": 28,
+      "text": "## 3.2 HYPERPARAMETER ESTIMATION\n\n**Hyperparameter consistency.** The number of hyperparameters that describe a layer type depends on its linear step. For instance, a CNN layer type\u2019s linear step is described by size, padding, kernel size, number of channels, and stride hyperparameters. Hyperparameters within a layer must be _intra-consistent_ . Of the six CNN hyperparameters (stride, padding, dilation, input, output, and kernel size), any one is determined by the other five. Hyperparameters must also be _inter-consistent_ across consecutive layers: the output of one layer must fit the input of the next. A brute-force search of consistent hyperparameters easily becomes intractable for deeper networks; we therefore first estimate hyperparameters for each layer in isolation, and then jointly optimize to obtain consistency."
+    },
+    {
+      "index": 29,
+      "text": "**Initial estimation.** We estimate a specific hyperparameter of a specific layer type, by pretraining a DNN. We pretrain a suite of such DNNs, one for each (layer type, hyperparameter) pairing. Once the layers (and their types) are recovered, we estimate each hyperparameter using these pretrained (layer type, hyperparameter) recovery DNNs."
+    },
+    {
+      "index": 30,
+      "text": "Each DNN is comprised of two 1024-node fully connected layers with dropout. The DNN accepts two (concatenated) feature vectors describing two signal segments: the linear step and immediately subsequent step. That subsequent step (e.g., activation, pooling, batch normalization) tends to require effort proportional to the linear step\u2019s output dimensions, thus its inclusion informs the estimated output dimension. Each segment\u2019s feature vector is assembled by **(i)** partitioning the segment uniformly into _N_ windows, and computing the average value of each window, **(ii)** concatenating the time duration of the segment. The concatenated feature vector has a length of 2 _N_ + 2."
+    },
+    {
+      "index": 31,
+      "text": "The DNN is trained with our automatically generated dataset (see Sec. 4.2). The choice of loss function depends on the hyperparameter type: For a hyperparameter drawn from a wide range, such as a _size_ , we minimize mean squared error between the predicted size and the ground truth (i.e., regression). For a hyperparameter drawn from a small discrete distribution, such as _stride_ , we minimize the cross-entropy loss between the predicted value and the ground truth (i.e., classification). In particular, we used regression for sizes, and classification for all other parameters."
+    },
+    {
+      "index": 32,
+      "text": "**Joint optimization.** The initial estimates of the hyperparameters are generally not _fully_ accurate, nor consistent. To enforce consistency, we jointly optimize all hyperparameters, seeking values that _best fit their initial estimates, subject to consistency constraints_ . Our optimization minimizes the convex quadratic form"
+    },
+    {
+      "index": 33,
+      "text": "where _X_ is the set of all hyperparameters across all layers; _x[\u2217] i_[and] _[x][i]_[are][the][initial][estimate][and] optimal value of the _i_ -th hyperparameter, respectively. The imposed consistency constraints are:"
+    },
+    {
+      "index": 34,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nSensor placed on the power cable\nAnalog-to-Digital\nConverter\nGND\nGPU GPU power cable\nUSB output top view    side view\n**----- End of picture text -----**"
+    },
+    {
+      "index": 35,
+      "text": "Figure 2: Placement of the magnetic induction sensor on the power cord works regardless of the GPU model, providing a common weak-spot to enable current-based magnetic side-channel attacks."
+    },
+    {
+      "index": 36,
+      "text": "- (i) The output size of a layer agrees with the input size of the next next layer.\n\n- (ii) The input size of the first layer agrees with the input feature size."
+    },
+    {
+      "index": 37,
+      "text": "- (iii) The output size of a CNN layer does not exceed its input size (due to convolution).\n\n- (iv) The hyperparameters of a CNN layer satisfy"
+    },
+    {
+      "index": 38,
+      "text": "where _\u03b1_ , _\u03b2_ , _\u03b3_ , and _k_ denote the layer\u2019s stride, padding, dilation, and kernel size, respectively."
+    },
+    {
+      "index": 39,
+      "text": "- (v) Heuristic constraint: the kernel size must be odd.\n\nAmong these constraints, **(i-iii)** are linear constraints, which preserves the convexity of the problem. The heuristic **(v)** can be expressed as a linear constraint: for every kernel size parameter _kj_ , we introduce a dummy variable _\u03c4j_ , and require _kj_ = 2 _\u03c4j_ +1 and _\u03c4j \u2208_ Z[0+] . Constraint **(iv)** , however, is troublesome, because the appearance of kernel size _\u03b1_ and dilation _\u03b3_ , both of which are optimization variables, make the constraint nonlinear."
+    },
+    {
+      "index": 40,
+      "text": "Since all hyperparameters are non-negative integers, the objective must be optimized via integer programming: IP in general case is NP-complete (Papadimitriou & Steiglitz, 1998), and the nonlinear constraint **(iv)** does not make life easier. Fortunately, both _\u03b1_ and _\u03b3_ have very narrow ranges in practice: _\u03b1_ is often set to be 1 or 2, and _\u03b3_ is usually 1, and they rarely change across all CNN layers in a network. As a result, they can be accurately predicted by our DNN models; we therefore retain the initial estimates and do not optimize for _\u03b1_ and _\u03b3_ , rendering (2) linear. Even if DNN models could not reliably recover _\u03b1_ and _\u03b3_ , one could exhaustively enumerate the few possible _\u03b1_ and _\u03b3_ combinations, and solve the IP problem (1) for each combination, and select the best recovery."
+    },
+    {
+      "index": 41,
+      "text": "The IP problem with a quadratic objective function and linear constraints can be easily solved, even when the number of hyperparameters is large (e.g., _>_ 1000). In practice, we use IBM CPLEX (Cplex, 2009), a widely used IP solver. Optimized hyperparameters remain close to the initial DNN estimates, and are guaranteed to define a valid network structure."
+    },
+    {
+      "index": 42,
+      "text": "## 4 EXPERIMENTAL SETUP\n\n## 4.1 HARDWARE SENSORS\n\nWe use the DRV425 fluxgate magnetic sensor from Texas Instruments for reliable high-frequency sensing of magnetic signals (Instruments, 2020; Petrucha & Novotny, 2018). This sensor, though costing only $3 USD, outputs robust analog signals with a 47kHz sampling rate and _\u00b1_ 2mT sensing range. For analog to digital conversion (ADC), we use the USB-204 Digital Acquisition card, a 5-Volt ADC from Measurement Computing (Computing, 2020). This allows a 12-bit conversion of the signal, mapping sensor readings from -2mT _\u223c_ 2mT to 0V _\u223c_ 5V."
+    },
+    {
+      "index": 43,
+      "text": "## 4.2 DATASET CONSTRUCTION\n\n**Sensor placement.** To avoid interference from other electric components, we place the sensor near the GPU\u2019s magnetic induction source, anywhere along the power cable. Because magnetic flux decays inversely proportional to the squared distance from the source, according to the Biot-Savart law (Griffiths, 2005), we position the sensor within millimeters of the cable casing (see Fig. 2)."
+    },
+    {
+      "index": 44,
+      "text": "**Data capture.** Pretraining the recovery DNN models (recall Sec. 3) requires an annotated dataset with pairwise corresopndence between signal and step types (see Fig. 2). We can automatically generate an annotated signal for a given network and specific GPU hardware, simply"
+    },
+    {
+      "index": 45,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2021\n\nby executing a query (with arbitrary input values) on the GPU to acquire the signal. Timestamped ground-truth GPU operations are made available by most deep learning libraries (e.g., torch.autograd.profiler in PyTorch and tf.profiler in TensorFlow). A difficulty in this process lies in the fact that the captured (47kHz) raw signals and the ground truth GPU traces run on different clocks. Similar to the use of clapperboard to synchronize picture and sound in filmmaking, we precede the inference query with a short intensive GPU operation to induce a sharp spike in the signal, yielding a synchronization landmark (see Fig. S3). We implemented this \u201cclapperboard\u201d by filling a vector with random floating point numbers."
+    },
+    {
+      "index": 46,
+      "text": "**Training Set.** The set of networks to be annotated could in principle consist solely of randomly generated networks, on the basis that data values and \u201cfunctionality\u201d are irrelevant to us, and the training serves to recover the substeps of a layer; or of curated networks or those found in the wild, on the basis that such networks are more indicative of what lies within the black-box. We chose to construct our training set as a mixture of both of these approaches. All in all we consider 500 networks for training leading to a total of 5708 network steps we aim to identify. We will release the complete training and test datasets, along with source code and hardware schematics for full reproducibility."
+    },
+    {
+      "index": 47,
+      "text": "## 5 RESULTS\n\nThis section presents the major empirical evaluations of our method. We refer the reader to Appx. B for complete results, additional experiments, and more thorough discussion."
+    },
+    {
+      "index": 48,
+      "text": "## 5.1 ACCURACY OF NETWORK RECONSTRUCTION\n\n**Test dataset.** We construct a test dataset fully separate from the training dataset. Our test dataset consists of 64 randomly generated networks in a way similar to Sec. 4.2. The number of layers ranges from 30 to 50 layers. To diversify our zoology of test models, we also include smaller networks that are under 10 layers, LSTM networks, as well as ResNets (18, 34, 50, and 101). Altogether, each test network has up to 514 steps. In total, the test dataset includes 5708 network steps, broken down into 1808 activation functions, 1975 additional batch normalization and pooling, and 1925 convolutional, fully connected, and recurrent layers. When we construct these networks, their input image resolutions are randomly chosen from [224 _\u00d7_ 224, 96 _\u00d7_ 96, 64 _\u00d7_ 64, 48 _\u00d7_ 48, 32 _\u00d7_ 32]: the highest resolution is used in ImageNet, and lower ones are used in datasets such as CIFAR."
+    },
+    {
+      "index": 49,
+      "text": "**Topology reconstruction.** As discussed in Sec. 3, we use a biLSTM model to predict the network step for each single sample. Table 1 reports its accuracy, measured on an Nvidia TITAN V GPU. There, we also break the accuracy down into measures of individual types of network steps, with an overall accuracy of **96.8%** . An interesting observation is that the training and test datasets are both unbalanced in terms of signal samples (see last column of Table 1). This is because in practice convolutional layers are computationally the most expensive, while activation functions and pooling are lightweight. Also, certain steps like average pooling are much less frequently used. While such data imbalance does reflect reality, when we use them to"
+    },
+    {
+      "index": 50,
+      "text": "Table 1: Classification accuracy of network steps on TITAN V.\n\n|TITAN V.||\n|---|---|\n|Layer Type|Prec.\nRec.\nF1\n# samples|\n|LSTM\nConv\nFully-connected\nAdd\nBatchNorm\nMaxPool\nAvgPool\nReLU\nELU\nLeakyReLU\nSigmoid\nTanh|.997\n.992\n.995\n8704\n.993\n.996\n.994\n447968\n.901\n.796\n.846\n10783\n.984\n.994\n.989\n22714\n.953\n.955\n.954\n47440\n.957\n.697\n.806\n4045\n.371\n.760\n.499\n675\n.861\n.967\n.911\n28512\n.464\n.825\n.594\n2834\n.732\n.578\n.646\n9410\n.694\n.511\n.588\n8744\n.773\n.557\n.648\n4832|\n|Weighted Avg.|**.968**\n**.967**\n**.966**\n-|"
+    },
+    {
+      "index": 51,
+      "text": "train and test, most of the misclassifications occur at those rarely used, lightweight network steps, whereas the majority of network steps are classified correctly."
+    },
+    {
+      "index": 52,
+      "text": "We evaluate the quality of topology reconstruction using normalized Levenshtein distance (i.e., one of the edit distance metrics) that has been used to evaluate network structure similarity (Graves et al., 2006; Hu et al., 2020). Here, Levenshtein distance measures the minimum number of operations\u2014 including adding/removing network steps and altering step type\u2014needed to fully rectify a recovered topology. This distance is then normalized by the total number of steps of the target network."
+    },
+    {
+      "index": 53,
+      "text": "We report the detailed results in Fig. S2 in the appendix. Among the 64 tested networks, 40 of the reconstructed networks match precisely their targets, resulting in _zero_ Levenshtein distance. The"
+    },
+    {
+      "index": 54,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2021\n\nTable 2: Model extraction accuracy on CIFAR-10 across different GPUs."
+    },
+    {
+      "index": 55,
+      "text": "|Model|Target\nTitan-V\nTitan-X\nGTX-1080\nGTX-960|\n|---|---|\n|VGG-11\nVGG-16\nAlexNet\nResNet-18\nResNet-34\nResNet-50\nResNet-101|89.03\n89.61\n89.63\n88.46\n88.3\n90.95\n91.08\n91.03\n89.33\n90.78\n81.68\n85.26\n85.11\n85.27\n85.03\n92.77\n92.61\n92.82\n92.79\n92.04\n92.21\n92.28\n92.95\n90.81\n92.71\n90.89\n91.8\n91.97\n91.2\n91.29\n91.58\n91.91\n91.85\n91.37\n91.72|"
+    },
+    {
+      "index": 56,
+      "text": "average normalized Levenshtein distance of all tested networks is **0.118** . To provide a sense of how the Levenshtein distance is related to the network\u2019s ultimate performance (i.e., its classification accuracy), we conduct an additional experiment and discuss it in Appx. B.1."
+    },
+    {
+      "index": 57,
+      "text": "**DNN hyperparameter estimation.** Next, we report the test accuracies of our DNN models (discussed in Sec. 3.2) for estimating hyperparameters of convolutional layers. Our test data here consists of 1804 convolutional layers. On average, our DNN models have **96** _\u223c_ **97%** accuracy. The break-down accuracies for individual hyperparameters are shown in Table S3 of the appendix."
+    },
+    {
+      "index": 58,
+      "text": "**Reconstruction quality measured as classification accuracy.** Ultimately, the reconstruction quality must be evaluated by how well the reconstructed network performs in the task that the original network aims for. To this end, we test seven networks, including VGGs, AlexNet, and ResNets, that have been used for CIFAR-10 classification (shown in Table 2). We treat those networks as black-box models and reconstruct them from their magnetic signals. We then train those reconstructed networks and compare their test accuracies with the original networks\u2019 performance. Both the reconstructed and original networks are trained with the same training dataset for the same number of epochs. The results in Table 2 show that for all seven networks, including large networks (e.g., ResNet101), the reconstructed networks perform almost as well as their original versions. We also conduct similar experiments on ImageNet and report the results in Table S1 of Appx. B.2."
+    },
+    {
+      "index": 59,
+      "text": "**GPU transferability.** Our proposed attack requires the adversary to have the same brand/version of GPU as the victim, but not necessarily the same physical copy (see Fig. S3). Here, we obtain two copies of an Nvidia GTX-1080 GPU running on two different machines, using one to generate training data and another one for black-box reconstruction. We demonstrate that in this setting the models can still be well reconstructed. The experiment details and results are described in Appx. B.3."
+    },
+    {
+      "index": 60,
+      "text": "## 5.2 TRANSFER ATTACK\n\nTo demonstrate a potential exploit of this side-channel exposure, we use reconstructed networks to launch adversarial transfer attack. Transfer attack relies on a surrogate model, one that approximates the target model, to craft adversarial examples of the target model. In a black-box setting, it is known to be hard in general case to find an effective surrogate model (Demontis et al., 2019). But under our threat model, the adversary can recover the network structure of a black-box model from the leaked magnetic signals, and use it as the surrogate model."
+    },
+    {
+      "index": 61,
+      "text": "Here we test on six networks found in the wild, ranging from VGGs to AlexNet to ResNets (listed in Table 3). For each network (and each column in Table 3), we treat it as a black-box model and reconstruct its structure by running it on four different GPUs (listed in Table 3), obtaining four reconstructed versions. Afterwards, we train each reconstructed network and use it to craft adversarial examples for transfer attacking the original network. The transfer attack success rates are reported in the top four rows of Table 3, which are compared against several baselines shown in the bottom half of the table. Using our side-channel-based surrogate model, the transfer attack success rate is comparable to the _white-box_ transfer attack baseline, that is, using the target model\u2019s network structure (but trained separately) to attack the target model itself. In other words, our sidechannel-based reconstruction effectively turn a black-box attack into a white-box attack."
+    },
+    {
+      "index": 62,
+      "text": "We also conducted additional experiments for transfer attacks on MNIST dataset. We reconstruct network models downloaded online and then launch attacks. The results are reported in Appx. B.4."
+    },
+    {
+      "index": 63,
+      "text": "## 5.3 DISCUSSION: DEFENSES AGAINST MAGNETIC SIDE CHANNEL LEAKAGE\n\nAt this point, we have shown the robustness and accuracy of the magnetic side channel exploits. Traditionally countermeasures fall under the category of either prevention, detection, or jamming."
+    },
+    {
+      "index": 64,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2021\n\nTable 3: Transfer attack results on CIFAR-10.\n\n|||Table 3: Transfer attack results on CIFAR-10.|\n|---|---|---|\n|||Target Model\nResNet-18\nResNet-34\nResNet-101\nVGG-11\nVGG-16\nAlexNet|\n|Source Model|GTX-960\nGTX-1080\nTITAN-X\nTITAN-V|98.56\n92.51\n91.20\n63.41\n72.57\n58.90\n97.88\n90.86\n86.24\n64.69\n55.19\n56.83\n98.32\n93.45\n84.47\n61.89\n77.36\n68.41\n98.48\n93.65\n91.27\n64.39\n72.77\n60.17|\n||VGG-11\nVGG-16\nResNet-18\nResNet-34\nResNet-101\nAlexNet|65.86\n57.82\n57.52\n60.24\n65.50\n39.95\n74.00\n61.54\n54.23\n41.60\n74.29\n29.57\n97.70\n90.72\n80.27\n47.98\n86.64\n30.56\n97.21\n92.46\n82.30\n51.42\n85.60\n32.34\n92.53\n86.98\n92.95\n53.98\n83.04\n30.55\n10.11\n9.59\n10.19\n11.60\n10.42\n62.70|"
+    },
+    {
+      "index": 65,
+      "text": "Since our approach is passive in that it does not alter any code or hardware operation of GPUs, detection methods which consist of somehow discovering someone is listening to the GPU are not applicable to magnetic leakage. Here we focus on _prevention_ and _jamming_ ."
+    },
+    {
+      "index": 66,
+      "text": "**Prevention** As shown in Figure 1, each rise and drop of the magnetic signals correspond to the boundary between GPU operations. This is only possible when the input batch is large enough to keep every GPU operation sustained and stabilized at a high-load state. To prevent this behavior, one can keep the input sufficiently small (e.g. 1 single image) such that the magnetic signals never reach any stable state and suffer from a low signal-to-noise ratio, rendering our sensing setup futile. Another way to prevent magnetic side channel leakage is to use a non-standard framework for inference which the adversary does not have any training data to start with."
+    },
+    {
+      "index": 67,
+      "text": "**Jamming** While running on tiny input batch size might be infeasible for large input dataset, we find jamming also an effective defense mechanism. Specifically, during the inference of a large input batch, we ran a third-party CUDA GPU stress test in the background (Timonen, 2020). We found that the magnetic signals are completely distorted because of the constantly high utilization of GPU. Moreover, we observe little speed degradation for the foreground inference. The main caveat with this approach is higher power consumption and the possible effects on the lifetime of a GPU."
+    },
+    {
+      "index": 68,
+      "text": "Another possible defense mechanism results from the fact that we are not tracking the actual dataflow in the GPU. For example, we can correctly identify two GPU operations, convolution and batch norm, in a long sequence. But there is no evidence proving the dataflow follows the same pattern\u2014the output from convolution could be a deadend and batch norm takes input from a previous GPU operation. This mismatch between the dataflow and the underlying network model makes it hard to decipher robustly. While this defense can handle arbitrary input and networks in theory, we are unsure about the implementation hurdles of this defense and how modern deep learning libraries optimize for such unconventional graphs."
+    },
+    {
+      "index": 69,
+      "text": "## 6 CONCLUDING REMARKS\n\nWe set out to study what can be learned from passively listening to a magnetic side channel in the proximity of a running GPU. Our prototype shows it is possible to extract both the high-level network topology and detailed hyperparameters. To better understand the robustness and accuracy, we collected a dataset of magnetic signals by inferencing through thousands of layers on four different GPUs. We also investigated how one might use this side channel information to turn a black-box attack into a white-box transfer attack."
+    },
+    {
+      "index": 70,
+      "text": "**Limitations.** In our formulation, we assume networks progress in a linear fashion and do not handle complex graph network with intricate branching topologies. We cannot tell if a network is trained with dropout since dropout layers do not appear at inference time. Indeed, any operation that only appears during training is beyond the capability of magnetic side channel snooping."
+    },
+    {
+      "index": 71,
+      "text": "Our reconstruction DNNs require knowledge of the victim\u2019s GPU model and version. When these are unknown, the adversary may still exhaustively pretrain multiple sets of reconstruction DNNs for all GPU models and at runtime scan through all reconstruction options. Software upgrades, which can lead to significant performance boost and therefore alter the emitted magnetic signals, may be"
+    },
+    {
+      "index": 72,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\nviewed as further increasing the set of possible GPU models. In our experiments, we keep all the software versions constant, including OS verion, CUDA version, and PyTorch/Tensorflow version."
+    },
+    {
+      "index": 73,
+      "text": "**Ethical Considerations.** Our main intention is to study the extent to which a magnetic side channel can leak information. We hope to help people understand that running deep learning inferences on GPUs can leak critical information, and in particular model architecture and hyperparameters, to nearby induction sensors. Sharing these findings creates the potential for malicious use. We introduced several viable defense mechanisms in 5.3."
+    },
+    {
+      "index": 74,
+      "text": "## REFERENCES\n\n- Mart\u00b4\u0131n Abadi, Paul Barham, Jianmin Chen, Zhifeng Chen, Andy Davis, Jeffrey Dean, Matthieu Devin, Sanjay Ghemawat, Geoffrey Irving, Michael Isard, et al. Tensorflow: A system for largescale machine learning. In _12th {USENIX} symposium on operating systems design and implementation ({OSDI} 16)_ , pp. 265\u2013283, 2016."
+    },
+    {
+      "index": 75,
+      "text": "- Lejla Batina, Dirmanto Jap, Shivam Bhasin, and S Picek. Csi nn: Reverse engineering of neural network architectures through electromagnetic side channel. In _Proceedings of the 28th USENIX Security Symposium_ . USENIX Association, 2019."
+    },
+    {
+      "index": 76,
+      "text": "- Ian Buck. Gpu computing: Programming a massively parallel processor. In _International Symposium on Code Generation and Optimization (CGO\u201907)_ , pp. 17\u201317. IEEE, 2007."
+    },
+    {
+      "index": 77,
+      "text": "Measurement Computing. _USB-200 Series Single Gain Multifunction USB Devices (accessed Oct 1, 2020)_ , 2020. URL https://www.mccdaq.com/usb-data-acquisition/ USB-200-Series.aspx."
+    },
+    {
+      "index": 78,
+      "text": "- IBM ILOG Cplex. V12. 1: User\u2019s manual for cplex. _International Business Machines Corporation_ , 46(53):157, 2009."
+    },
+    {
+      "index": 79,
+      "text": "- Ambra Demontis, Marco Melis, Maura Pintor, Matthew Jagielski, Battista Biggio, Alina Oprea, Cristina Nita-Rotaru, and Fabio Roli. Why do adversarial attacks transfer? explaining transferability of evasion and poisoning attacks. In _28th USENIX Security Symposium Security 19)_ , pp. 321\u2013338, 2019."
+    },
+    {
+      "index": 80,
+      "text": "- Anuj Dubey, Rosario Cammarota, and Aydin Aysu. Maskednet: The first hardware inference engine aiming power side-channel protection. _arXiv: Cryptography and Security_ , 2019."
+    },
+    {
+      "index": 81,
+      "text": "- Vasisht Duddu and D Vijay Rao. Quantifying (hyper) parameter leakage in machine learning. _arXiv preprint arXiv:1910.14409_ , 2019."
+    },
+    {
+      "index": 82,
+      "text": "- Vasisht Duddu, Debasis Samanta, D Vijay Rao, and Valentina E Balas. Stealing neural networks via timing side channels. _arXiv preprint arXiv:1812.11720_ , 2018."
+    },
+    {
+      "index": 83,
+      "text": "- Daniel Genkin, Adi Shamir, and Eran Tromer. Rsa key extraction via low-bandwidth acoustic cryptanalysis. In _Annual Cryptology Conference_ , pp. 444\u2013461. Springer, 2014."
+    },
+    {
+      "index": 84,
+      "text": "- Alex Graves, Santiago Fern\u00b4andez, and J\u00a8urgen Schmidhuber. Bidirectional lstm networks for improved phoneme classification and recognition. In _International Conference on Artificial Neural Networks_ , pp. 799\u2013804. Springer, 2005."
+    },
+    {
+      "index": 85,
+      "text": "- Alex Graves, Santiago Fern\u00b4andez, Faustino Gomez, and J\u00a8urgen Schmidhuber. Connectionist temporal classification: labelling unsegmented sequence data with recurrent neural networks. In _Proceedings of the 23rd international conference on Machine learning_ , pp. 369\u2013376, 2006."
+    },
+    {
+      "index": 86,
+      "text": "David J Griffiths. Introduction to electrodynamics, 2005.\n\n- Ed Grochowski and Murali Annavaram. Energy per instruction trends in intel microprocessors. _Technology@ Intel Magazine_ , 4(3):1\u20138, 2006."
+    },
+    {
+      "index": 87,
+      "text": "- Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In _Proceedings of the IEEE conference on computer vision and pattern recognition_ , pp. 770\u2013778, 2016."
+    },
+    {
+      "index": 88,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\n- Sanghyun Hong, Michael Davinroy, Yi\u02c7gitcan Kaya, Dana Dachman-Soled, and Tudor Dumitras\u00b8. How to 0wn the nas in your spare time. In _International Conference on Learning Representations_ , 2019."
+    },
+    {
+      "index": 89,
+      "text": "- Xing Hu, Ling Liang, Shuangchen Li, Lei Deng, Pengfei Zuo, Yu Ji, Xinfeng Xie, Yufei Ding, Chang Liu, Timothy Sherwood, et al. Deepsniffer: A dnn model extraction framework based on learning architectural hints. In _Proceedings of the Twenty-Fifth International Conference on Architectural Support for Programming Languages and Operating Systems_ , pp. 385\u2013399, 2020."
+    },
+    {
+      "index": 90,
+      "text": "- Weizhe Hua, Zhiru Zhang, and G Edward Suh. Reverse engineering convolutional neural networks through side-channel information leaks. In _2018 55th ACM/ESDA/IEEE Design Automation Conference (DAC)_ , pp. 1\u20136. IEEE, 2018."
+    },
+    {
+      "index": 91,
+      "text": "- Texas Instruments. _DRV425: Fully-integrated fluxgate magnetic sensor for open-loop applications (accessed Oct 1, 2020)_ , 2020. URL https://www.ti.com/product/DRV425."
+    },
+    {
+      "index": 92,
+      "text": "- Paul Kocher, Joshua Jaffe, and Benjamin Jun. Differential power analysis. In _Annual international cryptology conference_ , pp. 388\u2013397. Springer, 1999."
+    },
+    {
+      "index": 93,
+      "text": "- Paul C Kocher. Timing attacks on implementations of diffie-hellman, rsa, dss, and other systems. In _Annual International Cryptology Conference_ , pp. 104\u2013113. Springer, 1996."
+    },
+    {
+      "index": 94,
+      "text": "- Yanpei Liu, Xinyun Chen, Chang Liu, and Dawn Song. Delving into transferable adversarial examples and black-box attacks. _arXiv preprint arXiv:1611.02770_ , 2016."
+    },
+    {
+      "index": 95,
+      "text": "- Chao Luo, Yunsi Fei, Pei Luo, Saoni Mukherjee, and David Kaeli. Side-channel power analysis of a gpu aes implementation. In _2015 33rd IEEE International Conference on Computer Design (ICCD)_ , pp. 281\u2013288. IEEE, 2015."
+    },
+    {
+      "index": 96,
+      "text": "- Seong Joon Oh, Bernt Schiele, and Mario Fritz. Towards reverse-engineering black-box neural networks. In _Explainable AI: Interpreting, Explaining and Visualizing Deep Learning_ , pp. 121\u2013 144. Springer, 2019."
+    },
+    {
+      "index": 97,
+      "text": "- Christos H Papadimitriou and Kenneth Steiglitz. _Combinatorial optimization: algorithms and complexity_ . Courier Corporation, 1998."
+    },
+    {
+      "index": 98,
+      "text": "- Nicolas Papernot, Patrick McDaniel, Ian Goodfellow, Somesh Jha, Z Berkay Celik, and Ananthram Swami. Practical black-box attacks against machine learning. In _Proceedings of the 2017 ACM on Asia conference on computer and communications security_ , pp. 506\u2013519, 2017."
+    },
+    {
+      "index": 99,
+      "text": "- Adam Paszke, Sam Gross, Francisco Massa, Adam Lerer, James Bradbury, Gregory Chanan, Trevor Killeen, Zeming Lin, Natalia Gimelshein, Luca Antiga, et al. Pytorch: An imperative style, highperformance deep learning library. In _Advances in neural information processing systems_ , pp. 8026\u20138037, 2019."
+    },
+    {
+      "index": 100,
+      "text": "Vojtech Petrucha and David Novotny. Testing and application of an integrated fluxgate sensor drv425. _Journal of Electrical Engineering_ , 69(6):418\u2013421, 2018."
+    },
+    {
+      "index": 101,
+      "text": "- Ville Timonen. _Multi-GPU CUDA stress test (accessed Oct 1, 2020)_ , 2020. URL https:// github.com/wilicc/gpu-burn."
+    },
+    {
+      "index": 102,
+      "text": "- Florian Tram`er, Fan Zhang, Ari Juels, Michael K Reiter, and Thomas Ristenpart. Stealing machine learning models via prediction apis. In _25th {USENIX} Security Symposium ({USENIX} Security 16)_ , pp. 601\u2013618, 2016."
+    },
+    {
+      "index": 103,
+      "text": "- Lingxiao Wei, Bo Luo, Yu Li, Yannan Liu, and Qiang Xu. I know what you see: Power side-channel attack on convolutional neural network accelerators. In _Proceedings of the 34th Annual Computer Security Applications Conference_ , pp. 393\u2013406, 2018."
+    },
+    {
+      "index": 104,
+      "text": "Yun Xiang, Zhuangzhi Chen, Zuohui Chen, Zebin Fang, Haiyang Hao, Jinyin Chen, Yi Liu, Zhefu Wu, Qi Xuan, and Xiaoniu Yang. Open dnn box by power side-channel attack. _IEEE Transactions on Circuits and Systems II: Express Briefs_ , 2020.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes a magnetic side-channel attack on GPUs to extract neural network architectures and hyperparameters. By measuring magnetic flux from power cables with a low-cost sensor, the authors demonstrate that they can reconstruct network topologies and perform adversarial transfer attacks with high accuracy.\n\nThe paper presents an innovative and practical side-channel attack that effectively bridges the gap between physical hardware emissions and high-level neural network architectural recovery. The methodology is well-structured, combining signal processing with integer programming to solve the reconstruction problem. It makes a strong case for the vulnerability of GPU-based inference to non-invasive monitoring.\n\nOverview issues:\n\n- Unaddressed Sensitivity to Environmental Noise: The paper assumes a relatively clean environment for magnetic signal acquisition, yet provides little analysis on the robustness of the signal-to-noise ratio (SNR) in realistic settings. In Section 4.1, the authors mention placing the sensor within millimeters of the cable, but do not discuss how common electromagnetic interference (EMI) from other nearby electronics or power sources might degrade the classification accuracy reported in Section 5.1. Without a quantitative analysis of how the biLSTM classifier performs under varying levels of ambient noise, the claim that this is a practical attack remains speculative. The authors should include a sensitivity analysis or a demonstration of the attack's performance in a non-shielded, multi-device environment to validate its real-world applicability.\n\n- Lack of Generalizability Across GPU Architectures: The methodology relies on pretraining recovery DNN models on the same GPU hardware as the target, as stated in Section 3. While Section 5.1 shows success on different Nvidia models, the paper does not address how the attack would perform across vastly different architectures or board layouts (e.g., laptop GPUs vs. server-grade cards). Since magnetic flux patterns are highly dependent on the physical trace layout and power delivery network of the PCB, the current approach may not generalize as easily as the authors imply. A more rigorous evaluation is needed to determine if the 'clapperboard' synchronization and feature extraction pipeline hold up when the attacker has a different GPU model or a different board revision than the victim.\n\n- Incomplete Discussion on Dynamic Runtime Optimizations: The paper assumes a static execution path for neural networks, which is often violated by modern deep learning frameworks that employ dynamic graph optimization, kernel fusion, and just-in-time compilation. Section 5.3 mentions that the mismatch between dataflow and the underlying model is a potential defense, but it does not explore how these runtime optimizations affect the magnetic signatures themselves. If a compiler fuses layers or changes the execution order of operations to improve performance, the biLSTM classifier's ability to map signal segments to specific architectural steps (as described in Section 3.1) might be significantly compromised. The authors should clarify how their model accounts for these common framework-level optimizations or demonstrate that their signal classification remains stable despite them.\n\n- Ambiguity in the 'Clapperboard' Synchronization: The synchronization method described in Section 4.2 relies on a deliberate spike in the signal to align the ground-truth GPU traces with the captured magnetic data. However, it is unclear how an attacker can force this 'clapperboard' event on a black-box target that they do not control, as the threat model in Section 2 explicitly states the adversary lacks the ability to execute code on the host. If the target model does not perform a recognizable, high-intensity operation at the start of every inference, the temporal alignment of the signal segments could fail. The authors need to explain how this synchronization is achieved in a truly black-box scenario where the attacker cannot trigger specific operations on the victim's GPU.\n\n- Lack of empirical validation for the integer programming (IP) solver: The paper introduces an integer programming problem in Section 3.2 to enforce consistency across layer hyperparameters, yet it provides no empirical evidence of the solver's performance or failure cases. Specifically, it is unclear how often the initial DNN estimates are sufficiently accurate for the IP solver to find a valid global optimum within a reasonable timeframe. The authors should include a brief simulation or empirical study showing the convergence rate of the CPLEX solver for networks of varying depth and complexity, particularly for cases where initial hyperparameter estimates are noisy, to demonstrate that this step is computationally feasible in practice.\n\n- Absence of a baseline comparison for reconstruction accuracy: The paper claims to recover network structures with high precision, but it lacks a formal comparison against existing black-box model extraction techniques (e.g., query-based methods like those by Tram\u00e9r et al. or Oh et al.). While the paper contrasts itself in the related work section, it does not quantitatively benchmark its reconstruction accuracy or the resulting transfer attack success rate against these established methods. Adding a side-by-side comparison on a standard benchmark, such as CIFAR-10, would provide necessary context on whether the magnetic side-channel approach offers a significant improvement over purely query-based extraction.\n\n- Missing analysis of the impact of input data variability: The threat model assumes the adversary can launch queries of known batch size, but it remains vague about how input data variability (e.g., different image content or noise levels) affects the magnetic signal's stability. While the authors claim the signal correlates with operations rather than specific data values, they do not demonstrate this robustness with a controlled experiment comparing signals from different input distributions. A simple experiment showing the signal correlation (e.g., Pearson correlation coefficient) between the same network processing different image classes would solidify the claim that the signal is truly independent of the input content.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Provide a quantitative analysis of the attack's robustness against ambient electromagnetic interference and noise.\n\n- Clarify the synchronization mechanism for a true black-box scenario where the attacker cannot trigger specific operations on the target GPU.\n\n- Expand the discussion on how modern compiler-level optimizations (e.g., kernel fusion) impact the reliability of the signal segmentation process.\n\n- Include a more detailed comparison of the attack's performance across a wider range of GPU architectures to better define the limitations of the pretraining requirement.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency in CNN hyperparameter count",
+          "quote": "Of the six CNN hyperparameters (stride, padding, dilation, input, output, and kernel size), any one is determined by the other five.",
+          "explanation": "The claim that any one of these six is determined by the other five is mathematically incorrect. While the output size is a function of the other five parameters, the input size is not uniquely determined by the output size and layer parameters due to the floor function in equation (2). This mapping is not injective. Please clarify that the output size is a function of the other five, while the input size is constrained by the preceding layer's output.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Unjustified assumption of convexity for integer programming",
+          "quote": "Among these constraints, (i-iii) are linear constraints, which preserves the convexity of the problem.",
+          "explanation": "The authors state that the problem is a convex quadratic form subject to linear constraints, but they also specify that the variables must be non-negative integers. Integer programming is fundamentally non-convex because the feasible set is a discrete collection of points. While the objective function is convex, the optimization problem is an Integer Quadratic Program, which is NP-hard and does not inherit the properties of convex optimization. Please clarify that the problem is an Integer Quadratic Program rather than a convex optimization problem.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Logical inconsistency in step-level data dependency claim",
+          "quote": "While there may be data dependencies between steps, there are no such dependencies within a step.",
+          "explanation": "The claim that there are no data dependencies within a single GPU kernel is inconsistent with the nature of SIMD execution and GPU memory access patterns. Operations often involve shared memory synchronization or reduction patterns where threads must wait for each other to complete partial computations. By asserting there are no dependencies within a step, the authors ignore internal synchronization primitives that are fundamental to GPU kernel execution. Please acknowledge that internal kernel synchronization exists and contributes to the observed signal.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistency between threat model and query capability",
+          "quote": "The adversary is otherwise weak, lacking access to the model source, binaries, training data, and underlying training data distribution; without ability to execute code on the host CPU and GPU; and without knowledge of the input values and output results of the launched queries.",
+          "explanation": "The threat model claims the adversary lacks knowledge of the output results of their own launched queries. However, the purpose of a query-based attack is to observe the output to infer model behavior or to facilitate transfer attacks. If the adversary truly lacks access to the output results, they cannot perform the standard transfer attacks mentioned earlier in the introduction. Please clarify if the adversary observes the output or if the attack is purely passive and independent of the model's response.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inaccurate characterization of prior work on deep network extraction",
+          "quote": "All these previous works are demonstrated on shallow networks (e.g., fewer than 20 layers). It remains unclear whether these methods can also extract deep network models, ones that are structurally more complex and more prevalent in practice.",
+          "explanation": "The claim that all previous side-channel works are limited to shallow networks is factually incorrect. For instance, DeepSniffer (Hu et al., 2020) demonstrates the extraction of architectures for deep models like VGG-16 and ResNet-50. The assertion that prior methods are restricted to fewer than 20 layers overlooks significant existing literature that has already addressed deep neural network extraction.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Contradictory claims regarding input data influence",
+          "quote": "Although the specific input data values do not influence the signal, the input data size does.",
+          "explanation": "The text asserts that the signal is independent of specific input data values, yet it immediately qualifies this by stating the signal is affected by input data size. This is a logical contradiction because the input data size is a fundamental property of the input. Please clarify that the signal is invariant to the content of the input data but sensitive to the structure of the input, such as batch size.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_6",
+          "title": "Incorrect physical justification for sensor placement",
+          "quote": "Because magnetic flux decays inversely proportional to the squared distance from the source, according to the Biot-Savart law (Griffiths, 2005), we position the sensor within millimeters of the cable casing (see Fig. 2).",
+          "explanation": "The Biot-Savart law describes the magnetic field generated by a current element, but for a long, straight wire, the magnetic field magnitude is proportional to 1/r, not 1/r\u00b2. While the conclusion to place the sensor close to the cable remains empirically sound, the theoretical justification citing a 1/r\u00b2 decay is physically inaccurate for this geometry. Please replace 'inversely proportional to the squared distance' with 'inversely proportional to the distance'.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        }
+      ],
+      "cost_usd": 0.0718,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a magnetic side-channel attack to reconstruct neural network topology and hyperparameters from GPU power cable emissions. The core idea of leveraging kernel synchronization patterns is interesting, but the experimental validation and threat model contain several structural weaknesses that limit practical relevance and theoretical rigor.\n\nThe work makes a timely contribution to hardware side-channel analysis by demonstrating that magnetic flux from consumer GPUs leaks architectural information. The two-stage recovery pipeline combining sequence classification with integer programming is a reasonable engineering choice. However, the gap between the claimed black-box setting and the actual hardware-matching pretraining requirement, combined with missing robustness and modern-deployment experiments, weakens the overall impact.\n\nOverview issues:\n\n- Pretraining Requirement Contradicts the Black-Box Threat Model: The threat model states that an adversary can recover a network from a single query, yet the methodology requires pretraining recovery models on the exact same GPU model and version. Section 3 explicitly notes that good recovery demands pretraining on like hardware, and Section 6 acknowledges this as a limitation. This creates a direct contradiction: the attacker must already possess identical hardware and generate thousands of annotated traces before launching the actual attack, which defeats the purpose of a remote, single-query extraction. Readers will question whether the method truly enables black-box snooping or merely shifts the burden to a same-hardware calibration phase. The paper should either reframe the threat model to explicitly require identical hardware for pretraining or demonstrate cross-GPU transferability without retraining. Adding an ablation that measures accuracy decay when training on a different GPU model would clarify the actual attack surface.\n\n- Transfer Attack Evaluation Conflates Architecture Recovery with Training Stochasticity: Section 5.2 and Table 3 report high transfer attack success rates, but the evaluation does not isolate architectural fidelity from training dynamics. Training a reconstructed network on the same dataset does not guarantee identical optimization trajectories, loss landscapes, or convergence behavior, especially across different GPU architectures. The high success rates may stem from the fact that many standard architectures share similar decision boundaries, rather than the side-channel reconstruction being highly accurate. The paper also lacks confidence intervals or variance reporting across training runs, making it difficult to assess whether the results are stable or driven by favorable random seeds. To strengthen the claim, the authors should add a controlled experiment where multiple networks with identical recovered architectures are trained with different seeds and optimizers to establish a baseline transfer success rate. Reporting variance and comparing against this baseline would clarify the actual contribution of the magnetic side channel to attack effectiveness.\n\n- Concrete walkthrough of signal-to-hyperparameter mapping: The paper relies heavily on learned mappings between magnetic signals and network operations but never computes these quantities for a simple, fully-specified model. Readers cannot verify how a specific hyperparameter change, such as doubling the kernel size in a single convolutional layer, alters the magnetic signature or how the integer program resolves it. Computing equation (1) and the consistency constraints for a minimal 3-layer CNN with known dimensions would let readers calibrate their intuition about the signal structure and the optimization landscape. Without this, the recovery pipeline remains a black box that is hard to audit or adapt to new architectures.\n\n- Sample complexity and generalization of hyperparameter DNNs: The hyperparameter estimation step trains a separate DNN for each layer type and hyperparameter pair using a dataset of 500 randomly generated networks. The paper does not discuss the sample complexity required to train these classifiers and regressors, nor does it address potential overfitting given the high-dimensional input space and discrete hyperparameter distributions. For large networks like ResNet101, the number of hyperparameters to estimate exceeds the number of training steps, raising questions about whether the DNNs learn genuine signal features or memorize the training set. Providing a learning curve analysis or reporting the number of training samples per hyperparameter value would clarify the feasibility of scaling this approach to larger or custom architectures.\n\n- Quantified performance cost of proposed defenses: Section 5.3 proposes defense mechanisms such as reducing batch size to one and running background GPU stress tests, but it does not quantify the practical cost of these countermeasures. Running inference with a batch size of 1 drastically reduces GPU throughput and increases latency, while background jamming significantly raises power consumption and thermal load. The paper claims these are viable defenses but lacks metrics on throughput degradation, energy overhead, or real-time performance impact. Adding a brief evaluation of these costs would ground the discussion in practical engineering trade-offs and clarify whether the defenses are feasible for production systems.\n\n- Direct comparison against power and timing side channels: The paper positions its magnetic approach as superior to prior side-channel methods that only work on shallow networks, but it never empirically compares the magnetic signal against power or timing traces on the same hardware. Since power consumption is the physical root cause of the magnetic flux, a direct comparison would show whether the magnetic sensor provides genuinely higher signal-to-noise ratio or better temporal resolution for deep networks. Running an ablation where the same GPU traces are analyzed using standard power analysis techniques would validate the specific advantage of magnetic induction and rule out the possibility that simpler sensors could achieve similar results. This comparison is necessary to substantiate the claim that magnetic induction unlocks capabilities that previous modalities cannot reach.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Reframe the threat model to explicitly acknowledge the identical-hardware pretraining requirement, or demonstrate cross-GPU generalization without retraining.\n\n- Add a systematic noise robustness study reporting SNR metrics, accuracy degradation under background interference, and failure thresholds.\n\n- Correct the convexity claim in the joint optimization, explicitly describe floor constraint handling, and include sensitivity analysis for initial stride/dilation errors.\n\n- Extend experiments to mixed-precision (FP16) and quantized (INT8) inference, documenting how kernel fusion and data packing alter magnetic signatures.\n\n- Isolate architectural recovery from training stochasticity in transfer attack evaluation by reporting variance across training seeds and establishing baseline transfer rates.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Incorrect claim about intra-step data dependencies",
+          "quote": "While there may be data dependencies between steps, there are no such dependencies within a step.",
+          "explanation": "This statement mischaracterizes modern GPU execution. Within a single kernel launch, threads routinely share data via global or shared memory, use warp-level primitives, and synchronize with barriers. Algorithms like tiled matrix multiplication inherently require threads to wait for partial results. Claiming zero intra-step dependencies ignores fundamental SIMT execution patterns and risks invalidating the temporal assumptions used in the analysis.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Incorrect claim about unique determination of CNN hyperparameters",
+          "quote": "Of the six CNN hyperparameters (stride, padding, dilation, input, output, and kernel size), any one is determined by the other five.",
+          "explanation": "The claim is mathematically imprecise. The standard convolution output formula contains a floor operator and requires integer strides. This means the mapping is not a simple bijection: multiple integer stride values can yield the same output size, and no integer stride may satisfy the equation exactly for arbitrary targets. Rewrite to acknowledge that these values are constrained by the convolution formula but are not uniquely determined due to discretization and integer stride requirements.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Misaligned justification for subsequent signal segment",
+          "quote": "That subsequent step (e.g., activation, pooling, batch normalization) tends to require effort proportional to the linear step\u2019s output dimensions, thus its inclusion informs the estimated output dimension.",
+          "explanation": "The physical justification for including the subsequent signal segment is too narrow. The text claims this segment informs the estimated output dimension, implying the DNN predicts filter counts. However, the methodology trains separate DNNs for hyperparameters like stride and padding, which do not directly determine output dimensions. Clarify that the subsequent segment provides complementary computational signatures correlating with various layer hyperparameters, not just output size.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Ambiguity in feature vector duration concatenation",
+          "quote": "nsion. Each segment\u2019s feature vector is assembled by (i) partitioning the segment uniformly into $N$ windows, and computing the average value of each window, (ii) concatenating the time duration of the segment. The concatenated feature vector has a length of",
+          "explanation": "The description contains a mathematical ambiguity. Concatenating a single duration value to each segment's averages would yield a length of N+1 per segment, totaling 2N+2 only if both segments contribute a duration. The current phrasing obscures whether one or two duration values are appended. Explicitly state how many duration values accompany the window averages to ensure reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Confusion between sensor bandwidth and ADC sampling rate",
+          "quote": "outputs robust analog signals with a 47kHz sampling rate and \u00b12mT sensing range.",
+          "explanation": "Analog signals are continuous and do not possess a sampling rate; sampling is a property of the analog-to-digital converter. The DRV425 datasheet specifies a 47 kHz bandwidth. Conflating the sensor's bandwidth with the ADC's sampling rate misrepresents the signal acquisition chain. State that the sensor has a 47 kHz bandwidth and separately specify the USB-204 ADC's sampling rate.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Misapplication of Biot-Savart law to field decay",
+          "quote": "Because magnetic flux decays inversely proportional to the squared distance from the source, according to the Biot-Savart law (Griffiths, 2005)",
+          "explanation": "The Biot-Savart law describes the differential magnetic field from a current element, but integrating this over a long straight wire yields a magnetic field that decays as 1/r. Citing the law to justify a general 1/r^2 decay of the total field is physically inaccurate. Rewrite to reflect that the integrated field from a power cable follows a 1/r law, not 1/r^2.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Vector fill operation unlikely to generate synchronization spike",
+          "quote": "We implemented this \"clapperboard\" by filling a vector with random floating point numbers.",
+          "explanation": "Filling a vector with random numbers is a memory-bound, element-wise operation that draws minimal current compared to compute-heavy kernels. It is highly unlikely to produce the sharp magnetic spike needed for reliable synchronization. Use a compute-intensive operation, such as a large matrix multiplication, to generate a distinguishable magnetic transient.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Discrepancy between stated test dataset size and Table 1 sample counts",
+          "quote": ". In total, the test dataset includes 5708 network steps,",
+          "explanation": "The text explicitly defines the test dataset as containing 5,708 network steps, yet Table 1 lists sample counts in the hundreds of thousands. This mismatch suggests the column refers to time-series data points rather than network steps. Clarify what \"# samples\" measures and explicitly state whether the reported classification accuracy corresponds to the 5,708-step test set or a different dataset.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Unexplained cross-GPU results in Table 2",
+          "quote": "x. B.2.\n\nGPU transferability. Our proposed attack requires the adversary to have the same brand/version of GPU as the victim, but",
+          "explanation": "Table 2 reports reconstruction accuracies across four distinct GPU architectures, but the accompanying paragraph only describes experiments transferring between two physical copies of the same GTX-1080 model. Clarify whether the side-channel classifiers were retrained for each GPU architecture or if a single model was applied across all hardware.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Overstatement of white-box equivalence",
+          "quote": "In other words, our side-channel-based reconstruction effectively turn a black-box attack into a white-box attack.",
+          "explanation": "This claim is conceptually inaccurate. A white-box attack requires direct access to the target model's gradients or internal parameters during adversarial example generation. Here, the adversary only possesses a reconstructed architecture and trains a surrogate model separately, which remains a black-box transfer attack. The high success rate stems from structural fidelity, not white-box access. Reframe the claim to state that the reconstruction achieves black-box transfer performance comparable to white-box baselines.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Overstated efficacy of small batch size defense",
+          "quote": "To prevent this behavior, one can keep the input sufficiently small (e.g. 1 single image) such that the magnetic signals never reach any stable state and suffer from a low signal-to-noise ratio, rendering our sensing setup futile.",
+          "explanation": "The assertion that small batches inevitably produce low SNR and render the attack futile overstates the defense's robustness. Magnetic emissions persist even with small batches; the primary change is the duty cycle. Provide empirical SNR measurements for batch size 1 versus larger batches, or temper the language to reflect that small batches may degrade but not necessarily eliminate the side-channel leakage.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Unsubstantiated claims regarding jamming defense",
+          "quote": "m. Specifically, during the inference of a large input batch, we ran a third-party CUDA GPU stress test in the background (Timonen, 2020). We found that the magnetic signals are completely distorted because of the constantly high utilization",
+          "explanation": "Claiming that background stress tests completely distort magnetic signals while causing little speed degradation lacks empirical support. Running a compute-intensive stress test concurrently shares memory bandwidth and compute units, which typically introduces contention. Clarify whether the distortion refers to the loss of operation-specific temporal patterns or a complete breakdown of the signal structure. Add a quantitative comparison of signal correlation or reconstruction accuracy with and without the background stress test.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Speculative dataflow mismatch defense contradicts results",
+          "quote": "This mismatch between the dataflow and the underlying network model makes it hard to decipher robustly.",
+          "explanation": "The discussion argues that mismatched dataflows inherently prevent robust deciphering, yet the authors immediately admit there is no evidence proving this pattern mismatch and express uncertainty about implementation hurdles. Presenting a purely speculative defense as a robust countermeasure creates a logical disconnect. Clarify whether this defense is theoretically sound or practically viable, and remove the unsupported assertion that unconventional graphs inherently prevent robust deciphering.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Inaccurate claim about prior network depth limits",
+          "quote": "All these previous works are demonstrated on shallow networks (e.g., fewer than 20 layers).",
+          "explanation": "This positioning statement overstates the limitations of prior side-channel literature. Several power and electromagnetic studies have successfully targeted architectures exceeding 20 layers, such as ResNet-18 and VGG-16. Stating a strict depth threshold misrepresents the state of the art. Revise to accurately reflect the depth of previously targeted models and clarify which specific structural details were not recovered in those works.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Exaggerated experimental requirements for prior EM work",
+          "quote": "necessitating delicate measurement devices and even mechanical opening of the chip package.",
+          "explanation": "The claim that prior electromagnetic side-channel work requires opening the chip package is factually incorrect. Near-field probes are routinely used on packaged chips or PCBs without desoldering. This exaggeration artificially inflates the novelty of the current approach. Verify the experimental setup in Batina et al. (2019) and remove the package-opening claim unless explicitly documented in those specific studies.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Overgeneralization of malware requirements in prior SCA",
+          "quote": "These methods placed a malware process on the machine hosting the black-box model.",
+          "explanation": "This statement mischaracterizes the broader side-channel field. While some timing or cache attacks rely on co-resident processes, power and electromagnetic side-channel attacks are physical measurements that do not require software access to the target. Clarify which specific prior works depend on malware and distinguish them from physical methods that operate independently of the host's software stack.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Ambiguous hardware access requirement in threat model",
+          "quote": ")\n\naccess to the GPU hardware, beyond the proximity to the power cable. The adversary only requires access to their own GPU hardware, matching th",
+          "explanation": "The phrasing here is contradictory. The first clause implies the attacker has no hardware access at all, while the next sentence explicitly requires a matching GPU. Clarify this by specifying \"victim's GPU hardware\" in the first clause. This small edit removes confusion about the physical attack surface.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_17",
+          "title": "Inaccurate attribution of electromagnetic principles",
+          "quote": "Current induces magnetic flux governed by the Biot-Savart law (Griffiths, 2005), and current fluctuations induce EM ripples whose propagation through the environment is governed by the Amp\u00e8re-Maxwell law.",
+          "explanation": "The Biot-Savart law applies to steady currents, not magnetic flux directly. The Amp\u00e8re-Maxwell law relates the curl of the magnetic field to current density and displacement current; it does not describe wave propagation. Correct these attributions to maintain physical rigor. Suggest: \"Current generates a magnetic field governed by the Biot-Savart law, and time-varying currents produce electromagnetic waves whose propagation is governed by the wave equation derived from Maxwell's laws.\"",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        }
+      ],
+      "cost_usd": 0.2147,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper presents a magnetic side-channel attack on GPUs to reverse-engineer neural network architectures and hyperparameters. The work is timely and addresses an important security concern, but several methodological and framing issues need attention.\n\nThe paper demonstrates a novel attack vector (magnetic side channel from GPU power cables) and provides a reasonably thorough experimental pipeline. The main strengths are the low-cost sensor, the clear threat model, and the demonstration on deep networks like ResNet-101. However, the paper would benefit from more rigorous statistical validation of reconstruction accuracy, a clearer discussion of the attack's practical limitations, and a more complete comparison with prior work.\n\nOverview issues:\n\n- Reconstruction accuracy metrics lack statistical rigor: The paper reports topology reconstruction accuracy as 96.8% and hyperparameter estimation accuracy as 96-97%, but these are overall averages. The per-class F1 scores in Table 1 show wide variation: AvgPool has F1=0.499, ELU has F1=0.594, and several activation functions are below 0.7. The paper should report confidence intervals or error bars for these metrics, and discuss the practical impact of low-F1 classes on the overall reconstruction. Additionally, the hyperparameter estimation accuracy is reported only for convolutional layers; the paper should also report accuracy for other layer types (e.g., fully connected, recurrent) to give a complete picture.\n\n- Transfer attack evaluation confounds multiple factors: The transfer attack results in Table 3 compare side-channel-based surrogates against baselines like VGG-11 and ResNet-18, but these baselines are trained on the same dataset (CIFAR-10) with unknown hyperparameters. The paper does not control for model capacity, training procedure, or random initialization when comparing attack success rates. A fairer comparison would use surrogates with the same architecture but trained independently, and report the variance across multiple training runs. Without such controls, it is unclear whether the high success rates are due to side-channel reconstruction or simply to the use of a similar architecture trained on the same data.\n\n- Limited discussion of signal-to-noise ratio and reproducibility across hardware: The paper uses a single sensor (DRV425) with a 47kHz sampling rate and reports results on four GPU models. However, it does not systematically characterize the signal-to-noise ratio (SNR) under different conditions (e.g., varying distance from cable, presence of other electronics, different cable shielding). The claim that 'good recovery requires pretraining on like hardware' is acknowledged but not explored: the paper should quantify how much performance degrades when using a different GPU model or even a different physical copy of the same model. The literature context highlights that transferability between GPU families is a known limitation, and the paper should address this more directly.\n\n- Assumption of precise temporal alignment is unrealistic: The attack assumes the attacker can achieve precise temporal alignment of the magnetic signal with network execution using a 'clapperboard' synchronization spike. However, in a real-world setting, the attacker may not control the input timing or may face OS scheduling jitter and GPU driver variability. The paper does not evaluate the robustness of the synchronization method to timing noise or discuss how misalignment would affect reconstruction accuracy. A sensitivity analysis varying the synchronization precision would strengthen the practical relevance.\n\n- No evaluation on dynamic computation graphs or modern frameworks: The paper assumes the network architecture is static during inference, but modern frameworks (e.g., TensorFlow 2.x with eager execution, PyTorch with dynamic graphs) may use dynamic computation graphs where the sequence of operations depends on input data. The paper does not test on such frameworks or discuss whether the attack would still work. Given that dynamic graphs are increasingly common, this is a significant limitation that should be explicitly acknowledged and, if possible, tested.\n\n- Incomplete comparison with prior side-channel work: The related work section mentions several prior studies (e.g., Batina et al. 2019, Yan et al. 2020, Hua et al. 2018) but does not provide a quantitative comparison of reconstruction accuracy, network depth, or attack requirements. For instance, Batina et al. report results on networks with up to 5 layers, while this paper claims to handle 101-layer ResNets. A direct comparison table showing the capabilities of each method (max depth, accuracy, required hardware, attacker assumptions) would help contextualize the contribution. The literature context also references BarraCUDA (2023) and NVBleed (2025), which are more recent; while these may postdate the paper, the authors should at least discuss how their approach compares to the state of the art at the time of submission.\n\n- Missing demonstration on non-linear network topologies: The paper explicitly states it assumes networks progress in a linear fashion and does not handle complex graph networks with intricate branching topologies, such as those found in Inception or DenseNet architectures. However, the paper claims to reconstruct the 'complete' network structure for 'large and deep networks' like ResNet101, which itself has skip connections (branching). The paper should test on at least one non-linear architecture (e.g., a simple residual block or an Inception module) to demonstrate the method's limitations or to show that the integer programming formulation can handle such cases. Without this, the claim of reconstructing 'complete' structure for deep networks is overstated, as many modern architectures are non-linear.\n\n- No evaluation of hyperparameter estimation for non-convolutional layers: The paper reports hyperparameter estimation accuracy only for convolutional layers (96-97%), but the test dataset includes fully connected and recurrent layers. The paper should report the accuracy for these layer types as well, since they are part of the claimed reconstruction capability. Without this, readers cannot assess whether the method works for all layer types or only for convolutions. A simple table showing mean absolute error or classification accuracy for fully connected layer sizes, LSTM hidden dimensions, etc., would suffice.\n\n- Lack of sensitivity analysis for synchronization precision: The attack relies on a 'clapperboard' synchronization spike to align the magnetic signal with GPU operations. The paper does not evaluate how robust the synchronization is to timing jitter from OS scheduling, GPU driver variability, or sensor placement. A sensitivity analysis that introduces controlled timing offsets (e.g., \u00b11 ms, \u00b15 ms) and measures the resulting degradation in topology and hyperparameter reconstruction accuracy would strengthen the practical relevance. Without this, the assumption of precise temporal alignment is untested.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add confidence intervals or error bars to all reconstruction accuracy metrics, and report per-class performance for hyperparameter estimation across all layer types.\n\n- Control for confounding factors in the transfer attack evaluation: use multiple independent training runs, report variance, and compare against surrogates with the same architecture trained from scratch.\n\n- Characterize the SNR and reconstruction accuracy under realistic noise conditions (e.g., varying sensor distance, presence of other electronics, timing jitter).\n\n- Test the attack on at least one dynamic computation graph framework (e.g., TensorFlow eager mode or a simple conditional network) and discuss the implications for real-world applicability.\n\n- Provide a quantitative comparison table with prior side-channel attacks (e.g., Batina et al., Yan et al., Hua et al.) covering network depth, accuracy, and attacker assumptions.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Results section is a placeholder",
+          "quote": "This section presents the major empirical evaluations of our method. We refer the reader to Appx. B for complete results, additional experiments, and more thorough discussion.",
+          "explanation": "The entire '5 RESULTS' section consists of a single sentence that defers all empirical content to an appendix. This is not a results section \u2014 it is a placeholder. A results section must present key quantitative findings, tables, or figures that support the paper's claims. Without any data, the reader cannot evaluate the method's performance. The authors should move at least the main accuracy metrics (e.g., topology reconstruction accuracy, hyperparameter estimation errors) and a summary table into this section, and keep only supplementary details in the appendix.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "ADC voltage range mismatch with sensor output",
+          "quote": "We use the DRV425 fluxgate magnetic sensor from Texas Instruments for reliable high-frequency sensing of magnetic signals (Instruments, 2020; Petrucha & Novotny, 2018). This sensor, though costing only $3 USD, outputs robust analog signals with a 47kHz sampling rate and \u00b12mT sensing range. For analog to digital conversion (ADC), we use the USB-204 Digital Acquisition card, a 5-Volt ADC from Measurement Computing (Computing, 2020). This allows a 12-bit conversion of the signal, mapping sensor readings from -2mT~2mT to 0V~5V.",
+          "explanation": "The DRV425 sensor outputs an analog voltage proportional to the magnetic field, but its output range is not \u00b12mT directly. The sensor's sensitivity is typically 25 mV/mT (for a 5V supply), so a \u00b12mT field would produce a \u00b150 mV output, not a 0\u20135V signal. The USB-204 ADC has a 0\u20135V input range, so the sensor's \u00b150 mV output would need amplification to utilize the ADC's full range. The paper states 'mapping sensor readings from -2mT~2mT to 0V~5V' without specifying any amplification stage, which is physically implausible. The authors should describe the signal conditioning circuitry (e.g., amplifier gain, offset) that converts the sensor's millivolt output to the ADC's 0\u20135V input range. Without this, the measurement chain is incomplete and the reported 12-bit resolution may not be achievable.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Incorrect claim about hyperparameter determinism",
+          "quote": "Of the six CNN hyperparameters (stride, padding, dilation, input, output, and kernel size), any one is determined by the other five.",
+          "explanation": "This claim is too strong. The standard formula for output size is: output = floor((input + 2*padding - dilation*(kernel-1) - 1)/stride + 1). Given the other five, output is uniquely determined. However, given output and the other four (excluding input), input is not uniquely determined because the floor operation loses information. Similarly, stride and kernel size are not uniquely recoverable from the other five. The paper should replace this sentence with: 'Given the other five hyperparameters, the output size is uniquely determined by the formula output = floor((input + 2*padding - dilation*(kernel-1) - 1)/stride + 1).' This correction is necessary to avoid a factual error about the relationship among hyperparameters.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Claim of reconstructing 'complete' network structure overstated",
+          "quote": "Remarkably, we show that, through magnetic induction sensing, a passive observer can reconstruct the *complete* network structure even for *large* and *deep* networks.",
+          "explanation": "The paper later states that it assumes networks progress in a linear fashion and does not handle complex graph networks with intricate branching topologies. ResNet-101, which is tested, has skip connections (branching). The claim of reconstructing the 'complete' structure is therefore overstated for networks with branching, including ResNet-101. The paper should qualify this claim to reflect that it reconstructs the linear backbone and certain types of skip connections, or demonstrate that the integer programming formulation can handle such cases.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Inconsistent definition of 'step' and 'layer'",
+          "quote": "We use step to refer to performing a specific kind of network operation, such as a linear operation, batch normalization, pooling, activation function, etc. A layer is a sequences of steps, e.g., a (i) linear operation, then (ii) pooling, then (iii) activation. While there may be data dependencies between steps, there are no such dependencies within a step.",
+          "explanation": "The definition of 'layer' as a sequence of steps (e.g., linear \u2192 pooling \u2192 activation) is non-standard and contradicts common usage in deep learning, where a layer typically corresponds to a single operation (e.g., a convolutional layer, a pooling layer, an activation layer). The paper's definition would call a standard convolutional block (conv \u2192 BN \u2192 ReLU) a single 'layer', which is at odds with how architectures are described in the literature and in the paper's own experiments (e.g., ResNet-101 has 101 layers, not ~300). This inconsistency could confuse readers and may affect the integer programming formulation in later sections. The authors should either adopt standard terminology or clearly justify their redefinition and explain how it maps to conventional layer counts.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Batch size and signal strength claim contradicts GPU behavior",
+          "quote": "As the batch size increases, more GPU cores will be utilized in each step. The GPU consequently draws more power, which in turn strengthens the signal. Once all GPU cores are involved, further increase of input batch size will not increase the signal strength, but elongate the execution time until the GPU runs out of memory.",
+          "explanation": "The claim that increasing batch size utilizes more GPU cores is incorrect for typical GPU execution. In deep learning inference, the GPU typically launches the same set of kernels regardless of batch size; each kernel processes the entire batch in parallel using all available cores. The number of cores utilized is determined by the kernel launch configuration, not the batch size. What actually changes with batch size is the amount of computation per kernel (more matrix multiplications of larger matrices), which increases execution time and power draw, but not core utilization. The statement should be rewritten to reflect that larger batches increase the duration and total power consumption of each kernel, not the number of cores used.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Training set size is too small for claimed generalization",
+          "quote": "All in all we consider 500 networks for training leading to a total of 5708 network steps we aim to identify.",
+          "explanation": "The paper claims to reconstruct the topology and hyperparameters of networks with up to 101 layers (ResNet-101). With only 500 training networks and 5708 steps, the average network in the training set has about 11.4 steps. This is far fewer than the 101 layers in the deepest test networks. The training set does not cover the depth range of the claimed capability. The paper should either (a) report the distribution of network depths in the training set, or (b) demonstrate that the recovery DNN generalizes to depths beyond those seen in training. Without this, the claim of reconstructing 101-layer networks is unsupported by the training data. Add a sentence reporting the range and distribution of network depths in the training set.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Unsubstantiated claim of turning black-box into white-box attack",
+          "quote": "Using our side-channel-based surrogate model, the transfer attack success rate is comparable to the white-box transfer attack baseline, that is, using the target model's network structure (but trained separately) to attack the target model itself. In other words, our side-channel-based reconstruction effectively turns a black-box attack into a white-box attack.",
+          "explanation": "The claim that the attack 'effectively turns a black-box attack into a white-box attack' is overstated. The white-box baseline uses the exact network structure of the target model, while the side-channel reconstruction is approximate (as shown by the 96.8% topology accuracy and lower F1 scores for some layer types). The paper does not report whether the reconstructed networks are architecturally identical to the target, nor does it quantify how reconstruction errors affect attack success. The comparison to a white-box baseline is also confounded because both the side-channel surrogate and the white-box baseline are trained separately on the same dataset (CIFAR-10), so the high success rates may reflect dataset similarity rather than architectural fidelity. Rewrite the claim to state that the attack achieves success rates comparable to a white-box attack under the specific conditions tested, and acknowledge that reconstruction errors may degrade performance in practice.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Overstated claim about prevention via small batch size",
+          "quote": "To prevent this behavior, one can keep the input sufficiently small (e.g. 1 single image) such that the magnetic signals never reach any stable state and suffer from a low signal-to-noise ratio, rendering our sensing setup futile.",
+          "explanation": "The paper claims that using a batch size of 1 prevents the attack, but this is not supported by any experimental evidence. The paper's own methodology relies on sustained GPU operations to extract signals, but it does not test whether a batch size of 1 actually degrades the signal-to-noise ratio enough to prevent reconstruction. Without a quantitative evaluation (e.g., showing that topology accuracy drops below random chance for batch size 1), this claim is speculative. The paper should either provide experimental results demonstrating the effectiveness of this defense or temper the claim to reflect that it is a hypothesis.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Jamming defense lacks quantitative evaluation",
+          "quote": "Specifically, during the inference of a large input batch, we ran a third-party CUDA GPU stress test in the background (Timonen, 2020). We found that the magnetic signals are completely distorted because of the constantly high utilization of GPU. Moreover, we observe little speed degradation for the foreground inference.",
+          "explanation": "The paper claims that jamming completely distorts magnetic signals, but it does not provide any quantitative measure of distortion (e.g., signal-to-noise ratio, reconstruction accuracy under jamming). The claim of 'little speed degradation' is also vague\u2014no latency or throughput numbers are reported. Without these metrics, a practitioner cannot assess the practicality of this defense. The paper should report the reconstruction accuracy (e.g., topology F1 score) with and without jamming, and measure the inference time overhead.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Overclaim on extracting detailed hyperparameters",
+          "quote": "Our prototype shows it is possible to extract both the high-level network topology and detailed hyperparameters.",
+          "explanation": "The paper reports hyperparameter estimation accuracy only for convolutional layers (96-97%), but the test dataset includes fully connected and recurrent layers. The paper does not report accuracy for these layer types, so claiming extraction of 'detailed hyperparameters' for all layer types is not supported by the evidence presented. The claim should be qualified to specify that hyperparameter extraction was demonstrated for convolutional layers only. Rewrite as 'Our prototype shows it is possible to extract both the high-level network topology and detailed hyperparameters for convolutional layers; extraction for other layer types remains to be evaluated.'",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Incomplete limitation on dynamic computation graphs",
+          "quote": "In our formulation, we assume networks progress in a linear fashion and do not handle complex graph network with intricate branching topologies.",
+          "explanation": "The limitation statement only mentions branching topologies, but the paper also assumes static computation graphs. Modern frameworks (e.g., TensorFlow 2.x with eager execution, PyTorch with dynamic graphs) may use dynamic computation graphs where the sequence of operations depends on input data. The paper does not test on such frameworks or discuss whether the attack would still work. This is a significant limitation that should be explicitly acknowledged. Add 'Additionally, our method assumes a static computation graph; dynamic graphs where the sequence of operations depends on input data are not evaluated.'",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Missing discussion of synchronization robustness",
+          "quote": "We cannot tell if a network is trained with dropout since dropout layers do not appear at inference time. Indeed, any operation that only appears during training is beyond the capability of magnetic side channel snooping.",
+          "explanation": "This statement correctly notes that training-only operations are invisible, but the paper does not discuss a more fundamental limitation: the attack assumes precise temporal alignment of the magnetic signal with network execution using a 'clapperboard' synchronization spike. The paper does not evaluate robustness to timing jitter from OS scheduling or GPU driver variability. This is a practical limitation that should be acknowledged alongside the dropout limitation. Add 'Our method also assumes precise temporal alignment of the magnetic signal with network execution; timing jitter from OS scheduling or GPU driver variability may degrade reconstruction accuracy and has not been evaluated.'",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Overclaim on reconstructing 'complete' network structure in conclusion",
+          "quote": "We set out to study what can be learned from passively listening to a magnetic side channel in the proximity of a running GPU. Our prototype shows it is possible to extract both the high-level network topology and detailed hyperparameters.",
+          "explanation": "The paper claims to reconstruct the 'complete' network structure for 'large and deep networks' like ResNet101, which has skip connections (branching). However, the paper explicitly states it assumes linear networks and does not handle branching topologies. ResNet101 is not a linear network; its skip connections introduce branching. The paper should either test on a non-linear architecture to demonstrate the method's limitations or clarify that the reconstruction is limited to the linear backbone of such networks. Rewrite as 'Our prototype shows it is possible to extract the linear backbone topology and detailed hyperparameters for networks that progress in a linear fashion; networks with branching topologies (e.g., skip connections) are not handled.'",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Incomplete limitation on software version variability",
+          "quote": "nstruction options. Software upgrades, which can lead to significant performance boost and therefore alter the emitted magnetic signals, may be\n\n<!-- PAGE BREAK -->\n\nviewed as further increasing the set of possible GPU models. In our experiments, we keep all the software versions constant, including OS verion, CUDA version,",
+          "explanation": "The paper acknowledges that software upgrades alter magnetic signals but does not quantify the impact. The claim that software versions can be 'viewed as further increasing the set of possible GPU models' is vague and does not provide guidance on how an adversary would handle this. The paper should either provide a sensitivity analysis showing how reconstruction accuracy degrades with different software versions, or explicitly state that the method requires the same software stack as the victim. Add 'We have not evaluated the impact of different software versions on reconstruction accuracy; our results assume the attacker and victim use identical software stacks.'",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Typo in variable naming for stride and dilation",
+          "quote": "Constraint (iv), however, is troublesome, because the appearance of kernel size  $\\alpha$  and dilation  $\\gamma$ , both of which are optimization variables, make the constraint nonlinear.",
+          "explanation": "The text says 'kernel size $\\alpha$' but $\\alpha$ denotes stride, not kernel size. The kernel size is $k$. This is a typo that could confuse readers. Rewrite as 'the appearance of stride $\\alpha$ and dilation $\\gamma$' to match the definitions in equation (2).",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Ambiguous description of time duration concatenation",
+          "quote": "Each segment\u2019s feature vector is assembled by (i) partitioning the segment uniformly into $N$ windows, and computing the average value of each window, (ii) concatenating the time duration of the segment. The concatenated feature vector has a length of $2N+2$.",
+          "explanation": "The text says 'concatenating the time duration of the segment' (singular), which could be interpreted as adding one time duration for the pair of segments. However, the stated total length of $2N+2$ implies two time durations are included (one per segment). To avoid confusion, rewrite as: 'Each segment\u2019s feature vector is assembled by (i) partitioning the segment uniformly into $N$ windows and computing the average value of each window, (ii) appending the time duration of that segment. The two segment vectors are then concatenated, yielding a total length of $2N+2$.'",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_17",
+          "title": "Magnetic flux decay law is misstated",
+          "quote": "Because magnetic flux decays inversely proportional to the squared distance from the source, according to the Biot-Savart law (Griffiths, 2005)",
+          "explanation": "The Biot-Savart law states that the magnetic field magnitude from a current element decays as 1/r\u00b2, not the magnetic flux. Magnetic flux is the surface integral of the magnetic field, so its decay with distance depends on the geometry of the surface. The intended claim is that the magnetic field strength decays as 1/r\u00b2, which is correct for a current element but not for a long straight wire (where it decays as 1/r). Since the sensor is placed along the power cable, the wire is approximately straight and long, so the field actually decays as 1/r, not 1/r\u00b2. This misstatement does not affect the experimental results but should be corrected for physical accuracy. Rewrite as: 'Because the magnetic field strength from a current-carrying wire decays as the inverse of the distance (Ampere's law), we position the sensor within millimeters of the cable casing.'",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        }
+      ],
+      "cost_usd": 0.0554,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

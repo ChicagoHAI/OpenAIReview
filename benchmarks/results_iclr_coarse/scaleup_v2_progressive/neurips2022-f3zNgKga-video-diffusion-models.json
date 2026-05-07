@@ -1,0 +1,843 @@
+{
+  "slug": "neurips2022-f3zNgKga-video-diffusion-models",
+  "title": "Video Diffusion Models [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Video Diffusion Models**\n\n**Jonathan Ho** _[\u2217]_ `jonathanho@google.com`\n\n**Tim Salimans** _[\u2217]_ **Alexey Gritsenko** `salimans@google.com agritsenko@google.com`"
+    },
+    {
+      "index": 1,
+      "text": "**William Chan** `williamchan@google.com`\n\n**Mohammad Norouzi David J. Fleet** `mnorouzi@google.com davidfleet@google.com`"
+    },
+    {
+      "index": 2,
+      "text": "## **Abstract**\n\nGenerating temporally coherent high fidelity video is an important milestone in generative modeling research. We make progress towards this milestone by proposing a diffusion model for video generation that shows very promising initial results. Our model is a natural extension of the standard image diffusion architecture, and it enables jointly training from image and video data, which we find to reduce the variance of minibatch gradients and speed up optimization. To generate long and higher resolution videos we introduce a new conditional sampling technique for spatial and temporal video extension that performs better than previously proposed methods. We present the first results on a large text-conditioned video generation task, as well as state-of-the-art results on established benchmarks for video prediction and unconditional video generation. Supplementary material is available at `https://video-diffusion.github.io/` ."
+    },
+    {
+      "index": 3,
+      "text": "## **1 Introduction**\n\nDiffusion models have recently been producing high quality results in image generation and audio generation [e.g. 28, 39, 40, 16, 23, 36, 48, 60, 42, 10, 29], and there is significant interest in validating diffusion models in new data modalities. In this work, we present first results on video generation using diffusion models, for both unconditional and conditional settings."
+    },
+    {
+      "index": 4,
+      "text": "We show that high quality videos can be generated using essentially the standard formulation of the Gaussian diffusion model [46], with little modification other than straightforward architectural changes to accommodate video data within the memory constraints of deep learning accelerators. We train models that generate a fixed number of video frames using a 3D U-Net diffusion model architecture, and we enable generating longer videos by applying this model autoregressively using a new method for conditional generation. We additionally show the benefits of joint training on video and image modeling objectives. We test our methods on video prediction and unconditional video generation, where we achieve state-of-the-art sample quality scores, and we also show promising first results on text-conditioned video generation."
+    },
+    {
+      "index": 5,
+      "text": "## **2 Background**\n\nA diffusion model [46, 47, 22] specified in continuous time [53, 48, 10, 28] is a generative model with latents **z** = _{_ **z** _t | t \u2208_ [0 _,_ 1] _}_ obeying a forward process _q_ ( **z** _|_ **x** ) starting at data **x** _\u223c p_ ( **x** ). The forward process is a Gaussian process that satisfies the Markovian structure:"
+    },
+    {
+      "index": 6,
+      "text": "> _\u2217_ Equal contribution\n\n36th Conference on Neural Information Processing Systems (NeurIPS 2022).\n\nwhere 0 _\u2264 s < t \u2264_ 1, _\u03c3t_[2] _|s_[=][(1] _[ \u2212][e][\u03bb][t][\u2212][\u03bb][s]_[)] _[\u03c3] t_[2][, and] _[ \u03b1][t][, \u03c3][t]_[specify a differentiable noise schedule] whose log signal-to-noise-ratio _\u03bbt_ = log[ _\u03b1t_[2] _[/\u03c3] t_[2][]][ decreases with] _[ t]_[ until] _[ q]_[(] **[z]**[1][)] _[ \u2248N]_[(] **[0]** _[,]_ **[ I]**[)][.]"
+    },
+    {
+      "index": 7,
+      "text": "**Training** Learning to reverse the forward process for generation can be reduced to learning to \u02c6 denoisesimplify notation). **z** _t \u223c q_ ( **z** _t|_ **x** We train this denoising model) into an estimate **x** _\u03b8_ ( **z** _t, \u03bbt_ ) _\u2248_ **x** \u02c6 _\u03b8_ **x** for allusing a weighted mean squared error loss _t_ (we will drop the dependence on _\u03bbt_ to"
+    },
+    {
+      "index": 8,
+      "text": "over uniformly sampled times _t \u2208_ [0 _,_ 1]. This reduction of generation to denoising can be justified as optimizing a weighted variational lower bound on the data log likelihood under the diffusion model, or as a form of denoising score matching [56, 47, 22, 28]. In practice, we use the _**\u03f5**_ -prediction parameterization, defined as **x** \u02c6 _\u03b8_ ( **z** _t_ ) = ( **z** _t \u2212 \u03c3t_ _**\u03f5** \u03b8_ ( **z** _t_ )) _/\u03b1t_ , and train _**\u03f5** \u03b8_ using a mean squared error in _**\u03f5**_ space with _t_ sampled according to a cosine schedule [37]. This corresponds to a particular weighting _w_ ( _\u03bbt_ ) for learning a scaled score estimate _**\u03f5** \u03b8_ ( **z** _t_ ) _\u2248\u2212\u03c3t\u2207_ **z** _t_ log _p_ ( **z** _t_ ), where _p_ ( **z** _t_ ) is the true density of **z** _t_ under **x** _\u223c p_ ( **x** ) [22, 28, 48]. We also train using the **v** -prediction parameterization for certain models [42]."
+    },
+    {
+      "index": 9,
+      "text": "> **Sampling** We use a variety of diffusion model samplers in this work. One is the discrete time ancestral sampler [22] with sampling variances derived from lower and upper bounds on reverse process entropy [46, 22, 37]. To define this sampler, first note that the forward process can be described in reverse as _q_ ( **z** _s|_ **z** _t,_ **x** ) = _N_ ( **z** _s_ ; \u02dc _**\u00b5** s|t_ ( **z** _t,_ **x** ) _,_ \u02dc _\u03c3s_[2] _|t_ **[I]**[)][ (noting] _[ s < t]_[), where]"
+    },
+    {
+      "index": 10,
+      "text": "Starting at **z** 1 _\u223cN_ ( **0** _,_ **I** ), the ancestral sampler follows the rule\n\nwhere _**\u03f5**_ is standard Gaussian noise, _\u03b3_ is a hyperparameter that controls the stochasticity of the sampler [37], and _s, t_ follow a uniformly spaced sequence from 1 to 0."
+    },
+    {
+      "index": 11,
+      "text": "Another sampler, which we found especially effective with our new method for conditional generation (Section 3.1), is the predictor-corrector sampler [48]. Our version of this sampler alternates between the ancestral sampler step (4) and a Langevin correction step of the form"
+    },
+    {
+      "index": 12,
+      "text": "where _\u03b4_ is a step size which we fix to 0 _._ 1 here, and _**\u03f5**[\u2032]_ is another independent sample of standard Gaussian noise. The purpose of the Langevin step is to help the marginal distribution of each **z** _s_ generated by the sampler to match the true marginal under the forward process starting at **x** _\u223c p_ ( **x** )."
+    },
+    {
+      "index": 13,
+      "text": "In the conditional generation setting, the data **x** is equipped with a conditioning signal **c** , which may represent a class label, text caption, or other type of conditioning. To train a diffusion model to fit _p_ ( **x** _|_ **c** ), the only modification that needs to be made is to provide **c** to the model as **x** \u02c6 _\u03b8_ ( **z** _t,_ **c** ). Improvements to sample quality can be obtained in this setting by using _classifier-free guidance_ [20]. This method samples using adjusted model predictions \u02dc _**\u03f5** \u03b8_ , constructed via"
+    },
+    {
+      "index": 14,
+      "text": "where _w_ is the _guidance strength_ , _**\u03f5** \u03b8_ ( **z** _t,_ **c** ) = _\u03c3_ 1 _t_[(] **[z]** _[t][ \u2212]_ **[x]**[\u02c6] _[\u03b8]_[(] **[z]** _[t][,]_ **[ c]**[))][ is the regular conditional model] prediction, and _**\u03f5** \u03b8_ ( **z** _t_ ) is a prediction from an unconditional model jointly trained with the conditional model (if **c** consists of embedding vectors, unconditional modeling can be represented as **c** = **0** ). For _w >_ 0 this adjustment has the effect of over-emphasizing the effect of conditioning on the signal **c** , which tends to produce samples of lower diversity but higher quality compared to sampling from the regular conditional model [20]. The method can be interpreted as a way to guide the samples towards areas where an implicit classifier _p_ ( **c** _|_ **z** _t_ ) has high likelihood, and is an adaptation of the explicit classifier guidance method proposed by [16]."
+    },
+    {
+      "index": 15,
+      "text": "2\n\n## **3 Video diffusion models**\n\nOur approach to video generation using diffusion models is to use the standard diffusion model formalism described in Section 2 with a neural network architecture suitable for video data. Each of our models is trained to jointly model a fixed number of frames at a fixed spatial resolution. To extend sampling to longer sequences of frames or higher spatial resolutions, we will repurpose our models with a conditioning technique described later in Section 3.1."
+    },
+    {
+      "index": 16,
+      "text": "In prior work on image modeling, the standard architecture for **x** \u02c6 _\u03b8_ in an image diffusion model is a U-Net [38, 44], which is a neural network architecture constructed as a spatial downsampling pass followed by a spatial upsampling pass with skip connections to the downsampling pass activations. The network is built from layers of 2D convolutional residual blocks, for example in the style of the Wide ResNet [65], and each such convolutional block is followed by a spatial attention block [55, 58, 11]. Conditioning information, such as **c** and _\u03bbt_ , is provided to the network in the form of an embedding vector added into each residual block (we find it helpful for our models to process these embedding vectors using several MLP layers before adding)."
+    },
+    {
+      "index": 17,
+      "text": "We propose to extend this image diffusion model architecture to video data, given by a block of a fixed number of frames, using a particular type of 3D U-Net [13] that is factorized over space and time. First, we modify the image model architecture by changing each 2D convolution into a space-only 3D convolution, for instance, we change each 3x3 convolution into a 1x3x3 convolution (the first axis indexes video frames, the second and third index the spatial height and width). The attention in each spatial attention block remains as attention over space; i.e., the first axis is treated as a batch axis. Second, after each spatial attention block, we insert a temporal attention block that performs attention over the first axis and treats the spatial axes as batch axes. We use relative position embeddings [45] in each temporal attention block so that the network can distinguish ordering of frames in a way that does not require an absolute notion of video time. We visualize the model architecture in Fig. 1."
+    },
+    {
+      "index": 18,
+      "text": "**----- Start of picture text -----**\n\n( K [N] [)][2][,] [ M][K] ( K [N] [)][2][,] [ M][K] ( K [N] [)][2][,][ 2] [ \u00d7][ M][K]\n( [N] 2 [)][2][,] [ M] [2] ( [N] 2 [)][2][,][ 2] [ \u00d7][ M] [2]\n( z t,  c , \u03bbt ) N [2] ,  M 1 N [2] , 2  \u00d7 M 1 x \u02c6\n**----- End of picture text -----**"
+    },
+    {
+      "index": 19,
+      "text": "Figure 1: The 3D U-Net architecture for **x** \u02c6 _\u03b8_ in the diffusion model. Each block represents a 4D tensor with axes labeled as frames _\u00d7_ height _\u00d7_ width _\u00d7_ channels, processed in a space-time factorized manner as described in Section 3. The input is a noisy video **z** _t_ , conditioning **c** , and the log SNR _\u03bbt_ . The downsampling/upsampling blocks adjust the spatial input resolution height _\u00d7_ width by a factor of 2 through each of the _K_ blocks. The channel counts are specified using channel multipliers _M_ 1, _M_ 2, ..., _MK_ , and the upsampling pass has concatenation skip connections to the downsampling pass."
+    },
+    {
+      "index": 20,
+      "text": "The use of factorized space-time attention is known to be a good choice in video transformers for its computational efficiency [2, 5, 21]. An advantage of our factorized space-time architecture, which is unique to our video generation setting, is that it is particularly straightforward to mask the model to run on independent images rather than a video, simply by removing the attention operation inside each time attention block and fixing the attention matrix to exactly match each key and query vector at each video timestep. The utility of doing so is that it allows us to jointly train the model on both video and image generation. We find in our experiments that this joint training is important for sample quality (Section 4)."
+    },
+    {
+      "index": 21,
+      "text": "3\n\n## **3.1 Reconstruction-guided sampling for improved conditional generation**\n\nThe videos we consider modeling typically consist of hundreds to thousands of frames, at a frame rate of at least 24 frames per second. To manage the computational requirements of training our models, we only train on a small subset of say 16 frames at a time. However, at test time we can generate longer videos by extending our samples. For example, we could first generate a video **x**[a] _\u223c p\u03b8_ ( **x** ) consisting of 16 frames, and then extend it with a second sample **x**[b] _\u223c p\u03b8_ ( **x**[b] _|_ **x**[a] ). If **x**[b] consists of frames following **x**[a] , this allows us to autoregressively extend our sampled videos to arbitrary lengths, which we demonstrate in Section 4.3.3. Alternatively, we could choose **x**[a] to represent a video of lower frame rate, and then define **x**[b] to be those frames in between the frames of **x**[a] . This allows one to then to upsample a video temporally, similar to how [34] generate high resolution images through spatial upsampling."
+    },
+    {
+      "index": 22,
+      "text": "Both approaches require one to sample from a conditional model, _p\u03b8_ ( **x**[b] _|_ **x**[a] ). This conditional model could be trained explicitly, but it can also be derived approximately from our unconditional model _p\u03b8_ ( **x** ) by imputation, which has the advantage of not requiring a separately trained model. For example, [48] present a general method for conditional sampling from a jointly trained diffusion model _p\u03b8_ ( **x** = [ **x**[a] _,_ **x**[b] ]): In their approach to sampling from _p\u03b8_ ( **x**[b] _|_ **x**[a] ), the sampling procedure for updating **z**[b] _s_[is unchanged from the standard method for sampling from] _[ p][\u03b8]_[(] **[z]** _[s][|]_ **[z]** _[t]_[)][, with] **[ z]** _[s]_[= [] **[z]**[a] _s[,]_ **[ z]**[b] _s_[]][,] but the samples for **z**[a] _s_[are replaced by exact samples from the forward process,] _[ q]_[(] **[z]**[a] _s[|]_ **[x]**[a][)][, at each] iteration. The samples **z**[a] _s_[then have the correct marginal distribution by construction, and the samples] **z**[b] _s_[will conform with] **[ z]**[a] _s_[through their effect on the denoising model] **[x]**[\u02c6] _[\u03b8]_[([] **[z]**[a] _t[,]_ **[ z]**[b] _t_[])][.][Similarly, we could] sample **z**[a] _s_[from] _[ q]_[(] **[z]**[a] _s[|]_ **[x]**[a] _[,]_ **[ z]**[a] _t_[)][,][which follows the correct conditional distribution in addition to the] correct marginal. We will refer to both of these approaches as the _replacement_ method for conditional sampling from diffusion models."
+    },
+    {
+      "index": 23,
+      "text": "When we tried the replacement method to conditional sampling, we found it to not work well for our video models: Although samples **x**[b] looked good in isolation, they were often not coherent with **x**[a] . This is caused by a fundamental problem with this replacement sampling method. That is, the latents **z**[b] _s_[are][updated][in][the][direction][provided][by] **[x]**[\u02c6][b] _\u03b8_[(] **[z]** _[t]_[)] _[\u2248]_[E] _[q]_[[] **[x]** _[b][|]_ **[z]** _[t]_[]][,][while][what][is] needed instead is E _q_ [ **x** _[b] |_ **z** _t,_ **x** _[a]_ ]. Writing this in terms of the score of the data distribution, we get E _q_ [ **x** _[b] |_ **z** _t,_ **x** _[a]_ ] = E _q_ [ **x** _[b] |_ **z** _t_ ] + ( _\u03c3t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]** _[a][|]_ **[z]** _[t]_[)][,][where][the][second][term][is][missing][in][the] replacement method. Assuming a perfect denoising model, plugging in this missing term would make conditional sampling exact. Since _q_ ( **x** _[a] |_ **z** _t_ ) is not available in closed form, however, we instead propose **x** \u02c6[a] _\u03b8_[(] **[z]** _[t]_[)][ is a reconstruction of the conditioning data] to approximate it using a Gaussian of the **[ x]**[a] form[provided by our denoising model.] _q_ ( **x** _[a] |_ **z** _t_ ) _\u2248N_ [\u02c6 **x**[a] _\u03b8_[(] **[z]** _[t]_[)] _[,]_[ (] _[\u03c3] t_[2] _[/\u03b1]_[Assuming a] _t_[2][)][I][]][,][where] perfect model, this approximation becomes exact as _t \u2192_ 0, and empirically we find it to be good for largerto conditional sampling is a variant of the replacement method with an adjusted denoising model, _t_ also. Plugging in the approximation, and adding a weighting factor _wr_ , our proposed method **x** \u02dc _[b] \u03b8_[,] defined by"
+    },
+    {
+      "index": 24,
+      "text": "The additional gradient term in this expression can be interpreted as a form of _guidance_ [16, 20] based on the model\u2019s reconstruction of the conditioning data, and we therefore refer to this method as _reconstruction-guided sampling_ , or simply _reconstruction guidance_ . Like with other forms of guidance, we find that choosing a larger weighting factor, _wr >_ 1, tends to improve sample quality. We empirically investigate reconstruction guidance in Section 4.3.3, where we find it to work surprisingly well, especially when combined with predictor-corrector samplers using Langevin diffusion [48]."
+    },
+    {
+      "index": 25,
+      "text": "Reconstruction guidance also extends to the case of spatial interpolation (or super-resolution), in which the mean squared error loss is imposed on a downsampled version of the model prediction, and backpropagation is performed through this downsampling. In this setting, we have low resolution ground truth videos **x** _[a]_ (e.g. at the 64x64 spatial resolution), which may be generated from a low resolution model, and we wish to upsample them into high resolution videos (e.g. at the 128x128 spatial resolution) using an unconditional high resolution diffusion model **x** \u02c6 _\u03b8_ . To accomplish this, we adjust the high resolution model as follows:"
+    },
+    {
+      "index": 26,
+      "text": "4\n\nwhere **x** \u02c6 _[a] \u03b8_[(] **[z]** _[t]_[)][ is our model\u2019s reconstruction of the low-resolution video from] **[ z]** _[t]_[, which is obtained] by downsampling the high resolution output of the model using a differentiable downsampling algorithm such as bilinear interpolation. Note that it is also possible to simultaneously condition on low resolution videos while autoregressively extending samples at the high resolution using the same reconstruction guidance method. In Fig. 2, we show samples of this approach for extending 16x64x64 low resolution samples at frameskip 4 to 64x128x128 samples at frameskip 1 using a 9x128x128 diffusion model."
+    },
+    {
+      "index": 27,
+      "text": "## **4 Experiments**\n\nWe report our results on video diffusion models for unconditional video generation (Section 4.1), conditional video generation (video prediction) (Section 4.2), and text-conditioned video generation (Section 4.3). We evaluate our models using standard metrics such as FVD [54], FID [19], and IS [43]; details on evaluation are provided below alongside each benchmark. Samples and additional results are provided at `https://video-diffusion.github.io/` . Architecture hyperparameters, training details, and compute resources are listed in Appendix A."
+    },
+    {
+      "index": 28,
+      "text": "## **4.1 Unconditional video modeling**\n\nTo demonstrate our approach on unconditional generation, we use a popular benchmark of Soomro et al. [49] for unconditional modeling of video. The benchmark consists of short clips of people performing one of 101 activities, and was originally collected for the purpose of training action recognition models. We model short segments of 16 frames from this dataset, downsampled to a spatial resolution of 64x64. In Table 1 we present perceptual quality scores for videos generated by our model, and we compare against methods from the literature, finding that our method strongly improves upon the previous state-of-the-art."
+    },
+    {
+      "index": 29,
+      "text": "We use the data loader provided by TensorFlow Datasets [1] without further processing, and we train on all 13,320 videos. Similar to previous methods, we use the C3D network [51][2] for calculating FID and IS, using 10,000 samples generated from our model. C3D internally resizes input data to the 112x112 spatial resolution, so perceptual scores are approximately comparable even when the data is sampled at a different resolution originally. As discussed by [64], methods in the literature are unfortunately not always consistent in the data preprocessing that is used, which may lead to small differences in reported scores between papers. The Inception Score we calculate for real data ( _\u2248_ 60) is consistent with that reported by [26], who also report a higher real data Inception score of _\u2248_ 90 for data sampled at the 128x128 resolution, which indicates that our 64x64 model might be at a disadvantage compared to works that generate at a higher resolution. Nevertheless, our model obtains the best perceptual quality metrics that we could find in the literature."
+    },
+    {
+      "index": 30,
+      "text": "|Method|Resolution|FID_\u2193_|IS_\u2191_|\n|---|---|---|---|\n|MoCoGAN [52]|16x64x64|26998_\u00b1_33|12.42|\n|TGAN-F [26]|16x64x64|8942.63_\u00b1_3.72|13.62|\n|TGAN-ODE [18]|16x64x64|26512_\u00b1_27|15.2|\n|TGAN-F [26]|16x128x128|7817_\u00b1_10|22.91_\u00b1_.19|\n|VideoGPT [62]|16x128x128||24.69_\u00b1_0.30|\n|TGAN-v2 [41]|16x64x64|3431_\u00b1_19|26.60_\u00b1_0.47|\n|TGAN-v2 [41]|16x128x128|3497_\u00b1_26|28.87_\u00b1_0.47|\n|DVD-GAN [14]|16x128x128||32.97_\u00b1_1.7|\n|**Video Diffusion (ours)**|16x64x64|**295**_\u00b1_**3**|**57**_\u00b1_**0.62**|\n|real data|16x64x64||60.2|"
+    },
+    {
+      "index": 31,
+      "text": "Table 1: Unconditional video modeling results on UCF101.\n\n> 2We use the C3D model as implemented at `github.com/pfnet-research/tgan2` [41]."
+    },
+    {
+      "index": 32,
+      "text": "5\n\n## **4.2 Video prediction**\n\nA common benchmark task for evaluating generative models of video is _video prediction_ , where the model is given the first frame(s) of a video and is asked to generate the remainder. Models that do well on this _conditional generation_ task are usually trained explicitly for this conditional setting, for example by being autoregressive across frames. Although our models are instead only trained unconditionally, we can adapt them to the video prediction setting by using the guidance method proposed in section 3.1. Here we evaluate this method on two popular video prediction benchmarks, obtaining state-of-the-art results."
+    },
+    {
+      "index": 33,
+      "text": "**BAIR Robot Pushing** We evaluate video prediction performance on BAIR Robot Pushing [17], a standard benchmark in the video literature consisting of approximately 44000 videos of robot pushing motions at the 64x64 spatial resolution. Methods for this benchmark are conditioned on 1 frame and generate the next 15. Results are listed in Table 2. Following the evaluation protocol of [4] and others, we calculate FVD [54] using the I3D network [8] by comparing 100 _\u00d7_ 256 model samples against the 256 examples in the evaluation set."
+    },
+    {
+      "index": 34,
+      "text": "**Kinetics-600** We additionally evaluate video prediction performance on the Kinetics-600 benchmark [27, 9]. Kinetics-600 contains approximately 400 thousand training videos depicting 600 different activities. We train unconditional models on this dataset at the 64 _\u00d7_ 64 resolution and evaluate on 50 thousand randomly sampled videos from the test set, where we condition on a randomly sampled subsequence of 5 frames and generate the next 11 frames. Like previous works, we calculate FVD and Inception Score using the I3D network [8]. See Table 3 for results. In our reported results we sample test videos without replacement, and we use the same randomly selected subsequences for generating model samples and for defining the ground truth, since this results in the lowest bias and variance in the reported FVD metric. However, from personal communication we learned that [33, 14] instead sampled _with replacement_ , and used a different random seed when sampling the ground truth data. We find that this way of evaluating raises the FVD obtained by our model slightly, from 16 _._ 2 to 16 _._ 9. Inception Score is unaffected."
+    },
+    {
+      "index": 35,
+      "text": "|Table|2: Video prediction on BAIR Robot Pushing.\nMethod\nFVD_\u2193_\nDVD-GAN [14]\n109.8\nVideoGPT [62]\n103.3\nTrIVD-GAN-FP [33]\n103.3\nTransframer [35]\n100\nCCVS [31]\n99\nVideoTransformer [59]\n94\nFitVid [4]\n93.6\nNUWA [61]\n86.9\nVideo Diffusion (ours)\nancestral sampler, 512 steps\n68.19\nLangevin sampler, 256 steps\n**66.92**|Table 3: Video prediction on Kinetics-600.\nMethod\nFVD_\u2193_\nIS_\u2191_|\n|---|---|---|\n|||Video Transformer [59]\n170_\u00b1_5\nDVD-GAN-FP [14]\n69.1_\u00b1_0.78\nVideo VQ-VAE [57]\n64.3_\u00b1_2.04\nCCVS [31]\n55_\u00b1_1\nTrIVD-GAN-FP [33]\n25.74_\u00b1_0.66\n12.54\nTransframer [35]\n25.4|\n|||Video Diffusion (ours)\nancestral, 256 steps\n18.6\n15.39\nLangevin, 128 steps\n**16.2**_\u00b1_**0.34**\n**15.64**|\n||||"
+    },
+    {
+      "index": 36,
+      "text": "## **4.3 Text-conditioned video generation**\n\nThe remaining experiments reported are on text-conditioned video generation. In this text-conditioned video generation setting, we employ a dataset of 10 million captioned videos, and we condition the diffusion model on captions in the form of BERT-large embeddings [15] processed using attention pooling. We consider two model sizes: a small model for the joint training ablation, and a large model for generating the remaining results (both architectures are described in detail in Appendix A), and we explore the effects of joint video-image training, classifier-free guidance, and our newly proposed reconstruction guidance method for autoregressive extension and simultaneous spatial and temporal super-resolution. We report the following metrics in this section on 4096 samples: the video metric FVD, and the Inception-based image metrics FID and IS measured by averaging activations across frames (FID/IS-avg) and by measuring the first frame only (FID/IS-first). For FID and FVD, we report two numbers which are measured against the training and validation sets, respectively. For IS, we report two numbers which are averaged scores across 1 split and 10 splits of samples, respectively."
+    },
+    {
+      "index": 37,
+      "text": "6\n\nFigure 2: Text-conditioned video samples from a cascade of two models. First samples are generated from a 16x64x64 frameskip 4 model. Then those samples are treated as ground truth for simultaneous super-resolution and autoregressive extension to 64x128x128 using a 9x128x128 frameskip 1 model. Both models are conditioned on the text prompt. In this figure, the text prompt, low resolution frames, and high resolution frames are visualized in sequence. See Fig. 5 for more samples."
+    },
+    {
+      "index": 38,
+      "text": "## **4.3.1 Joint training on video and image modeling**\n\nAs described in Section 3, one of the main advantages of our video architecture is that it allows us to easily train the model jointly on video and image generative modeling objectives. To implement this joint training, we concatenate random independent image frames to the end of each video sampled from the dataset, and we mask the attention in the temporal attention blocks to prevent mixing information across video frames and each individual image frame. We choose these random independent images from random videos within the same dataset; in future work we plan to explore the effect of choosing images from other larger image-only datasets."
+    },
+    {
+      "index": 39,
+      "text": "Table 4 reports results for an experiment on text-conditioned 16x64x64 videos, where we consider training on an additional 0, 4, or 8 independent image frames per video. One can see clear improvements in video and image sample quality metrics as more independent image frames are added. Adding independent image frames has the effect of reducing variance of the gradient at the expense of some bias for the video modeling objective, and thus it can be seen as a memory optimization to fit more independent examples in a batch."
+    },
+    {
+      "index": 40,
+      "text": "Table 4: Improved sample quality due to image-video joint training on text-to-video generation.\n\n|Image frames|FVD_\u2193_|FID-avg_\u2193_|IS-avg_\u2191_|FID-frst_\u2193_|IS-frst_\u2191_|\n|---|---|---|---|---|---|\n|0|202.28/205.42|37.52/37.40|7.91/7.58|41.14/40.87|9.23/8.74|\n|4|68.11/70.74|18.62/18.42|9.02/8.53|22.54/22.19|10.58/9.91|\n|8|57.84/60.72|15.57/15.44|9.32/8.82|19.25/18.98|10.81/10.12|"
+    },
+    {
+      "index": 41,
+      "text": "## **4.3.2 Effect of classifier-free guidance**\n\nTable 5 reports results that verify the effectiveness of classifier-free guidance [20] on text-to-video generation. As expected, there is clear improvement in the Inception Score-like metrics with higher guidance weight, while the FID-like metrics improve and then degrade with increasing guidance weight. Similar findings have been reported on text-to-image generation [36]."
+    },
+    {
+      "index": 42,
+      "text": "7\n\nFigure 3 shows the effect of classifier-free guidance [20] on a text-conditioned video model. Similar to what was observed in other work that used classifier-free guidance on text-conditioned image generation [36] and class-conditioned image generation [20, 16], adding guidance increases the sample fidelity of each individual image and emphases the effect of the conditioning signal."
+    },
+    {
+      "index": 43,
+      "text": "Figure 3: Example frames from a random selection of videos generated by our 16x64x64 textconditioned model. Left: unguided samples, right: guided samples using classifier-free guidance."
+    },
+    {
+      "index": 44,
+      "text": "Table 5: Effect of classifier-free guidance on text-to-video generation (large models). Sample quality is reported for 16x64x64 models trained on frameskip 1 and 4 data. The model was jointly trained on 8 independent image frames per 16-frame video."
+    },
+    {
+      "index": 45,
+      "text": "|Frameskip|Guidance weight|FVD_\u2193_|FID-avg_\u2193_|IS-avg_\u2191_|FID-frst_\u2193_|IS-frst_\u2191_|\n|---|---|---|---|---|---|---|\n|1|1.0|41.65/43.70|12.49/12.39|10.80/10.07|16.42/16.19|12.17/11.22|\n||2.0|50.19/48.79|10.53/10.47|13.22/12.10|13.91/13.75|14.81/13.46|\n||5.0|163.74/160.21|13.54/13.52|14.80/13.46|17.07/16.95|16.40/14.75|\n|4|1.0|56.71/60.30|11.03/10.93|9.40/8.90|16.21/15.96|11.39/10.61|\n||2.0|54.28/51.95|9.39/9.36|11.53/10.75|14.21/14.04|13.81/12.63|\n||5.0|185.89/176.82|11.82/11.78|13.73/12.59|16.59/16.44|16.24/14.62|"
+    },
+    {
+      "index": 46,
+      "text": "## **4.3.3 Autoregressive video extension for longer sequences**\n\nIn Section 3.1 we proposed the _reconstruction guidance method_ for conditional sampling from diffusion models, an improvement over the _replacement method_ of [48]. In Table 6 we present results on generating longer videos using both techniques, and find that our proposed method indeed improves over the replacement method in terms of perceptual quality scores."
+    },
+    {
+      "index": 47,
+      "text": "Figure 4 shows the samples of our reconstruction guidance method for conditional sampling compared to the replacement method (Section 3.1) for the purposes of generating long samples in a blockautoregressive manner (Section 4.3.3). The samples from the replacement method clearly show a lack of temporal coherence, since frames from different blocks throughout the generated videos appear to be uncorrelated samples (conditioned on **c** ). The samples from the reconstruction guidance method, by contrast, are clearly temporally coherent over the course of the entire autoregressive generation process. Figure 2 additionally shows samples of using the reconstruction guidance method to simultaneously condition on low frequency, low resolution videos while autoregressively extending temporally at a high resolution."
+    },
+    {
+      "index": 48,
+      "text": "Table 6: Generating 64x64x64 videos using autoregressive extension of 16x64x64 models.\n\n|Guidance weight|Conditioningmethod|FVD_\u2193_|FID-avg_\u2193_|IS-avg_\u2191_|FID-frst_\u2193_|IS-frst_\u2191_|\n|---|---|---|---|---|---|---|\n|2.0|reconstruction guidance|136.22/134.55|13.77/13.62|10.30/9.66|16.34/16.46|14.67/13.37|\n||replacement|451.45/436.16|25.95/25.52|7.00/6.75|16.33/16.46|14.67/13.34|\n|5.0|reconstruction guidance|133.92/133.04|13.59/13.58|10.31/9.65|16.28/16.53|15.09/13.72|\n||replacement|456.24/441.93|26.05/25.69|7.04/6.78|16.30/16.54|15.11/13.69|"
+    },
+    {
+      "index": 49,
+      "text": "8\n\nFigure 4: Comparing the replacement method (left) vs the reconstruction guidance method (right) for conditioning for block-autoregressive generation of 64 frames from a 16 frame model. Video frames are displayed over time from left to right; each row is an independent sample. The replacement method suffers from a lack of temporal coherence, unlike the reconstruction guidance method."
+    },
+    {
+      "index": 50,
+      "text": "## **5 Related work**\n\nPrior work on video generation has usually employed other types of generative models, notably, autoregressive models, VAEs, GANs, and normalizing flows [e.g. 3, 4, 32, 30, 14, 59, 62, 57]. Related work on model classes similar to diffusion models includes [25, 24]. Concurrent work [63] proposes a diffusion-based approach to video generation that uses an image diffusion model to predict each individual frame within a RNN temporal autoregressive model. Our video diffusion model, by contrast, jointly models entire videos (blocks of frames) using a 3D video architecture with interleaved spatial and temporal attention, and we extend to long sequence lengths by filling in frames or autoregressive temporal extension."
+    },
+    {
+      "index": 51,
+      "text": "## **6 Conclusion**\n\nWe have introduced diffusion models for video modeling, thus bringing recent advances in generative modeling using diffusion models to the video domain. We have shown that with straightforward extensions of conventional U-Net architectures for 2D image modeling to 3D space-time, with factorized space-time attention blocks, one can learn effective generative models for video data using the standard formulation of the diffusion model. This includes unconditional models, text-conditioned models, and video prediction models."
+    },
+    {
+      "index": 52,
+      "text": "We have additionally demonstrated the benefits of joint image-video training and classifier-free guidance for video diffusion models on both video and image sample quality metrics, and we also introduced a new reconstruction-guided conditional sampling method that outperforms existing replacement or imputation methods for conditional sampling from unconditionally trained models. Our reconstruction guidance method can generate long sequences using either frame interpolation (or temporal super-resolution) or extrapolation in an auto-regressive fashion, and also can perform spatial super-resolution. We look forward to investigating this method in a wider variety of conditioning settings."
+    },
+    {
+      "index": 53,
+      "text": "Our goal with this work is to advance research on methods in generative modeling, and our methods have the potential to positively impact creative downstream applications. As with prior work in generative modeling, however, our methods have the potential for causing harmful impact and could enhance malicious or unethical uses of generative models, such as fake content generation, harassment, and misinformation spread, and thus we have decided not to release our models. Like all generative models, our models reflect the biases of their training datasets and thus may require curation to ensure fair results from sampling. In particular, our text-to-video models inherit the challenges faced by prior work on text-to-image models, and our future work will involve auditing for forms of social bias, similar to [6, 7, 50, 12] for image-to-text and image labeling models. We see our work as only a starting point for further investigation on video diffusion models and investigation into their societal implications, and we will aim to explore benchmark evaluations for social and cultural bias in the video generation setting and make the necessary research advances to address them."
+    },
+    {
+      "index": 54,
+      "text": "9\n\n## **References**\n\n- [1] TensorFlow Datasets, a collection of ready-to-use datasets. `https://www.tensorflow.org/ datasets` , 2022."
+    },
+    {
+      "index": 55,
+      "text": "- [2] Anurag Arnab, Mostafa Dehghani, Georg Heigold, Chen Sun, Mario Lu\u02c7ci\u00b4c, and Cordelia Schmid. ViViT: A video vision transformer. In _Proceedings of the IEEE/CVF International Conference on Computer Vision_ , pages 6836\u20136846, 2021."
+    },
+    {
+      "index": 56,
+      "text": "- [3] Mohammad Babaeizadeh, Chelsea Finn, Dumitru Erhan, Roy H Campbell, and Sergey Levine. Stochastic variational video prediction. _arXiv preprint arXiv:1710.11252_ , 2017."
+    },
+    {
+      "index": 57,
+      "text": "- [4] Mohammad Babaeizadeh, Mohammad Taghi Saffar, Suraj Nair, Sergey Levine, Chelsea Finn, and Dumitru Erhan. FitVid: Overfitting in pixel-level video prediction. _arXiv preprint arXiv:2106.13195_ , 2021."
+    },
+    {
+      "index": 58,
+      "text": "- [5] Gedas Bertasius, Heng Wang, and Lorenzo Torresani. Is space-time attention all you need for video understanding. _arXiv preprint arXiv:2102.05095_ , 2(3):4, 2021."
+    },
+    {
+      "index": 59,
+      "text": "- [6] Joy Buolamwini and Timnit Gebru. Gender shades: Intersectional accuracy disparities in commercial gender classification. In _Conference on Fairness, Accountability and Transparency, FAT 2018, 23-24 February 2018, New York, NY, USA_ , Proceedings of Machine Learning Research. PMLR, 2018."
+    },
+    {
+      "index": 60,
+      "text": "- [7] Kaylee Burns, Lisa Hendricks, Trevor Darrell, and Anna Rohrbach. Women also snowboard: Overcoming bias in captioning models. In _European Conference on Computer Vision (ECCV)_ , 2018."
+    },
+    {
+      "index": 61,
+      "text": "- [8] Joao Carreira and Andrew Zisserman. Quo vadis, action recognition? a new model and the kinetics dataset. In _proceedings of the IEEE Conference on Computer Vision and Pattern Recognition_ , pages 6299\u20136308, 2017."
+    },
+    {
+      "index": 62,
+      "text": "- [9] Joao Carreira, Eric Noland, Andras Banki-Horvath, Chloe Hillier, and Andrew Zisserman. A short note about kinetics-600. _arXiv preprint arXiv:1808.01340_ , 2018."
+    },
+    {
+      "index": 63,
+      "text": "- [10] Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and William Chan. WaveGrad: Estimating gradients for waveform generation. _International Conference on Learning Representations_ , 2021."
+    },
+    {
+      "index": 64,
+      "text": "- [11] Xi Chen, Nikhil Mishra, Mostafa Rohaninejad, and Pieter Abbeel. PixelSNAIL: An improved autoregressive generative model. In _International Conference on Machine Learning_ , pages 863\u2013871, 2018."
+    },
+    {
+      "index": 65,
+      "text": "- [12] Jaemin Cho, Abhay Zala, and Mohit Bansal. Dall-eval: Probing the reasoning skills and social biases of text-to-image generative transformers. _arxiv:2202.04053_ , 2022."
+    },
+    {
+      "index": 66,
+      "text": "- [13] \u00d6zg\u00fcn \u00c7i\u00e7ek, Ahmed Abdulkadir, Soeren S Lienkamp, Thomas Brox, and Olaf Ronneberger. 3d u-net: learning dense volumetric segmentation from sparse annotation. In _International conference on medical image computing and computer-assisted intervention_ , pages 424\u2013432. Springer, 2016."
+    },
+    {
+      "index": 67,
+      "text": "- [14] Aidan Clark, Jeff Donahue, and Karen Simonyan. Adversarial video generation on complex datasets. _arXiv preprint arXiv:1907.06571_ , 2019."
+    },
+    {
+      "index": 68,
+      "text": "- [15] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: pre-training of deep bidirectional transformers for language understanding. In _Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, NAACL-HLT_ , pages 4171\u20134186. Association for Computational Linguistics, 2019."
+    },
+    {
+      "index": 69,
+      "text": "- [16] Prafulla Dhariwal and Alexander Nichol. Diffusion models beat GANs on image synthesis. _Advances in Neural Information Processing Systems_ , 34, 2021."
+    },
+    {
+      "index": 70,
+      "text": "- [17] Frederik Ebert, Chelsea Finn, Alex X Lee, and Sergey Levine. Self-supervised visual planning with temporal skip connections. In _CoRL_ , pages 344\u2013356, 2017.\n\n10"
+    },
+    {
+      "index": 71,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is a significant contribution to the field of generative modeling, effectively bridging the gap between high-fidelity image synthesis and coherent video generation. The authors demonstrate a sophisticated command of the diffusion model framework, successfully adapting 2D architectures into 3D U-Net structures and justifying these extensions with rigorous mathematical formulations, such as their novel conditional sampling techniques for temporal and spatial extrapolation. The writing is clear, technically dense, and well-structured, providing a solid theoretical foundation before transitioning into the specific architectural modifications required for video. The most significant potential issue\u2014which the authors seem aware of\u2014is the computational burden of video data; while they propose clever solutions like joint image-video training to reduce gradient variance and speed up optimization, the paper must ensure that the transition from a \"standard\" diffusion formulation to high-resolution, multi-frame video synthesis is sufficiently framed by clear empirical bounds on memory constraints and computational efficiency to be truly reproducible for the broader research community.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "Missing and malformed definitions for reconstruction-guided sampling",
+          "quote": "",
+          "explanation": "Multiple instances in Section 3.1 indicate that the mathematical definition of the reconstruction-guided prediction (x\u0303[b]_\u03b8) is omitted or obscured by severe OCR-induced text corruption. The text fails to provide the core equation for the proposed method, nor does it explicitly define how the weighting factor 'w_r' is integrated into the denoising process. This makes the methodology underspecified and non-reproducible.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Mathematical inconsistency in the reconstruction guidance derivation",
+          "quote": "",
+          "explanation": "The derivation in section 3.1 for the conditional mean E_q[x[b] | z_t, x[a]] contains significant notation and logic errors. Specifically, the gradient operator \u2207_z[b]t is applied in a way that implies an incorrect functional dependence of the conditioning variable x[a] on the latent z[b]t. Furthermore, the jump from the Gaussian approximation q(x[a]|z_t) to the final gradient-based guidance objective is not algebraically rigorous, leading to ambiguity regarding how the variance term (\u03c3_t\u00b2/\u03b1_t\u00b2) and the weighting factor w_r are scaled.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Underspecified model adjustment for high-resolution models",
+          "quote": "",
+          "explanation": "The text states that the high-resolution model is adjusted 'as follows' but fails to provide the corresponding equation or logic for the super-resolution guidance step. Without the specific mathematical operator, the adaptation of the method to high-resolution tasks remains underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0299,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 71979,
+      "completion_tokens": 7946
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper is a significant contribution to the field of generative modeling, effectively bridging the gap between high-fidelity image synthesis and coherent video generation. The authors demonstrate a sophisticated command of the diffusion model framework, successfully adapting 2D architectures into 3D U-Net structures and justifying these extensions with rigorous mathematical formulations, such as their novel conditional sampling techniques for temporal and spatial extrapolation. The writing is clear, technically dense, and well-structured, providing a solid theoretical foundation before transitioning into the specific architectural modifications required for video. The most significant potential issue\u2014which the authors seem aware of\u2014is the computational burden of video data; while they propose clever solutions like joint image-video training to reduce gradient variance and speed up optimization, the paper must ensure that the transition from a \"standard\" diffusion formulation to high-resolution, multi-frame video synthesis is sufficiently framed by clear empirical bounds on memory constraints and computational efficiency to be truly reproducible for the broader research community.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistent formulation of classifier-free guidance",
+          "quote": "\u02dc \u03f5 \u03b8 = \u03f5 \u03b8 ( z t ) + w ( \u03f5 \u03b8 ( z t , c ) \u2212 \u03f5 \u03b8 ( z t ) )",
+          "explanation": "In the paragraph describing classifier-free guidance, the text defines the adjusted prediction as \u02dc \u03f5 \u03b8 = \u03f5 \u03b8 ( z t ) + w ( \u03f5 \u03b8 ( z t , c ) \u2212 \u03f5 \u03b8 ( z t ) ). However, the line immediately preceding it states: \u03f5 \u03b8 ( z t , c ) = \u03c3 1 t ( z t \u2212 x \u02c6 \u03b8 ( z t , c ) ) / \u03b1 t. This definition for \u03f5 \u03b8 actually corresponds to the noise prediction formula (x \u02c6 \u03b8 = (z t - \u03c3 t \u03f5 \u03b8)/\u03b1 t, rearranged). The text identifies this as the 'regular conditional model prediction', which is correct for \u03f5-prediction, but the equation \u02dc \u03f5 \u03b8 = \u03f5 \u03b8 ( z t ) + w ( \u03f5 \u03b8 ( z t , c ) \u2212 \u03f5 \u03b8 ( z t ) ) is standard for w-guidance. The confusion arises because the text defines \u03f5 \u03b8 ( z t , c ) as the *prediction* (the output of the neural network) but uses it inside a formula where one might expect a score or noise estimate. While this is the conventional formula for classifier-free guidance, the OCR/text presentation makes the relationship between the network output x \u02c6 \u03b8 and the guidance adjustment look potentially inconsistent due to the nested definitions.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Unclear derivation of the reconstruction guidance term",
+          "quote": "E q [ x b | z t , x a ] = E q [ x b | z t ] + ( \u03c3 t 2 / \u03b1 t ) \u2207 z b t log q ( x a | z t )",
+          "explanation": "This derivation appears to present the conditional mean as a correction to the unconditional mean. Using the standard property of Gaussian diffusion where z t = \u03b1 t x + \u03c3 t \u03f5, the posterior q ( x a | z t ) should involve the score function. The term (\u03c3 t 2 / \u03b1 t) \u2207 z_b log q (x_a | z_t) seems to be a heuristic approximation of the influence of x_a on z_b. However, the text claims this follows from E q [ x b | z t , x a ], yet the transition from the score of the data distribution to the gradient of the reconstruction is not algebraically rigorous. While authors often use such approximations in diffusion literature, the jump here is quite large and not fully justified mathematically.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "Missing definition of reconstruction-guided denoising formula",
+          "quote": "our proposed method **x** \u02dc _[b] \u03b8_[,] defined by",
+          "explanation": "The text introduces the concept of reconstruction guidance and arrives at a derivation involving an adjusted denoising model, but the sentence concludes abruptly without presenting the final equation for the updated prediction \u02dc**x**_\u03b8[b]. A reader needs to see the definition of the guided prediction to understand how the reconstruction term and the weighting factor w_r are applied to the denoising model output. This is a critical methodological omission.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistent formatting and likely OCR contamination in Section 3.1",
+          "quote": "Assuming a perfect denoising model, plugging in this missing term would make conditional sampling exact. Since _q_ ( **x** _[a] |_ **z** _t_ ) is not available in closed form, however, we instead propose **x** \u02c6[a] _\u03b8_[(] **[z]** _[t]_[)][ is a reconstruction of the conditioning data] to approximate it using a Gaussian of the **[ x]**[a] form[provided by our denoising model.] _q_ ( **x** _[a] |_ **z** _t_ ) _\u2248N_ [\u02c6 **x**[a] _\u03b8_[(] **[z]** _[t]_[)] _[,]_[ (] _[\u03c3] t_[2] _[/\u03b1]_[Assuming a] _t_[2][)][I][]][,][where] perfect model, this approximation becomes exact as _t \u2192_ 0, and empirically we find it to be good for largerto conditional sampling is a variant of the replacement method with an adjusted denoising model, _t_ also.",
+          "explanation": "The paragraph suffers from significant OCR-induced structure issues that obscure the technical derivation. Phrases like 'Assuming a perfect model' and 'largerto conditional sampling' appear to be disjointed fragments trapped in the middle of a mathematical definition. While the intent is to define an approximation for q(x[a]|z[t]), the garbled text makes it impossible to verify the stated Gaussian approximation correctly.",
+          "comment_type": "logical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Missing definition of reconstruction-guided sampling formula",
+          "quote": "Our proposed method **x** \u02dc _[b] \u03b8_[,] defined by",
+          "explanation": "In Section 3.1, the text introduces 'our proposed method' and explicitly mentions it is defined by a formula; however, the actual mathematical equation for the reconstruction-guided prediction $\\tilde{\\mathbf{x}}^b_\\theta$ is missing from the provided text. While the text describes the logic leading up to it, the reader cannot verify the specific form of the guidance adjustment without the equation. This is a technical oversight as the formula is critical for the implementation of the core contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Unspecified adjustment for high-resolution models",
+          "quote": "To accomplish this, we adjust the high resolution model as follows:",
+          "explanation": "At the start of the final paragraph of Section 3.1, the authors state they adjust the model 'as follows' but do not provide the corresponding equation. While the text describes what is being done (using reconstruction guidance for super-resolution), the specific mathematical operator or adjustment is absent, leaving the method underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_6",
+          "title": "Mathematical inconsistency in reconstruction guidance formulation",
+          "quote": "q(x[a] | z[t]) \u2248 N(x\u0302[a]_\u03b8(z[t]), (\u03c3[t]^2/\u03b1[t]^2)I)",
+          "explanation": "In Section 2, the paper specifies the denoising model output as x\u0302_\u03b8(z[t]) = (z[t] - \u03c3[t]\u03f5_\u03b8(z[t])) / \u03b1_t. In the context of the Gaussian approximation in Section 3.1, the variance of the reconstruction error is typically associated with the conditional distribution q(x|z_t). The term (\u03c3[t]^2/\u03b1[t]^2) is the correct variance scale for the conditional distribution of x given z[t] under the forward process q(z[t]|x) = N(z[t]; \u03b1[t]x, \u03c3[t]^2I). However, the paper uses a scaling factor involving a weighting factor 'wr' in the subsequent reconstruction guidance formula: \u02dc\u03f5_\u03b8(z[t], c) = \u03f5_\u03b8(z[t]) - wr * (\u03c3[t]/\u03b1[t]) * \u2207_z[t] ||x[a] - x\u0302[a]_\u03b8(z[t])||^2. While the intent is clear (gradient-based guidance), the jump from the Gaussian approximation (using the inverse SNR as the variance of the uncertainty) to the final objective function (which acts like an MSE loss with weight wr) is underspecified in terms of the derivation of the gradient term constant. It is not explicitly stated if the variance term (\u03c3[t]^2/\u03b1[t]^2) is folded into 'wr' or if the weighting is applied differently in practice, potentially masking a scale factor required for the guidance to be valid.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_7",
+          "title": "Potential ambiguity in FID/IS metric reporting for video",
+          "quote": "For IS, we report two numbers which are averaged scores across 1 split and 10 splits of samples, respectively.",
+          "explanation": "The Inception Score (IS) is typically calculated by taking the expectation of the KL divergence between conditional and marginal label distributions. For video, IS is often computed frame-by-frame using a 2D backbone or using a 3D backbone like C3D/I3D. The paper mentions 'averaged scores across 1 split and 10 splits'. In standard vision literature, 'splits' usually refer to the number of portions the generated samples are divided into to compute the variance/mean of the IS metric, not a property of the model itself. The phrasing 'averaged scores across... 10 splits' is ambiguous: does it mean the score is computed on individual splits and then averaged, or that the sample pool is partitioned? This is a minor ambiguity, but as IS is highly sensitive to the number of samples, the reporting method should be formally defined to ensure reproducibility.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_8",
+          "title": "Mathematical inconsistency in score-based conditional mean derivation",
+          "quote": "E_q[x[b] | z_t, x[a]] = E_q[x[b] | z_t] + (\u03c3_t\u00b2/\u03b1_t\u00b2) \u2207_z[b]t log q(x[a] | z_t)",
+          "explanation": "In Section 3.1, the authors derive the conditional mean. The standard formulation for the score of the posterior E[x|z_t] is expressed as E[x|z_t] + sigma^2 * grad log p(z_t). When conditioning on x[a], we are effectively looking at q(x[b]|z_t, x[a]). The identity provided uses the gradient of log q(x[a]|z_t) with respect to z[b]_t. However, the score of the conditional distribution involves the gradient of the log-likelihood of the *latents* given the conditioning variable. The derivation provided in the text appears to conflate the likelihood of the data x[a] with the conditional score, and the placement of the operator \u2207_z[b]t on log q(x[a]|z_t) seems to incorrectly suggest that the conditioning variable x[a] is a function of z[b]_t. While the intent to perform reconstruction guidance is clear, the formal equation governing the conditional mean shift is mathematically suspect in its current notation.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_9",
+          "title": "Ambiguous definition of reconstruction guidance weight",
+          "quote": "adding a weighting factor wr , our proposed method x \u02dc [b] \u03b8 , defined by",
+          "explanation": "The text abruptly terminates the introduction of the method 'x \u02dc [b] \u03b8' (which appears to be a typo for an expression) before the actual formula is provided in the provided block of text. While Section 2 defines the guidance strength 'w' for classifier-free guidance, this section introduces 'wr' as a separate factor, but the specific mathematical operation (whether wr is a scalar multiplier applied to the gradient difference, or a more complex scheduling term) is not explicitly defined in the provided snippets. This makes the claim that 'choosing a larger weighting factor, wr > 1, tends to improve sample quality' difficult to verify or reproduce without knowing how wr interacts with the gradient.",
+          "comment_type": "logical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0299,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 71979,
+      "completion_tokens": 7946
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "## High-Level Feedback\n\nThis paper presents a conceptually straightforward yet impactful extension of diffusion models to the video domain, demonstrating strong empirical results on multiple benchmarks. The writing is generally clear and technically precise, and the architectural choices\u2014particularly the 3D U-Net extension and the joint training on image and video data\u2014are well-motivated and sensible. However, the paper suffers from several notable issues. First, **novelty is modest**: the core methodology (Gaussian diffusion, U-Net architecture, classifier-free guidance) is lifted almost entirely from prior work, with video-specific contributions limited to architectural modifications (e.g., temporal attention layers) and a conditional sampling technique for spatial/temporal extension. The paper would benefit from a clearer articulation of which components are genuinely novel versus engineering contributions. Second, **the evaluation is somewhat narrow**: while state-of-the-art results are claimed on video prediction and unconditional generation, the metrics used (e.g., FVD, IS) are standard but the paper lacks qualitative analysis of failure modes, temporal coherence, or diversity, and the text-conditioned results are presented only as \"promising\" without rigorous evaluation. Third, **the conditional sampling method (Section 3.1) is underspecified** in the provided excerpt\u2014its relationship to prior work on autoregressive video generation or latent trajectory extrapolation is not discussed, and it is unclear how it avoids error accumulation or temporal drift. Finally, **the paper's organization is slightly imbalanced**: Section 2 recapitulates known diffusion model theory at length, while the core video-specific contributions are compressed into a short section. Pruning the background and expanding the video methodology would improve clarity and impact. Overall, the paper is a solid engineering achievement with competent execution, but the intellectual contribution is incremental and the presentation could be more sharply focused.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Incorrect conversion between x\u0302 and \u03b5 in classifier-free guidance",
+          "quote": "where w is the guidance strength, \u03b5_\u03b8(z_t, c) = (1/\u03c3_t)(z_t - x\u0302_\u03b8(z_t, c)) is the regular conditional model prediction",
+          "explanation": "Earlier in Section 2 the authors define the \u03b5-prediction parameterization as x\u0302_\u03b8(z_t) = (z_t - \u03c3_t \u03b5_\u03b8(z_t))/\u03b1_t. Solving for \u03b5_\u03b8 gives \u03b5_\u03b8(z_t) = (z_t - \u03b1_t x\u0302_\u03b8(z_t))/\u03c3_t. The quoted expression omits the factor \u03b1_t multiplying x\u0302_\u03b8. This is not a typo that can be resolved by context, because the derivation of classifier-free guidance relies on the correct relationship between the denoising model output and the noise prediction. An implementation following the given formula would use an incorrect scaling, affecting sample quality when guidance is applied.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Missing equation for reconstruction-guided sampling adaptation",
+          "quote": "To accomplish this, we adjust the high resolution model as follows:\n\n4",
+          "explanation": "The text says 'we adjust the high resolution model as follows:' but then only shows '4' on the next line, which appears to be a page number or formatting artifact from the PDF extraction. The actual modified sampling equation for the spatial interpolation (super-resolution) case is missing. While the paper summary mentions a general adjustment for reconstruction-guided sampling (x\u0303^b_\u03b8 defined by an equation in section 3.1), the specific adaptation to spatial interpolation that incorporates downsampling and backpropagation is not shown here. This makes it impossible for a reader to reproduce the method without guessing the correct form. The authors' intent is clear conceptually (impose MSE loss on a downsampled version of the model prediction), but the exact mathematical formulation is absent from the provided passage.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Underspecified weighting factor w_r for reconstruction guidance",
+          "quote": "we find that choosing a larger weighting factor, wr > 1, tends to improve sample quality. We empirically investigate reconstruction guidance in Section 4.3.3",
+          "explanation": "The variable w_r is introduced as a weighting factor for reconstruction-guided sampling, but its role in the sampling equation is not made explicit in this passage. The paper summary mentions w_r is 'introduced but not explicitly defined.' Here we learn that values >1 improve quality, but it's unclear whether w_r scales the gradient term, is applied additively, or serves some other purpose. The forward reference to Section 4.3.3 may clarify this empirically, but a reader of this section alone cannot determine how to implement the guidance. Given that the summary indicates the adjusted denoising model x\u0303^b_\u03b8 was defined with an equation in section 3.1 that includes w_r, this is likely explained earlier, but within the provided passage the role of w_r remains ambiguous.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_3",
+          "title": "Ambiguous specification of frameskip values in spatial interpolation example",
+          "quote": "In Fig. 2, we show samples of this approach for extending 16x64x64 low resolution samples at frameskip 4 to 64x128x128 samples at frameskip 1 using a 9x128x128 diffusion model.",
+          "explanation": "The example describes extending 16 frames at 64x64 resolution with frameskip 4 to 64 frames at 128x128 resolution with frameskip 1, using a model that apparently generates 9 frames at 128x128 resolution. The mechanism by which a 9-frame model produces 64 frames through autoregressive extension and temporal upsampling is not detailed. The relationship between the 'frameskip' parameter values (from 4 to 1) and the reconstruction guidance method for simultaneous spatial and temporal conditioning is left implicit. While the general concept is plausible (using reconstruction guidance for both spatial upsampling and temporal interpolation), the specific procedure is underspecified for reproduction.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_4",
+          "title": "Ambiguous meaning of 'Guidance weight' in Table 6",
+          "quote": "Table 6: Generating 64x64x64 videos using autoregressive extension of 16x64x64 models.\n\n|Guidance weight|Conditioningmethod|FVD_\u2193_|FID-avg_\u2193_|IS-avg_\u2191_|FID-frst_\u2193_|IS-frst_\u2191_|\n|---|---|---|---|---|---|\n|2.0|reconstruction guidance|136.22/134.55|13.77/13.62|10.30/9.66|16.34/16.46|14.67/13.37|\n| |replacement|451.45/436.16|25.95/25.52|7.00/6.75|16.33/16.46|14.67/13.34|\n|5.0|reconstruction guidance|133.92/133.04|13.59/13.58|10.31/9.65|16.28/16.53|15.09/13.72|\n| |replacement|456.24/441.93|26.05/25.69|7.04/6.78|16.30/16.54|15.11/13.69|",
+          "explanation": "The column header 'Guidance weight' appears in a table comparing 'reconstruction guidance' and 'replacement' methods for conditional sampling. Earlier in the paper (Section 2) the classifier-free guidance weight is denoted w, and in Section 3.1 a separate reconstruction guidance weighting factor w_r is introduced. The table does not clarify which weight is being varied. Since both methods can incorporate classifier-free guidance, it is likely the classifier-free guidance weight, but the text preceding the table does not specify. This ambiguity could mislead a reader who has followed both definitions, especially because the reconstruction guidance method also has its own weighting factor that might be expected to appear in the table.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0188,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 67679,
+      "completion_tokens": 33478
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "## High-Level Feedback\n\nThis paper presents a conceptually straightforward yet impactful extension of diffusion models to the video domain, demonstrating strong empirical results on multiple benchmarks. The writing is generally clear and technically precise, and the architectural choices\u2014particularly the 3D U-Net extension and the joint training on image and video data\u2014are well-motivated and sensible. However, the paper suffers from several notable issues. First, **novelty is modest**: the core methodology (Gaussian diffusion, U-Net architecture, classifier-free guidance) is lifted almost entirely from prior work, with video-specific contributions limited to architectural modifications (e.g., temporal attention layers) and a conditional sampling technique for spatial/temporal extension. The paper would benefit from a clearer articulation of which components are genuinely novel versus engineering contributions. Second, **the evaluation is somewhat narrow**: while state-of-the-art results are claimed on video prediction and unconditional generation, the metrics used (e.g., FVD, IS) are standard but the paper lacks qualitative analysis of failure modes, temporal coherence, or diversity, and the text-conditioned results are presented only as \"promising\" without rigorous evaluation. Third, **the conditional sampling method (Section 3.1) is underspecified** in the provided excerpt\u2014its relationship to prior work on autoregressive video generation or latent trajectory extrapolation is not discussed, and it is unclear how it avoids error accumulation or temporal drift. Finally, **the paper's organization is slightly imbalanced**: Section 2 recapitulates known diffusion model theory at length, while the core video-specific contributions are compressed into a short section. Pruning the background and expanding the video methodology would improve clarity and impact. Overall, the paper is a solid engineering achievement with competent execution, but the intellectual contribution is incremental and the presentation could be more sharply focused.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Incorrect conversion between x\u0302 and \u03f5 in classifier-free guidance",
+          "quote": "where w is the guidance strength, \u03f5_\u03b8(z_t, c) = (1/\u03c3_t)(z_t - x\u0302_\u03b8(z_t, c)) is the regular conditional model prediction",
+          "explanation": "Earlier in Section 2 the authors define the \u03f5-prediction parameterization as x\u0302_\u03b8(z_t) = (z_t - \u03c3_t \u03f5_\u03b8(z_t))/\u03b1_t. Solving for \u03f5_\u03b8 gives \u03f5_\u03b8(z_t) = (z_t - \u03b1_t x\u0302_\u03b8(z_t))/\u03c3_t. The quoted expression omits the factor \u03b1_t multiplying x\u0302_\u03b8. This is not a typo that can be resolved by context, because the derivation of classifier-free guidance relies on the correct relationship between the denoising model output and the noise prediction. An implementation following the given formula would use an incorrect scaling, affecting sample quality when guidance is applied.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Ambiguous description of masking temporal attention for joint image training",
+          "quote": "simply by removing the attention operation inside each time attention block and fixing the attention matrix to exactly match each key and query vector at each video timestep.",
+          "explanation": "The authors state that to run the model on independent images rather than video, they 'remov[e] the attention operation inside each time attention block and fix[] the attention matrix to exactly match each key and query vector at each video timestep.' The phrasing is contradictory: if the attention operation is removed, there is no attention matrix to fix. The intended behavior is likely to set the attention weights to an identity mapping (each time step attends only to itself) or to replace the temporal attention with an identity function. The wording could mislead a reader trying to implement the procedure, as it conflates two distinct modifications. The underlying idea is clear to an expert, but the description is imprecise.",
+          "comment_type": "logical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Missing equation for reconstruction-guided sampling adaptation",
+          "quote": "To accomplish this, we adjust the high resolution model as follows:\n\n4",
+          "explanation": "The text says 'we adjust the high resolution model as follows:' but then only shows '4' on the next line, which appears to be a page number or formatting artifact from the PDF extraction. The actual modified sampling equation for the spatial interpolation (super-resolution) case is missing. While the paper summary mentions a general adjustment for reconstruction-guided sampling (x\u0303^b_\u03b8 defined by an equation in section 3.1), the specific adaptation to spatial interpolation that incorporates downsampling and backpropagation is not shown here. This makes it impossible for a reader to reproduce the method without guessing the correct form. The authors' intent is clear conceptually (impose MSE loss on a downsampled version of the model prediction), but the exact mathematical formulation is absent from the provided passage.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Underspecified weighting factor w_r for reconstruction guidance",
+          "quote": "we find that choosing a larger weighting factor, wr > 1, tends to improve sample quality. We empirically investigate reconstruction guidance in Section 4.3.3",
+          "explanation": "The variable w_r is introduced as a weighting factor for reconstruction-guided sampling, but its role in the sampling equation is not made explicit in this passage. The paper summary mentions w_r is 'introduced but not explicitly defined.' Here we learn that values >1 improve quality, but it's unclear whether w_r scales the gradient term, is applied additively, or serves some other purpose. The forward reference to Section 4.3.3 may clarify this empirically, but a reader of this section alone cannot determine how to implement the guidance. Given that the summary indicates the adjusted denoising model x\u0303^b_\u03b8 was defined with an equation in section 3.1 that includes w_r, this is likely explained earlier, but within the provided passage the role of w_r remains ambiguous.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_4",
+          "title": "Inconsistent reference to Section 4.3.3 for reconstruction guidance investigation",
+          "quote": "We empirically investigate reconstruction guidance in Section 4.3.3",
+          "explanation": "The passage states that reconstruction guidance is empirically investigated in Section 4.3.3, but the subsequent sections shown (4 Experiments, 4.1, 4.2) only go up to Section 4.2. Section 4.3 follows but appears truncated, and no subsection 4.3.3 is visible in the provided text. While this could exist in the full paper outside the OCR excerpt, within the passage provided there is no evidence that Section 4.3.3 exists or that the investigation is carried out. This is a minor consistency concern\u2014the reference may be valid in the complete paper, but from the provided context it cannot be verified.",
+          "comment_type": "logical",
+          "paragraph_index": 24,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_5",
+          "title": "Ambiguous specification of frameskip values in spatial interpolation example",
+          "quote": "In Fig. 2, we show samples of this approach for extending 16x64x64 low resolution samples at frameskip 4 to 64x128x128 samples at frameskip 1 using a 9x128x128 diffusion model.",
+          "explanation": "The example describes extending 16 frames at 64x64 resolution with frameskip 4 to 64 frames at 128x128 resolution with frameskip 1, using a model that apparently generates 9 frames at 128x128 resolution. The mechanism by which a 9-frame model produces 64 frames through autoregressive extension and temporal upsampling is not detailed. The relationship between the 'frameskip' parameter values (from 4 to 1) and the reconstruction guidance method for simultaneous spatial and temporal conditioning is left implicit. While the general concept is plausible (using reconstruction guidance for both spatial upsampling and temporal interpolation), the specific procedure is underspecified for reproduction.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_6",
+          "title": "Ambiguous meaning of 'Guidance weight' in Table 6",
+          "quote": "Table 6: Generating 64x64x64 videos using autoregressive extension of 16x64x64 models.\n\n|Guidance weight|Conditioningmethod|FVD_\u2193_|FID-avg_\u2193_|IS-avg_\u2191_|FID-frst_\u2193_|IS-frst_\u2191_|\n|---|---|---|---|---|---|\n|2.0|reconstruction guidance|136.22/134.55|13.77/13.62|10.30/9.66|16.34/16.46|14.67/13.37|\n| |replacement|451.45/436.16|25.95/25.52|7.00/6.75|16.33/16.46|14.67/13.34|\n|5.0|reconstruction guidance|133.92/133.04|13.59/13.58|10.31/9.65|16.28/16.53|15.09/13.72|\n| |replacement|456.24/441.93|26.05/25.69|7.04/6.78|16.30/16.54|15.11/13.69|",
+          "explanation": "The column header 'Guidance weight' appears in a table comparing 'reconstruction guidance' and 'replacement' methods for conditional sampling. Earlier in the paper (Section 2) the classifier-free guidance weight is denoted w, and in Section 3.1 a separate reconstruction guidance weighting factor w_r is introduced. The table does not clarify which weight is being varied. Since both methods can incorporate classifier-free guidance, it is likely the classifier-free guidance weight, but the text preceding the table does not specify. This ambiguity could mislead a reader who has followed both definitions, especially because the reconstruction guidance method also has its own weighting factor that might be expected to appear in the table.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_7",
+          "title": "Slight overstatement in improvement claim for reconstruction guidance",
+          "quote": "In Table 6 we present results on generating longer videos using both techniques, and find that our proposed method indeed improves over the replacement method in terms of perceptual quality scores.",
+          "explanation": "The FVD and FID-avg metrics show large improvements, but the first-frame metrics (FID-frst and IS-frst) are essentially identical between the two methods (e.g., for guidance 2.0, FID-frst: 16.34/16.46 vs 16.33/16.46). A careful reader might interpret 'perceptual quality scores' as including all reported metrics. The improvement is clear in video-level and frame-average metrics, but claiming improvement in 'perceptual quality scores' without qualification could be slightly overbroad. The authors likely meant the overall set of metrics that matter for video quality (FVD, FID-avg, IS-avg), and the text is acceptable in context, but it is worth noting the first-frame scores are not improved.",
+          "comment_type": "logical",
+          "paragraph_index": 46,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0188,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 67679,
+      "completion_tokens": 33478
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a methodical and theoretically grounded extension of Gaussian diffusion models to the video domain, establishing a strong baseline for text-conditioned and unconditional video generation. The writing is precise and technical, effectively outlining the benefits of joint training on image and video data to reduce gradient variance. However, the clarity of the theoretical background in Section 2 is significantly hindered by extremely dense mathematical notation and several LaTeX formatting errors that disrupt the continuity of the equations, creating a steep cognitive load for readers not deeply familiar with continuous-time diffusion theory. Furthermore, a critical issue regarding the completeness of the work is the abrupt termination of the excerpt in Section 3, which cuts off before the specific architectural innovations of the 3D U-Net and the details of the conditional generation technique are fully articulated.",
+      "comments": [
+        {
+          "id": "progressive__glm-4.7-flash_0",
+          "title": "Missing Equation and Text Coherence Issues in Section 3",
+          "quote": "our proposed method **x** \u02dc _[b] \u03b8_[,] defined by ... and empirically we find it to be good for largerto conditional sampling is a variant of the replacement method with an adjusted denoising model, _t_ also.",
+          "explanation": "The paragraph contains multiple issues affecting clarity and reproducibility. First, the definition of the proposed method trails off immediately after the phrase 'defined by' without providing the explicit update rule for the proposed reconstruction-guided sampling method (corresponding to Issue 5). Furthermore, the text exhibits broken sentence structures due to OCR errors (e.g., the fusion 'we find it to be good for largerto conditional sampling...'), which disrupts the logical flow and makes the transition to the method's mathematical definition confusing (corresponding to Issue 4).",
+          "comment_type": "logical",
+          "paragraph_index": 23,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_1",
+          "title": "Mathematical Error in Covariance Derivation",
+          "quote": "q ( x[a] | z[t] ) [\u2248N] [\u02c6 x[a] \u03b8 ( z[t] ) [,] _ [ ( ] _[ \u03c3] [ t][2] _[/\u03b1] _ [Assuming a] _ t[2 ] [) ] [I ] [)]",
+          "explanation": "The authors propose approximating the conditional density q(x_a | z_t) with a Gaussian whose covariance is given as (\u03c3_t\u00b2 / \u03b1_t) I. However, based on the forward process definition z_t = \u03b1_t x_a + \u03c3_t \u03b5, the variance of x_a is (\u03c3_t\u00b2 / \u03b1_t\u00b2) I. The text omits the square on \u03b1_t in the denominator. If this covariance is used to calculate a weighting factor or gradient magnitude in the proposed method, the theoretical scaling would be incorrect.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_2",
+          "title": "Incorrect Notation in Gradient Term",
+          "quote": "( \u03c3_t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]**[a][|]_ **[z]**[t]_[)]",
+          "explanation": "The text writes the gradient term as \u2207_{z_b t} log q(x_a | z_t). The function q(x_a | z_t) is a function of the joint latent variable z_t. The gradient must be with respect to the input variable z_t. The subscript 'b' likely originates from a typo or OCR error referring to the 'b' part of the video, but the mathematical operation requires the gradient w.r.t. the full variable z_t.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_3",
+          "title": "Suspect Temporal Dimension in Method Definition",
+          "quote": "using a 9x128x128 diffusion model.",
+          "explanation": "Throughout the passage (e.g., Section 3: \"short segments of 16 frames\", Section 4.1: \"16 frames\"), the authors consistently define their models as processing 16 frames. A temporal dimension of 9 frames is inconsistent with the stated architecture and appears to be a typo or OCR error (likely intended to be \"16x128x128\") that would mislead a reader attempting to reproduce the experiments described.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_4",
+          "title": "Ambiguity in Figure 2 Caption Regarding Model Parameters",
+          "quote": "First samples are generated from a 16x64x64 frameskip 4 model. Then those samples are treated as ground truth for simultaneous super-resolution and autoregressive extension to 64x128x128 using a 9x128x128 frameskip 1 model.",
+          "explanation": "The figure caption introduces specific architectural parameters ('frameskip 4', 'frameskip 1') and the '9x128x128 model' without explicit definition. While the term 'frameskip' can be inferred as a standard shorthands in this domain, the specific usage of '9x128x128' combined with the model's stated '16 frames' elsewhere creates ambiguity regarding the temporal resolution and block size used in the cascade.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0404,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 69851,
+      "completion_tokens": 83331
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a methodical and theoretically grounded extension of Gaussian diffusion models to the video domain, establishing a strong baseline for text-conditioned and unconditional video generation. The writing is precise and technical, effectively outlining the benefits of joint training on image and video data to reduce gradient variance. However, the clarity of the theoretical background in Section 2 is significantly hindered by extremely dense mathematical notation and several LaTeX formatting errors that disrupt the continuity of the equations, creating a steep cognitive load for readers not deeply familiar with continuous-time diffusion theory. Furthermore, a critical issue regarding the completeness of the work is the abrupt termination of the excerpt in Section 3, which cuts off before the specific architectural innovations of the 3D U-Net and the details of the conditional generation technique are fully articulated.",
+      "comments": [
+        {
+          "id": "progressive_original__glm-4.7-flash_0",
+          "title": "Mathematical Error in Covariance Derivation",
+          "quote": "q ( x[a] | z[t] ) [\u2248N] [\u02c6 x[a] \u03b8 ( z[t] ) [,] _ [ ( ] _[ \u03c3] [ t][2] _[/\u03b1] _ [Assuming a] _ t[2 ] [) ] [I ] [)]",
+          "explanation": "The authors propose approximating the conditional density q(x_a | z_t) with a Gaussian whose covariance is given as (\u03c3_t\u00b2 / \u03b1_t) I. However, based on the forward process definition z_t = \u03b1_t x_a + \u03c3_t \u03b5, the variance of x_a is (\u03c3_t\u00b2 / \u03b1_t\u00b2) I. The text omits the square on \u03b1_t in the denominator. If this covariance is used to calculate a weighting factor or gradient magnitude in the proposed method, the theoretical scaling would be incorrect.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_1",
+          "title": "Incorrect Notation in Gradient Term",
+          "quote": "( \u03c3_t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]**[a][|]_ **[z]**[t]_[)]",
+          "explanation": "The text writes the gradient term as \u2207_{z_b t} log q(x_a | z_t). The function q(x_a | z_t) is a function of the joint latent variable z_t. The gradient must be with respect to the input variable z_t. The subscript 'b' likely originates from a typo or OCR error referring to the 'b' part of the video, but the mathematical operation requires the gradient w.r.t. the full variable z_t.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_2",
+          "title": "Underspecified Method Definition",
+          "quote": "our proposed method **x** \u02dc _[b] \u03b8_[,] defined by",
+          "explanation": "The sentence is cut off at the equation defining the proposed 'reconstruction-guided sampling' update rule. While the text describes the intuition behind the method (adding a gradient term based on the model's reconstruction of the conditioning data), the actual mathematical formula for x\u0303_b^\u03b8 is missing. This makes it difficult for the reader to reproduce the method or verify the implementation details from this passage alone.",
+          "comment_type": "logical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_3",
+          "title": "Sentence Fragment and Flow Issue",
+          "quote": "...where perfect model, this approximation becomes exact as _t \u2192_ 0, and empirically we find it to be good for largerto conditional sampling is a variant of the replacement method with an adjusted denoising model, _t_ also. Plugging in the approximation...",
+          "explanation": "The paragraph suffers from broken sentence structures due to the extraction process (likely OCR). Specifically, the phrase 'we find it to be good for largerto conditional sampling is a variant...' contains a fusion of clauses and misplacement of 't also.' This breaks the logical flow of the explanation and makes the transition to the proposed method confusing.",
+          "comment_type": "logical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_4",
+          "title": "Missing Equation for Reconstruction Guidance",
+          "quote": "Plugging in the approximation, and adding a weighting factor wr, our proposed method defined by",
+          "explanation": "The authors describe the mathematical intuition behind the conditional expectation term, the Gaussian approximation for $q(x^{[a]} | z_t)$, and the weighting factor $w_r$, but fail to provide the explicit equation defining the proposed sampling update rule for $x \u0303^{[b]}_\theta$. The sentence trails off immediately after \"defined by\" and the reader must infer the missing formula from previous equations or context, making the method underspecified in this passage.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_5",
+          "title": "Suspect Temporal Dimension \"9x128x128\"",
+          "quote": "using a 9x128x128 diffusion model.",
+          "explanation": "Throughout the passage (e.g., Section 3: \"short segments of 16 frames\", Section 4.1: \"16 frames\", Section 4.2: \"segments of 16 frames\"), the authors consistently define their models as processing 16 frames. A temporal dimension of 9 frames is non-standard in this context and appears inconsistent with the stated architecture. It is likely a typo or OCR error (possibly intended to be \"16x128x128\") that would mislead a reader attempting to reproduce the experiments described in Figure 2.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_6",
+          "title": "Ambiguity in Figure 2 Caption Regarding Model Parameters",
+          "quote": "First samples are generated from a 16x64x64 frameskip 4 model. Then those samples are treated as ground truth for simultaneous super-resolution and autoregressive extension to 64x128x128 using a 9x128x128 frameskip 1 model.",
+          "explanation": "The figure caption introduces specific architectural and sampling parameters (\u2018frameskip 4\u2019, \u20189x128x128 model\u2019, \u2018frameskip 1\u2019) to describe the experimental setup. While captions are permitted to contain specifics, the passage lacks context defining these terms. Specifically, does \u2018frameskip 4\u2019 refer to the model's input stride, its output stride, or a training hyperparameter? Does \u20189x128x128\u2019 refer to the model having 9 frames as its maximum sequence length? The reader must infer these from general conventions, which is acceptable but could be clarified by the main text or the caption itself to prevent ambiguity about the block size or temporal resolution changes during the cascade.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0404,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 69851,
+      "completion_tokens": 83331
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript presents a compelling and clearly articulated extension of diffusion models to video generation, demonstrating high technical quality in its formulation and justification. The authors effectively establish a rigorous foundation by reviewing standard diffusion mechanics and smoothly integrating the transition to video data via 3D U-Nets",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Typo in conditional expectation identity (denominator scaling)",
+          "quote": "E _q_ [ **x** _[b] |_ **z** _t,_ **x** _[a]_ ] = E _q_ [ **x** _[b] |_ **z** _t_ ] + ( _\u03c3t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]** _[a][|]_ **[z]** _[t]_[)]",
+          "explanation": "The authors present an identity relating the conditional expectation of the target frames to the unconditional expectation plus a correction term involving the gradient of the conditional likelihood of the observed frames. Dimensional and algebraic analysis of the standard diffusion forward process $\\mathbf{z}_t = \\alpha_t \\mathbf{x} + \\sigma_t \\boldsymbol{\\epsilon}$ shows that the correction term should be scaled by $\\sigma_t^2 / \\alpha_t$, not $\\sigma_t^2 / \\alpha_t^2$. Deriving this: the score of the marginal distribution satisfies $\\nabla_{\\mathbf{z}_t} \\log p(\\mathbf{z}_t) = -(\\mathbf{z}_t - \\alpha_t \\mathbb{E}[\\mathbf{x}|\\mathbf{z}_t]) / \\sigma_t^2$, which rearranges to $\\mathbb{E}[\\mathbf{x}|\\mathbf{z}_t] = \\mathbf{z}_t/\\alpha_t + (\\sigma_t^2/\\alpha_t)\\nabla_{\\mathbf{z}_t} \\log p(\\mathbf{z}_t)$. Conditioning on $\\mathbf{x}_a$ adds $\\nabla_{\\mathbf{z}_t} \\log q(\\mathbf{x}_a | \\mathbf{z}_t)$ to the score, yielding a correction of $(\\sigma_t^2/\\alpha_t)\\nabla_{\\mathbf{z}_t} \\log q(\\mathbf{x}_a | \\mathbf{z}_t)$. If the original PDF intended $\\alpha_t^2$ in the denominator, it is a mathematical typo that would incorrectly scale the reconstruction guidance strength during sampling. If the OCR simply dropped a superscript '2', the intended formula is likely correct, but the notation must be verified against the source.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Missing core formula for reconstruction guidance update rule",
+          "quote": "To accomplish this, we adjust the high resolution model as follows:\n\n4\n\nwhere **x** \u02c6 _[a] \u03b8_[(] **[z]** _[t]_[)][ is our model\u2019s reconstruction...",
+          "explanation": "The authors introduce a novel sampling adjustment ('we adjust the high resolution model as follows:') but the corresponding mathematical equation is entirely absent from the text, replaced only by a stray '4' (likely a lost equation number or page artifact from OCR). Without this formula, the precise definition of the guidance adjustment for super-resolution cannot be verified or reproduced. While clearly an extraction artifact, it leaves a critical gap in the methodology that hinders technical reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Ambiguous phrasing conflates training procedure with inference guidance",
+          "quote": "Reconstruction guidance also extends to the case of spatial interpolation (or super-resolution), in which the mean squared error loss is imposed on a downsampled version of the model prediction, and backpropagation is performed through this downsampling.",
+          "explanation": "The phrasing 'mean squared error loss is imposed... and backpropagation is performed' strongly evokes a training-time procedure (e.g., an auxiliary loss or self-supervised pretraining objective). However, in the context of reconstruction guidance, this describes an inference-time step: the model's high-resolution output is downsampled to match the conditioning video, and the gradient of the reconstruction error w.r.t. the latent is used to guide the sampling process. The current wording could mislead a reader into thinking the model architecture or training objective requires modification, rather than it being a plug-and-play adjustment to the sampling loop. Explicitly stating that this is computed during inference would resolve the ambiguity.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Ambiguity in FID/FVD reference datasets",
+          "quote": "For FID and FVD, we report two numbers which are measured against the training and validation sets, respectively.",
+          "explanation": "I initially wondered why FID and FVD would be reported against training and validation sets rather than a standard held-out test set. I checked the evaluation protocol description but found no further clarification. While using a validation set as a reference is acceptable, the phrasing 'respectively' for FID and FVD is ambiguous, and evaluating against the training set can introduce optimism bias. This leaves uncertainty about how strictly these scores reflect generalization compared to standard benchmarks.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Contradictory phrasing on memory optimization in joint training",
+          "quote": "Adding independent image frames has the effect of reducing variance of the gradient at the expense of some bias for the video modeling objective, and thus it can be seen as a memory optimization to fit more independent examples in a batch.",
+          "explanation": "My concern initially arose from the claim that adding image frames is a 'memory optimization to fit more independent examples in a batch.' Adding data logically increases memory usage per step. I reasoned that the authors might mean this reduces gradient variance (allowing smaller batches) or that images are cheaper to compute (allowing larger batches without OOM). However, the text directly calls adding data a 'memory optimization,' which contradicts basic memory accounting. The intended meaning is unclear without further specification.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Ambiguity in Inception Score reporting protocol",
+          "quote": "For IS, we report two numbers which are averaged scores across 1 split and 10 splits of samples, respectively.",
+          "explanation": "I was confused by the reporting of IS across '1 split and 10 splits.' Standard practice reports mean and standard deviation over multiple splits to show stability. I checked if the authors meant something else, but the phrasing suggests two separate average values are provided. Without clarity on how these splits are constructed or whether standard deviation is omitted, it's hard to judge the reliability of the IS numbers or compare them fairly to other works.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1201,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 79785,
+      "completion_tokens": 90155
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "This manuscript presents a compelling and clearly articulated extension of diffusion models to video generation, demonstrating high technical quality in its formulation and justification. The authors effectively establish a rigorous foundation by reviewing standard diffusion mechanics and smoothly integrating the transition to video data via 3D U-Nets",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Typo in conditional expectation identity (denominator scaling)",
+          "quote": "E _q_ [ **x** _[b] |_ **z** _t,_ **x** _[a]_ ] = E _q_ [ **x** _[b] |_ **z** _t_ ] + ( _\u03c3t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]** _[a][|]_ **[z]** _[t]_[)]",
+          "explanation": "The authors present an identity relating the conditional expectation of the target frames to the unconditional expectation plus a correction term involving the gradient of the conditional likelihood of the observed frames. Dimensional and algebraic analysis of the standard diffusion forward process $\\mathbf{z}_t = \\alpha_t \\mathbf{x} + \\sigma_t \\boldsymbol{\\epsilon}$ shows that the correction term should be scaled by $\\sigma_t^2 / \\alpha_t$, not $\\sigma_t^2 / \\alpha_t^2$. Deriving this: the score of the marginal distribution satisfies $\\nabla_{\\mathbf{z}_t} \\log p(\\mathbf{z}_t) = -(\\mathbf{z}_t - \\alpha_t \\mathbb{E}[\\mathbf{x}|\\mathbf{z}_t]) / \\sigma_t^2$, which rearranges to $\\mathbb{E}[\\mathbf{x}|\\mathbf{z}_t] = \\mathbf{z}_t/\\alpha_t + (\\sigma_t^2/\\alpha_t)\\nabla_{\\mathbf{z}_t} \\log p(\\mathbf{z}_t)$. Conditioning on $\\mathbf{x}_a$ adds $\\nabla_{\\mathbf{z}_t} \\log q(\\mathbf{x}_a | \\mathbf{z}_t)$ to the score, yielding a correction of $(\\sigma_t^2/\\alpha_t)\\nabla_{\\mathbf{z}_t} \\log q(\\mathbf{x}_a | \\mathbf{z}_t)$. If the original PDF intended $\\alpha_t^2$ in the denominator, it is a mathematical typo that would incorrectly scale the reconstruction guidance strength during sampling. If the OCR simply dropped a superscript '2', the intended formula is likely correct, but the notation must be verified against the source.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Missing core formula for reconstruction guidance update rule",
+          "quote": "To accomplish this, we adjust the high resolution model as follows:\n\n4\n\nwhere **x** \u02c6 _[a] \u03b8_[(] **[z]** _[t]_[)][ is our model\u2019s reconstruction...",
+          "explanation": "The authors introduce a novel sampling adjustment ('we adjust the high resolution model as follows:') but the corresponding mathematical equation is entirely absent from the text, replaced only by a stray '4' (likely a lost equation number or page artifact from OCR). Without this formula, the precise definition of the guidance adjustment for super-resolution cannot be verified or reproduced. While clearly an extraction artifact, it leaves a critical gap in the methodology that hinders technical reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Notation looseness in conditional score decomposition gradient",
+          "quote": "E _q_ [ **x** _[b] |_ **z** _t,_ **x** _[a]_ ] = E _q_ [ **x** _[b] |_ **z** _t_ ] + ( _\u03c3t_[2] _[/\u03b1][t]_[)] _[\u2207]_ **z** _[b] t_[log] _[ q]_[(] **[x]** _[a][|]_ **[z]** _[t]_[)...",
+          "explanation": "The authors write the guidance term as $\\nabla_{\\mathbf{z}_{b,t}} \\log q(\\mathbf{x}_a | \\mathbf{z}_t)$. Mathematically, the conditional likelihood $q(\\mathbf{x}_a | \\mathbf{z}_t)$ depends on the full latent vector $\\mathbf{z}_t$, so the exact gradient should be taken with respect to $\\mathbf{z}_t$. The non-zero components lie entirely in the $\\mathbf{z}_{a,t}$ subspace. By writing the gradient with respect to $\\mathbf{z}_{b,t}$, the authors are using shorthand for the effective update direction that influences the generated segment via backpropagation through the shared 3D U-Net weights. A careful reader might initially find this notation contradictory, though it is functionally correct in the context of how the gradient flows through the network. Clarifying that this represents the effective projected gradient or backpropagated direction would improve precision.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Ambiguous phrasing conflates training procedure with inference guidance",
+          "quote": "Reconstruction guidance also extends to the case of spatial interpolation (or super-resolution), in which the mean squared error loss is imposed on a downsampled version of the model prediction, and backpropagation is performed through this downsampling.",
+          "explanation": "The phrasing 'mean squared error loss is imposed... and backpropagation is performed' strongly evokes a training-time procedure (e.g., an auxiliary loss or self-supervised pretraining objective). However, in the context of reconstruction guidance, this describes an inference-time step: the model's high-resolution output is downsampled to match the conditioning video, and the gradient of the reconstruction error w.r.t. the latent is used to guide the sampling process. The current wording could mislead a reader into thinking the model architecture or training objective requires modification, rather than it being a plug-and-play adjustment to the sampling loop. Explicitly stating that this is computed during inference would resolve the ambiguity.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Ambiguity in FID/FVD reference datasets",
+          "quote": "For FID and FVD, we report two numbers which are measured against the training and validation sets, respectively.",
+          "explanation": "I initially wondered why FID and FVD would be reported against training and validation sets rather than a standard held-out test set. I checked the evaluation protocol description but found no further clarification. While using a validation set as a reference is acceptable, the phrasing 'respectively' for FID and FVD is ambiguous, and evaluating against the training set can introduce optimism bias. This leaves uncertainty about how strictly these scores reflect generalization compared to standard benchmarks.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Contradictory phrasing on memory optimization in joint training",
+          "quote": "Adding independent image frames has the effect of reducing variance of the gradient at the expense of some bias for the video modeling objective, and thus it can be seen as a memory optimization to fit more independent examples in a batch.",
+          "explanation": "My concern initially arose from the claim that adding image frames is a 'memory optimization to fit more independent examples in a batch.' Adding data logically increases memory usage per step. I reasoned that the authors might mean this reduces gradient variance (allowing smaller batches) or that images are cheaper to compute (allowing larger batches without OOM). However, the text directly calls adding data a 'memory optimization,' which contradicts basic memory accounting. The intended meaning is unclear without further specification.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Ambiguity in Inception Score reporting protocol",
+          "quote": "For IS, we report two numbers which are averaged scores across 1 split and 10 splits of samples, respectively.",
+          "explanation": "I was confused by the reporting of IS across '1 split and 10 splits.' Standard practice reports mean and standard deviation over multiple splits to show stability. I checked if the authors meant something else, but the phrasing suggests two separate average values are provided. Without clarity on how these splits are constructed or whether standard deviation is omitted, it's hard to judge the reliability of the IS numbers or compare them fairly to other works.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1201,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 79785,
+      "completion_tokens": 90155
+    }
+  }
+}

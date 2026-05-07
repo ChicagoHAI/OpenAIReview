@@ -1,0 +1,539 @@
+{
+  "slug": "iclr2022-pFyXqxCh-intsgd-adaptive-floatless-compression-of-stochastic-gradient",
+  "title": "INTSGD: ADAPTIVE FLOATLESS COMPRESSION OF STOCHASTIC GRADIENTS [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## INTSGD: ADAPTIVE FLOATLESS COMPRESSION OF STOCHASTIC GRADIENTS"
+    },
+    {
+      "index": 1,
+      "text": "## **Konstantin Mishchenko**\n\nCNRS, \u00c9cole Normale Sup\u00e9rieure, Inria konsta.mish@gmail.com\n\n**Bokun Wang** KAUST _[\u2217]_"
+    },
+    {
+      "index": 2,
+      "text": "bokunw.wang@gmail.com\n\n**Dmitry Kovalev Peter Richt\u00e1rik** KAUST KAUST dakovalev1@gmail.com peter.richtarik@kaust.edu.sa"
+    },
+    {
+      "index": 3,
+      "text": "## ABSTRACT\n\nWe propose a family of adaptive integer compression operators for distributed Stochastic Gradient Descent (SGD) that do not communicate a single float. This is achieved by multiplying floating-point vectors with a number known to every device and then rounding to integers. In contrast to the prior work on integer compression for SwitchML by Sapio et al. (2021), our IntSGD method is provably convergent and computationally cheaper as it estimates the scaling of vectors adaptively. Our theory shows that the iteration complexity of IntSGD matches that of SGD up to constant factors for both convex and non-convex, smooth and nonsmooth functions, with and without overparameterization. Moreover, our algorithm can also be tailored for the popular all-reduce primitive and shows promising empirical performance."
+    },
+    {
+      "index": 4,
+      "text": "## 1 INTRODUCTION\n\nMany recent breakthroughs in machine learning were made possible due to the introduction of large, sophisticated and high capacity supervised models whose training requires days or even weeks of computation (Hinton et al., 2015; He et al., 2016; Huang et al., 2017; Devlin et al., 2018). However, it would not be possible to train them without corresponding advances in parallel and distributed algorithms capable of taking advantage of modern hardware. Very large models are typically trained on vast collections of training data stored in a distributed fashion across a number of compute nodes that need to communicate throughout the training process. In this scenario, reliance on efficient communication protocols is of utmost importance."
+    },
+    {
+      "index": 5,
+      "text": "**Communication in distributed systems.** The training process of large models relies on fast synchronization of gradients computed in a parallel fashion. Formally, to train a model, we want to solve the problem of parallel/distributed minimization of the average of _n_ functions:"
+    },
+    {
+      "index": 6,
+      "text": "where we will compute the gradients of stochastic realizations _fi_ ( _x_ ; _\u03be_ ). The two dominating protocols for gradient synchronization are _all-reduce_ and _all-gather_ aggregation, which may use either Parameter Server or all-to-all communication under the hood. The core difference between them lies in that all-gather communicates all vectors, whereas all-reduce only outputs their average. As shown in previous works, current distributed deep learning algorithms predominantly use all-reduce as it scales much better than all-gather (Vogels et al., 2019; Agarwal et al., 2021)."
+    },
+    {
+      "index": 7,
+      "text": "A popular way to reduce the communication cost of both all-reduce and all-gather primitives is to use lossy compression of gradients (Ramesh et al., 2021). To study the benefit of lossy compression, large swaths of recent literature on distributed training attribute the cost of sending a single vector"
+    },
+    {
+      "index": 8,
+      "text": "> _\u2217_ Work done when the author was a research intern at KAUST.\n\n1\n\nPublished as a conference paper at ICLR 2022"
+    },
+    {
+      "index": 9,
+      "text": "from a worker to the server to the number of bits needed to represent it. Based on this abstraction, various elaborate vector compression techniques (see Table 1 in Beznosikov et al. 2020; Xu et al. 2020; Safaryan et al. 2020) and algorithms have been designed for higher and higher compression ratios. However, in real systems, the efficiency of sending a vector is not fully characterized by the number of bits alone, because:"
+    },
+    {
+      "index": 10,
+      "text": "- First, many compressors with high compression ratio (e.g., natural compression (Horv\u00e1th et al., 2019), quantization (Alistarh et al., 2017), top- _k_ sparsification, sign (Bernstein et al., 2018)) are not compatible with the efficient all-reduce primitive and require all-gather implementation."
+    },
+    {
+      "index": 11,
+      "text": "- Secondly, some compressors rely on expensive operations such as low-rank decomposition (Wang et al., 2018; Vogels et al., 2019) or bit-level operations (Horv\u00e1th et al., 2019), whose computation overhead may outweigh the benefits of reduced communication load."
+    },
+    {
+      "index": 12,
+      "text": "- Thirdly, algorithms with biased compressors such as Top- _k_ SGD, SignSGD, PowerSGD (Vogels et al., 2019), require the error-feedback (EF-SGD) mechanism (Stich et al., 2018; Karimireddy et al., 2019) to ensure the convergence. Alas, error feedback needs extra sequences that may not fit the low memory budget of GPUs. Moreover, to the best of our knowledge, no convergence guarantee has been established for EF-SGD on the non-smooth objectives with multiple workers."
+    },
+    {
+      "index": 13,
+      "text": "**SwitchML.** Another approach to combating long communication times is to improve the hardware itself. The recently proposed SwitchML is an alternative to the NVIDIA Collective Communications Library (NCCL) on real-world hardware (Sapio et al., 2021). The first key component of SwitchML is the in-network aggregation (INA) by a programmable switch. INA reduces the communication cost and latency because the execution can be paralleled and pipelined. To be specific, it splits the vector to aggregate into chunks and processes them individually by the switch pipeline. The advantages of INA over parameter server and all-reduce in terms of latency and communication cost have been theoretically and empirically justified by Sapio et al. (2021). The second key component of SwitchML is stochastic gradient descent with integer rounding and aggregation. Instead of reducing the data volume to exchange, the goal of integer rounding in SwitchML is to fit the limited computation capability of the modern programmable switch, which only supports integer additions or logic operations. To increase the rounding precision, the gradient _gi[k]_[on device] _[ i]_[ multiplies a positive] scaling factor _\u03b1k_ known to every worker and then rounded to an integer number _Int_ ( _\u03b1k \u25e6 gi[k]_[)][.][As] there is no additional scaling or decompression before aggregating the communicated vectors, their sums can be computed on the fly. Then, each worker can divide the aggregated gradient by _n\u03b1k_ to update the model."
+    },
+    {
+      "index": 14,
+      "text": "However, Sapio et al. (2021) remark that the choice of the scaling factor _\u03b1k_ requires special care. In their presentation[1] , one of the authors notes: \u201cA bad choice of scaling factor can reduce the performance.\u201d To this end, they propose a heuristic-based profiling step that is executed before the gradient aggregation and keeps the rounded integers small to fit in 32 bits. We refer to their algorithm including the profiling step as Heuristic IntSGD. Unfortunately, no convergence guarantee for that algorithm has been established. This is where our theory comes to the rescue. By rigorously and exhaustively analyzing integer rounding based on scaling, we find adaptive rules for the scaling factor _\u03b1k_ that do not require the profiling employed by Sapio et al. (2021). As we will show in the remainder of the paper, our algorithm is perfectly suited for both in-network aggregation (INA) of SwitchML and for other efficient primitives such as all-reduce."
+    },
+    {
+      "index": 15,
+      "text": "## 1.1 CONTRIBUTIONS\n\nWe summarize the key differences of our algorithm and prior work in Table 1, and we also list our main contributions below."
+    },
+    {
+      "index": 16,
+      "text": "_\u2022_ **Adaptive IntSGD.** We develop a family of computationally cheap adaptive scaling factors for provably convergent IntSGD. It is a better alternative to the Heuristic IntSGD in Sapio et al. (2021) that requires expensive operations and does not ensure convergence."
+    },
+    {
+      "index": 17,
+      "text": "> 1https://youtu.be/gBPHFyBWVoM?t=606\n\n2\n\nPublished as a conference paper at ICLR 2022\n\nTable 1: Conceptual comparison of our method to the related literature. If all-reduce is supported, the method does not need any decompression. If all-reduce is not supported, the expensive all-gather operation is required and decompression is slow. See also Section 5 for numerical comparisons."
+    },
+    {
+      "index": 18,
+      "text": "|Algorithm|Supports\nall-reduce|Supports\nswitch|Provably\nworks|Fast\ncompression|Works without\nerror-feedback|Adaptive|Reference|\n|---|---|---|---|---|---|---|---|\n|IntSGD|\u0013|\u0013|\u0013|\u0013|\u0013|\u0013|**Ours**|\n|Heuristic\nIntSGD|\u0013|\u0013|\u0017|\u0013|\u0013|\u0017|Sapio et al.(2021)|\n|PowerSGD\n(theoretical)|\u0013|\u0017|\u0013|\u0017(1)|\u0017|\u0017(2)|Vogels et al.(2019)|\n|PowerSGD\n(practical)|\u0013|\u0017|\u0017|\u0013(1)|\u0017|\u0017(2)|Vogels et al.(2019)|\n|NatSGD|\u0017|\u0013|\u0013|\u0017|\u0013|N/A|Horv\u00e1th et al.(2019)|\n|QSGD|\u0017|\u0017|\u0013|\u0013|\u0013|N/A|Alistarh et al.(2017)|\n|SignSGD|\u0017|\u0017|\u0013|\u0013|\u0017|N/A|Karimireddy et al.(2019)|"
+    },
+    {
+      "index": 19,
+      "text": "> (1) In theory, PowerSGD requires computing low-rank decompositions. In practice, an approximation is found by power iteration, which requires just a few matrix-vector multiplications but it is not analyzed theoretically and might be less stable."
+    },
+    {
+      "index": 20,
+      "text": "> (2) PowerSGD requires tuning the rank of the low-rank decomposition. Vogels et al. (2019) reported that rank-1 PowerSGD consistently underperformed in their experiments, and, moreover, rank-2 was optimal for image classification while language modeling required rank-4. Ramesh et al. (2021) reported that a much larger rank was needed to avoid a gap in the training loss."
+    },
+    {
+      "index": 21,
+      "text": "_\u2022_ **Rates.** We obtain the first analysis of the integer rounding and aggregation for distributed machine learning. For all of the proposed variants, we prove convergence rates of IntSGD that match those of full-precision SGD up to constant factors. Our results are tight and apply to both convex and nonconvex problems. Our analysis does not require any extra assumption compared to those typically invoked for SGD. In contrast to other compression-based methods, IntSGD has the same rate as that of full-precision SGD even on non-smooth problems."
+    },
+    {
+      "index": 22,
+      "text": "_\u2022_ **IntDIANA.** We observe empirically that IntSGD struggles when the devices have heterogeneous (non-identical) data\u2014an issue it shares with vanilla SGD\u2014and propose an alternative method, IntDIANA, that can provably alleviate this issue. We also show that our tools are useful for extending the methodology beyond SGD methods, for example, to _variance reduced_ methods (Johnson & Zhang, 2013; Allen-Zhu & Hazan, 2016; Kovalev et al., 2020; Gower et al., 2020) with integer rounding. Please refer to Appendix A.2 for theoretical results and Appendix C.5 for the empirical verification."
+    },
+    {
+      "index": 23,
+      "text": "By _randomized integer rounding_ we mean the mapping _Int_ : R _\u2192_ Z defined by\n\nwhere [ _t_ ] denotes the floor of _t \u2208_ R, i.e., [ _t_ ] = _k \u2208_ Z, where _k_ is such that _k \u2264 t < k_ + 1. Note that E [ _Int_ ( _t_ )] = ( _t \u2212_ [ _t_ ])([ _t_ ] + 1) + ([ _t_ ] + 1 _\u2212 t_ )[ _t_ ] = _t._"
+    },
+    {
+      "index": 24,
+      "text": "def We extend this mapping to vectors _x \u2208_ R _[d]_ by applying in element-wise: _Int_ ( _x_ ) _i_ = _Int_ ( _xi_ )."
+    },
+    {
+      "index": 25,
+      "text": "2.1 ADAPTIVE INTEGER ROUNDING\n\nGiven a _scaling vector \u03b1 \u2208_ R _[d]_ with nonzero entries, we further define the _adaptive integer rounding_ operator _Q_ : R _[d] \u2192_ R _[d]_ by"
+    },
+    {
+      "index": 26,
+      "text": "def where _a \u25e6 b_ = ( _a_ 1 _b_ 1 _, . . . , adbd_ ) _\u2208_ R _[d]_ denotes the Hadamard product of two vectors _a_ = ( _a_ 1 _, . . . , ad_ ) _\u2208_ R _[d]_ and _b_ = ( _b_ 1 _, . . . , bd_ ) _\u2208_ R _[d]_ ."
+    },
+    {
+      "index": 27,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n**Algorithm 1** IntSGD. Default setting for the tested problems: _\u03b2_ = 0 _._ 9, _\u03b5_ = 10 _[\u2212]_[8] ."
+    },
+    {
+      "index": 28,
+      "text": "1: **Params:** Stepsizes _\u03b7k_ , scaling vectors _\u03b1k \u2208_ R _[d]_ 2: **Init:** _x_[0] _\u2208_ R _[d]_ , _x_[1] = _x_[0] _\u2212 \u03b7_ 0 _n_[1] \ufffd _ni_ =1 _[g] i_[0] 3: **for** _k_ = 1 _,_ 2 _, . . ._ **do** 4: **for** each device _i_ = 1 _,_ 2 _, . . . , n_ **do** 5: Compute stochastic gradient _gi[k]_[(][E] \ufffd _gi[k][|][ x][k]_[\ufffd] _\u2208 \u2202fi_ ( _x[k]_ )) 6: Maintain the moving average: _rk_ = _\u03b2rk\u2212_ 1 + (1 _\u2212 \u03b2_ ) _\u2225x[k] \u2212 x[k][\u2212]_[1] _\u2225_[2] 7: Compute the adaptive scaling factor: _\u03b1k_ = ~~_\u221a_~~ _d_ ~~_\u221a_~~ 2 _nrk/\u03b7k_[2][+] _[\u03b5]_[2] 8: Scale and round the local gradient _Q_ ( _gi[k]_[) =] _[ I][nt]_[(] _[\u03b1][k][ \u25e6][g] i[k]_[)] 9: **end for** 10: Aggregate _Q_ ( _gi[k]_[)][ by either all-reduce or in-network aggregation (INA)] 11: **for** each device _i_ = 1 _,_ 2 _, . . . , n_ **do** 12: Compute the (sub)gradient estimator: _g_ \u02dc _[k]_ = _n\u03b1_ 1 _k_ \ufffd _ni_ =1 _[Q]_[(] _[g] i[k]_[)] \u02dc 13: Update the model parameter _x[k]_[+1] = _x[k] \u2212 \u03b7kg[k]_ 14: **end for** 15: **end for**"
+    },
+    {
+      "index": 29,
+      "text": "As we show below, the adaptive integer rounding operator (2) has several properties which will be useful in our analysis. In particular, the operator is unbiased, and its variance can be controlled by choice of a possibly random scaling vector _\u03b1 \u2208_ R _[d]_[[.]]"
+    },
+    {
+      "index": 30,
+      "text": "++[[.]]\n\n**Lemma 1.** For any _x \u2208_ R _[d]_ and _\u03b1 \u2208_ R _[d]_ ++[, we have]\n\nThe expectations above are taken with respect to the randomness inherent in the rounding operator."
+    },
+    {
+      "index": 31,
+      "text": "2.2 NEW ALGORITHM: INTSGD\n\nWe are ready to present our algorithm, IntSGD. At iteration _k_ , each device _i_ computes a stochastic (sub)gradient vector _gi[k]_[, i.e., a vector satisfying]"
+    },
+    {
+      "index": 32,
+      "text": "Prior to communication, each worker _i_ rescales its stochastic (sub)gradients _gi[k]_[using the same vector] _\u03b1k \u2208_ R _[d]_ ++[, and applies the randomized rounding operator] _[ I][nt]_[.][The resulting vectors] _[ I][nt]_[(] _[\u03b1][k][\u25e6][g] i[k]_[)] are aggregated to obtain[\ufffd] _[n] i_ =1 _[I][nt]_[(] _[\u03b1][k][\u25e6][g] i[k]_[)][,][which][is][also][an][integer.][Each][device][subsequently] performs division by _n_ and inverse scaling to decode the message, obtaining the vector"
+    },
+    {
+      "index": 33,
+      "text": "Here _\u03b1k_ is a random adaptive scaling factor calculated based on the historical information. We left the design of _\u03b1k_ to Section 4. By combining (5) and (3), we observe that _g[k]_ is a stochastic (sub)gradient of _f_ at _x[k]_ . Finally, all devices perform in parallel an SGD-type step of the form \u02dc _x[k]_[+1] = _x[k] \u2212\u03b7kg[k]_ and the process is repeated. Our IntSGD method is formally stated as Algorithm 1 with the suggested rule of _\u03b1_ ."
+    },
+    {
+      "index": 34,
+      "text": "**Relation to QSGD** (Alistarh et al., 2017). QSGD bears some similarity to the IntSGD: Both of them scale _gi[k]_[by a factor before the quantization (the scaling factor in][ QSGD][ is][ 1] _[/][\u2225][g] i[k][\u2225]_[for normalization).] However, some key difference makes the communication efficiency of IntSGD much better than that of QSGD. It is worth noting that the normalization factors 1 _/\u2225gi[k][\u2225]_[in][ QSGD][ are different for various] workers. Then, the quantized values of various workers need to be gathered and decompressed before aggregation. On the contrary, the scaling factor _\u03b1k_ in our IntSGD is the same for all workers such that the sum of integers can be computed on the fly. Thus, IntSGD supports the efficient allreduce primitive while QSGD does not. As seen in the experimental results in Section 5 , this"
+    },
+    {
+      "index": 35,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\nmakes a big difference in empirical performance. Moreover, the proof technique for IntSGD is also intrinsically different from that of QSGD. Please see the next section for the details."
+    },
+    {
+      "index": 36,
+      "text": "## 3 ANALYSIS OF INTSGD[2]\n\nTo establish convergence of IntSGD, we introduce the following assumption on the scaling vector _\u03b1k_ = ( _\u03b1k,_ 1 _, . . . , \u03b1k,d_ ) _[\u22a4] \u2208_ R _[d]_ ++[.]"
+    },
+    {
+      "index": 37,
+      "text": "While this assumption may look exotic, it captures precisely what we need to establish the convergence of IntSGD, and it holds for several practical choices of _\u03b1k_ , including the one shown in Section 4 and more choices in Appendix A.1."
+    },
+    {
+      "index": 38,
+      "text": "**Challenges in IntSGD analysis.** Although the _Int_ operation is unbiased and has finite variance as shown in Lemma 1, we highlight that it is non-trivial to obtain the convergence analysis of IntSGD and the analysis is different from that of QSGD and similar methods. Indeed, QSGD, Rank- _k_ , and NatSGD all use unbiased operators _Q_ with variance satisfying E[ _\u2225Q_ ( _g_ ) _\u2212 g\u2225_[2] ] _\u2264 \u03c9\u2225g\u2225_[2] for some _\u03c9 >_ 0. For them, the convergence theory is simply a plug-in of the analysis of Compressed SGD (Khirirat et al., 2018). However, the integer rounding operator _Int_ does not satisfy this property, and the variance of the integer compressor will not decrease to zero when _\u2225g\u2225_[2] _\u2192_ 0. Moreover, to estimate _\u03b1k_ adaptively, we use the values of past iterates, which makes its value itself random, so the analysis of Compressed SGD cannot apply. As shown in our proofs, an extra trick is required: we reserve an additional term[\ufffd] _[k] t_ =0[E][[] _[\u2225][x][t]_[+1] _[ \u2212][x][t][\u2225]_[2][]][ to control the variance of the rounding.][Fur-] thermore, the analysis of moving-average estimation is particularly challenging since the value of _\u03b1k_ is affected by all past model updates, starting from the very first iteration."
+    },
+    {
+      "index": 39,
+      "text": "## 3.1 NON-SMOOTH ANALYSIS: GENERIC RESULT\n\nLet us now show that IntSGD works well even on non-smooth functions."
+    },
+    {
+      "index": 40,
+      "text": "**Assumption 2.** Stochastic (sub)gradients _g_ 1 _[k][, . . . , g] n[k]_[sampled at iteration] _[ k]_[ satisfy the inequalities]"
+    },
+    {
+      "index": 41,
+      "text": "where the former inequality corresponds to _G_ -Lipschitzness of _f_ and the latter to bounded variance of stochastic (sub)gradients."
+    },
+    {
+      "index": 42,
+      "text": "**Theorem 1.** _Let functions f_ 1 _, . . . , fn be convex and Assumptions 1 and 2 be satisfied. Then_"
+    },
+    {
+      "index": 43,
+      "text": "_where x_ \u02c6 _[k]_ = \ufffd _kt_ =01 _[\u03b7][t]_ \ufffd _kt_ =0 _[\u03b7][t][x][t][ is a weighted average of iterates.]_"
+    },
+    {
+      "index": 44,
+      "text": "## 3.2 SMOOTH ANALYSIS: GENERIC RESULT\n\nWe now develop a theory for smooth objectives.\n\n**Assumption 3.** There exist constants _L, \u03c3\u2217 \u2265_ 0 such that the stochastic gradients _g_ 1 _[k][, . . . , g] n[k]_[at] iteration _k_ satisfy E _k_ [ _gi[k]_[] =] _[ \u2207][f][i]_[(] _[x][k]_[)][ and]"
+    },
+    {
+      "index": 45,
+      "text": "2In our analysis, we use the red color to highlight the extra terms coming from our integer compression, in contrast to the blue error terms, which come from SGD itself."
+    },
+    {
+      "index": 46,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\nAssumption 3 is known as the _expected smoothness_ assumption (Gower et al., 2019). In its formulation, we divide the constant term _\u03c3\u2217_[2][by] _[ n]_[, which is justified by the following proposition.]"
+    },
+    {
+      "index": 47,
+      "text": "**Proposition 1** (Section 3.3 in Gower et al. 2019) **.** Let _fi_ ( _x_ ) = E _\u03be_ [ _fi_ ( _x_ ; _\u03be_ )], _gi[k]_[=] _[ \u2207][f][i]_[(] _[x][k]_[;] _[ \u03be] i[k]_[)][, and] _fi_ ( _\u00b7_ ; _\u03be_ ) be convex and its gradient be _Li_ -Lipschitz for any _\u03be_ . Then, the second part of Assumption 3 is satisfied with _\u03c3\u2217_[2] def= _n_ 2 \ufffd _ni_ =1[E] _[\u03be]_ \ufffd _\u2225\u2207fi_ ( _x[\u2217]_ ; _\u03be_ ) _\u2225_[2][\ufffd] and _L_ def= 4 max _i_ =1 _,...,n Li_ ."
+    },
+    {
+      "index": 48,
+      "text": "Gower et al. (2019) state and prove this result in a more general form, so for the reader\u2019s convenience, we provide a proof in the appendix."
+    },
+    {
+      "index": 49,
+      "text": "**Theorem 2.** _Assume that f is convex and Assumption 3 holds. If \u03b7k \u2264_ 21 _L[and][x]_[\u02c6] _[k]_ = 1 _k_ \ufffd _kt_ =0 _[\u03b7][t]_ \ufffd _t_ =0 _[\u03b7][t][x][t][ is a weighted average of iterates, then]_"
+    },
+    {
+      "index": 50,
+      "text": "**Corollary 1** (Overparameterized regime) **.** When the model is overparameterized (i.e., the losses can be minimized to optimality simultaneously: _\u03c3\u2217_ = 0), we can set _\u03b5_ = 0 and obtain _O_ \ufffd _k_ 1 \ufffd rate."
+    },
+    {
+      "index": 51,
+      "text": "## 3.3 NON-CONVEX ANALYSIS: GENERIC RESULT\n\nWe now develop a theory for non-convex objectives.\n\n**Assumption 4.** The gradient of _f_ is _L_ -Lipschitz and there exists _f_[inf] _\u2208_ R such that _f_[inf] _\u2264 f_ ( _x_ ) for all _x_ . Furthermore, for all _i_ and _k_ we have"
+    },
+    {
+      "index": 52,
+      "text": "Our main result in the non-convex regime follows.\n\n**Theorem 3.** _Let f be L-smooth and let Assumption 1 hold. If \u03b7k \u2264_ 21 _L[for all][ k][, then]_"
+    },
+    {
+      "index": 53,
+      "text": "_where x_ \u02c6 _[k] is sampled from {x_[0] _, . . . , x[k] } with probabilities proportional to \u03b7_ 0 _, . . . , \u03b7k._"
+    },
+    {
+      "index": 54,
+      "text": "## 3.4 EXPLICIT COMPLEXITY RESULTS\n\nHaving developed generic complexity results for IntSGD in the non-smooth (Section 3.1), smooth (Section 3.2) and non-convex (Section 3.3) regimes, we now derive explicit convergence rates."
+    },
+    {
+      "index": 55,
+      "text": "**Corollary 2.** For any sequence of scaling vectors _\u03b1k_ satisfying Assumption 1, we recover the following complexities:"
+    },
+    {
+      "index": 56,
+      "text": "Based on Corollary 2, our IntSGD has linear speed-up in case (ii) and (iii).\n\n6\n\nPublished as a conference paper at ICLR 2022"
+    },
+    {
+      "index": 57,
+      "text": "**Comparison with error-feedback (** EF-SGD **).** Distributed SGD with biased compressors (like PowerSGD, SignSGD, Top- _k_ SGD) requires the error-feedback modification to converge. In the non-convex and smooth case, EF-SGD leads to the _O_ \ufffd ~~_\u221a_~~ _\u03c3kn_[+] \ufffd _Gk_ \ufffd2 _/_ 3[\ufffd] rate in Koloskova et al. (2019) when assuming the second moment of stochastic gradient is bounded by _G_[2] . Compared to their result, our rate is never worse and does not require the second moment of stochastic gradient to be bounded, which is often violated in practice even for quadratic objectives and simplest neural networks. The convergence guarantee of EF-SGD for the convex and non-smooth function (Assumption 2) is even weaker: Karimireddy et al. (2019) show the _O_ \ufffd ~~_\u221a_~~ _\u03c3\u03b4k_ \ufffd convergence rate of EF-SGD only for the single-worker case ( _n_ = 1), which is ~~_\u221a_~~ 1 _\u03b4_[-times][worse][than][IntSGD][(] _[\u03b4]_[could] be fairly small, e.g., _\u03b4_ = 1 _/d_ in Top-1 compression). To the best of our knowledge, there is no convergence guarantee of EF-SGD for the non-smooth function when there are multiple workers. In contrast, our IntSGD has the same rate as SGD under the same set of assumptions."
+    },
+    {
+      "index": 58,
+      "text": "## 4 DESIGN OF SCALING FACTORS\n\n## 4.1 ADAPTIVE SCALING FACTOR WITH THE MOVING AVERAGE AND SAFEGUARD"
+    },
+    {
+      "index": 59,
+      "text": "We now present an effective rule of adaptive _\u03b1k_ (presented in Algorithm 1) that satisfies Assumption 1 for the convergence rates listed in previous section. In the appendix, we provide more options that also satisfy Assumption 1 and the proof still goes through. For simplicity, we assume that the first communication is exact, which allows us to estimate _\u03b1k_ adaptively without worrying about _\u03b1_ 0."
+    },
+    {
+      "index": 60,
+      "text": "**Proposition 2.** Assumption 1 holds if we choose _\u03b2 \u2208_ [0 _,_ 1) _, \u03b5 \u2265_ 0 and _\u03b1k_ = ~~_\u221a_~~ 2 _nr_ ~~_\u221a_~~ _k/\u03b7d k_[2][+] _[\u03b5]_[2] _[,]_[ where]"
+    },
+    {
+      "index": 61,
+      "text": "_rk_ = _\u03b2rk\u2212_ 1 + (1 _\u2212 \u03b2_ ) _\u2225x[k] \u2212 x[k][\u2212]_[1] _\u2225_[2] _._\n\n**Remark 1.** Here _\u03b2 \u2208_ [0 _,_ 1) is a constant factor to control the moving average update of _rk_ , which prevents the scaling factor _\u03b1k_ from changing too rapidly. _\u03b5_[2] could be any sufficiently small number, which serves as a safeguard to avoid the potential \u201cdivide by zero\u201d error. We study the sensitivity of our IntSGD to _\u03b2_ and _\u03b5_ in Appendix C.4."
+    },
+    {
+      "index": 62,
+      "text": "## 4.2 COMPRESSION EFFICIENCY\n\nLet us now discuss the number of bits needed for the compressed vectors. Although the main attraction of IntSGD is that it can perform efficient in-network communication, we may also hope to gain from the smaller size of the updates."
+    },
+    {
+      "index": 63,
+      "text": "Consider for simplicity the case where _\u2225x[k] \u2212 x[k][\u2212]_[1] _\u2225\u2248\u2225\u03b7kgi[k][\u2225]_[with some] _[ i]_[.][The adaptive scheme] with _\u03b2_ = 0, _\u03b5_ = 0 gives _\u03b1k_ = ~~_\u221a_~~ 2 _n\u2225\u03b7xk[k]_ ~~_\u221a_~~ _\u2212dx[k][\u2212]_[1] _\u2225[\u2248]_ ~~_\u221a_~~ 2 _n\u2225\u03b7xk[k]_ ~~_\u221a_~~[+1] _d\u2212x[k] \u2225_[=] ~~_\u221a_~~ 2 _n_ ~~_\u221a_~~ _\u2225dgi[k][\u2225]_[, so that] _[ \u2225][\u03b1][k][g] i[k][\u2225][\u221e]_[=] ~~_\u221a\u221a_~~ 2 _dn \u2225\u2225ggi[k] i[k][\u2225][\u2225][\u221e][\u2264]_ ~~_\u221a\u221a_~~ 2 _dn_[.][Since we only use signed integers, we need at most][ 1 + log][2] ~~_\u221a\u221a_~~ 2 _dn_[bits for each] coordinate. For instance, for _d \u223c_ 10[10] and _n \u223c_ 100, the upper bound is 1 + log2( _\u221a_ 5 _\u00b7_ 10[7] ) _<_ 14 bits. The situation becomes even better when _\u2225gi[k][\u2225\u226b\u2225][g] i[k][\u2225][\u221e]_[, i.e., when the stochastic gradients are] dense. This property has been observed in certain empirical evaluations for deep neural networks; see for example the study in (Bernstein et al., 2018)."
+    },
+    {
+      "index": 64,
+      "text": "## 5 EXPERIMENTS\n\n## 5.1 SETUP\n\nWe empirically compare our IntSGD algorithm with several representative and strong baselines: SGD, Heuristic IntSGD (Sapio et al., 2021), SGD, PowerSGD + Error-feedback (EF) (Vogels et al., 2019), NatSGD (Horv\u00e1th et al., 2019), and QSGD (Alistarh et al., 2017). The experiments are performed on 16 NVIDIA Tesla V100 GPUs located on 8 compute nodes of a cluster (2 GPUs per node) following the PowerSGD paper. The compute nodes in the cluster utilize InfiniBand HDR-100 Director Switch at 100Gbps speed for network connection. The cluster also supports the NVIDIA Collective Communications Library (NCCL)."
+    },
+    {
+      "index": 65,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\nWe consider two tasks: image classification by ResNet18 (He et al., 2016) on the CIFAR-10 dataset and language modeling by a 3-layer LSTM on the Wikitext-2 dataset. The neural network architectures and hyperparameters are from some public PyTorch implementations[3] . Our code is built on the codebase of PowerSGD[4] . We also borrow their all-reduce-based implementations of SGD and PowerSGD. It is worth noting that QSGD and NatSGD do not support all-reduce. Thus, we implement their collective communications by all-gather. The implementations for compression and decompression in QSGD and NatSGD are from the authors of NatSGD[5] . For the sake of comparison, we also implement the all-gather-based SGD. We report the results of 3 repetitions with varying seeds."
+    },
+    {
+      "index": 66,
+      "text": "Apart from the IntSGD with randomized integer rounding (IntSGD (Random)) analyzed in our theory, we also consider the variant of IntSGD with deterministic integer rounding (IntSGD (Determ.)) which can use the PyTorch built-in function torch.round. For all IntSGD variants, we clip the local stochastic gradients to ensure that each aggregated value fits in either 8 bits or 32 bits."
+    },
+    {
+      "index": 67,
+      "text": "For more details of the experimental setup, please refer to Appendix C.1.\n\n## 5.2 INTSGD VS. HEURISTIC INTSGD"
+    },
+    {
+      "index": 68,
+      "text": "**----- Start of picture text -----**\n\nFirst, we compare our IntSGD with the most related algorithm Heuristic IntSGD (Sapio et al., 2021).\nFor both algorithms, we consider two potential communication data types: int8 and int32. Note\n2 [nb] \u2212 1\nthat the rule of scaling factor in Heuristic IntSGD is  \u03b1  = n\u00b7 2 [max_exp] [, where \u201cnb\u201d represents the number]\nof bits to encode each coordinate and \u201cmax_exp\u201d is the rounded exponent of the largest absolute\nvalue in the communicated package. Although this scaling rule is straightforward and avoids over-\nflows, it cannot guarantee convergence, even with int32 as the communication data type. Indeed,\nthe Heuristic IntSGD may fail to match the testing performance of full-precision SGD according to\nFigure 1. On the contrary, our IntSGD can perfectly match the performance of full-precision SGD\non both image classification and language modeling tasks, which is in accordance with our theory\nthat IntSGD is provably convergent.\nResNet18 ResNet18 LSTM LSTM\n90 90 SGDHeuristic IntSGD(32-bit) 4 \u00d7 10 [2] SGDIntSGD(32-bit)\n10 [4] Heuristic IntSGD(8-bit) 3 \u00d7 10 [2] IntSGD(8-bit)\n80 80\n2 \u00d7 10 [2]\n10 [3]\n70 SGD 70 SGD\nHeuristic IntSGD(8-bit) IntSGD(8-bit)\n60 Heuristic IntSGD(32-bit) 60 IntSGD(32-bit) 10 [2] 10 [2]\n0 50 100 150 200 250 300 0 50 100 150 200 250 300 0 20 40 60 80 0 20 40 60 80\nEpochs Epochs Epochs Epochs\nTest Accuracy Test Accuracy Test Perplexity Test Perplexity\n**----- End of picture text -----**"
+    },
+    {
+      "index": 69,
+      "text": "Figure 1: Comparison among IntSGD (8-bit or 32-bit), Heuristic IntSGD (8-bit or 32-bit), and fullprecision SGD on the tasks of training ResNet18 and LSTM."
+    },
+    {
+      "index": 70,
+      "text": "## 5.3 INTSGD VS. OTHER BASELINES\n\nWe also compare our IntSGD algorithms to the other baselines including the all-gather-based SGD, QSGD, NatSGD and the all-reduce-based SGD, PowerSGD (EF) on the two tasks. See the test performance and time breakdown in Table 2 and Table 3."
+    },
+    {
+      "index": 71,
+      "text": "First, we can observe that the all-gather based SGD + compressors (e.g., QSGD, NatSGD) are indeed faster than the all-gather based full-precision SGD, which shows the benefit of lossy compressions. However, they are even much slower than the all-reduce-based full-precision SGD. Unfortunately, QSGD and NatSGD) does not support the more efficient all-reduce primitive. Similar observation can be seen in previous works (Vogels et al., 2019; Agarwal et al., 2021)."
+    },
+    {
+      "index": 72,
+      "text": "All of PowerSGD (EF), IntSGD (Random), and IntSGD (Determ.) are consistently faster than the allreduce-based full-precision SGD on both tasks. Compared to IntSGD (Determ.), IntSGD (Random) leads to slightly more computation overhead due to the randomized rounding. However, IntSGD"
+    },
+    {
+      "index": 73,
+      "text": "> 3ResNet18: https://github.com/kuangliu/pytorch-cifar; LSTM: https://github. com/pytorch/examples/tree/master/word_language_model"
+    },
+    {
+      "index": 74,
+      "text": "> 4https://github.com/epfml/powersgd\n\n> 5https://github.com/sands-lab/grace\n\n8\n\nPublished as a conference paper at ICLR 2022"
+    },
+    {
+      "index": 75,
+      "text": "Table 2: Test accuracy and time breakdown in one iteration (on average) of training ResNet18 on the CIFAR-10 dataset with 16 workers. All numbers of time are in millisecond (ms). In each column, the best one is highlighted in black and the second-best one is highlighted in gray."
+    },
+    {
+      "index": 76,
+      "text": "|Algorithm|Test Accuracy (%)|Computation\nOverhead|Communication|Total Time|\n|---|---|---|---|---|\n|SGD (All-gather)|**94.65**_\u00b1_**0.08**|-|261.29_\u00b1_0.98|338.76_\u00b1_0.76|\n|QSGD|93.69_\u00b1_0.03|129.25_\u00b1_1.58|138.16_\u00b1_1.29|320.49_\u00b1_2.11|\n|NatSGD|94.57_\u00b1_0.13|36.01_\u00b1_1.30|106.27_\u00b1_1.43|197.18_\u00b1_0.25|\n|SGD (All-reduce)|**94.67**_\u00b1_**0.17**|-|18.48_\u00b1_0.09|74.32_\u00b1_0.06|\n|PowerSGD (EF)|94.33_\u00b1_0.15|7.07_\u00b1_0.03|**5.03**_\u00b1_**0.07**|67.08_\u00b1_0.06|\n|IntSGD (Determ.)|94.43_\u00b1_0.12|**2.51**_\u00b1_**0.04**|6.92_\u00b1_0.07|**64.95**_\u00b1_**0.15**|\n|IntSGD (Random)|94.55_\u00b1_0.13|**3.20**_\u00b1_**0.02**|**6.21**_\u00b1_**0.13**|**65.22**_\u00b1_**0.08**|"
+    },
+    {
+      "index": 77,
+      "text": "(Determ.) fails to match the testing performance of SGD on the language modeling task. Compared to PowerSGD (EF), our IntSGD variants are better on the task of training ResNet18 but inferior on the task of training a 3-layer LSTM. Although IntSGD is not always better than PowerSGD (EF), there are several scenarios where IntSGD is preferrable as explained in in Section 1 and Section 3.4. In addition, as seen in Figure 3 of the Appendix C.3, PowerSGD (EF) converges much slower than SGD and IntSGD in the first 150 epochs of the ResNet training (which has non-smooth activations)."
+    },
+    {
+      "index": 78,
+      "text": "Table 3: Test loss and time breakdown in one iteration (on average) of training a 3-layer LSTM on the Wiki-text2 dataset with 16 workers. All numbers of time are in millisecond (ms). In each column, the best one is highlighted in black and the second-best one is highlighted in gray."
+    },
+    {
+      "index": 79,
+      "text": "|Algorithm|Test Loss|Computation\nOverhead|Communication|Total Time|\n|---|---|---|---|---|\n|SGD (All-gather)|**4.52**_\u00b1_**0.01**|-|733.07_\u00b1_1.04|796.23_\u00b1_1.03|\n|QSGD|4.63_\u00b1_0.01|43.67_\u00b1_0.11|307.63_\u00b1_1.16|399.10_\u00b1_1.25|\n|NatSGD|**4.52**_\u00b1_**0.01**|64.63_\u00b1_0.12|309.87_\u00b1_1.32|422.49_\u00b1_2.15|\n|SGD (All-reduce)|**4.54**_\u00b1_**0.03**|-|22.33_\u00b1_0.02|70.46_\u00b1_0.05|\n|PowerSGD (EF)|**4.52**_\u00b1_**0.01**|**4.22**_\u00b1_**0.01**|**2.10**_\u00b1_**0.01**|**54.89**_\u00b1_**0.02**|\n|IntSGD (Determ.)|4.70_\u00b1_0.02|**3.04**_\u00b1_**0.01**|**6.94**_\u00b1_**0.05**|**57.93**_\u00b1_**0.03**|\n|IntSGD (Random)|**4.54**_\u00b1_**0.01**|4.76_\u00b1_0.01|7.14_\u00b1_0.04|59.99_\u00b1_0.01|"
+    },
+    {
+      "index": 80,
+      "text": "## 6 CONCLUSION\n\nIn this paper, we propose the provably convergent and computationally cheap IntSGD algorithm for efficient distributed machine learning. The core component of IntSGD is the adaptively estimated scaling factor shared by all users, which makes it compatible with the widely used communication primitive all-reduce and the recently proposed in-network aggregation (INA) (Sapio et al., 2021). The convergence rates of IntSGD match that of SGD up to constant factors on a broad spectrum of problems. Experimental results on two deep learning tasks show its promising empirical performance. A limitation of our algorithm is that its compression ratio is bounded by 4, but we hope to address this in a future work."
+    },
+    {
+      "index": 81,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n**Reproducibility statement.** Regarding the theoretical results: We describe the mathematical setting and algorithms in Section 1, 2, and Appendix A; Assumptions and the main theoretical results are presented in Section 3; We provide the complete proof for those results in Appendix B. Regarding the experimental results: We report the number of repetitions, the computing infrastructure used, the range of hyper-parameters considered, and the evaluation metrics in Section 5 and Appendix C.1; We attach our code in the supplementary material."
+    },
+    {
+      "index": 82,
+      "text": "## REFERENCES\n\n- Saurabh Agarwal, Hongyi Wang, Shivaram Venkataraman, and Dimitris Papailiopoulos. On the utility of gradient compression in distributed training systems. _arXiv preprint arXiv:2103.00543_ , 2021."
+    },
+    {
+      "index": 83,
+      "text": "- Dan Alistarh, Demjan Grubic, Jerry Li, Ryota Tomioka, and Milan Vojnovic. QSGD: Communication-efficient SGD via gradient quantization and encoding. In _Advances in Neural Information Processing Systems_ , pp. 1709\u20131720, 2017."
+    },
+    {
+      "index": 84,
+      "text": "- Zeyuan Allen-Zhu and Elad Hazan. Variance reduction for faster non-convex optimization. In _The 33th International Conference on Machine Learning_ , pp. 699\u2013707, 2016."
+    },
+    {
+      "index": 85,
+      "text": "- Jeremy Bernstein, Yu-Xiang Wang, Kamyar Azizzadenesheli, and Animashree Anandkumar. SignSGD: Compressed optimisation for non-convex problems. In Jennifer Dy and Andreas Krause (eds.), _Proceedings of the 35th International Conference on Machine Learning_ , volume 80 of _Proceedings of Machine Learning Research_ , pp. 560\u2013569, Stockholmsm\u00e4ssan, Stockholm Sweden, 10\u201315 Jul 2018. PMLR."
+    },
+    {
+      "index": 86,
+      "text": "- Aleksandr Beznosikov, Samuel Horv\u00e1th, Peter Richt\u00e1rik, and Mher Safaryan. On biased compression for distributed learning. _arXiv:2002.12410_ , 2020."
+    },
+    {
+      "index": 87,
+      "text": "- Lisandro Dalc\u00edn, Rodrigo Paz, and Mario Storti. MPI for Python. _Journal of Parallel and Distributed Computing_ , 65(9):1108\u20131115, 2005."
+    },
+    {
+      "index": 88,
+      "text": "- Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidirectional transformers for language understanding. _arXiv preprint arXiv:1810.04805_ , 2018."
+    },
+    {
+      "index": 89,
+      "text": "- Robert M. Gower, Mark Schmidt, Francis Bach, and Peter Richt\u00e1rik. Variance-reduced methods for machine learning. _Proceedings of the IEEE_ , 108(11):1968\u20131983, 2020."
+    },
+    {
+      "index": 90,
+      "text": "- Robert Mansel Gower, Nicolas Loizou, Xun Qian, Alibek Sailanbayev, Egor Shulgin, and Peter Richt\u00e1rik. SGD: General analysis and improved rates. In Kamalika Chaudhuri and Ruslan Salakhutdinov (eds.), _Proceedings of the 36th International Conference on Machine Learning_ , volume 97 of _Proceedings of Machine Learning Research_ , pp. 5200\u20135209, Long Beach, California, USA, 09\u201315 Jun 2019. PMLR."
+    },
+    {
+      "index": 91,
+      "text": "- Priya Goyal, Piotr Doll\u00e1r, Ross Girshick, Pieter Noordhuis, Lukasz Wesolowski, Aapo Kyrola, Andrew Tulloch, Yangqing Jia, and Kaiming He. Accurate, large minibatch sgd: Training imagenet in 1 hour. _arXiv preprint arXiv:1706.02677_ , 2017."
+    },
+    {
+      "index": 92,
+      "text": "- Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In _Proceedings of the IEEE conference on computer vision and pattern recognition_ , pp. 770\u2013778, 2016."
+    },
+    {
+      "index": 93,
+      "text": "- Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. _arXiv preprint arXiv:1503.02531_ , 2015."
+    },
+    {
+      "index": 94,
+      "text": "- Samuel Horv\u00e1th, Chen-Yu Ho, L\u2019udov\u00edt Horv\u00e1th, Atal Narayan Sahu, Marco Canini, and Peter Richt\u00e1rik. Natural compression for distributed deep learning. _arXiv preprint arXiv:1905.10988_ , 2019."
+    },
+    {
+      "index": 95,
+      "text": "- Gao Huang, Zhuang Liu, Laurens Van Der Maaten, and Kilian Q. Weinberger. Densely connected convolutional networks. In _Proceedings of the IEEE conference on computer vision and pattern recognition_ , pp. 4700\u20134708, 2017.\n\n10"
+    },
+    {
+      "index": 96,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper presents a solid contribution to the field of distributed SGD by introducing a provably convergent 'floatless' integer compression scheme. The methodology addresses a key practical gap in the SwitchML framework (lack of convergence guarantees and the need for profiling). However, there are minor technical ambiguities regarding the dimensional scaling in the adaptive rules and the specific handling of the 'divide by zero' safeguard in the theoretical proofs.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Ambiguity in 'd' within the scaling factor definition",
+          "quote": "\\alpha_k = \\frac{\\sqrt{d}}{\\sqrt{2 n r_k^2 / \\eta_k^2 + \\epsilon^2}}",
+          "explanation": "In Algorithm 1 (line 7), the authors define the adaptive scaling factor alpha. I initially wondered if 'd' (dimension) was inside or outside the radical, as the typography is slightly compressed. While standard scaling for integer rounding often involves the dimension to bound the L2 norm, the explicit derivation in Section 4.2 suggests alpha scales as sqrt(d)/norm. If 'd' is meant to be in the numerator of the scaling factor, it implies that the magnitude of the scaled gradient gi grows with the dimension, which might lead to 32-bit overflows for very large models. Contextually, it works for the proof, but the 'reducibility' or 'overflow' limit for the switch hardware mentioned in Section 4.2 remains a tight boundary that is not fully explored for varying d.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Subscript inconsistency in moving average definition",
+          "quote": "r_k = \\beta r_{k-1} + (1 - \\beta) \\|x^{(k)} - x^{(k-1)} \\|_2",
+          "explanation": "In Algorithm 1, line 6 defines the moving average r_k using the distance between x^k and x^{k-1}. Looking at the loop structure, at iteration k=1, this requires x^0 and x^1. Line 2 initializes x^1 using a full-precision average. However, in Theorem 1 and 2, the convergence results depend on alpha_k satisfying Assumption 1. Assumption 1 requires a bound on the sum of 1/alpha_k^2. If the initial gradient is very small or zero, r_k (and thus alpha_k) could be dominated by the epsilon safeguard. The proofs in Appendix B (not shown but referenced) usually require alpha_k to be available *before* the gradient is computed, but r_k in the pseudo-code uses the current update which is ostensibly what we are trying to compute. There is a slight circularity: x^k - x^{k-1} depends on g^{k-1}, which depended on alpha_{k-1}. This is mostly resolved by the 'historical information' claim, but the first iteration's alpha computation is slightly underspecified regarding whether it uses the update just performed or the one prior.",
+          "comment_type": "logical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Potential missing n-factor in Section 4.2 complexity",
+          "quote": "\\|\\alpha_k g_i^{(k)}\\|_\\infty = \\sqrt{\\frac{2 d}{n}} \\frac{\\|g_i^{(k)}\\|}{\\|g_i^{(k)}\\|_\\infty} \\le \\sqrt{\\frac{2 d}{n}}",
+          "explanation": "In Section 4.2, the authors estimate the number of bits needed. They assume ||x^k - x^{k-1}|| approx ||eta g_i^k||. My derivation for alpha_k (with beta=0, epsilon=0) yields alpha_k = sqrt(d) / (sqrt(2n) * ||eta g_i^k||). Then alpha_k * g_i^k = (sqrt(d) * g_i^k) / (sqrt(2n) * ||eta g_i^k||). The term \u03b7 cancels out. However, the resulting bound shown in the text is sqrt(2d/n). If n is large, the number of bits *decreases* as the number of workers increases. While this is mathematically consistent with their alpha definition, it seems counter-intuitive that adding more workers allows for coarser per-worker quantization at the same convergence rate. I checked the variance bound (Lemma 1), and it shows variance scales as 1/alpha^2. Summing over n workers and dividing by n^2 gives a 1/(n * alpha^2) term. This justifies why alpha can be smaller (coarser) when n is larger, but it's a non-trivial point that readers might mistake for a typo.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.009,
+      "prompt_tokens": 11364,
+      "completion_tokens": 1098
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper presents a novel and well-motivated approach to stochastic gradient compression for distributed systems, effectively bridging the gap between theoretical convergence guarantees and practical, hardware-friendly integer-based aggregation. The authors propose an adaptive scaling mechanism that allows for robust gradient communication without requiring the expensive profiling or potentially unconvergent heuristics seen in prior work (specifically SwitchML). While the theoretical derivation is logically consistent, there is a notable ambiguity in the definition of the 'randomized integer rounding' operator, and the mapping between the theoretical assumptions and the implementable algorithms requires careful parsing. Overall, the paper is technically sound, contributes significantly to the field of communication-efficient distributed training, and is supported by thorough empirical validation.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Ambiguity in expectation derivation for rounding operator",
+          "quote": "Note that E [ Int ( t )] = ( t \u2212 [ t ])([ t ] + 1) + ([ t ] + 1 \u2212 t )[ t ] = t.",
+          "explanation": "The authors define the rounding operator using the floor function as [t]. The expectation formula given is valid for randomized rounding (specifically, rounding t to either floor(t) or floor(t)+1 with probabilities p=t-floor(t) and 1-p=1-(t-floor(t))). However, the definition of 'Int(t)' in the text is presented as simply the floor operator (the traditional definition of [t]). After re-reading, it is clear from the context that the authors intend for 'Int' to be a *randomized* rounding mechanism (stochastic rounding), but the notation [t] is used interchangeably with both the mathematical floor constant and the randomized rounding operator. While the final identity E[Int(t)] = t is correct under the randomized interpretation, the notation [t] for rounding is non-standard and could confuse a reader expecting a deterministic floor.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in Assumption 3 bounds",
+          "quote": "E k [ gi[k][ ] = \u2207fi( x[k] ) ] and E k [ \u2225 gi[k] \u2212 \u2207fi( x[k] ) \u22252 ] \u2264 \u03c3\u22172 / n",
+          "explanation": "In Section 3.2, the authors define Assumption 3 for the variance of the gradients, where the RHS of the second inequality is \u03c3\u2217^2 / n. In Proposition 1, they provide a justification for this assumption referencing Gower et al. (2019). Checking the standard 'expected smoothness' assumptions in the cited literature, the scaling factors involving 1/n are often dependent on whether the variance is defined as an average across workers or a sum. Given the algorithm description in Section 2.2, which involves dividing by n, the scaling is likely correct, but the presentation of \u03c3\u2217^2 / n is slightly underspecified regarding whether \u03c3\u2217^2 is a global constant or worker-dependent constant.",
+          "comment_type": "logical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0039,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 11364,
+      "completion_tokens": 683
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces a novel adaptive integer compression scheme for distributed SGD that supports efficient all-reduce and in-network aggregation. The theoretical framework is well-structured, covering convex, non-convex, smooth, and non-smooth regimes, and the empirical results are promising. However, there is a notable numerical inconsistency in the compression efficiency analysis (Section 4.2) where the derived scaling bound and the plug-in example contradict each other, undermining the bit-complexity argument. Additionally, the paper experiments with deterministic rounding while its theory strictly relies on unbiased randomized rounding, a gap that deserves brief discussion. Finally, a strong literature claim regarding error-feedback SGD for non-smooth multi-worker settings may require softening or updated citations. Overall, the work is conceptually sound and practically relevant, but these localized issues should be clarified before publication.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Numerical inconsistency in bit-complexity derivation (Section 4.2)",
+          "quote": "Consider for simplicity the case where _\u2225x[k] \u2212 x[k][\u2212]_[1] _\u2225\u2248\u2225\u03b7kgi[k][\u2225]_[with some] _[ i]_[.][The adaptive scheme] with _\u03b2_ = 0, _\u03b5_ = 0 gives _\u03b1k_ = ~~_\u221a_~~ 2 _n\u2225\u03b7xk[k]_ ~~_\u221a_~~ _\u2212dx[k][\u2212]_[1] _\u2225[\u2248]_ ~~_\u221a_~~ 2 _n\u2225\u03b7xk[k]_ ~~_\u221a_~~[+1] _d\u2212x[k] \u2225_[=] ~~_\u221a_~~ 2 _n_ ~~_\u221a_~~ _\u2225dgi[k][\u2225]_[, so that] _[ \u2225][\u03b1][k][g] i[k][\u2225][\u221e][=] ~~_\u221a\u221a_~~ 2 _dn \u2225\u2225ggi[k] i[k][\u2225][\u2225][\u221e][\u2264]_ ~~_\u221a\u221a_~~ 2 _dn_[.][Since we only use signed integers, we need at most][ 1 + log][2] ~~_\u221a\u221a_~~ 2 _dn_[bits for each] coordinate. For instance, for _d \u223c_ 10[10] and _n \u223c_ 100, the upper bound is 1 + log2( _\u221a_ 5 _\u00b7_ 10[7] ) _<_ 14 bits.",
+          "explanation": "The authors derive a coordinate-wise bound of $\\sqrt{2n/d}$ and claim the bit complexity is $1 + \\log_2 \\sqrt{2n/d}$. However, plugging in $d \\sim 10^{10}$ and $n \\sim 100$ into $\\sqrt{2n/d}$ yields approximately $\\sqrt{2 \\times 10^{-8}} \\approx 1.4 \\times 10^{-4}$, which would result in a negative bit count. Yet, the text immediately claims the value evaluates to $\\sqrt{5 \\cdot 10^7} \\approx 7071$, leading to $<14$ bits. These two statements are mathematically incompatible. It is unclear whether the formula should be $\\sqrt{2nd}$, whether $d$ was meant to be $10^6$, or if an intermediate normalization was omitted. As this section forms the paper's justification for low-bit communication efficiency, the mismatch significantly weakens the claim and needs correction.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Deterministic rounding used in experiments despite unbiased theory (Section 5.1)",
+          "quote": "Apart from the IntSGD with randomized integer rounding (IntSGD (Random)) analyzed in our theory, we also consider the variant of IntSGD with deterministic integer rounding (IntSGD (Determ.)) which can use the PyTorch built-in function torch.round.",
+          "explanation": "The convergence theory (Lemma 1, Theorems 1-3) explicitly relies on the unbiasedness of the randomized rounding operator $\\text{Int}(t) = [t]\\cdot(t-[t]) + ([t]+1)\\cdot([t]+1-t)$. Deterministic rounding (e.g., $\\text{round}(\\cdot)$) is biased and introduces a systematic error that does not average out, potentially affecting convergence rates or requiring different assumptions. The authors report results for IntSGD (Determ.) without discussing how the bias interacts with their theoretical guarantees or why it is empirically acceptable. A brief remark on how the bias is handled or mitigated (e.g., through the adaptive scaling or error-feedback-like implicit behavior) would bridge the gap between theory and practice.",
+          "comment_type": "logical",
+          "paragraph_index": 66,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Questionable literature claim regarding EF-SGD non-smooth guarantees (Section 3.4)",
+          "quote": "To the best of our knowledge, there is no convergence guarantee of EF-SGD for the non-smooth function when there are multiple workers.",
+          "explanation": "The authors state that no convergence guarantee exists for error-feedback SGD on non-smooth functions with multiple workers. While early EF-SGD analyses did focus on smooth or single-worker settings, several subsequent works (e.g., Stich & Karimireddy 2020, or follow-ups on top-k/sign SGD with EF in distributed non-smooth contexts) have addressed multi-worker non-smooth convergence. This claim may be slightly outdated or too absolute. I recommend softening the phrasing (e.g., 'to the best of our knowledge, guarantees are limited to...') or citing the specific recent works that touch upon this setting, to accurately position the theoretical contribution.",
+          "comment_type": "logical",
+          "paragraph_index": 57,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0349,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 23134,
+      "completion_tokens": 21246
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes IntSGD, an adaptive integer compression method for distributed SGD, and claims provably convergent rates matching SGD. However, there is a critical mathematical error in Lemma 1 (variance bound) that undermines the entire theoretical analysis. The variance of the quantization operator is inversely proportional to the scaling factor, not proportional to its squared norm as claimed. This flaw invalidates Assumption 1 and all subsequent rate guarantees. Additionally, there is a minor notation inconsistency in Algorithm 1 regarding the definition of Q. The experimental comparisons are interesting but do not compensate for the theoretical gap.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Erroneous variance bound in Lemma 1",
+          "quote": "E[\u2225Q(x) \u2212 x\u2225^2] \u2264 \u2225\u03b1\u2225^2.",
+          "explanation": "The lemma claims that the variance of the adaptive integer rounding operator Q (defined as Q(x) = (1/\u03b1) \u25e6 Int(\u03b1 \u25e6 x)) is bounded by \u2225\u03b1\u2225^2. However, for a scalar coordinate, the rounding error is at most 1 in the integer domain, so after division by \u03b1_i the per-coordinate variance is at most 1/(4\u03b1_i^2). Summing over coordinates gives a bound proportional to \u22251/\u03b1\u2225^2, not \u2225\u03b1\u2225^2. A counterexample: d=1, x=0.5, \u03b1=0.1 yields variance \u22484.75, while \u2225\u03b1\u2225^2=0.01, so the claimed inequality fails. This error propagates into Assumption 1 and the entire convergence analysis, making the theoretical results unsupported.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Inconsistent definition of Q in Algorithm 1",
+          "quote": "Scale and round the local gradient Q(g_i^k) = Int(\u03b1_k \u25e6 g_i^k)",
+          "explanation": "In Section 2, the operator Q is defined as Q(x) = (1/\u03b1) \u25e6 Int(\u03b1 \u25e6 x), which includes division by the scaling factor. However, in Algorithm 1, line 8, Q(g_i^k) is defined as just Int(\u03b1_k \u25e6 g_i^k) (no division). The division by \u03b1_k is performed later in line 12. While the overall computation is equivalent, this inconsistency could confuse readers about what Q denotes. The authors should either use a different symbol for the integer rounding step or adjust the definition to match the algorithm.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0033,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10846,
+      "completion_tokens": 6730
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper introduces IntSGD, an adaptive integer compression method for distributed SGD that claims to be provably convergent with rates matching full-precision SGD. The core idea of using an adaptive scaling factor to achieve convergence without error-feedback is theoretically interesting. However, the review identifies critical issues that undermine the theoretical rigor. First, the convergence rate claimed for the non-convex case ($O(k^{-1/2})$) is inconsistent with the vanilla SGD algorithmic setup described in the paper, which lacks the necessary acceleration mechanisms (e.g., momentum). Second, the presentation contains a direct contradiction between the textual definition of the estimator and the mathematical formula provided in the algorithm steps, indicating a significant notation or algebraic error.",
+      "comments": [],
+      "cost_usd": 0.0098,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 22116,
+      "completion_tokens": 22547
+    }
+  }
+}

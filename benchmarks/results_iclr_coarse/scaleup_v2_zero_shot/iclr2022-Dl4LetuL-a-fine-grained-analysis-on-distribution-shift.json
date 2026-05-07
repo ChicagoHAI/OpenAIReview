@@ -1,0 +1,701 @@
+{
+  "slug": "iclr2022-Dl4LetuL-a-fine-grained-analysis-on-distribution-shift",
+  "title": "A FINE-GRAINED ANALYSIS ON DISTRIBUTION SHIFT [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## A FINE-GRAINED ANALYSIS ON DISTRIBUTION SHIFT\n\n## **Olivia Wiles Sven Gowal Florian Stimberg Ira Ktena Krishnamurthy (Dj) Dvijotham Taylan Cemgil** DeepMind, London, UK"
+    },
+    {
+      "index": 1,
+      "text": "_{_ oawiles,sgowal,stimberg,sylvestre,iraktena,taylancemgil _}_ @deepmind.com\n\ndvij@google.com\n\n## ABSTRACT"
+    },
+    {
+      "index": 2,
+      "text": "Robustness to distribution shifts is critical for deploying machine learning models in the real world. Despite this necessity, there has been little work in defining the underlying mechanisms that cause these shifts and evaluating the robustness of algorithms across multiple, different distribution shifts. To this end, we introduce a framework that enables fine-grained analysis of various distribution shifts. We provide a holistic analysis of current state-of-the-art methods by evaluating 19 distinct methods grouped into five categories across both synthetic and real-world datasets. Overall, we train more than 85K models. Our experimental framework can be easily extended to include new methods, shifts, and datasets. We find, unlike previous work (Gulrajani & Lopez-Paz, 2021), that progress has been made over a standard ERM baseline; in particular, pretraining and augmentations (learned or heuristic) offer large gains in many cases. However, the best methods are not consistent over different datasets and shifts. Code is available at github.com/deepmind/distribution_shift_framework."
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nIf machine learning models are to be ubiquitous in critical applications such as driverless cars (Janai et al., 2020), medical imaging (Erickson et al., 2017), and science (Jumper et al., 2021), it is pivotal to build models that are robust to distribution shifts. Otherwise, models may fail surprisingly in ways that derail trust in the system. For example, Koh et al. (2020); Perone et al. (2019); AlBadawy et al. (2018); Heaven (2020); Castro et al. (2020) find that a model trained on one set of hospitals may not generalise to the imaging conditions of another; Alcorn et al. (2019); Dai & Van Gool (2018) find that a model for driverless cars may not generalise to new lighting conditions or object poses; and Buolamwini & Gebru (2018) find that a model may perform worse on subsets of the distribution, such as different ethnicities, if the training set has an imbalanced distribution. Thus, it is important to understand when we expect a model to generalise and when we do not. This would allow a practitioner to have confidence in the system (e.g. if a model is demonstrated to be robust to the imaging conditions of different hospitals, then it can be deployed in new hospitals with confidence)."
+    },
+    {
+      "index": 4,
+      "text": "While domain generalization is a well studied area, Gulrajani & Lopez-Paz (2021); Schott et al. (2021) have cast doubt on the efficacy of existing methods, raising the question: _has any progress been made in domain generalization over a standard expectation risk minimization (ERM) algorithm?_ Despite these discouraging results, there are many examples that machine learning models _do_ generalise across datasets with different distributions. For example, CLIP (Radford et al., 2021), with well engineered prompts, generalizes to many standard image datasets. Taori et al. (2020) found that models trained on one image dataset generalise to another, albeit with some drop in performance; in particular, higher performing models generalise better. However, there is little understanding and experimentation on _when_ and _why_ models generalise, especially in realistic settings inspired by real-world applications. This begs the following question:"
+    },
+    {
+      "index": 5,
+      "text": "## _robustness of different methods?_\n\nTo answer the above question, we present a grounded understanding of robustness to distribution shifts. We draw inspiration from disentanglement literature (see section 6), which aims to separate images into an independent set of factors of variation (or attributes). In brief, we assume the data"
+    },
+    {
+      "index": 6,
+      "text": "1\n\nPublished as a conference paper at ICLR 2022\n\nis composed of some (possibly extremely large) set of attributes. We expect models, having seen some distribution of values for an attribute, to be able to learn invariance to that attribute and so to generalise to unseen examples of the attribute and different distributions over that attribute. Using a simple example to clarify the setup, assume our data has two attributes (shape and color) among others. Given data with some distribution over the set of possible colors (e.g. red and blue) and the task of predicting shape (e.g. circle or square), we want our model to generalise to unseen colors (e.g. green) or a different distribution of colors (e.g. there are very few red circles in the training set, but the samples at evaluation are uniformly sampled from the set of possible colors and shapes)."
+    },
+    {
+      "index": 7,
+      "text": "Using this framework, we evaluate models across three distribution shifts: _spurious correlation_ , _lowdata drift_ , and _unseen data shift_ (illustrated in figure 1) and two additional conditions (label noise and dataset size). We choose these settings as they arise in the real world and harm generalization performance. Moreover, in our framework, these distribution shifts are the fundamental blocks of building more complex distribution shifts. We additionally evaluate models when there is varying amounts of label noise (as inspired by noise arising from human raters) and when the total size of the train set varies (to understand how models perform as the number of training examples changes). The unique ability of our framework to evaluate fine-grained performance of models across different distribution shifts and under different conditions is of critical importance to analyze methods under a variety of real-world settings. This work makes the following contributions:"
+    },
+    {
+      "index": 8,
+      "text": "- We propose a framework to when and why we expect methods to generalise. We use this framework to define three, real world inspired distribution shifts. We then use this framework to create a systematic evaluation setup across real and synthetic datasets for different distribution shifts. Our evaluation framework is easily extendable to new distribution shifts, datasets, or methods to be evaluated."
+    },
+    {
+      "index": 9,
+      "text": "- We evaluate and compare 19 different methods (training more than 85K models) in these settings. These methods span the following 5 common approaches: architecture choice, data augmentation, domain generalization, adaptive algorithms, and representation learning. This allows for a direct comparison across different areas in machine learning."
+    },
+    {
+      "index": 10,
+      "text": "- tive and that domain generalization algorithms do work for certain datasets and distribution shifts. However, there is no easy way to select the best approach a-priori and results are inconsistent over different datasets and attributes, demonstrating there is still much work to be done to improve robustness in real-world settings."
+    },
+    {
+      "index": 11,
+      "text": "- 2 FRAMEWORK TO EVALUATE GENERALIZATION\n\nIn this section we introduce our robustness framework for characterizing distribution shifts in a principled manner. We then relate three common, real world inspired distribution shifts."
+    },
+    {
+      "index": 12,
+      "text": "## 2.1 LATENT FACTORISATION\n\nWe assume a joint distribution _p_ of inputs _**x**_ and corresponding attributes _y_[1] _, y_[2] _, . . . , y[K]_ (denoted as _y_[1:] _[K]_ ) with _y[k] 2_ A _[k]_ where A _[k]_ is a finite set. One of these _K_ attributes is a label of interest, denoted as _y[l]_ (in a mammogram, the label could be cancer/benign and a nuisance attribute _y[i]_ with _i 6_ = _l_ could be the identity of the hospital where the mammogram was taken). Our aim is to build a classifier _f_ that minimizes the risk _R_ . However, in real-world applications, we only have access to a finite set of inputs and attributes of size _n_ . Hence, we minimize the empirical risk _R_[\u02c6] instead:"
+    },
+    {
+      "index": 13,
+      "text": "where _L_ is a suitable loss function. Here, all nuisance attributes _y[k]_ with _k_ = _l_ are ignored and we work with samples obtained from the marginal _p_ ( _y[l] ,_ _**x**_ ). In practice, however, due to selection bias or other confounding factors in data collection, we are only able to train and test our models on data collected from two related but distinct distributions: _p_ train _, p_ test. For example, _p_ train and _p_ test may be concentrated on different subsets of hospitals and this discrepancy may result in a distribution shift; for example, hospitals may use different equipment, leading to different staining on their cell"
+    },
+    {
+      "index": 14,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a)  p train : SC. (b)  p train : LDD. (c)  p train : UDS. (d)  p test : y [l] , y [a] are IID.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 15,
+      "text": "Figure 1: Visualization of the joint distribution for the different shifts we consider on the DSPRITES example. The lighter the color, the more likely the given sample. figure 1a-1c visualise different shifts over _p_ train( _y[l] , y[a]_ ) discussed in 2.2: _spurious correlation_ (SC), _low-data drift_ (LDD), and _unseen data shift_ (UDS). figure 1d visualises the test set, where the attributes are uniformly distributed."
+    },
+    {
+      "index": 16,
+      "text": "images. While we train _f_ on data from _p_ train by minimizing _R_[\u02c6] ( _f_ ; _p_ train), we aim to learn a model that generalises well to data from _p_ test; that is, it should achieve a small _R_[\u02c6] ( _f_ ; _p_ test)."
+    },
+    {
+      "index": 17,
+      "text": "While generalization in the above sense is desirable for machine learning models, it is not clear _why_ a model _f_ trained on data from _p_ train _should_ generalise to _p_ test. It is worth noting that while _p_ train and _p_ test can be different, they are both related to the true distribution _p_ . We take inspiration from disentanglement literature to express this relationship. In particular, that we can view data as being decomposed into an underlying set of factors of variations. We formalise various distribution shifts using a latent variable model for the true data generation process:"
+    },
+    {
+      "index": 18,
+      "text": "where _z_ denotes latent factors. By a simple refactorization, we can write\n\nThus, the true distribution can be expressed as the product of the marginal distribution of the attributes with a conditional generative model. We assume that distribution shifts arise when a new marginal distribution for the attributes is chosen, such as _p_ ( _y_[1:] _[K]_ ) = _p_ train( _y_[1:] _[K]_ ) = _p_ test( _y_[1:] _[K]_ ), but otherwise the conditional generative model is shared across all distributions, i.e., we have _p_ test( _y_[1:] _[K] ,_ _**x**_ ) = _p_ test( _y_[1:] _[K]_ ) R _p_ ( _**x** |z_ ) _p_ ( _z|y_[1:] _[K]_ ) _dz_ , and similarly for _p_ train."
+    },
+    {
+      "index": 19,
+      "text": "To provide more context, as a running example, we use the color DSPRITES dataset (Matthey et al., 2017); where in our notation _y_[1] defines the color with A[1] = _{_ red _,_ green _,_ blue _}_ , and _y_[2] defines the shape with A[2] = _{_ ellipse _,_ heart _,_ square _}_ . We can imagine that a data collector (intentionally or implicitly) selects some marginal distribution over attributes _p_ train( _y_[1:] _[K]_ ) when training; for example they select mostly blue ellipses and red hearts. This induces a new joint distribution over latent factors and attributes: _p_ train( _z, y_[1:] _[K]_ ) = _p_ ( _z|y_[1:] _[K]_ ) _p_ train( _y_[1:] _[K]_ ). Consequently, during training, we get images with a different joint distribution _p_ train( _**x** , y_[1:] _[K]_ ) = R _p_ ( _**x** |z_ ) _p_ train( _z, y_[1:] _[K]_ ). This similarly applies when collecting data for the test distribution. We focus on common cases of distribution shifts visualized in figure 1; we discuss these in more detail in section 2.2."
+    },
+    {
+      "index": 20,
+      "text": "The goal of enforcing robustness to distribution shifts is to maintain performance when the data generating distribution _p_ train changes. In other words, we would like to minimize risk on _p, p_ test given _only_ access to _p_ train. We can achieve robustness in the following ways:"
+    },
+    {
+      "index": 21,
+      "text": "- **Weighted resampling.** We can resample the training set using importance weights _W_ ( _y_[1:] _[K]_ ) = _p_ ( _y_[1:] _[K]_ ) _/p_ train( _y_[1:] _[K]_ ). This means that given the attributes, the _i_ -th data point ( _yi_[1:] _[K] ,_ _**x** i_ ) in the training set is used with probability _W_ ( _yi_[1:] _[K]_ ) _/_[P] _[n] i[0]_ =1 _[W]_[(] _[y] i_[1:] _[0][K]_ ) rather than 1 _/n_ . We refer to this empirical distribution as _p_ reweight. This procedure requires access to the true distribution of attributes _p_ ( _y_[1:] _[K]_ ), so to avoid bias and improve fairness, it is often assumed that all combinations of attributes happen uniformly at random."
+    },
+    {
+      "index": 22,
+      "text": "- **Data Augmentation** : Alternatively, we can learn a generative model _p_ \u02c6( _**x** |y_[1:] _[K]_ ) from the training data that aims to approximate R _p_ ( _**x** |z_ ) _p_ ( _z|y_[1:] _[K]_ ) _dz_ , as the true conditional"
+    },
+    {
+      "index": 23,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nDSPRITES. MPI3D. SHAPES3D.\nSMALLNORB. CAMELYON17. IWILDCAM.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 24,
+      "text": "Figure 2: **Dataset samples** . Each row an attribute (e.g. color for DSPRITES, MPI3D, SHAPES3D; azimuth for SMALLNORB; hospital for CAMELYON17; and location for IWILDCAM)."
+    },
+    {
+      "index": 25,
+      "text": "generator is by our assumption the same over all (e.g. train and test) distributions. If such a conditional generative model can be learned, we can sample new synthetic data at training time (e.g. according to the true distribution _p_ ( _y_[1:] _[K]_ )) to correct for the distribution shift. More precisely, we can generate data from the augmented distribution \u02c6 _p_ aug = (1 _\u2212 \u21b5_ ) _p_ reweight + _\u21b5p_ ( _**x** |y_[1:] _[K]_ ) _p_ ( _y_[1:] _[K]_ ) and train a supervised classifier on this augmented dataset. Here, _\u21b5 2_ [0 _,_ 1] is the percentage of synthetic data used for training."
+    },
+    {
+      "index": 26,
+      "text": "- **Representation Learning** : An alternative factorization of a data generating distribution (e.g. train) is _p_ train( _y_[1:] _[K] ,_ _**x**_ ) = R _p_ ( _z|_ _**x**_ ) _p_ train( _y_[1:] _[K] |z_ ) _dz_ . We can learn an unsupervised representation that approximates _p_ ( _z|_ _**x**_ ) using the training data only, and attach a classifier to learn a task specific head that approximates _p_ train( _y[l] |z_ ). Again, by our assumption _p_ ( _z|_ _**x**_ ) _/ p_ ( _**x** |z_ ) _p_ ( _z_ ). Given a good guess of the true prior, the learned representation would not be impacted by the specific attribute distribution and so generalise to _p_ test _, p_ ."
+    },
+    {
+      "index": 27,
+      "text": "## 2.2 DISTRIBUTION SHIFTS\n\nWhile distribution shifts can happen in a continuum, we consider three types of shifts, inspired by real-world challenges. We discuss these shifts and two additional, real-world inspired conditions."
+    },
+    {
+      "index": 28,
+      "text": "**Test distribution** _p_ test **.** We assume that the attributes are distributed uniformly: _p_ test( _y_[1:] _[K]_ ) = 1 _/_[Q] _i[|]_[A] _[i][|]_[.][This is desirable, as all attributes are represented and a-priori independent.]"
+    },
+    {
+      "index": 29,
+      "text": "**Shift 1: Spurious correlation \u2013 Attributes are correlated under** _p_ train **but not** _p_ test **.** Spurious correlation arises in the wild for a number of reasons including capture bias, environmental factors, and geographical bias (Beery et al., 2018; Torralba & Efros, 2011). These spurious correlations lead to surprising results and poor generalization. Therefore, it is important to be able to build models that are robust to such challenges. In our framework, spurious correlation arises when two attributes _y[a]_ , _y[b]_ are correlated at training time, but this is not true of _p_ test, for which attributes are independent: _p_ train( _y[a] |y_[1] _. . . y[b] . . . y[K]_ ) _> p_ train( _y[a] |y_[1] _. . . y[b][\u2212]_[1] _, y[b]_[+1] _. . . y[K]_ ). This is especially problematic when one attribute _y[b]_ is _y[l]_ , the label. Using the running DSPRITES example, shape and color may be correlated and the model may find it easier to predict color. If color is the label, the model will generalise well. However, if the aim is to predict shape, the model\u2019s reliance on color will lead to poor generalization."
+    },
+    {
+      "index": 30,
+      "text": "**Shift 2: Low-data drift \u2013 Attribute values are unevenly distributed under** _p_ train **but not under** _p_ test **.** Low-data drift arises in the wild (e.g. in (Buolamwini & Gebru, 2018) for different ethnicities) when data has not been collected uniformly across different attributes. When deploying models in the wild, it is important to be able to reason and have confidence that the final predictions will"
+    },
+    {
+      "index": 31,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\nFigure 3: **Spurious Correlation.** We use all correlated samples and vary the number of samples _N_ from the true, uncorrelated distribution. We plot the percentage change over the baseline ResNet, averaged over all seeds and datasets. Blue is better, red worse. CYCLEGAN performs consistently best while ImageNet augmentation and pretraining on ImageNet also consistently boosts performance."
+    },
+    {
+      "index": 32,
+      "text": "Figure 4: **Low-data drift.** We use all samples from the high data regions and vary the number of samples _N_ from the low-data region. We plot the percentage change over the baseline ResNet, averaged over all seeds and datasets. Blue is better, red worse. Pretraining on ImageNet performs consistently best, while CYCLEGAN, most domain generalization methods and ImageNet augmentation also provide some boost in performance."
+    },
+    {
+      "index": 33,
+      "text": "be consistent and fair across different attributes. In the framework above, low-data shifts arise when certain values in the set A _[a]_ of an attribute _y[a]_ are sampled with a much smaller probability than in _p_ test: _p_ train( _y[a]_ = _v_ ) _\u2327 p_ test( _y[a]_ = _v_ ). Using the DSPRITES example, only a handful of red shapes may be seen at training time, yet in _p_ test all colors are sampled with equal probability."
+    },
+    {
+      "index": 34,
+      "text": "**Shift 3: Unseen data shift \u2013 Some attribute values are unseen under** _p_ train **but are under** _p_ test **.** This is a special case of _shift 2: low-data drift_ which we make explicit due to its important real world applications. Unseen data shift arises when a model, trained in one setting is expected to work in another, disjoint setting. For example: a model trained to classify animals on images at certain times of day should generalise to other times of day. In our framework, _unseen data shift_ arises when some values in the set A _[a]_ of an attribute _y[a]_ are unseen in _p_ train but are in _p_ test:"
+    },
+    {
+      "index": 35,
+      "text": "This is a stronger constraint than in standard out-of-distribution generalization (see section 6), as multiple values for A _[a]_ must be seen under _p_ train, which allows the model to learn invariance to _y[a]_ . In the DSPRITES example, the color red may be unseen at train time but all colors are in _p_ test."
+    },
+    {
+      "index": 36,
+      "text": "**Discussion.** We choose these sets of shifts as they are the building blocks of more complex distribution shifts. Consider the simplest case of two attributes: the label and a nuisance attribute. If we consider the marginal distribution of the label, it decomposes into two terms: the conditional probability and the probability of a given attribute value: _p_ ( _y[l]_ ) =[P] _y[a][ p]_[(] _[y][l][|][y][a]_[)] _[p]_[(] _[y][a]_[)][.][The][three] shifts we consider control these terms independently: _unseen data shift_ and _low-data drift_ control _p_ ( _y[a]_ ) whereas _spurious correlation_ controls _p_ ( _y[l] |y[a]_ ). The composition of these terms describes any distribution shift for these two variables."
+    },
+    {
+      "index": 37,
+      "text": "## 2.3 CONDITIONS\n\n**Label noise.** We investigate the change in performance due to noisy information. This can arise when there are disagreements and errors among the labellers (e.g. in medical imaging (Castro et al., \u02c6 2020)). We model this as an observed attribute (e.g. the label) being corrupted by noise. _y[i] \u21e0 c_ ( _y[i]_ ), where _y[i] 2_ A _[i]_ is the true label, _y_ \u02c6 _[i] 2_ A _[i]_ the corrupted, observed one, and _c_ the corrupting function."
+    },
+    {
+      "index": 38,
+      "text": "**Dataset size.** We investigate how performance changes with the size of the training dataset. This setting arises when it is unrealistic or expensive to collect additional data (e.g. in medical imaging or in camera trap imagery). Therefore, it is important to understand how performance degrades given fewer total samples. We do this by limiting the total number of samples from _p_ train."
+    },
+    {
+      "index": 39,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\n## 3 MODELS EVALUATED\n\nWe evaluate 19 algorithms to cover a broad range of approaches that can be used to improve model robustness to distribution shifts and demonstrate how they relate to the three ways to achieve robustness, outlined in section 2. We believe this is the first paper to comprehensively evaluate a large set of different approaches in a variety of settings. These algorithms cover the following areas: architecture choice, data augmentation, domain adaptation, adaptive approaches and representation learning. Further discussion on how these models relate to our robustness framework is in appendix E."
+    },
+    {
+      "index": 40,
+      "text": "**Architecture choice.** We evaluate the following standard vision models: ResNet18, ResNet50, ResNet101 (He et al., 2016), ViT (Dosovitskiy et al., 2021), and an MLP (Vapnik, 1992). We use weighted resampling _p_ reweight to oversample from the parts of the distribution that have a lower probability of being sampled from under _p_ train. Performance depends on how robust the learned representation is to distribution shift."
+    },
+    {
+      "index": 41,
+      "text": "**Heuristic data augmentation.** These approaches attempt to approximate the true underlying generative model _p_ ( _**x** |y_[1:] _[K]_ ) in order to improve robustness. We analyze the following augmentation methods: standard ImageNet augmentation (He et al., 2016), AugMix without JSD (Hendrycks et al., 2020), RandAugment (Cubuk et al., 2020), and AutoAugment (Cubuk et al., 2019). Performance depends on how well the heuristic augmentations approximate the true generative model."
+    },
+    {
+      "index": 42,
+      "text": "**Learned data augmentation.** These approaches approximate the true underlying generative model _p_ ( _**x** |y_[1:] _[K]_ ) by learning augmentations conditioned on the nuisance attribute. The learned augmentations can be used to transform any image _**x**_ to have a new attribute, while keeping the other attributes fixed. We follow Goel et al. (2020), who use CYCLEGAN (Zhu et al., 2017), but we do not use their SGDRO objective in order to evaluate the performance of learned data augmentation alone. Performance depends on how well the learned augmentations approximate the true generative model."
+    },
+    {
+      "index": 43,
+      "text": "**Domain generalization.** These approaches aim to recover a representation _z_ that is independent of the attribute: _p_ ( _y[a] , z_ ) = _p_ ( _y[a]_ ) _p_ ( _z_ ) to allow generalization over that attribute. We evaluate IRM (Arjovsky et al., 2019), DeepCORAL (Sun & Saenko, 2016), domain MixUp (Gulrajani & LopezPaz, 2021), DANN (Ganin et al., 2016), and SagNet (Nam et al., 2021). Performance depends on the invariance of the learned representation _z_ ."
+    },
+    {
+      "index": 44,
+      "text": "**Adaptive approaches.** These works modify _p_ reweight dynamically. We evaluate JTT (Liu et al., 2021) and BN-Adapt (Schneider et al., 2020). These methods do not give performance guarantees."
+    },
+    {
+      "index": 45,
+      "text": "**Representation learning.** These works aim to learn a robust representation of _z_ that describes the true prior. We evaluate using a _\u03b2_ -VAE (Higgins et al., 2017a) and pretraining on ImageNet (Deng et al., 2009). Performance depends on the quality of the learned representation for the specific task."
+    },
+    {
+      "index": 46,
+      "text": "## 4 EXPERIMENTS\n\nWe evaluate the 19 different methods across these six datasets, three distribution shifts, varying label noise, and dataset size. We plot aggregate results in figures 3-7 and complete results in the appendix in figures 10-12. We discuss the results by distilling them into seven concrete takeaways in section 4.1 and four practical tips in section 4.2."
+    },
+    {
+      "index": 47,
+      "text": "**Datasets.** DSPRITES (Matthey et al., 2017), MPI3D (Gondal et al., 2019), SMALLNORB (LeCun et al., 2004), SHAPES3D (Burgess & Kim, 2018), CAMELYON17 (Koh et al., 2020; Bandi et al., 2018), and IWILDCAM (Koh et al., 2020; Beery et al., 2018). These datasets consist of multiple (potentially an arbitrarily large number) attributes. We select two attributes _y[l] , y[a]_ for each dataset and make one _y[l]_ the label. We then use these two attributes to build the three shifts. Visualizations of samples from the datasets are given in figure 2 and further description in appendix D.1. We discuss precisely how we set up the shifts, choose the attributes, and additional conditions for these datasets in appendix D.2."
+    },
+    {
+      "index": 48,
+      "text": "**Model selection.** When investigating heuristic data augmentation, domain generalization, learned augmentation, adaptive approaches, and representation learning, we use a ResNet18 for the simpler, synthetic datasets (DSPRITES, MPI3D, SHAPES3D, and SMALLNORB) but a ResNet50 for the"
+    },
+    {
+      "index": 49,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\nFigure 5: **Unseen data shift.** We rank the methods (where best is 1, worst 19) for each dataset and seed and plot the rankings, with the overall median rank as the black bar. Pretraining on ImageNet and ImageNet augmentation perform consistently best. DANN, CycleGAN and other heuristic augmentations perform consistently well."
+    },
+    {
+      "index": 50,
+      "text": "more complex, real world ones (CAMELYON17 and IWILDCAM). To perform model selection, we choose the best model according to the validation set which matches the distribution of the test set. In the _unseen data shift_ setting for the CAMELYON17 and IWILDCAM, we use the given out-ofdistribution validation set, which is a different, distinct set in _D_ that is independent of _D_ train _, D_ test. (We consider using the in-distribution validation set in appendix B.4.)"
+    },
+    {
+      "index": 51,
+      "text": "**Hyperparameter choices.** We perform a sweep over the hyperparameters (the precise sweeps are given in appendix F.8). We run each set of hyperparameters for five seeds for each setting. To choose the best model for each seed, we perform model selection over _all_ hyperparameters using the top-1 accuracy on the validation set. In the _low-data_ and _spurious correlation_ settings, we choose a different set of samples from the low-data region with each seed. We report the mean and standard"
+    },
+    {
+      "index": 52,
+      "text": "## 4.1 TAKEAWAYS\n\n**Takeaway 1: While we can improve over ERM, no one method always performs best.** The relative performance between methods varies across datasets and shifts. Under _spurious correlation_ (figure 3), CYCLEGAN consistently performs best but in figure 4, under _low-data drift_ , pretraining consistently performs best. Under _unseen data shift_ (figure 5), pretraining is again one of the best performing models. However, if we drill down on the results in figure 10 (appendix B.1), we can see pretraining performs best on the synthetic datasets, but not on CAMELYON17 (where using augmentation or DANN is best) or IWILDCAM (where using ViT or an MLP is best)."
+    },
+    {
+      "index": 53,
+      "text": "**Takeaway 2: Pretraining is a powerful tool across different shifts and datasets.** While pretraining is not always helpful (e.g. in appendix B.1 on CAMELYON17 in figures 10-11, IWILDCAM in figures 10-11), it often provides a strong boost in performance. This is presumably because the representation _z_ learned during pretraining is helpful for the downstream task. For example, the representation may have been trained to be invariant to certain useful properties (e.g. scale, shift, and color). If these properties are useful on the downstream tasks, then the learned representation should improve generalization."
+    },
+    {
+      "index": 54,
+      "text": "**Takeaway 3: Heuristic augmentation improves generalization** _**if**_ **the augmentation describes an attribute.** In all settings (figures 3-5), ImageNet augmentation generally improves performance. However, RandAugment, AugMix, and AutoAugment have more variable performance (as further shown in figures 10-12). These methods are compositions of different augmentations. We investigate the impact of each augmentation in RandAugment in appendix B.2 and find variable performance. Augmentations that approximate the true underlying generative model _p_ ( _**x** |y_[1:] _[K]_ ) lead to the best results; otherwise, the model may waste capacity. For example, on CAMELYON17 (which consists of cell images), color jitter harms performance but on SHAPES3D and MPI3D it is essential."
+    },
+    {
+      "index": 55,
+      "text": "**Takeaway 4: Learned data augmentation is effective across different conditions and distribution shifts.** This approach is highly effective in the _spurious correlation_ setting (figure 3). It can also help in the _low-data_ and _unseen data shift_ settings (figure 4,5) (though the gains for these two shifts are not as large as for pretraining). The effectiveness of this approach can be explained by the fact that if the augmentations are learned perfectly, then augmented samples by design are from the true underlying generative model and can cover missing parts of the distribution."
+    },
+    {
+      "index": 56,
+      "text": "**Takeaway 5: Domain generalization algorithms offer limited performance improvement.** In some cases these methods (in particular DANN) do improve performance, most notably in the _lowdata drift_ and _unseen data shift_ settings (figures 4-5). However, this depends on the dataset (see figures 10-12) and performance is rarely much better than using heuristic augmentation."
+    },
+    {
+      "index": 57,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\nFigure 6: **Condition 1: Noisy labels.** We vary the amount of noise _p_ in the labels. We plot the percentage change over the baseline ResNet, averaged over all seeds and datasets."
+    },
+    {
+      "index": 58,
+      "text": "Figure 7: **Condition 2: Fixed data.** We vary the total size of the dataset _T_ . We plot the percentage change over the baseline ResNet, averaged over all seeds and datasets."
+    },
+    {
+      "index": 59,
+      "text": "**Takeaway 6: The best algorithms may differ under the precise conditions.** When labels have varying noise in figure 6, relative performance is reasonably consistent. When the dataset size decreases in figure 7, heuristic augmentation methods perform poorly. However, using pretraining and learned augmentation is consistently robust."
+    },
+    {
+      "index": 60,
+      "text": "**Takeaway 7: The precise attributes we consider directly impacts the results.** For example, on DSPRITES, if we make color _y[l]_ and shape _y[a]_ , we find that _all_ methods generalise perfectly in the _unseen data shift_ setting (as demonstrated in appendix B.3) unlike when shape is _y[l]_ (figure 10)."
+    },
+    {
+      "index": 61,
+      "text": "## 4.2 PRACTICAL TIPS\n\nWhile there is no free lunch in terms of the method to choose, we recommend the following tips."
+    },
+    {
+      "index": 62,
+      "text": "**Tip 1: If heuristic augmentations approximate part of the true underlying generative model, use them.** Under this constraint, heuristic augmentations can significantly improve performance; this should be a first point of call. How to heuristically choose these augmentations without exhaustively trying all possible combinations is an open research question."
+    },
+    {
+      "index": 63,
+      "text": "**Tip 2: If heuristic augmentations do not help, learn the augmentation.** If the true underlying generative model cannot be readily approximated with heuristic techniques, but some subset of the generative model can be learned by conditioning on known attributes, this is a promising way to further improve performance. How to learn the underlying generative model directly from data and use this for augmentation is a promising area to explore more thoroughly."
+    },
+    {
+      "index": 64,
+      "text": "**Tip 3: Use pretraining.** In general, pretraining was found to be a useful way to learn a robust representation. While this was not true for all datasets (e.g. CAMELYON17, IWILDCAM), performance could be dramatically improved by pretraining (DSPRITES, MPI3D, SMALLNORB, SHAPES3D). An area to be investigated is the utility of self-supervised pre-training."
+    },
+    {
+      "index": 65,
+      "text": "**Tip 4: More complex approaches lead to limited improvements.** Domain generalization, adaptive approaches and disentangling lead to limited improvements, if any, across the different datasets and shifts. Of these approaches, DANN performs generally best. How to make these approaches generically useful for robustness is still an open research question."
+    },
+    {
+      "index": 66,
+      "text": "## 5 DISCUSSION\n\nOur experiments demonstrate that no one method performs best over all shifts and that performance is dependent on the precise attribute being considered. This leads to the following considerations."
+    },
+    {
+      "index": 67,
+      "text": "**There is no way to decide a-priori on the best method given only the dataset.** It would be helpful for practitioners to be able to select the best approaches without requiring comprehensive evaluations and comparisons. Moreover, it is unclear how to pinpoint the precise distribution shift (and thereby methods to explore) in a given application. This should be an important future area of investigation."
+    },
+    {
+      "index": 68,
+      "text": "**We should focus on the cases where we have knowledge about the distribution shift.** We found that the ability of a given algorithm to generalize depends heavily on the attribute and dataset being"
+    },
+    {
+      "index": 69,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\nconsidered. Instead of trying to make one algorithm for any possible shift, it makes sense to have adaptable algorithms which can use auxiliary information if given. Moreover, algorithms should be evaluated in the context for which we will use them."
+    },
+    {
+      "index": 70,
+      "text": "**It is pivotal to evaluate methods in a variety of conditions.** Performance varies due to the number of examples, amount of noise, and size of the dataset. Thus it is important to perform comprehensive evaluations when comparing different methods, as in our framework. This gives others a more realistic view of different models\u2019 relative performance in practice."
+    },
+    {
+      "index": 71,
+      "text": "## 6 RELATED WORK\n\nC.\n\n**Benchmarking robustness to out of distribution (OOD) generalization.** While a multitude of methods exist that report improved OOD generalization, Gulrajani & Lopez-Paz (2021) found that in actuality no evaluated method performed significantly better than a strong ERM baseline on a variety of datasets. However, Hendrycks et al. (2021) found that, when we focus on better augmentation, larger models and pretraining, we can get a sizeable boost in performance. This can be seen on the Koh et al. (2020) benchmark (the largest boosts come from larger models and better augmentation). Our work is complementary to these methods, as we look at a range of approaches (pretraining, heuristic augmentation, learned augmentation, domain generalisation, adaptive, disentangled representations) on a range of both synthetic and real-world datasets. Moreover, we allow for a fine-grained analysis of methods over different distribution shifts."
+    },
+    {
+      "index": 72,
+      "text": "**Benchmarking spurious correlation and low-data drift.** Studies on fairness and bias (surveyed by Mehrabi et al. (2021)) have demonstrated the pernicious impact of low-data in face recognition (Buolamwini & Gebru, 2018), medical imaging (Castro et al., 2020), and conservation (Beery et al., 2018) and spurious correlation in classification (Geirhos et al., 2019) and conservation (Beery et al., 2020). Arjovsky et al. (2019) hypothesized that spurious correlation may be the underlying reason for poor generalization of models to unseen data. To our knowledge, there has been no large scale work focused on understanding the benefits of different methods across these distribution shifts systematically across multiple datasets and with fine-grained control on the amount of shift. Here we introduce a framework for creating these shifts in a controllable way to allow such challenges to be investigated robustly."
+    },
+    {
+      "index": 73,
+      "text": "**Benchmarking disentangled representations.** A related area, disentangled representation learning, aims to learn a representation where the factors of variation in the data are separated. If this could be achieved, then models should be able to generalise effortlessly to unseen data as investigated in multiple settings such as reinforcement learning (Higgins et al., 2017b). Despite many years of work in disentangled representations (Higgins et al., 2017a; Burgess et al., 2017; Kim & Mnih, 2018; Chen et al., 2018), a benchmark study by Locatello et al. (2019) found that, without supervision or implicit model or data assumptions, one cannot reliably perform disentanglement; however, weak supervision appears sufficient to do so (Locatello et al., 2020). Dittadi et al. (2021); Schott et al. (2021); Montero et al. (2020) further investigated whether representations (disentangled or not) can interpolate, extrapolate, or compose properties; they found that when considering complex combinations of properties and multiple datasets, representations do not do so reliably."
+    },
+    {
+      "index": 74,
+      "text": "## 7 CONCLUSIONS\n\nThis work has put forward a general, comprehensive framework to reason about distribution shifts. We analyzed 19 different methods, spanning a range of techniques, over three distribution shifts \u2013 _spurious correlation_ , _low-data drift_ , and _unseen data shift_ , and two additional conditions \u2013 _label noise_ and _dataset size_ . We found that while results are not consistent across datasets and methods, a number of methods do better than an ERM baseline in some settings. We then put forward a number of practical tips, promising directions, and open research questions. We hope that our framework and comprehensive benchmark spurs research on in this area and provides a useful tool for practitioners to evaluate which methods work best under which conditions and shifts."
+    },
+    {
+      "index": 75,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n## ACKNOWLEDGMENTS\n\nThe authors thank Irina Higgins and Timothy Mann for feedback and discussions while developing their work. They also thank Irina, Rosemary Ke, and Dilan Gorur for reviewing earlier drafts."
+    },
+    {
+      "index": 76,
+      "text": "## REFERENCES\n\n- Ehab A AlBadawy, Ashirbani Saha, and Maciej A Mazurowski. Deep learning for segmentation of brain tumors: Impact of cross-institutional training and testing. _Medical physics_ , 2018."
+    },
+    {
+      "index": 77,
+      "text": "- Michael A Alcorn, Qi Li, Zhitao Gong, Chengfei Wang, Long Mai, Wei-Shinn Ku, and Anh Nguyen. Strike (with) a pose: Neural networks are easily fooled by strange poses of familiar objects. In _Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition_ , 2019."
+    },
+    {
+      "index": 78,
+      "text": "Martin Arjovsky, L\u00b4eon Bottou, Ishaan Gulrajani, and David Lopez-Paz. Invariant risk minimization. _arXiv preprint arXiv:1907.02893_ , 2019."
+    },
+    {
+      "index": 79,
+      "text": "- Peter Bandi, Oscar Geessink, Quirine Manson, Marcory Van Dijk, Maschenka Balkenhol, Meyke Hermsen, Babak Ehteshami Bejnordi, Byungjae Lee, Kyunghyun Paeng, Aoxiao Zhong, et al. From detection of individual metastases to classification of lymph node status at the patient level: the CAMELYON17 challenge. _IEEE Transactions on Medical Imaging_ , 2018."
+    },
+    {
+      "index": 80,
+      "text": "- Sara Beery, Grant Van Horn, and Pietro Perona. Recognition in terra incognita. In _Proceedings of the European Conference on Computer Vision_ , 2018."
+    },
+    {
+      "index": 81,
+      "text": "- Sara Beery, Yang Liu, Dan Morris, Jim Piavis, Ashish Kapoor, Neel Joshi, Markus Meister, and Pietro Perona. Synthetic examples improve generalization for rare classes. In _Proceedings of the IEEE Workshop on Applications of Computer Vision_ , 2020."
+    },
+    {
+      "index": 82,
+      "text": "- Joy Buolamwini and Timnit Gebru. Gender shades: Intersectional accuracy disparities in commercial gender classification. In _Conference on fairness, accountability and transparency_ , 2018."
+    },
+    {
+      "index": 83,
+      "text": "- Chris Burgess and Hyunjik Kim. 3D shapes dataset. https://github.com/deepmind/3dshapes-dataset/, 2018."
+    },
+    {
+      "index": 84,
+      "text": "- Christopher P Burgess, Irina Higgins, Arka Pal, Loic Matthey, Nick Watters, Guillaume Desjardins, and Alexander Lerchner. Understanding disentangling in _\u03b2_ -VAE. In _Workshop on Learning Disentangled Representations at the 31st Conference on Neural Information Processing Systems_ , 2017."
+    },
+    {
+      "index": 85,
+      "text": "- Fabio M Carlucci, Paolo Russo, Tatiana Tommasi, and Barbara Caputo. Hallucinating agnostic images to generalize across domains. In _Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition Workshops_ , 2019."
+    },
+    {
+      "index": 86,
+      "text": "- Daniel C Castro, Ian Walker, and Ben Glocker. Causality matters in medical imaging. _Nature Communications_ , 2020."
+    },
+    {
+      "index": 87,
+      "text": "- Ricky TQ Chen, Xuechen Li, Roger Grosse, and David Duvenaud. Isolating sources of disentanglement in variational autoencoders. In _Advances in Neural Information Processing Systems_ , 2018."
+    },
+    {
+      "index": 88,
+      "text": "- Xi Chen, Yan Duan, Rein Houthooft, John Schulman, Ilya Sutskever, and Pieter Abbeel. InfoGAN: Interpretable representation learning by information maximizing generative adversarial nets. In _Advances in Neural Information Processing Systems_ , 2016."
+    },
+    {
+      "index": 89,
+      "text": "- Yunjey Choi, Minje Choi, Munyoung Kim, Jung-Woo Ha, Sunghun Kim, and Jaegul Choo. StarGan: Unified generative adversarial networks for multi-domain image-to-image translation. In _Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition_ , 2018."
+    },
+    {
+      "index": 90,
+      "text": "- Ekin D Cubuk, Barret Zoph, Dandelion Mane, Vijay Vasudevan, and Quoc V Le. AutoAugment: Learning augmentation strategies from data. In _Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition_ , 2019.\n\n10"
+    },
+    {
+      "index": 91,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "The paper provides a structured and extensive empirical evaluation of distribution shift robustness across 19 methods on 6 datasets, filling an important gap between synthetic disentanglement research and real-world domain generalization benchmarks. The framework cleverly uses latent factor notation to unify different shift types (spurious correlation, low-data drift, unseen data shift). While the takeaways are useful for practitioners, there is a recurring mathematical ambiguity in the definition of the test distribution and some notation consistency issues regarding index variables that require careful reading to interpret correctly.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Mathematical ambiguity in the definition of the test distribution",
+          "quote": "$p_{\\text{test}}(y_{[1:K]}) = 1 / \\prod_i |A_{[i]}|$. [This is desirable, as all attributes are represented and a-priori independent.]",
+          "explanation": "The authors define the test distribution as a uniform distribution over the Cartesian product of all attribute sets to ensure independence. However, in Shift 3 (Unseen data shift), they state that some attribute values are unseen under training but present in the test. If the label $y_{[l]}$ is one of these attributes, a uniform test distribution over the entire set $A_{[l]}$ implies that the model is evaluated on classes it never saw during training (zero-shot). Usually, in domain generalization (like CAMELYON17), the 'unseen' part refers to nuisance attributes (e.g., a new hospital), not the label itself. While the text later clarifies that they analyze label $y_{[l]}$ and nuisance $y_{[a]}$ separately, the formal definition of $p_{\\text{test}}$ as a product of all $|A_{[i]}|$ suggests an evaluation on the full joint space, which might be impossible for a classifier if the label space $A_{[l]}$ changes between train and test. Context suggests they likely mean $p_{\\text{test}}$ is uniform over the subset of 'active' labels, but the equation is overly broad.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Index variable inconsistency in weighted resampling",
+          "quote": "$W(y_i^{[1:K]}) / \\sum_{i=1}^n [W]([y]_i^{[1:][0][K]})$",
+          "explanation": "In Section 2.1 (Weighted resampling), the formula for normalizing weights contains several indexing errors, likely exacerbated by OCR but potentially present in the logic of the LaTeX source. Specifically, the summation index $i$ is used, but the term inside the sum contains brackets and zeros ($[1:][0][K]$) that do not match the weight definition $W(y^{[1:K]})$. More importantly, the use of $n$ (size of the finite set) in the denominator suggests a simple empirical average, but if $p_{\\text{train}}$ is very sparse, the empirical count might be zero for some attribute combinations, making $W$ undefined. The notation $y_i^{[1:K]}$ is also slightly inconsistent with the earlier $y_{[1:K]}$ (subscript vs superscript).",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Insufficient justification for 'Unseen Data Shift' vs 'OOD'",
+          "quote": "This is a stronger constraint than in standard out-of-distribution generalization (see section 6), as multiple values for $A_{[a]}$ must be seen under $p_{\\text{train}}$, which allows the model to learn invariance to $y_{[a]}$.",
+          "explanation": "The authors claim Shift 3 is a 'stronger constraint' than standard OOD generalisation. Usually, 'stronger' implies that if a model satisfies Shift 3, it must satisfy standard OOD. However, the explanation says that because they provide 'multiple values' during training, it allows the model to learn invariance. This actually makes the task *easier* (weaker constraint) than 'zero-shot' OOD where no variation of the nuisance attribute is seen. If the authors meant it is a more 'structured' or 'specific' constraint, the word 'stronger' is misleading in a logical sense.",
+          "comment_type": "logical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_3",
+          "title": "Inconsistency in dataset result interpretation (IWILDCAM)",
+          "quote": "Takeaway 1: ...pretraining performs best on the synthetic datasets, but not on CAMELYON17... or IWILDCAM (where using ViT or an MLP is best).",
+          "explanation": "The prose states that for IWILDCAM, ViT or an MLP is 'best'. However, looking at the provided aggregate ranking in Figure 5 (Unseen Data Shift), Pretraining and ImageNet Augmentation are shown as the top performers overall. While Top-1 results for specific datasets are in Appendix B.1 (which I am directed to check), asserting that an MLP is 'best' for a complex real-world dataset like IWILDCAM is a significant claim that seems to contradict the general trend of Vision Transformers and ResNets outperforming MLPs on image data. Without the full Appendix B.1 table, this claim stays questionable as it suggests a very specific, non-obvious failure of standard architectures or a specific property of that dataset not fully explained.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.009,
+      "prompt_tokens": 10692,
+      "completion_tokens": 1206
+    },
+    "zero_shot__qwen3-235b-a22b-2507": {
+      "label": "Zero Shot (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "This paper presents a comprehensive and valuable empirical study of robustness to distribution shifts, introducing a principled framework grounded in latent factorization and evaluating 19 methods across multiple datasets and shift types. The scale of experimentation (over 85K models) and the clarity of the setup make it a strong contribution to the robustness and domain generalization literature. The findings\u2014that pretraining and augmentation often outperform specialized domain generalization methods\u2014are both sobering and important. While the paper is well-structured and generally sound, there are several technical and logical issues in the formalism and exposition, particularly around the definition of test distribution, inconsistent subscript usage, and underspecified model selection procedures, which affect clarity and reproducibility. These do not invalidate the core empirical conclusions but reduce confidence in fine-grained interpretations.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_0",
+          "title": "Incorrect conditioning in spurious correlation definition",
+          "quote": "p_train( y[a] |y_[1] _. . . y[b] . . . y[K] ) > p_train( y[a] |y_[1] _. . . y[b][\u2212]_[1] _, y[b]_[+1] _. . . y[K] ).",
+          "explanation": "The inequality suggests that the conditional probability of y[a] given all attributes is greater than when y[b] is removed, but the right-hand side incorrectly excludes y[b] by referencing y[b]\u22121 and y[b]+1, which implies neighboring indices rather than omitting y[b]. The intent is clearly to define spurious correlation via dependence between y[a] and y[b], so the correct expression should compare p_train(y[a]|..., y[b], ...) vs p_train(y[a]|..., \\neg y[b], ...), i.e., the marginal dependence. The current notation is not standard and looks like an OCR or typesetting error (e.g., [b][\u2212]_[1] for [b\u22121]). However, even assuming the intended meaning, the inequality direction is problematic: a strict inequality 'greater than' does not capture correlation (which could be positive or negative) and does not equate to dependence. In probability, dependence is defined by inequality in either direction. The authors likely meant \u2260 instead of >. This is a real error in formal definition, though the surrounding text clarifies intent.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_1",
+          "title": "Inconsistent subscript for attribute set",
+          "quote": "y[1:] [K]",
+          "explanation": "The notation 'y[1:] [K]' appears repeatedly (e.g., in 'p(y[1:] [K])') and is clearly intended to denote the vector of attributes (y_1, ..., y_K). However, this is nonstandard and ambiguous\u2014 '[1:]' suggests a Python slice, while '[K]' may be a size annotation. Later, the same quantity is referred to as 'y[1:] [K]' or simply 'y[1:K]', but without consistent formatting. In one instance, the test distribution is written as 'p_test(y[1:] [K])', then in the factorization section as 'p(y[1:] [K])'. This inconsistency persists across equations and text. While context resolves the meaning (a K-dimensional attribute vector), the notation is confusing and risks misreading as two separate indices or a misrendered 'y_{1:K}'. The most plausible fix is that this should uniformly be 'y_{1:K}' or 'y_{[K]}'. Given the OCR warning, this may stem from a typesetting issue, but as written, it's a notation inconsistency that impedes clarity.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_2",
+          "title": "Missing subscript in test distribution definition",
+          "quote": "p_test(y[1:] [K]) = 1 / [Q] i[|] [A] i[|] [.][This is desirable, as all attributes are represented and a-priori independent.]",
+          "explanation": "The expression '1 / [Q] i[|] [A] i[|]' appears to be a corrupted OCR rendering of a uniform distribution over attribute combinations: likely intended as 1 / \u220f_{i=1}^K |A_i|, i.e., the reciprocal of the product of the sizes of each attribute set. The current form is illegible and mathematically meaningless. The sentence following it confirms the intent: uniform and independent attributes. However, without correctly parsing this formula, a reader cannot verify that the test distribution is indeed uniform over the full Cartesian product. This is a critical definition, as all shifts are defined relative to this. While the surrounding text provides strong hints, the formula itself is broken. Given the OCR note, we assume 'i[|][A][i][|]' meant '|A_i|' and '[Q]' meant \u220f, but as it stands, the definition is underspecified and requires guesswork to reconstruct.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_3",
+          "title": "Unseen data shift incorrectly labeled as special case of low-data drift",
+          "quote": "This is a special case of shift 2: low-data drift which we make explicit due to its important real world applications.",
+          "explanation": "The authors state that unseen data shift is a special case of low-data drift where p_train(y[a] = v) = 0 < p_test(y[a] = v). However, 'low-data drift' was defined as p_train(y[a] = v) \u2327 p_test(y[a] = v), implying a small but non-zero probability. The case of zero probability (unseen) is qualitatively different: it involves extrapolation rather than interpolation. While mathematically a limit of low-data drift, in machine learning contexts, 'unseen' is treated as a distinct regime requiring different assumptions (e.g., feature invariance). The authors' own figures and results treat them as separate (figures 4 and 5), justifying the distinction. The claim of 'special case' understates the conceptual gap and could mislead readers into thinking methods for low-data automatically apply to unseen. The issue is one of framing and scientific precision rather than mathematical error.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_4",
+          "title": "Ambiguity in learned augmentation procedure",
+          "quote": "We follow Goel et al. (2020), who use CYCLEGAN (Zhu et al., 2017), but we do not use their SGDRO objective in order to evaluate the performance of learned data augmentation alone.",
+          "explanation": "The paper states they use CYCLEGAN for learned augmentation but omit the SGDRO objective. However, it does not specify how the generated samples are incorporated into training\u2014whether they replace real data, augment it, or are used in a mixup-style loss. The earlier general description mentions \u02c6p_aug = (1\u2212\u03b1)p_reweight + \u03b1 p(x|y[1:] [K]) p(y[1:] [K]), but it's unclear if this applies to CYCLEGAN. Moreover, CYCLEGAN is typically unconditional or class-conditional, but here it must be conditioned on attributes y[a] to alter specific factors. The method section does not detail the conditioning mechanism or training setup (e.g., how attribute labels are used in training the GAN). This leaves the learned augmentation procedure underspecified, making reproduction difficult despite the claim of extensibility.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_5",
+          "title": "Inconsistent model selection across datasets lacks justification",
+          "quote": "we use a ResNet18 for the simpler, synthetic datasets ... but a ResNet50 for the more complex, real world ones ... We perform a sweep over the hyperparameters ... [and] choose the best model according to the validation set",
+          "explanation": "The paper uses different architectures (ResNet18 vs ResNet50) for different datasets but does not justify why this choice is fair when comparing methods across all datasets. A method that benefits more from larger capacity (e.g., pretraining) may appear better on real-world datasets simply due to the ResNet50 choice. The model selection procedure is based on validation performance, but since architecture is fixed per dataset type, it cannot be optimized. This introduces a confounding variable: performance differences may arise from architecture rather than the robustness method itself. While practical, this undermines the claim of fair comparison across all methods and datasets. The authors should either standardize architecture or account for this choice in analysis.",
+          "comment_type": "logical",
+          "paragraph_index": 51,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_6",
+          "title": "Missing definition of risk and empirical risk",
+          "quote": "Hence, we minimize the empirical risk R[\u02c6] instead: where L is a suitable loss function.",
+          "explanation": "The sentence introduces R\u0302 but the formula is missing\u2014likely due to OCR or formatting loss. The standard definition would be R\u0302(f) = (1/n) \u03a3 L(f(x_i), y_i), but without it, the reader cannot confirm alignment with the assumed setup. This is especially critical because later sections refer to risk minimization under distribution shifts. While the definition is standard and recoverable from context, its absence in the formal section is a glaring omission. Given the instruction to ignore formatting issues, this might be excusable, but in a formal framework paper, even expected formulas should appear. The risk definitions are central to the contribution and their absence constitutes a moderate issue.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.001,
+      "prompt_tokens": 10813,
+      "completion_tokens": 2078
+    },
+    "zero_shot__glm-4.6": {
+      "label": "Zero Shot (glm-4.6)",
+      "model": "z-ai/glm-4.6",
+      "overall_feedback": "This paper presents a comprehensive framework for analyzing distribution shifts in machine learning, evaluating 19 methods across multiple datasets and shift types. The work is well-motivated and makes valuable contributions to understanding robustness under different distribution shifts. While the experimental setup is sound and the conclusions appear well-supported, the paper contains several minor notation inconsistencies and typographical issues that could confuse readers but do not undermine the core technical contributions.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.6_0",
+          "title": "Notation inconsistency in spurious correlation definition",
+          "quote": "p_train(y[a] |y[1] . . . y[b] . . . y[K] ) > p_train(y[a] |y[1] . . . y[b][\u2212] [1] , y[b][+1] . . . y[K] )",
+          "explanation": "The notation y[b][\u2212] [1] and y[b][+1] appears to be a typo or OCR error. The intent seems to be comparing the conditional probability with y[b] included versus excluded from the conditioning variables. A clearer notation would be p_train(y[a]|y[1:K]) > p_train(y[a]|y[1:K]\\{y[b]}) or similar. While the meaning can be inferred from context, this notation is unconventional and could confuse readers.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_1",
+          "title": "Unusual notation for corrupted labels",
+          "quote": "y[i] \u21e0 c(y[i])",
+          "explanation": "The arrow symbol (\u21e0) is unusual for denoting corrupted variables. Standard notation would use y\u0302[i] ~ c(y[i]) or y\u0302[i] = c(y[i]) to indicate that the observed label is a corrupted version of the true label. While the meaning is understandable from context, this non-standard notation could be confusing.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_2",
+          "title": "Missing differential in integral",
+          "quote": "p_train(x, y[1:K] ) = R p(x|z) p_train(z, y[1:K] )",
+          "explanation": "The integral sign is present but the differential dz is missing at the end. This appears to be a typographical error, as dz is present in other similar integrals in the paper. The correct expression should be p_train(x, y[1:K]) = \u222b p(x|z) p_train(z, y[1:K]) dz.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_3",
+          "title": "Inconsistent bracketing in weighted resampling",
+          "quote": "W(y[i][1:K] )",
+          "explanation": "The notation for the importance weights uses inconsistent bracketing compared to elsewhere in the paper. It should be W(y[1:K]) to match the consistent notation used throughout the document for attribute vectors.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_4",
+          "title": "Unusual symbol for augmentation parameter",
+          "quote": "\u02c6p_aug = (1 \u2212 \u21b5) p_reweight + \u21b5p(x|y[1:K] ) p(y[1:K] )",
+          "explanation": "The symbol \u21b5 appears to be a rendering of the Greek letter alpha (\u03b1). While the meaning is clear from context as the proportion of synthetic data, this non-standard symbol could be confusing. The standard notation would use \u03b1.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_5",
+          "title": "Confusing notation for Bayes' rule",
+          "quote": "Again, by our assumption p(z|x) / p(x|z) p(z)",
+          "explanation": "The slash notation (/) is ambiguous here. The intent appears to be stating that p(z|x) is proportional to p(x|z)p(z) by Bayes' rule. A clearer notation would be p(z|x) \u221d p(x|z)p(z) or explicitly writing Bayes' rule: p(z|x) = p(x|z)p(z)/p(x).",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_6",
+          "title": "Inconsistent summation notation",
+          "quote": "p(y[l] ) =[P] y[a][ p]( [y][l]|[y][a] )[ p]( [y][a] )",
+          "explanation": "The summation notation [P] y[a] is unconventional. Standard notation would use \u03a3_{y[a]} p(y[l]|y[a])p(y[a]). While the meaning is clear from context as marginalization over y[a], this notation could be confusing to readers.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0296,
+      "prompt_tokens": 21176,
+      "completion_tokens": 11244
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper establishes a well-structured, modular, and thoughtful framework for investigating robustness to distribution shifts, successfully distilling complex phenomena into controllable variables. It provides a valuable empirical analysis that moves beyond simple 'method X vs. ERM' comparisons by contextualizing how different techniques interact with specific types of distribution shifts. The main issues identified relate to minor notational ambiguities and a potential discrepancy between the formal definition of the 'unseen data shift' and its practical implementation as described in the prose, which might confuse a reader seeking exact reproducibility.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Unseen data shift condition ambiguity",
+          "quote": "In the DSPRITES example, the color red may be unseen at train time but all colors are in p test.",
+          "explanation": "The formal definition of Unseen Data Shift in Section 2.2 defines the shift as the training distribution p_train(y[a] = v) = 0 for some v, while p_test(y[a] = v) > 0. However, the requirement of being able to 'learn invariance' to an attribute seems to implicitly contrast with this zero-support condition. If the model never sees the attribute 'red' at all during training, standard supervised learning usually fails to decouple 'red' from the label if they are confounded. The text mentions 'as multiple values for A[a] must be seen under p_train', but does not specify how this reconciles with the definition where values are 'unseen'. It remains slightly ambiguous whether the authors assume the attribute is seen in combination with something else, or if the model relies purely on transfer from seeing other values (e.g., green/blue).",
+          "comment_type": "logical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Subscript inconsistency in latent factorisation",
+          "quote": "y[1:] _[K] where A [k] is a finite set.",
+          "explanation": "The notation uses subscript indexing for collections of attributes, but the formatting in the OCR output includes a possibly redundant '[K]' inside the subscript and a trailing '[K]' which might be a parsing artifact. Specifically, 'y[1:] _[K]' looks like a likely OCR misread of a sequence notation like 'y_{1:K}'. Given the surrounding context, the intent is clearly a set of attributes from 1 to K. While trivial to resolve through context, this notation appears inconsistently throughout the document (e.g., y[1:] _[K], y[i], y[l]).",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_2",
+          "title": "Underspecified weighting implementation details",
+          "quote": "The i-th data point ( yi[1:] [K] , xi ) in the training set is used with probability W( yi[1:] [K] ) / [P] [n] i[0]=1 [W][(] [y] i[1:] [0][K] ) rather than 1 /n .",
+          "explanation": "The denominator contains a stray summation limit notation that is clearly an artifact of typesetting or OCR. More importantly, while the logic for importance weighting is standard, the paper does not specify if this reweighting is done via true sampling (replacement) or by modifying the loss function (scaling individual losses by weights). Given the performance sensitivity of deep learning models to batch composition and optimization, this distinction is not merely trivial.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0038,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10692,
+      "completion_tokens": 784
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper provides a comprehensive framework for analyzing distribution shifts and evaluates a large number of methods across multiple datasets and conditions. The findings are practically relevant and the experimental setup is thorough. However, there is a significant mathematical error in the derivation of the latent variable model factorization that could mislead readers about the relationship between the joint and conditional distributions. A minor formalism issue in the augmentation description also exists. Overall, the paper is well-structured and makes valuable contributions, but these issues should be addressed for clarity and correctness.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Incorrect refactorization of joint distribution in latent variable model",
+          "quote": "By a simple refactorization, we can write p(y^{[1:K]}, x) = \\int p(z|x) p(y^{[1:K]}|z) dz",
+          "explanation": "This equation states that the joint distribution of attributes and input equals the integral of p(z|x) times p(y|z). Using Bayes' rule, \\int p(z|x) p(y|z) dz = p(y|x) (under the Markov assumption y\u2192z\u2192x), not p(y,x). The left-hand side should be p(y|x) or the right-hand side should include an additional factor p(x). The error likely arises from a misapplication of the factorization. This could confuse readers about the assumed data generation process and the justification for representation learning. The intended decomposition is plausible but must be corrected.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Mixing discrete and continuous distributions in augmentation description",
+          "quote": "we can generate data from the augmented distribution \\hat{p}_{\\text{aug}} = (1 - \\alpha) p_{\\text{reweight}} + \\alpha p(\\mathbf{x} | y^{[1:K]}) p(y^{[1:K]})",
+          "explanation": "Here p_{\\text{reweight}} is an empirical distribution over finitely many training samples (a discrete measure), while p(\\mathbf{x}|y)p(y) is a continuous density. Adding them as if they are densities is mathematically imprecise. The intended meaning is that each minibatch is a mixture of reweighted empirical samples and synthetic samples drawn from the generative model. The conceptual description is clear, but the formal notation is sloppy and could be misinterpreted.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0029,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 10373,
+      "completion_tokens": 5312
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a comprehensive and well-motivated framework for evaluating robustness to distribution shifts, supported by an extensive empirical study. The core ideas regarding latent factorization and the decomposition of shifts into spurious correlation, low-data drift, and unseen data shift are conceptually strong and well-aligned with recent literature. However, the manuscript suffers from several presentation and definitional issues that obscure the formal framework. Notably, a critical equality in the definition of distribution shifts appears to be a typo that contradicts the premise of the paper. Additionally, multiple critical mathematical formulations are missing from the extracted text, ambiguous conditioning notation is used, and there are minor inconsistencies between the abstract and the methodology section. These issues, while largely fixable, currently hinder full reproducibility and precise interpretation of the theoretical claims.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_0",
+          "title": "Contradictory definition of distribution shift in Section 2.1",
+          "quote": "We assume that distribution shifts arise when a new marginal distribution for the attributes is chosen, such as _p_ ( _y_[1:] _[K]_ ) = _p_ train( _y_[1:] _[K]_ ) = _p_ test( _y_[1:] _[K]_ ), but otherwise the conditional generative model is shared across all distributions",
+          "explanation": "The text states that distribution shifts arise when a new marginal distribution is chosen, but then immediately claims that $p(y_{1:K}) = p_{train}(y_{1:K}) = p_{test}(y_{1:K})$. This equality directly contradicts the concept of a distribution shift, which by definition requires $p_{train} \\neq p_{test}$. It is highly likely that the equals signs should be non-equality signs (e.g., $p_{train}(y_{1:K}) \\neq p_{test}(y_{1:K})$). As this is the foundational assumption for the entire framework, the error undermines the clarity of the theoretical setup and must be corrected.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_1",
+          "title": "Ambiguous and non-standard notation for spurious correlation",
+          "quote": "_p_ train( _y[a] |y_[1] _. . . y[b] . . . y[K]_ ) _> p_ train( _y[a] |y_[1] _. . . y[b][\u2212]_[1] _, y[b]_[+1] _. . . y[K]_ ).",
+          "explanation": "The notation used to define spurious correlation is unclear. Specifically, the terms `[1]` and `[\u2212]_[1]` appended to the conditioning set do not follow standard probability or set notation. It appears the authors intend to say that $y_a$ is more probable when conditioned on $y_b$ compared to being conditioned on all other attributes except $y_b$. Using standard set difference notation (e.g., $y_{1:K} \\setminus \\{y_b\\}$) or explicit enumeration would remove ambiguity and align with formal definitions in the domain generalization literature.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_2",
+          "title": "Missing critical mathematical formulations in Section 2.1",
+          "quote": "Hence, we minimize the empirical risk _R_[\u02c6] instead: \n\nwhere _L_ is a suitable loss function.",
+          "explanation": "Due to OCR extraction, two pivotal equations are completely missing from Section 2.1: the definition of the empirical risk $\\hat{R}$ and the latent variable factorization of the true distribution $p(x, y_{1:K})$. While the surrounding prose describes these concepts, the absence of the actual formulas prevents a precise understanding of how risk is minimized and how the latent factors are decomposed. Providing the explicit equations is essential for reproducibility and for readers to correctly map the empirical setup to the theoretical framework.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_3",
+          "title": "Inconsistency between abstract and Section 3 regarding method categories",
+          "quote": "abstract: '...grouped into five categories...' | Section 3: 'These algorithms cover the following areas: architecture choice, data augmentation, domain adaptation, adaptive approaches and representation learning.' (followed by 6 distinct subsections)",
+          "explanation": "The abstract states that methods are grouped into five categories. However, the abstract text itself lists 'domain generalization', while Section 3 lists 'domain adaptation'. Furthermore, Section 3 expands into six distinct bullet points (Architecture choice, Heuristic data augmentation, Learned data augmentation, Domain generalization, Adaptive approaches, Representation learning). This discrepancy between the stated number of categories and the actual enumerated list, along with the shift from 'generalization' to 'adaptation', could mislead readers about the taxonomy and scope of the evaluation.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3.6-35b-a3b_4",
+          "title": "Overclaim regarding perfect generalization on DSPRITES",
+          "quote": "Takeaway 7: '...we find that _all_ methods generalise perfectly in the _unseen data shift_ setting (as demonstrated in appendix B.3) unlike when shape is _y[l]_ (figure 10).'",
+          "explanation": "Claiming that 'all methods generalise perfectly' is a very strong statement that warrants careful scrutiny. In distribution shift benchmarks, 'perfect' typically implies 100% accuracy or zero drop in performance. While DSPRITES is a synthetic dataset where attributes are independent, stating that all 19 evaluated methods achieve perfect generalization without specifying the threshold or metric (e.g., relative drop vs absolute accuracy) is ambiguous. If performance drops are non-zero but small, this phrasing overstates the result. Clarifying the exact metric and reporting the quantitative gap would strengthen this takeaway.",
+          "comment_type": "logical",
+          "paragraph_index": 60,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0474,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 21566,
+      "completion_tokens": 20730
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper presents a comprehensive evaluation framework for distribution shifts, defining specific shifts like spurious correlation, low-data drift, and unseen data shift. The experimental setup is thorough, evaluating 19 methods across multiple datasets and conditions. However, the paper contains a significant logical contradiction within the definition of 'Unseen Data Shift' where it simultaneously states that attribute values are 'unseen' yet later claims that 'multiple values' must be seen. This undermines the clarity of the framework's definitions. Additionally, the specific corruption model for label noise is left underspecified, which limits reproducibility.",
+      "comments": [],
+      "cost_usd": 0.0077,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 21176,
+      "completion_tokens": 17558
+    }
+  }
+}

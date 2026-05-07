@@ -1,0 +1,837 @@
+{
+  "slug": "iclr2022-_55bCXzj-exploring-and-evaluating-personalized-models-for-code-genera",
+  "title": "EXPLORING AND EVALUATING PERSONALIZED MODELS FOR CODE GENERATION [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## EXPLORING AND EVALUATING PERSONALIZED MODELS FOR CODE GENERATION"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nLarge Transformer models achieved the state-of-the-art status for Natural Language Understanding and are increasingly the baseline architecture for source code generation models. Transformers are usually pre-trained on a large unsupervised corpus, learning token representations and transformations relevant to modeling generally available text, and then fine-tuned on a particular task of interest. While fine-tuning is a tried-and-true method for adapting a model to a new domain, for example question-answering on a given topic or a source code generation model, generalization remains an on-going challenge. Here we explore the ability of various levels of model fine-tuning to improve generalization by personalized fine-tuning. In the context of generating unit tests for Java methods, here we evaluate learning to personalize to a specific project using several methods to personalize transformer models for unit test generation for a specific Java project. We consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which freezes most of the model\u2019s parameters, allowing a tuning of the token embeddings and softmax layer or the final layer alone; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific prefix vector. Each of these techniques offers a different trade-off in total compute cost and prediction performance, which we evaluate by code and task-specific metrics, training time, and total computational operations. We compare these fine-tuning strategies for code generation and discuss the potential generalization and cost benefits of each in deployment scenarios."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nIt is well-known that even the best models can fail to generalize properly to new domains, and even to new users of said models. For example, a model trained to answer questions in general may not answer StackOverflow questions as well as the questions in the training domain, or a software developer in an Enterprise environment with private code may have libraries and attribute name which differ from public source code used to train a code synthesis model."
+    },
+    {
+      "index": 3,
+      "text": "The current dominant paradigm in Natural Language Processing (NLP) modeling is to pre-train a large transformer model (Vaswani et al., 2017a) on a large corpus and then fine-tune it on a particular task of interest. For example, a question-answering (Q&A) model is generally first pre-trained on a large corpus of textual data for the specific language ( _e.g.,_ Wikipedia, and news articles in English), then fine-tuned on a task-specific dataset of paired questions and corresponding answers. The pre-training process aims at learning semantic vector representation of the language and words, while the fine-tuning process specializes the model for a specific domain."
+    },
+    {
+      "index": 4,
+      "text": "Transformer models are also increasingly the baseline architecture used for code generation tasks, such as writing methods from natural language description (Clement et al., 2020; Austin et al., 2021; Chen et al., 2021), or generating test cases from the focal method under test (Tufano et al., 2021). Similarly for NLP tasks these models are pre-trained on a large corpus of natural text and publicly available source code and then fine-tuned on a specific code-related task. Further, these models also may not generalize to new domains of interest, and can benefit from task or even user-specific fine-tuning, here called customization or personalization. Customization is particularly relevant for code generation models since it provides several benefits:"
+    },
+    {
+      "index": 5,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\n- allows fine-tuning on source code data that may not be available when training a base model ( _e.g.,_ private repositories or internal codebases), enabling improved overall performances on codebases with proprietary dependencies and code styles;"
+    },
+    {
+      "index": 6,
+      "text": "- the opportunity to improve data privacy by considering private or sensitive data only during the customization process on the client side;"
+    },
+    {
+      "index": 7,
+      "text": "- the opportunity to reduce deployment cost as customized models can offer better user performance without increasing model size."
+    },
+    {
+      "index": 8,
+      "text": "Custom models can provide clear benefits to users and model providers. We envision serving tens or hundreds of thousands of custom models, but doing so presents several logistical hurdles, including the costs of training, storing, and loading these models into GPU memory for inference. Worse, memory costs will only be exacerbated when working with ever larger and more powerful models."
+    },
+    {
+      "index": 9,
+      "text": "For these reasons, we investigate several customization approaches, some of which can dramatically reduce the memory footprint and amortized computational cost introduced by custom models. Specifically, we consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which only optimizes the token embedding representations or the final softmax layer; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific vector prefix."
+    },
+    {
+      "index": 10,
+      "text": "In our extensive empirical evaluation we found that all the customization strategies lead to significant model improvements on a target project in terms of both intrinsic and task-specific metrics. While there is no unambiguous winner among the customization strategies, each approach can provide specific benefits in particular deployment scenarios. This paper provides insights on these customization strategies, their benefits and drawbacks, as well as providing guidelines and suggestions on which one to use based on the training cost, memory and storage, number of users, and deployment scenarios."
+    },
+    {
+      "index": 11,
+      "text": "## 2 APPROACH\n\nThis section describes the proposed customization approach for code generation models. We begin by formally defining the customization process, then we provide details for each of the fine-tuning strategies."
+    },
+    {
+      "index": 12,
+      "text": "## 2.1 CUSTOMIZATION PROCESS\n\nWe use the term _customization_ to refer to the process of fine-tuning a model _m_ , previously trained on a generic dataset for a task _t_ , with the goal of improving its performance on a specific dataset _p_ . The performance of a machine learning model _m_ on a dataset _p_ is measured by one or more evaluation functions _f_ ( _m, p_ ), where _f_ can be either a maximization ( _e.g.,_ BLEU, top-k accuracy) or minimization ( _e.g.,_ perplexity) function. The customization process is designed to modify the trainable parameters of the model _m_ , obtaining the model _m[\u2032]_ , such that the performance of _m[\u2032]_ on _p_ is better than what was attained by _m_ . Specifically, _f_ ( _m[\u2032] , p_ ) _> f_ ( _m, p_ ) for maximization functions, or _f_ ( _m[\u2032] , p_ ) _< f_ ( _m, p_ ) for minimization functions."
+    },
+    {
+      "index": 13,
+      "text": "In this work, _m_ is an encoder-decoder transformer model, _t_ is a code generation task, and _p_ is a target software project to which we intend to customize _m_ ."
+    },
+    {
+      "index": 14,
+      "text": "## 2.2 CUSTOM FINE-TUNING\n\nCustom fine-tuning is the most straightforward customization approach. The model to be customized is taken as is and trained on a selected project. All parameters are trainable during this process. Figure 1a shows the model during fine-tuning, where all the parameters from the encoder and decoder blocks, as well as embeddings and output layers can be modified."
+    },
+    {
+      "index": 15,
+      "text": "## 2.3 LIGHTWEIGHT FINE-TUNING - EMBEDDINGS AND OUTPUT LAYER (L-EO)\n\nFully fine-tuning a model for every project or user may be prohibitive in terms of storage and memory costs. As a result, we explore ways to mitigate these costs by reducing the number of parameters that vary from one custom model to another. In our lightweight fine-tuning experiments, we achieve this"
+    },
+    {
+      "index": 16,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a) Custom (b) L-EO (c) L-LDB (d) Prefix\n**----- End of picture text -----**"
+    },
+    {
+      "index": 17,
+      "text": "Figure 1: Overview of the Customization Approaches - Transformer models during fine-tuning, where the frozen parts of the model (not trainable) are displayed in gray: (a) Custom fine-tuning modifies all parameters during training; (b) L-EO trains only the embedding and output layers; (c) L-LDB allows to train only the parameters of the last decoder block; (d) Prefix tuning adds a trainable prefix to the encoder and decoder blocks."
+    },
+    {
+      "index": 18,
+      "text": "by freezing most parameters in the baseline model, and only keeping a small subset trainable. Figure 1b shows the Lightweight fine-tuning - Embeddings and Output Layer (L-EO) design, where most of the model parameters are frozen (displayed in gray), and we allow only the embedding and output layers parameters to be fine-tuned, following the approach in Lu et al. (2021)."
+    },
+    {
+      "index": 19,
+      "text": "## 2.4 LIGHTWEIGHT FINE-TUNING - LAST DECODER BLOCK (L-LDB)\n\nIn this lightweight fine-tuning strategy, shown in Figure 1c (L-LDB), most of the model\u2019s parameters are kept frozen, while only the parameters in the last decoder block are trainable, this includes: self-attention, encoder-decoder attention, layernorm and feedforward layers. This design decision of training only the last decoder block is motivated by experimental results analyzing the model\u2019s parameter changes during custom fine-tuning. Figure 2 reports the average absolute changes, during fine-tuning, in the parameters belonging to different Encoder and Decoder blocks for a BART model. We observe that, as we go through the transformer model, the average change in parameter values tends to increase, with the last decoder block showing the highest changes in parameter values. As a result, we hypothesize that it could be sufficient to tune the last decoder block and obtain performance improvements similar to the fully custom fine-tuned model."
+    },
+    {
+      "index": 20,
+      "text": "## 2.5 PREFIX TUNING\n\nPrefix tuning was first introduced by Li and Liang (2021), with the goal of fine-tuning a general model for different tasks. The technique concatenates a sequence (prefix) of virtual tokens (trainable parameters) to the front of the input of every encoder and decoder block. In our context, the intuition behind this approach is that the prefix embeds the properties of a specific project, which allows the model to generate customized responses for that repository. Practically, we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 _\u00d7_ 200 _\u00d7_ 24 _\u00d7_ 2 _\u2248_ 10M trainable parameters. The prefix is initialized to the most frequent words in the repository for which the model is customized."
+    },
+    {
+      "index": 21,
+      "text": "## 2.6 TRAINABLE PARAMETERS DURING FINE-TUNING\n\nTable 1 provides an overview of the number of total and trainable parameters involved in each customization process, in the case of a BART Transformer model with 406M parameters. Custom fine-tuning allows to train 100% of the 406M available parameters in the model. During L-EO finetuining, instead, only 13% (53M) parameters are trained. The L-LDB fientuning reduces the"
+    },
+    {
+      "index": 22,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n0.000300\n0.000275\n0.000250\n0.000225\n0.000200\n0.000175\n0.000150\n0.000125\n0.000100\nTransformer Block\nAverage Absolute Change\n(Other, -1) (Encoder, 0) (Encoder, 1) (Encoder, 2) (Encoder, 3) (Encoder, 4) (Encoder, 5) (Encoder, 6) (Encoder, 7) (Encoder, 8) (Encoder, 9) (Encoder, 10) (Encoder, 11) (Decoder, 0) (Decoder, 1) (Decoder, 2) (Decoder, 3) (Decoder, 4) (Decoder, 5) (Decoder, 6) (Decoder, 7) (Decoder, 8) (Decoder, 9) (Decoder, 10) (Decoder, 11)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 23,
+      "text": "Figure 2: This figure shows the total average parameter change after fine-tuning to a new project domain, showing that the largest parameter changes occur in deeper parts of the model. This motivates our choice to try only fine-tuning the later layers of the model."
+    },
+    {
+      "index": 24,
+      "text": "number of trainable parameters to 4.2% (17M). Finally, Prefix tuning has the lowest number of trainable parameters, only 2.4% (10M) of the total, but these are additional parameters added to the model, which reaches a total of 416M."
+    },
+    {
+      "index": 25,
+      "text": "|Customization|Process|Total|Parameters\nTrained|\n|---|---|---|---|\n|Custom||406M|406M (100%)|\n|L-EO||406M|53M (13%)|\n|L-LDB||406M|17M (4.2%)|\n|Prefx||416M|10M (2.4%)|"
+    },
+    {
+      "index": 26,
+      "text": "Table 1: Comparing the number of trainable parameters in each fine-tuning method.\n\n## 3 EXPERIMENTAL DESIGN"
+    },
+    {
+      "index": 27,
+      "text": "The goal of our experimental design is to investigate whether custom models outperform the baseline model, leading to performance improvements in terms of intrinsic metrics (RQ1), as well as extrinsic task-specific metrics (RQ2). Next, we analyze and compare the different customization approaches in terms of training and compute costs (RQ3) as well as model size and required storage for deployment."
+    },
+    {
+      "index": 28,
+      "text": "In our case study, we chose Unit Test Case generation as our code generation task _t_ , and _AthenaTest_ by Tufano et al. (2021) as our baseline model _m_ , which is a BART transformer model pre-trained on source code and English, and fine-tuned on Java unit test generation. The task is modeled as a translation task, where the input is a focal method ( _i.e.,_ method under test), and the output is a test case which tests the focal method\u2019s correctness. We randomly sample 20 projects from the test set, each of those representing the dataset _p_ on which a custom model is fine-tuned. Specifically, for each project _p_ , we start from the baseline model _m_ and fine-tune four different custom models according to the four proposed fine-tuning strategies. For each project and fine-tuning strategy ( _e.g.,_ L-EO), we fine-tune and evaluate the models using 4-fold cross-validation. The models are trained until the best validation loss is reached, independently for every fold, every repository, and every customization approach. In total, we fine-tune and evaluate 20( _projects_ ) _\u00d7_ 4( _approaches_ ) _\u00d7_ 4( _folds_ ) = 320 models."
+    },
+    {
+      "index": 29,
+      "text": "## 3.1 DATASET\n\nTable 2 reports information about the 20 GitHub repositories sampled from the test set, which will be used to customize our models. The table shows (i) the Project ID, which will be used in the paper to"
+    },
+    {
+      "index": 30,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\nreference a specific project; (ii) the project name; (iii) the project size in terms of disk usage; (iv) the popularity of the project in terms of number of stars obtained on GitHub; (v) and the dataset size, which corresponds to the number of data points for the unit test generation task ( _i.e.,_ pair of focal method and test case). The list of projects represent a diverse set of repositories with different size, domain, and popularity. They span from small personal projects ( _e.g.,_ Tutorials with 6 stars), to open source projects developed by large organizations such as Apache and Google."
+    },
+    {
+      "index": 31,
+      "text": "|Project ID|Name|Project Size (MB)|Stars|Dataset Size|\n|---|---|---|---|---|\n|26644682|Talend Data Prep|68.8|56|651|\n|40735368|GeoTools|62.4|8|653|\n|107330274|Titus Control Plane|36.0|302|660|\n|52972024|Smart Actors|57.8|22|704|\n|9714608|Arakhn\u00ea Foundation Classes|17.9|13|753|\n|60701247|Android Plugin for IntelliJ IDEA|1026.7|716|754|\n|14550159|EverRest|5.3|24|761|\n|9278888|Brave|18.8|2084|787|\n|66940520|DHIS 2|118.1|211|862|\n|33645537|Tutorials|34.4|6|878|\n|62253355|Mobi|62.6|35|986|\n|155883728|OakPAL|15.0|9|1005|\n|4710920|Apache Dubbo|36.1|36231|1058|\n|29603649|Wilma|6.7|40|1074|\n|42949039|Herd|227.2|127|1249|\n|1381673|Drools|176.7|3908|1394|\n|1244027|ModeShape|131.1|212|1550|\n|73948366|AthenZ|38.8|639|1920|\n|660443|Chemistry Development Kit (CDK)|214.8|305|2591|\n|87849739|Eclipse Ditto\u2122Project|52.5|311|2842|"
+    },
+    {
+      "index": 32,
+      "text": "Table 2: Dataset - Projects used for customization\n\n## 3.2 RQ1: INTRINSIC EVALUATION METRICS\n\n**RQ** 1 **: Do custom models obtain better performances on intrinsic metrics, such as BLEU and perplexity, w.r.t. the baseline?** To begin, we investigate how the different model customization approaches described in Sec. 2 score on intrinsic metrics such as BLEU and perplexity. All approaches entail fine-tuning the baseline model to the dataset of a specific project, with the choice of parameters being tuned depending on the approach taken. The four variants are trained independently until the best validation loss is achieved. We report the BLEU4 score and the mean perplexity per token on the test fold, for all the 20 projects. Next, we perform statistical tests to investigate whether the observed differences between the baseline and custom models are significant, as well as differences among the customization approaches. Specifically, we rely on the Kruskal-Wallis test, a non-parametric statistical test."
+    },
+    {
+      "index": 33,
+      "text": "- 3.3 RQ2: TASK-SPECIFIC PERFORMANCES\n\n**RQ** 2 **: Do custom models improve on performance metrics specific to unit test generation?** We want to investigate how the different customization approaches compare with respect to the downstream task of generating unit tests. Beyond BLEU score and perplexity, we would like to see if custom models can produce the correct target code, how closely their unit tests mimic the repository style, or even if they can perfectly match the desired output."
+    },
+    {
+      "index": 34,
+      "text": "- _Perfect Matches_ : We compare the model\u2019s output string with the target developer-written unit test. If the two strings are identical, this is considered a perfect match. We do not take spacing and indentation into account as we are using a Java dataset (where indentation is not required). We report the proportion of perfect matches among the top 5 model predictions."
+    },
+    {
+      "index": 35,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\n- _Abstracted Code Matches_ : We pass the model output and target output through the src2abs tool (Tufano, 2018), to obtain an abstracted version, masking variable names, method names, etc. We also do not distinguish between different objects of the same type."
+    },
+    {
+      "index": 36,
+      "text": "- _Coding Style_ : For each project\u2019s custom model, we would like to determine how closely the model learns the developer\u2019s personal programming style and preferences. To this end, we extract the collection of all identifiers ( _i.e.,_ variables and functions\u2019 names) from the unit tests written by the developer as well as those generated by the models. We then pass these text outputs through a tf-idf vectorizer and compute the cosine similarity between them. This allows us to compare the developer\u2019s and the models\u2019 word usage. We examine the similarity between the developer\u2019s unit tests and the baseline and custom models generated tests. This scores the vocabulary similarity of the unit tests with the model generated code."
+    },
+    {
+      "index": 37,
+      "text": "- 3.4 RQ3: TRAINING COST COMPARISON\n\n**RQ** 3 **: Given the same amount of compute, which custom models achieve the biggest performance improvement?** Since our four training regimes tune a different number of parameters, simply comparing the training time or number of optimization steps to reach the best validation loss may not be appropriate. For a model with _N_ parameters, we approximate the computation cost of a forward pass to be _C \u2248_ 2 _N_ floating point operations per training token, with an additional correction for embedding layers. The backward pass takes roughly twice the amount of compute, but it is unnecessary for layers that are frozen. For additional details, we refer to Table 1 in Kaplan et al. (2020). We report the resulting compute in petaFLOPS-seconds."
+    },
+    {
+      "index": 38,
+      "text": "## 4 RESULTS\n\n## 4.1 RQ1: INTRINSIC EVALUATION METRICS\n\nTable 3 presents the results of custom models in terms of the intrinsic metrics: BLEU and perplexity. Specifically, for each project, we report the average BLEU and perplexity over the four folds, achieved on the test set by the different customization strategy, as well as the baseline model. We observe notable improvements in both metrics for every project w.r.t. the baseline, with BLEU going from 16.1 achieved by the baseline model to 36-38 by custom models."
+    },
+    {
+      "index": 39,
+      "text": "The statistical tests reported in Table 4 confirm that the improvement observed by the four customization techniques are statistically significant w.r.t. the baseline ( _p <_ 1e-7). However, we do not observe statistical significance in the differences among the customization strategies, meaning that, in terms of intrinsic metrics performances, the differences are within margin of error."
+    },
+    {
+      "index": 40,
+      "text": "## 4.2 RQ2: TASK-SPECIFIC PERFORMANCES\n\nThe results in terms of task-specific performances are presented in Figure 3. The plot 3a shows the top-k accuracy for perfect matches (solid line) and abstracted matches (dotted line), aggregated over the 20 projects. The baseline model outputs the same code structure (abstracted) in roughly 3% of all cases, and virtually never produces the exact target output (<1%). Moreover, its performance does not improve as we consider more predictions. All customization processes show significant improvement compared to the baseline. Specifically, these improvements are observed for every single project (full results will be available on our online appendix). Customized models produce the correct code structure as their top prediction in _\u223c_ 13-14% of instances, and a perfect match in _\u223c_ 4-6% of cases. They also tend to improve as we consider their top 5 predictions. Between the different customization processes, Custom consistently performs the best, closely followed by Prefix and L-LDB. When considering abstracted code matches, these three approaches are nearly identical. L-EO, however, performs slightly worse than the others."
+    },
+    {
+      "index": 41,
+      "text": "Plot 3b shows the distribution of tf-idf cosine similarity computed between identifiers used in the developers\u2019 written tests and the models\u2019 generated outputs. We observe that the distribution for custom models is skewed towards the higher values of cosine similarity. This result demonstrates that custom models tend to use variable and function names that are more similar to what developers used in their own tests."
+    },
+    {
+      "index": 42,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\n|Project\nBLEU4\nPerplexity\nBase\nCust.\nL-EO\nL-LDB\nPrefx\nBase\nCust.\nL-EO\nL-LDB\nPrefx|Project\nBLEU4\nPerplexity\nBase\nCust.\nL-EO\nL-LDB\nPrefx\nBase\nCust.\nL-EO\nL-LDB\nPrefx|\n|---|---|\n|||\n|26644682\n14.1\n32.9\n31.6\n31.9\n**34.0**\n40735368\n18.5\n**30.7**\n29.0\n29.4\n29.1\n107330274\n14.8\n**38.0**\n35.0\n35.9\n35.7\n52972024\n10.2\n31.8\n**33.2**\n32.2\n30.1\n9714608\n14.7\n**41.0**\n38.1\n40.4\n40.2\n60701247\n10.8\n**28.9**\n24.4\n25.9\n26.6\n14550159\n20.0\n**49.5**\n47.2\n46.6\n46.4\n9278888\n17.3\n46.8\n44.5\n47.2\n**47.8**\n66940520\n17.4\n**37.9**\n33.9\n35.5\n37.7\n33645537\n17.0\n30.4\n31.2\n**32.0**\n31.0\n62253355\n14.7\n**48.0**\n45.7\n47.3\n**48.0**\n155883728\n13.7\n**41.3**\n37.5\n39.3\n39.5\n4710920\n28.2\n**39.1**\n38.1\n38.8\n38.6\n29603649\n19.1\n**58.4**\n54.9\n56.6\n56.8\n42949039\n17.0\n**38.2**\n37.7\n37.5\n37.3\n1381673\n14.3\n**33.3**\n29.3\n30.9\n30.8\n1244027\n19.6\n**30.1**\n29.7\n30.0\n30.0\n73948366\n12.0\n33.1\n31.8\n**34.0**\n33.6\n660443\n15.0\n34.0\n**37.2**\n36.5\n34.3\n87849739\n13.4\n45.1\n47.0\n**48.9**\n46.8|1.275\n1.212\n1.208\n1.238\n**1.197**\n1.276\n**1.186**\n1.197\n**1.186**\n1.194\n1.273\n**1.160**\n1.168\n1.164\n1.175\n1.271\n1.142\n1.146\n**1.135**\n**1.135**\n1.263\n1.155\n1.145\n1.150\n**1.138**\n1.267\n1.187\n1.190\n**1.172**\n1.176\n1.245\n1.121\n1.122\n**1.116**\n1.124\n1.272\n**1.137**\n1.152\n1.138\n1.140\n1.264\n1.154\n1.163\n1.154\n**1.150**\n1.264\n1.231\n1.200\n**1.192**\n1.211\n1.292\n**1.113**\n1.114\n1.114\n1.116\n1.238\n**1.132**\n1.148\n1.146\n1.140\n1.218\n1.161\n1.162\n1.167\n**1.160**\n1.266\n**1.096**\n1.110\n1.099\n1.098\n1.238\n1.154\n1.152\n1.154\n**1.148**\n1.261\n**1.133**\n1.152\n1.138\n1.138\n1.244\n**1.142**\n1.160\n**1.142**\n1.150\n1.267\n1.161\n**1.157**\n1.159\n1.164\n1.281\n1.180\n1.170\n**1.169**\n1.177\n1.259\n1.138\n1.136\n**1.124**\n1.144|\n|||\n|Average\n16.1\n**38.4**\n36.9\n37.8\n37.7|1.262\n**1.153**\n1.158\n**1.153**\n1.154|"
+    },
+    {
+      "index": 43,
+      "text": "Table 3: The BLEU score and perplexity for the customization methods evaluated on the 20 projects in our test set."
+    },
+    {
+      "index": 44,
+      "text": "|BLEU4\nPerplexity\nBase\nCust.\nL-EO\nL-LDB\nPrefx\nBase\nCust.\nL-EO\nL-LDB\nPrefx|BLEU4\nPerplexity\nBase\nCust.\nL-EO\nL-LDB\nPrefx\nBase\nCust.\nL-EO\nL-LDB\nPrefx|\n|---|---|\n|||\n|Base\n-\n**3e-08**\n**3e-08**\n**3e-08**\n**3e-08**\nCust.\n**3e-08**\n-\n0.4\n0.7\n0.7\nEO\n**3e-08**\n0.4\n-\n0.5\n0.7\nLDB\n**3e-08**\n0.7\n0.5\n-\n0.9\nPrefx\n**3e-08**\n0.7\n0.7\n0.9\n-|-\n**3e-08**\n**3e-08**\n**3e-08**\n**3e-08**\n**3e-08**\n-\n0.5\n0.9\n0.9\n**3e-08**\n0.5\n-\n0.5\n0.5\n**3e-08**\n0.9\n0.5\n-\n0.8\n**3e-08**\n0.9\n0.5\n0.8\n-|"
+    },
+    {
+      "index": 45,
+      "text": "Table 4: Kruskal-Wallis Test p-values testing the significance of the pairwise hypothesis that one customization method is superior than another. Custom strategies are significantly better than baseline."
+    },
+    {
+      "index": 46,
+      "text": "**----- Start of picture text -----**\n\nTop-K Accuracy\n25\nBaseline\nCustom\nL-EO\n20 L-LDB\nPrefix\n15\n10\n5\n0\n1 2 3 4 5\nTop-K\n(a) Exact (solid) and abstracted (dotted) match rate (b) Coding style as identifier similarity\nMatch %\n**----- End of picture text -----**"
+    },
+    {
+      "index": 47,
+      "text": "Figure 3: Task-specific metrics (a) custom models outperform the baseline in terms of perfect matches (solid line) and abstract matches (dotted line); (b) custom models generate code that uses identifiers ( _i.e.,_ variable and function names) that are more similar to the project codebase."
+    },
+    {
+      "index": 48,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\n## 4.3 RQ3: TRAINING COST COMPARISON\n\nFor each customization process, we plot validation loss as a function of compute, as defined in section 3.4. The results are presented in Figure 4, where the light lines represent the validation loss curve for each individual project and fold, while the bold line represents the average for each custom strategy. First note that Custom achieves very large gains during the first epoch, as evidenced by the fact that its validation loss starts much lower than L-EO and L-LDB. Custom also outperforms other customization processes when given a limited amount of compute. However, we observe that beyond a certain amount of compute, Custom and L-LDB tend to achieve similar performances. In contrast, L-EO starts at the same validation loss as L-LDB but converges much slower to the best loss, requiring 2-3 times as much compute."
+    },
+    {
+      "index": 49,
+      "text": "Since the prefix parameters suffer from poor initialization, Prefix is the most expensive customization process. To overcome this problem, it is possible to first train the prefix on a large generic dataset. Then, given proper hyperparameter tuning, it is possible to substantially cut down compute cost for customizing the prefix."
+    },
+    {
+      "index": 50,
+      "text": "**----- Start of picture text -----**\n\nCustom\n4.0\nL-EO\nL-LDB\n3.5\nPrefix\n3.0\n2.5\n2.0\n1.5\n1.0\n0.5\n10 1 10 [0] 10 [1] 10 [2] 10 [3]\nCompute\nCross entropy loss\n**----- End of picture text -----**"
+    },
+    {
+      "index": 51,
+      "text": "Figure 4: Validation Loss vs Compute (PF-seconds) - Light lines represent the validation loss curve for each individual project and fold, while the bold line represents the average for each custom strategy. Custom is the most efficient, lightweight approaches require slightly more compute to reach a comparable validation loss, while prefix is the least efficient, suffering from poor initialization."
+    },
+    {
+      "index": 52,
+      "text": "## 5 DISCUSSION & LESSONS LEARNED\n\nThe four customization strategies considered in this work are effective in improving a code generation model\u2019s performances on a given software project. Specifically, all custom models significantly outperform the baseline in terms of intrinsic metrics ( _i.e.,_ BLEU and perplexity) as well as taskspecific metrics ( _i.e.,_ abstract and raw matches). While the differences among the customization approaches are not significant (no clear winner), each strategy offers specific advantages in different circumstances and deployment scenarios."
+    },
+    {
+      "index": 53,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\n_**Custom**_ fine-tuning achieves the overall best performances and the customization process is relatively fast and efficient. This is somewhat expected, since this customization strategy allows all the model\u2019s parameters to be tuned on the specific project. This characteristic also leads to the major disadvantage of this approach: each custom model is an entire copy of the original model. Storage and inference costs could become prohibitive when serving many users with personalized custom models."
+    },
+    {
+      "index": 54,
+      "text": "_**Lightweight**_ fine-tuning achieves good results while training fewer parameters. This allows to serve potentially many users with custom models which can be stored and loaded efficiently. Specifically, L-LDB trains fewer parameters than L-EO, however the latter could allow to deploy the embedding and output layers on the user side, with a privacy-preserving focus."
+    },
+    {
+      "index": 55,
+      "text": "_**Prefix**_ fine-tuning trains the lowest number of parameters (only 2.4% for a BART model), while improving over the baseline. However, it increases the total number of parameters of the model (prefixes are additional virtual tokens) and requires more compute time to achieve good performances, mostly due to the prefix initialization problem. On the bright side, this strategy allows to batch together requests from different users (with different prefixes), which can be processed by a single model, generating personalized outputs."
+    },
+    {
+      "index": 56,
+      "text": "## 6 RELATED WORK\n\nThis work is related to two areas of the existing literature: neural source code generation and model personalization. Neural code generation has generated an intense recent interest in NLP, using Transformer models Vaswani et al. (2017b) in particular for code completion Svyatkovskiy et al. (2020; 2019); Clement et al. (2020); Raychev et al. (2014); Bruch et al. (2009); Brockschmidt et al. (2018), code synthesis from examples Chen et al. (2018), natural language to code Clement et al. (2020); Chen et al. (2018); Austin et al. (2021), code feature summarization Liu et al. (2021); Moreno et al. (2013); Scalabrino et al. (2017); Wan et al. (2018); Alon et al. (2018); Moreno et al. (2014), code search Husain et al. (2019); Feng et al. (2020), unit test generation Tufano et al. (2021) and even bug fixing Drain et al. (2021) and detection Zhai et al. (2020). This paper naturally is an extension and evaluation of personalized unit test generations as studied by Tufano et al. (2021), and an important contribution to the understanding optimization in a deployment scenario."
+    },
+    {
+      "index": 57,
+      "text": "Much of the previous literature on personalized models focuses on client-side training to keep data on device Shor et al. (2019); Popov et al. (2018), and most work is in the domain of search query completion Jaech and Ostendorf (2018), natural language completion Popov et al. (2018), or even automated speech recognition Shor et al. (2019). Naturally this work extends the domain of evaluation beyond natural language tasks and into the software engineering domain. This paper does not evaluate methods for client side training with restricted resources, however, as the most powerful large language models which enable state of the art code synthesis have 10-100 million parameters. At the time of writing such large models cannot be executed in a reasonable amount of time on most consumer laptops. We leave to future work extending these studies to models which have been pruned, quantized, distilled, and optimized to be ran in limited resource environments."
+    },
+    {
+      "index": 58,
+      "text": "## 7 CONCLUSION\n\nIn this paper we explored different ways to customize a code generation model for a given codebase, with the goal of improving its performances on a target project. We described and analyzed four customization strategies and applied them on 20 different software projects for the task of generating unit test cases. Specifically, we considered the following strategies: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned on the target project; (ii) _L-EO_ fine-tuning, a lightweight training which freezes most of the model\u2019s parameters, tuning only embedding and output layers; (iii) _L-LDB_ fine-tuning, a lightweight training which only tunes the last decoder block; (iv) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific vector (prefix)."
+    },
+    {
+      "index": 59,
+      "text": "In our extensive empirical evaluation we found that all the customization strategies lead to significant model\u2019s improvements on a target project, in terms of both intrinsic and task-specific metrics, with the custom models adapting to the coding style of the target project. While there is no clear winner among the customization strategies, each approach can provide specific benefits in particular deployment scenarios."
+    },
+    {
+      "index": 60,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n## REFERENCES\n\n- Uri Alon, Shaked Brody, Omer Levy, and Eran Yahav. code2seq: Generating sequences from structured representations of code. _arXiv preprint arXiv:1808.01400_ , 2018."
+    },
+    {
+      "index": 61,
+      "text": "- Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language models. _arXiv preprint arXiv:2108.07732_ , 2021."
+    },
+    {
+      "index": 62,
+      "text": "Marc Brockschmidt, Miltiadis Allamanis, Alexander L Gaunt, and Oleksandr Polozov. Generative code modeling with graphs. In _International Conference on Learning Representations_ , 2018."
+    },
+    {
+      "index": 63,
+      "text": "- Marcel Bruch, Martin Monperrus, and Mira Mezini. Learning from examples to improve code completion systems. In _Proceedings of the 7th joint meeting of the European software engineering conference and the ACM SIGSOFT symposium on the foundations of software engineering_ , pages 213\u2013222, 2009."
+    },
+    {
+      "index": 64,
+      "text": "- Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde, Jared Kaplan, Harri Edwards, Yura Burda, Nicholas Joseph, Greg Brockman, et al. Evaluating large language models trained on code. _arXiv preprint arXiv:2107.03374_ , 2021."
+    },
+    {
+      "index": 65,
+      "text": "- Xinyun Chen, Chang Liu, and Dawn Song. Towards synthesizing complex programs from inputoutput examples. In _International Conference on Learning Representations_ , 2018. URL https: //openreview.net/forum?id=Skp1ESxRZ."
+    },
+    {
+      "index": 66,
+      "text": "- Colin Clement, Dawn Drain, Jonathan Timcheck, Alexey Svyatkovskiy, and Neel Sundaresan. Pymt5: Multi-mode translation of natural language and python code with transformers. In _Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP)_ , pages 9052\u20139065, 2020."
+    },
+    {
+      "index": 67,
+      "text": "- Dawn Drain, Chen Wu, Alexey Svyatkovskiy, and Neel Sundaresan. Generating bug-fixes using pretrained transformers. _arXiv preprint arXiv:2104.07896_ , 2021."
+    },
+    {
+      "index": 68,
+      "text": "- Zhangyin Feng, Daya Guo, Duyu Tang, Nan Duan, Xiaocheng Feng, Ming Gong, Linjun Shou, Bing Qin, Ting Liu, Daxin Jiang, et al. Codebert: A pre-trained model for programming and natural languages. In _Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: Findings_ , pages 1536\u20131547, 2020."
+    },
+    {
+      "index": 69,
+      "text": "- Hamel Husain, Ho-Hsiang Wu, Tiferet Gazit, Miltiadis Allamanis, and Marc Brockschmidt. Codesearchnet challenge: Evaluating the state of semantic code search. _arXiv preprint arXiv:1909.09436_ , 2019."
+    },
+    {
+      "index": 70,
+      "text": "- Aaron Jaech and Mari Ostendorf. Personalized language model for query auto-completion. In _Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers)_ , pages 700\u2013705, 2018."
+    },
+    {
+      "index": 71,
+      "text": "- Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models. _CoRR_ , abs/2001.08361, 2020. URL https://arxiv.org/abs/2001.08361."
+    },
+    {
+      "index": 72,
+      "text": "- Xiang Lisa Li and Percy Liang. Prefix-tuning: Optimizing continuous prompts for generation. _arXiv preprint arXiv:2101.00190_ , 2021."
+    },
+    {
+      "index": 73,
+      "text": "- Shangqing Liu, Yu Chen, Xiaofei Xie, Jing Kai Siow, and Yang Liu. Retrieval-augmented generation for code summarization via hybrid {gnn}. In _International Conference on Learning Representations (ICLR)_ , 2021."
+    },
+    {
+      "index": 74,
+      "text": "- Kevin Lu, Aditya Grover, Pieter Abbeel, and Igor Mordatch. Pretrained transformers as universal computation engines. _CoRR_ , abs/2103.05247, 2021. URL https://arxiv.org/abs/2103. 05247."
+    },
+    {
+      "index": 75,
+      "text": "- Laura Moreno, Jairo Aponte, Giriprasad Sridhara, Andrian Marcus, Lori Pollock, and K VijayShanker. Automatic generation of natural language summaries for java classes. In _2013 21st International Conference on Program Comprehension (ICPC)_ , pages 23\u201332. IEEE, 2013.\n\n10"
+    },
+    {
+      "index": 76,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__claude-opus-4.7": {
+      "label": "Progressive (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This paper addresses a timely and practically relevant problem: how to personalize large Transformer-based code generation models to specific projects (e.g., private codebases) in a cost-effective manner, using unit test generation for Java as the evaluation task. The motivation is well-articulated, the deployment-oriented framing (memory, storage, serving many custom models) is a genuine strength, and the three-way comparison of custom, lightweight, and prefix fine-tuning is a reasonable and useful axis of study. However, several significant concerns emerge from the introduction and early sections. First, the novelty appears limited: each of the three fine-tuning strategies is drawn from prior work, and the contribution seems primarily to be an empirical comparison rather than a methodological advance\u2014this needs to be more sharply justified relative to existing surveys and studies of parameter-efficient tuning (e.g., adapters, LoRA, which are conspicuously absent from the set of alternatives). Second, the scope of evaluation is narrow (a single task\u2014unit test generation\u2014on a single language), which undermines claims about general \"guidelines\" for choosing customization strategies; the paper would be substantially strengthened by including an additional code generation task or language. Third, the abstract and introduction concede that \"there is no unambiguous winner,\" which, combined with the lack of methodological novelty, risks leaving the reader without a crisp takeaway; the authors should more concretely preview the decision criteria and quantitative trade-offs that emerge. Finally, the writing is generally clear but repetitive (the three approaches are enumerated verbatim in both the abstract and introduction), and key terms such as \"generalization\" and \"personalization\" are used somewhat loosely\u2014personalizing to a project is not the same as generalization, and this conflation should be cleaned up. Overall, the paper tackles a meaningful engineering question but needs broader empirical coverage, comparison to more recent parameter-efficient methods, and a sharper articulation of its contribution to merit acceptance.",
+      "comments": [
+        {
+          "id": "progressive__claude-opus-4.7_0",
+          "title": "Abstract states three approaches but paper investigates four",
+          "quote": "We consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which freezes most of the model's parameters, allowing a tuning of the token embeddings and softmax layer or the final layer alone; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific prefix vector.",
+          "explanation": "At first read this seems consistent \u2014 three categories of fine-tuning. But the body of the paper (Sections 2.3, 2.4) and all experimental tables (Table 1, Table 3, Figure 1) actually evaluate four distinct approaches: Custom, L-EO, L-LDB, and Prefix. The abstract lumps L-EO and L-LDB under a single 'lightweight' umbrella ('token embeddings and softmax layer or the final layer alone'), which is defensible as a taxonomic grouping. However, the Introduction repeats the same 'three fine-tuning approaches' framing and also conflates the two lightweight variants: 'which only optimizes the token embedding representations or the final softmax layer'. This description of lightweight fine-tuning is actually inaccurate for L-LDB, which tunes the entire last decoder block (self-attention, encoder-decoder attention, layernorm, feedforward) \u2014 not just 'the final softmax layer' or 'the final layer alone'. A careful reader comparing abstract/intro to Section 2.4 will find the characterization in the abstract/intro misleading regarding what L-LDB actually does.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_1",
+          "title": "L-EO parameter count (53M / 13%) is large for 'embeddings and output layer only'",
+          "quote": "During L-EO finetuining, instead, only 13% (53M) parameters are trained.",
+          "explanation": "I wanted to sanity-check this. For BART-large with vocabulary size ~50k and embedding dim 1024, the token embedding matrix is ~50k \u00d7 1024 \u2248 51M parameters. If the output projection shares weights with the embedding (common in BART), then L-EO would have ~51M trainable parameters; if separate, ~102M. 53M is consistent with tied embedding+output weights (plus position embeddings and a small output bias/layer). So the number is plausible. The framing 'embeddings and output layer' is a bit misleading because it suggests two distinct layers, but in tied-embedding models these share weights \u2014 the authors should probably clarify whether weights are tied, since this affects the storage argument. The reduction in trainable parameters is still real, so this doesn't affect the main conclusions, but the per-user storage savings claim depends on whether one must store the full embedding (~51M params) per user, which is not much smaller than the full model for storage/memory purposes relative to the paper's motivation. This seems like a framing/motivation concern worth noting.",
+          "comment_type": "logical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_2",
+          "title": "Perfect matches described inconsistently with top-k reporting",
+          "quote": "We report the proportion of perfect matches among the top 5 model predictions.",
+          "explanation": "The methodology section states perfect matches are reported 'among the top 5 model predictions', but the results section describes top-k accuracy curves (Figure 3a) showing behavior across multiple k values, and mentions 'Customized models produce the correct code structure as their top prediction in ~13-14% of instances'. This is a minor inconsistency \u2014 the methodology suggests a single top-5 proportion, while results show a full top-k curve. A reader could reasonably be confused about whether a single number or a curve is being reported, though the results make clear that top-k (k=1 through presumably 5) is shown.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_3",
+          "title": "Compute cost approximation lacks specificity for prefix tuning",
+          "quote": "For a model with _N_ parameters, we approximate the computation cost of a forward pass to be _C \u2248_ 2 _N_ floating point operations per training token, with an additional correction for embedding layers. The backward pass takes roughly twice the amount of compute, but it is unnecessary for layers that are frozen.",
+          "explanation": "The authors cite Kaplan et al. (2020) for the 2N FLOPs-per-token approximation and note that backward pass is skipped for frozen layers. However, for prefix tuning the forward pass still requires computing through all 406M frozen parameters (since the prefix influences all layers), while only the ~10M prefix parameters receive gradients. It's unclear whether the authors use N=416M for the forward pass and only count backward cost on the 10M trainable prefix params, or something else. Similarly for L-EO and L-LDB, the forward pass FLOPs should still reflect full N=406M. Since RQ3 is centrally about compute comparison, the exact accounting matters, but is not fully specified here. This is a moderate underspecification given RQ3's focus.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_4",
+          "title": "Claim about baseline not improving with more predictions needs more support",
+          "quote": "Moreover, its performance does not improve as we consider more predictions.",
+          "explanation": "The authors claim the baseline's top-k accuracy does not improve as k grows. This is an unusual property \u2014 normally top-k accuracy is monotonically non-decreasing in k by definition (if the top-1 matches, top-5 also counts it). The authors likely mean the baseline's top-k accuracy is essentially flat (all correct predictions are already in top-1, or none of the top-5 match), but phrased as stated it reads oddly. For a careful reader this is resolvable (the curve is nearly flat at ~3%), but the phrasing slightly overstates a property that is technically impossible to violate (top-k is weakly monotonic).",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_5",
+          "title": "Claim about prefix batching ignores differing prefix lengths/contents not being the issue but memory cost is",
+          "quote": "this strategy allows to batch together requests from different users (with different prefixes), which can be processed by a single model, generating personalized outputs.",
+          "explanation": "This is a deployment claim offered without justification. Batching requests from different users with different prefixes is non-trivial: each user's prefix consists of distinct key/value parameters that must be loaded into the attention layers of every block. Standard batching assumes shared model weights; with per-user prefixes, each element of the batch requires different prefix parameters injected at every layer. The authors present this as a straightforward advantage, but a careful reader would want some explanation of how this batching actually works in practice (e.g., concatenating prefix KV caches per-example). Minor because it's in the discussion section framing advantages rather than a core technical claim.",
+          "comment_type": "logical",
+          "paragraph_index": 55,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__claude-opus-4.7_6",
+          "title": "Inconsistency in model size claim in Related Work",
+          "quote": "the most powerful large language models which enable state of the art code synthesis have 10-100 million parameters",
+          "explanation": "This seems off. The paper's own baseline (AthenaTest/BART) has 406M parameters, which is already larger than the \"10-100 million\" range cited here. Moreover, by 2021 state-of-the-art code synthesis models like Codex (12B), GPT-3 (175B), and others were in the billions of parameters. The phrase \"10-100 million\" is almost certainly a typo for \"10-100 billion\" or similar. As written, the claim contradicts the paper's own setup (a 406M-parameter model is described as too large for consumer laptops, yet that exceeds the stated range of \"most powerful\" models). This would mislead a careful reader about the scale of models being discussed.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.8396,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 95992,
+      "completion_tokens": 14386
+    },
+    "progressive_original__claude-opus-4.7": {
+      "label": "Progressive Original (claude-opus-4.7)",
+      "model": "anthropic/claude-opus-4.7",
+      "overall_feedback": "This paper addresses a timely and practically relevant problem: how to personalize large Transformer-based code generation models to specific projects (e.g., private codebases) in a cost-effective manner, using unit test generation for Java as the evaluation task. The motivation is well-articulated, the deployment-oriented framing (memory, storage, serving many custom models) is a genuine strength, and the three-way comparison of custom, lightweight, and prefix fine-tuning is a reasonable and useful axis of study. However, several significant concerns emerge from the introduction and early sections. First, the novelty appears limited: each of the three fine-tuning strategies is drawn from prior work, and the contribution seems primarily to be an empirical comparison rather than a methodological advance\u2014this needs to be more sharply justified relative to existing surveys and studies of parameter-efficient tuning (e.g., adapters, LoRA, which are conspicuously absent from the set of alternatives). Second, the scope of evaluation is narrow (a single task\u2014unit test generation\u2014on a single language), which undermines claims about general \"guidelines\" for choosing customization strategies; the paper would be substantially strengthened by including an additional code generation task or language. Third, the abstract and introduction concede that \"there is no unambiguous winner,\" which, combined with the lack of methodological novelty, risks leaving the reader without a crisp takeaway; the authors should more concretely preview the decision criteria and quantitative trade-offs that emerge. Finally, the writing is generally clear but repetitive (the three approaches are enumerated verbatim in both the abstract and introduction), and key terms such as \"generalization\" and \"personalization\" are used somewhat loosely\u2014personalizing to a project is not the same as generalization, and this conflation should be cleaned up. Overall, the paper tackles a meaningful engineering question but needs broader empirical coverage, comparison to more recent parameter-efficient methods, and a sharper articulation of its contribution to merit acceptance.",
+      "comments": [
+        {
+          "id": "progressive_original__claude-opus-4.7_0",
+          "title": "Abstract states three approaches but paper investigates four",
+          "quote": "We consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which freezes most of the model's parameters, allowing a tuning of the token embeddings and softmax layer or the final layer alone; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific prefix vector.",
+          "explanation": "At first read this seems consistent \u2014 three categories of fine-tuning. But the body of the paper (Sections 2.3, 2.4) and all experimental tables (Table 1, Table 3, Figure 1) actually evaluate four distinct approaches: Custom, L-EO, L-LDB, and Prefix. The abstract lumps L-EO and L-LDB under a single 'lightweight' umbrella ('token embeddings and softmax layer or the final layer alone'), which is defensible as a taxonomic grouping. However, the Introduction repeats the same 'three fine-tuning approaches' framing and also conflates the two lightweight variants: 'which only optimizes the token embedding representations or the final softmax layer'. This description of lightweight fine-tuning is actually inaccurate for L-LDB, which tunes the entire last decoder block (self-attention, encoder-decoder attention, layernorm, feedforward) \u2014 not just 'the final softmax layer' or 'the final layer alone'. A careful reader comparing abstract/intro to Section 2.4 will find the characterization in the abstract/intro misleading regarding what L-LDB actually does.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_1",
+          "title": "Prefix tuning parameter count computation is not fully transparent",
+          "quote": "Practically, we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 _\u00d7_ 200 _\u00d7_ 24 _\u00d7_ 2 _\u2248_ 10M trainable parameters.",
+          "explanation": "I tried to verify this calculation. 1024 \u00d7 200 \u00d7 24 \u00d7 2 = 9,830,400 \u2248 10M, so the arithmetic checks out. The factor of 24 presumably corresponds to 12 encoder blocks + 12 decoder blocks = 24 blocks (consistent with Figure 2 which shows Encoder 0\u201311 and Decoder 0\u201311). The factor of 2 is not explained, though \u2014 for a standard prefix-tuning setup on an encoder-decoder, one typically has separate prefixes for key and value activations, which would give the factor of 2. Alternatively it could be input-prefix for both self-attention and cross-attention in the decoder. Since this is a standard implementation detail and the numerical result is consistent with Table 1's reported 10M additional parameters (416M \u2212 406M = 10M), the calculation is internally consistent, but a reader wanting to reproduce the exact parameterization would need more detail. This is mildly underspecified but not a real error.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_2",
+          "title": "Prefix parameter count arithmetic inconsistent with stated architecture",
+          "quote": "we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 _\u00d7_ 200 _\u00d7_ 24 _\u00d7_ 2 _\u2248_ 10M trainable parameters",
+          "explanation": "I tried to reconstruct this calculation. BART-large has 12 encoder + 12 decoder = 24 transformer blocks, so the factor of 24 corresponds to per-block prefixes. The factor of 2 presumably accounts for key/value prefixes (as in Li & Liang 2021, who parameterize prefixes for K and V separately). With 1024 \u00d7 200 \u00d7 24 \u00d7 2 = 9,830,400 \u2248 10M, the arithmetic checks out. However, Figure 2 shows 12 encoder blocks (Encoder, 0)...(Encoder, 11) and 12 decoder blocks, consistent with 24 total. Also, in a standard encoder-decoder transformer with prefix tuning, decoder blocks have both self-attention and cross-attention, each needing K,V prefixes \u2014 so the factor of 2 may actually undercount for the decoder. Still, since the authors explicitly state their parameterization, this is an internally consistent choice, and the approximate count of 10M aligns with Table 1. The ambiguity is only in which two things the factor of 2 represents, and this is minor since the final parameter count is used consistently.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_3",
+          "title": "L-EO parameter count (53M / 13%) is large for 'embeddings and output layer only'",
+          "quote": "During L-EO finetuining, instead, only 13% (53M) parameters are trained.",
+          "explanation": "I wanted to sanity-check this. For BART-large with vocabulary size ~50k and embedding dim 1024, the token embedding matrix is ~50k \u00d7 1024 \u2248 51M parameters. If the output projection shares weights with the embedding (common in BART), then L-EO would have ~51M trainable parameters; if separate, ~102M. 53M is consistent with tied embedding+output weights (plus position embeddings and a small output bias/layer). So the number is plausible. The framing 'embeddings and output layer' is a bit misleading because it suggests two distinct layers, but in tied-embedding models these share weights \u2014 the authors should probably clarify whether weights are tied, since this affects the storage argument. The reduction in trainable parameters is still real, so this doesn't affect the main conclusions, but the per-user storage savings claim depends on whether one must store the full embedding (~51M params) per user, which is not much smaller than the full model for storage/memory purposes relative to the paper's motivation. This seems like a framing/motivation concern worth noting.",
+          "comment_type": "logical",
+          "paragraph_index": 21,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_4",
+          "title": "Perfect matches described inconsistently with top-k reporting",
+          "quote": "We report the proportion of perfect matches among the top 5 model predictions.",
+          "explanation": "The methodology section states perfect matches are reported 'among the top 5 model predictions', but the results section describes top-k accuracy curves (Figure 3a) showing behavior across multiple k values, and mentions 'Customized models produce the correct code structure as their top prediction in ~13-14% of instances'. This is a minor inconsistency \u2014 the methodology suggests a single top-5 proportion, while results show a full top-k curve. A reader could reasonably be confused about whether a single number or a curve is being reported, though the results make clear that top-k (k=1 through presumably 5) is shown.",
+          "comment_type": "logical",
+          "paragraph_index": 34,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_5",
+          "title": "Compute cost approximation lacks specificity for prefix tuning",
+          "quote": "For a model with _N_ parameters, we approximate the computation cost of a forward pass to be _C \u2248_ 2 _N_ floating point operations per training token, with an additional correction for embedding layers. The backward pass takes roughly twice the amount of compute, but it is unnecessary for layers that are frozen.",
+          "explanation": "The authors cite Kaplan et al. (2020) for the 2N FLOPs-per-token approximation and note that backward pass is skipped for frozen layers. However, for prefix tuning the forward pass still requires computing through all 406M frozen parameters (since the prefix influences all layers), while only the ~10M prefix parameters receive gradients. It's unclear whether the authors use N=416M for the forward pass and only count backward cost on the 10M trainable prefix params, or something else. Similarly for L-EO and L-LDB, the forward pass FLOPs should still reflect full N=406M. Since RQ3 is centrally about compute comparison, the exact accounting matters, but is not fully specified here. This is a moderate underspecification given RQ3's focus.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_6",
+          "title": "Claim about baseline not improving with more predictions needs more support",
+          "quote": "Moreover, its performance does not improve as we consider more predictions.",
+          "explanation": "The authors claim the baseline's top-k accuracy does not improve as k grows. This is an unusual property \u2014 normally top-k accuracy is monotonically non-decreasing in k by definition (if the top-1 matches, top-5 also counts it). The authors likely mean the baseline's top-k accuracy is essentially flat (all correct predictions are already in top-1, or none of the top-5 match), but phrased as stated it reads oddly. For a careful reader this is resolvable (the curve is nearly flat at ~3%), but the phrasing slightly overstates a property that is technically impossible to violate (top-k is weakly monotonic).",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_7",
+          "title": "Claim about prefix batching ignores differing prefix lengths/contents not being the issue but memory cost is",
+          "quote": "this strategy allows to batch together requests from different users (with different prefixes), which can be processed by a single model, generating personalized outputs.",
+          "explanation": "This is a deployment claim offered without justification. Batching requests from different users with different prefixes is non-trivial: each user's prefix consists of distinct key/value parameters that must be loaded into the attention layers of every block. Standard batching assumes shared model weights; with per-user prefixes, each element of the batch requires different prefix parameters injected at every layer. The authors present this as a straightforward advantage, but a careful reader would want some explanation of how this batching actually works in practice (e.g., concatenating prefix KV caches per-example). Minor because it's in the discussion section framing advantages rather than a core technical claim.",
+          "comment_type": "logical",
+          "paragraph_index": 55,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_8",
+          "title": "Inconsistency in model size claim in Related Work",
+          "quote": "the most powerful large language models which enable state of the art code synthesis have 10-100 million parameters",
+          "explanation": "This seems off. The paper's own baseline (AthenaTest/BART) has 406M parameters, which is already larger than the \"10-100 million\" range cited here. Moreover, by 2021 state-of-the-art code synthesis models like Codex (12B), GPT-3 (175B), and others were in the billions of parameters. The phrase \"10-100 million\" is almost certainly a typo for \"10-100 billion\" or similar. As written, the claim contradicts the paper's own setup (a 406M-parameter model is described as too large for consumer laptops, yet that exceeds the stated range of \"most powerful\" models). This would mislead a careful reader about the scale of models being discussed.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__claude-opus-4.7_9",
+          "title": "Prefix parameter count calculation",
+          "quote": "we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 \u00d7 200 \u00d7 24 \u00d7 2 \u2248 10M trainable parameters",
+          "explanation": "I wanted to verify this arithmetic. 1024 \u00d7 200 \u00d7 24 \u00d7 2 = 9,830,400 \u2248 10M. The factor 24 presumably accounts for 12 encoder + 12 decoder blocks, and the factor 2 accounts for key and value prefixes (standard prefix tuning parameterization). This checks out. However, note that standard prefix tuning (Li & Liang 2021) typically uses a reparameterization via an MLP during training, which increases trainable parameters further, and the 200-token prefix also incurs inference-time cost on attention (O(prefix_len \u00d7 seq_len)). The 10M figure refers to deployment parameters only. This is consistent with how the paper reports it in Table 1, so not a real issue\u2014just worth noting for completeness. No issue to flag.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.8396,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 95992,
+      "completion_tokens": 14386
+    },
+    "progressive__gpt-5.5": {
+      "label": "Progressive (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper addresses a timely and practically important problem\u2014cost-effective personalization of large code generation models for project-specific unit test generation\u2014and the framing around deployment trade-offs (performance, storage, memory, and training cost) is compelling. The opening is generally clear and accessible, and the comparison among full fine-tuning, lightweight tuning, and prefix tuning is well motivated. However, the contribution is not yet sharply differentiated from existing parameter-efficient fine-tuning work, and the paper should more explicitly state what is novel beyond applying known adaptation methods to a code-generation/test-generation setting. The terminology around \u201ccustomization\u201d and \u201cpersonalization\u201d is somewhat loose: the work appears to personalize to projects rather than individual users, and this distinction matters for claims about deployment and privacy. The introduction also makes strong empirical claims (\u201cextensive empirical evaluation,\u201d \u201csignificant model improvements\u201d) before providing enough context about datasets, baselines, model scale, statistical rigor, or whether gains reflect true generalization rather than project-level overfitting. The formal definition of customization is mostly tautological and could be replaced with a more precise experimental setup, including train/validation/test splits within projects and cross-project evaluation. Clarity would benefit from tighter writing, fewer repeated explanations of pretraining/fine-tuning, and more careful grammar and terminology. The most significant issue to watch is whether the evaluation convincingly supports the practical deployment claims: the paper must quantify not only accuracy improvements but also storage, latency, training cost, inference overhead, and robustness across diverse projects, while comparing against strong parameter-efficient baselines and clearly explaining when each method is preferable.",
+      "comments": [
+        {
+          "id": "progressive__gpt-5.5_0",
+          "title": "Lightweight fine-tuning variants are described inconsistently",
+          "quote": "Specifically, we consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which only optimizes the token embedding representations or the final softmax layer; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific vector prefix.",
+          "explanation": "The summary description of lightweight fine-tuning does not match the later methods. Section 2.3 describes L-EO as tuning the embedding and output layers together, not token embeddings alone or the final softmax layer alone. Section 2.4 describes L-LDB as tuning the last decoder block, including attention, layer normalization, and feedforward layers, not merely the final softmax layer. This could lead readers to misunderstand which parameters are actually trained in the lightweight baselines. The detailed sections mostly resolve the implementation, but the high-level summary should be aligned with them.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_1",
+          "title": "Formal definition conflates customization data with evaluation data",
+          "quote": "We use the term _customization_ to refer to the process of fine-tuning a model _m_ , previously trained on a generic dataset for a task _t_ , with the goal of improving its performance on a specific dataset _p_ . The performance of a machine learning model _m_ on a dataset _p_ is measured by one or more evaluation functions _f_ ( _m, p_ ) ... The customization process is designed to modify the trainable parameters of the model _m_ , obtaining the model _m[\u2032]_ , such that the performance of _m[\u2032]_ on _p_ is better than what was attained by _m_ .",
+          "explanation": "The formal definition uses the same symbol p for the data used to customize the model and the data used to evaluate f(m, p). Later cross-validation suggests the empirical setup is not simply training and testing on the exact same examples, but the notation itself is ambiguous. In standard ML notation, especially for personalization, it is important to distinguish the adaptation/training subset from a held-out project evaluation subset or from the underlying project distribution. Otherwise the stated improvement could be read as improvement on the same dataset used for fine-tuning, which would not demonstrate generalization. A notation such as p_train and p_test, or an explicit project distribution P_p, would remove the ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_2",
+          "title": "Statistical significance is asserted for task-specific metrics without shown support",
+          "quote": "All customization processes show significant improvement compared to the baseline.",
+          "explanation": "The paper repeatedly describes task-specific gains as \u201csignificant,\u201d including in broad summary statements about both intrinsic and task-specific metrics. The intrinsic metrics are accompanied by statistical tests and p-values, but the task-specific metrics appear to be reported visually and qualitatively, without a corresponding test, confidence interval, or paired analysis. The observed improvements may be substantial and consistent, but in an academic results context \u201csignificant\u201d can reasonably be read as statistical significance. The claim should either report appropriate tests for the task-specific metrics or use wording such as \u201csubstantial\u201d or \u201cconsistent.\u201d",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_3",
+          "title": "Prefix-tuning parameterization is ambiguous relative to the stated 10M count",
+          "quote": "The technique concatenates a sequence (prefix) of virtual tokens (trainable parameters) to the front of the input of every encoder and decoder block. ... Practically, we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 _\u00d7_ 200 _\u00d7_ 24 _\u00d7_ 2 _\u2248_ 10M trainable parameters.",
+          "explanation": "The arithmetic is correct, but the parameterization that justifies the extra factor of 2 is not explained. The prose says the prefix is concatenated to the input of every encoder and decoder block, which would suggest one 200\u00d71024 prefix per block before any additional factors. The \u00d72 likely corresponds to key/value prefixes in attention, but that is not stated. For an encoder-decoder Transformer, it is also unclear whether prefixes are added to encoder self-attention, decoder self-attention, decoder cross-attention, or all of them. Because the 10M figure is used to compare trainable-parameter budgets, the paper should explicitly state the prefix tensors being optimized and whether any reparameterization network is used.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_4",
+          "title": "Prefix initialization may use information outside the training fold",
+          "quote": "The prefix is initialized to the most frequent words in the repository for which the model is customized.",
+          "explanation": "The paper evaluates models using 4-fold cross-validation within each project, but this sentence does not specify whether the frequent words are computed only from the training portion of each fold, from all non-test source files in the repository, or from the entire repository including held-out test cases/targets. If held-out developer-written tests contribute to the initialization vocabulary, the model could receive evaluation-set vocabulary or style information, which is especially relevant because one downstream metric measures identifier/style similarity. The protocol should specify the data source for frequency counts and ensure it is consistent with the intended train/test separation.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_5",
+          "title": "Validation procedure within 4-fold cross-validation is underspecified",
+          "quote": "For each project and fine-tuning strategy ( _e.g.,_ L-EO), we fine-tune and evaluate the models using 4-fold cross-validation. The models are trained until the best validation loss is reached, independently for every fold, every repository, and every customization approach.",
+          "explanation": "Early stopping on validation loss is standard, but the paper does not explain how the validation set is obtained inside the stated 4-fold cross-validation. If each fold serves as the test fold once and the remaining folds are used for training, early stopping requires a further split of the training folds, a nested validation fold, or some predefined validation data. If the held-out fold is used both for checkpoint selection and reported test performance, the reported metrics would be optimistically biased. The validation split should be specified for reproducibility and to clarify how much per-project data is actually used for customization.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_6",
+          "title": "Layer-selection rationale from absolute parameter change is only a weak proxy for importance",
+          "quote": "We observe that, as we go through the transformer model, the average change in parameter values tends to increase, with the last decoder block showing the highest changes in parameter values. As a result, we hypothesize that it could be sufficient to tune the last decoder block and obtain performance improvements similar to the fully custom fine-tuned model.",
+          "explanation": "The authors present this as a hypothesis and later evaluate L-LDB empirically, so the issue is not fatal. However, average absolute parameter change after full fine-tuning is not necessarily a reliable measure of a layer\u2019s causal importance for adaptation. It can depend on parameter scale, optimizer dynamics, layer normalization, learning-rate effects, and the number or type of parameters in each block. The figure is useful as a heuristic, but the rationale would be stronger with normalization details or ablations over alternative layer subsets.",
+          "comment_type": "logical",
+          "paragraph_index": 19,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_7",
+          "title": "Statistical testing does not match the paired design and pairwise claims",
+          "quote": "Table 4: Kruskal-Wallis Test p-values testing the significance of the pairwise hypothesis that one customization method is superior than another. Custom strategies are significantly better than baseline.",
+          "explanation": "The same projects and apparently the same cross-validation folds are evaluated under each baseline/customization strategy, so the observations are naturally paired or repeated-measures rather than independent groups. A standard Kruskal-Wallis test assumes independent groups and is an omnibus test; by itself it does not establish directional pairwise superiority or identify which methods differ without an explicit post-hoc procedure. The table also reports many pairwise comparisons across methods and metrics, but no multiple-comparison correction or statement that p-values are uncorrected is specified. Finally, the paper interprets non-significant differences among customization strategies as being within a \u201cmargin of error,\u201d but failure to reject a null hypothesis does not establish practical equivalence without equivalence/non-inferiority analysis or confidence intervals against a predefined margin. A Friedman test, paired Wilcoxon/permutation tests, aligned-rank test, or mixed-effects model with suitable corrections would better match the design.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__gpt-5.5_8",
+          "title": "Compute-cost approximation appears to ignore activation-gradient costs through frozen layers",
+          "quote": "The backward pass takes roughly twice the amount of compute, but it is unnecessary for layers that are frozen.",
+          "explanation": "Frozen weights avoid computing and storing weight gradients, but that does not necessarily eliminate backward computation through frozen layers. If trainable parameters occur before or inside frozen computation\u2014such as trainable embeddings in L-EO, prefixes inserted into every layer, or other trainable inputs to frozen blocks\u2014one still needs backpropagation through frozen operations to obtain gradients with respect to those trainable parameters. Activation-gradient computation through frozen Transformer layers can be a substantial fraction of training cost. Therefore estimating training FLOPs by omitting the backward pass for all frozen layers may understate the cost of L-EO and prefix tuning and distort the compute comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__gpt-5.5_9",
+          "title": "Intrinsic metric computation is underspecified enough to affect reproducibility",
+          "quote": "We report the BLEU4 score and the mean perplexity per token on the test fold, for all the 20 projects.",
+          "explanation": "BLEU and perplexity are standard metrics, but their implementation details materially affect reported values. BLEU can vary depending on tokenization, corpus-level versus averaged sentence-level computation, smoothing, case handling, and treatment of generated code formatting. Perplexity depends on whether it is computed over BPE/subword tokens, source-code lexical tokens, or another tokenizer, and whether padding or special tokens are excluded. Because these metrics are central to RQ1 and the statistical comparisons, the paper should specify these choices for reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_10",
+          "title": "Top-5 match metric and decoding procedure are ambiguous",
+          "quote": "We report the proportion of perfect matches among the top 5 model predictions.",
+          "explanation": "The intended metric is likely whether at least one of the top-k predictions matches the target for each instance, but the wording could also be read as counting matching predictions among all generated candidates, which would use a different denominator. The method for obtaining the top 5 predictions is also unspecified: beam search versus sampling, beam width, length penalty, duplicate handling, and filtering of invalid outputs can all materially affect perfect-match and abstracted-match rates. Since RQ2 relies on top-k comparisons across models, these decoding and scoring choices should be explicit.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_11",
+          "title": "Coding-style claims are broader than the identifier-similarity metric supports",
+          "quote": "For each project\u2019s custom model, we would like to determine how closely the model learns the developer\u2019s personal programming style and preferences. To this end, we extract the collection of all identifiers ... We then pass these text outputs through a tf-idf vectorizer and compute the cosine similarity between them.",
+          "explanation": "Identifier-based tf-idf cosine similarity is a reasonable proxy for project-specific vocabulary usage, but it does not establish adaptation to developer style in the broader sense. Identifier overlap can reflect project vocabulary, API names, domain terminology, or memorized target tokens rather than formatting, assertion idioms, fixture use, test organization, mocking patterns, or other stylistic features. The paper should narrow the claim to identifier/vocabulary similarity or explicitly frame \u201ccoding style\u201d as this limited proxy.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gpt-5.5_12",
+          "title": "Prefix-tuning cost explanation and proposed mitigation are unsupported",
+          "quote": "Since the prefix parameters suffer from poor initialization, Prefix is the most expensive customization process. ... To overcome this problem, it is possible to first train the prefix on a large generic dataset.",
+          "explanation": "The results may show that Prefix requires more compute to reach comparable validation loss, but the causal explanation is not established. Earlier, the paper says the prefix is initialized using the most frequent words in the repository, so it is not obvious why \u201cpoor initialization\u201d is the demonstrated cause. Other possibilities include the prefix parameterization, prefix length, learning rate, optimization instability, or compute accounting. The proposed remedy\u2014pretraining the prefix on a large generic dataset\u2014is plausible, but no experiment defines the pretraining objective, measures its benefit, or accounts for the additional pretraining cost. These statements should be framed as hypotheses or future work unless supported by ablations.",
+          "comment_type": "logical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gpt-5.5_13",
+          "title": "Claim about state-of-the-art code synthesis model scale conflicts with the paper\u2019s own setup",
+          "quote": "This paper does not evaluate methods for client side training with restricted resources, however, as the most powerful large language models which enable state of the art code synthesis have 10-100 million parameters.",
+          "explanation": "The stated \u201c10\u2013100 million parameters\u201d scale is inconsistent with the paper\u2019s own experimental model, which has 406M parameters before prefixes. It is also inconsistent with prominent state-of-the-art code-generation models around the relevant period, which were often much larger than 100M parameters. Moreover, 10\u2013100M-parameter models can often be run, at least for inference and sometimes constrained fine-tuning, on consumer hardware, so the resource argument does not follow cleanly from that number. The authors may have intended \u201c10\u2013100 billion\u201d or a broader \u201chundreds of millions to billions,\u201d but as written the numerical claim is misleading.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 1.0081,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 70390,
+      "completion_tokens": 26245
+    },
+    "progressive_original__gpt-5.5": {
+      "label": "Progressive Original (gpt-5.5)",
+      "model": "openai/gpt-5.5",
+      "overall_feedback": "The paper addresses a timely and practically important problem\u2014cost-effective personalization of large code generation models for project-specific unit test generation\u2014and the framing around deployment trade-offs (performance, storage, memory, and training cost) is compelling. The opening is generally clear and accessible, and the comparison among full fine-tuning, lightweight tuning, and prefix tuning is well motivated. However, the contribution is not yet sharply differentiated from existing parameter-efficient fine-tuning work, and the paper should more explicitly state what is novel beyond applying known adaptation methods to a code-generation/test-generation setting. The terminology around \u201ccustomization\u201d and \u201cpersonalization\u201d is somewhat loose: the work appears to personalize to projects rather than individual users, and this distinction matters for claims about deployment and privacy. The introduction also makes strong empirical claims (\u201cextensive empirical evaluation,\u201d \u201csignificant model improvements\u201d) before providing enough context about datasets, baselines, model scale, statistical rigor, or whether gains reflect true generalization rather than project-level overfitting. The formal definition of customization is mostly tautological and could be replaced with a more precise experimental setup, including train/validation/test splits within projects and cross-project evaluation. Clarity would benefit from tighter writing, fewer repeated explanations of pretraining/fine-tuning, and more careful grammar and terminology. The most significant issue to watch is whether the evaluation convincingly supports the practical deployment claims: the paper must quantify not only accuracy improvements but also storage, latency, training cost, inference overhead, and robustness across diverse projects, while comparing against strong parameter-efficient baselines and clearly explaining when each method is preferable.",
+      "comments": [
+        {
+          "id": "progressive_original__gpt-5.5_0",
+          "title": "Lightweight fine-tuning variants are described inconsistently",
+          "quote": "Specifically, we consider three fine-tuning approaches: (i) _custom_ fine-tuning, which allows all the model parameters to be tuned; (ii) _lightweight_ fine-tuning, which only optimizes the token embedding representations or the final softmax layer; (iii) _prefix_ tuning, which keeps language model parameters frozen, but optimizes a small project-specific vector prefix.",
+          "explanation": "At first I read this as a high-level grouping: there are three families of approaches, with lightweight fine-tuning containing multiple subvariants. That framing is reasonable, and later sections do indeed introduce two lightweight methods. However, the specific description here does not match those later methods. Section 2.3 describes L-EO as tuning the embedding and output layers together, not token embeddings alone or the final softmax layer alone. Section 2.4 describes L-LDB as tuning the last decoder block, including self-attention, encoder-decoder attention, layernorm, and feedforward layers, not merely the final softmax layer. The abstract has a related phrase, \u201cthe token embeddings and softmax layer or the final layer alone,\u201d which could perhaps mean \u201clast decoder block,\u201d but the introduction\u2019s \u201cfinal softmax layer\u201d makes that interpretation difficult. This is not just a wording preference: it could lead a reader to misunderstand which parameters are actually trained in the lightweight baselines. The later detailed sections mostly resolve the implementation, but the summary statement should be aligned with them.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_1",
+          "title": "Formal definition conflates the project dataset used for customization with the evaluation dataset",
+          "quote": "We use the term _customization_ to refer to the process of fine-tuning a model _m_ , previously trained on a generic dataset for a task _t_ , with the goal of improving its performance on a specific dataset _p_ . The performance of a machine learning model _m_ on a dataset _p_ is measured by one or more evaluation functions _f_ ( _m, p_ ), where _f_ can be either a maximization ( _e.g.,_ BLEU, top-k accuracy) or minimization ( _e.g.,_ perplexity) function. The customization process is designed to modify the trainable parameters of the model _m_ , obtaining the model _m[\u2032]_ , such that the performance of _m[\u2032]_ on _p_ is better than what was attained by _m_ .",
+          "explanation": "The authors\u2019 intent seems to be to define customization at the project level: a project p supplies data for adaptation, and the customized model should perform better on that project\u2019s distribution. Later experimental context helps, because the models are evaluated with 4-fold cross-validation, so the empirical comparison is not simply train-and-test on the exact same examples. Still, the formal definition uses the same symbol p for the data being fine-tuned on and the data used in f(m, p). In standard ML notation, especially for personalization, it is important to distinguish the adaptation/training subset from the held-out project evaluation subset or from the underlying project distribution. As written, the inequality can be read as requiring improvement on the same dataset used for fine-tuning, which would not by itself demonstrate generalization and could be satisfied by overfitting. A small notation refinement, e.g. p_train and p_test or an explicit project distribution P_p, would remove the ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_2",
+          "title": "\u201cSignificant\u201d improvements on task-specific metrics may overstate the shown statistical support",
+          "quote": "In our extensive empirical evaluation we found that all the customization strategies lead to significant model improvements on a target project in terms of both intrinsic and task-specific metrics.",
+          "explanation": "The broad empirical message is supported by the later results: the customized models improve BLEU/perplexity substantially and also improve perfect matches, abstracted matches, and identifier-style similarity. I also checked whether the word \u201csignificant\u201d is later backed by statistical testing. For intrinsic metrics, the paper reports Kruskal-Wallis tests and p-values against the baseline. For task-specific metrics, the later context describes large improvements visually and qualitatively, but does not show an analogous statistical test in the provided sections. If \u201csignificant\u201d is meant colloquially as \u201clarge,\u201d the sentence is acceptable; however, in an academic results summary, readers may reasonably interpret it as statistical significance for both metric classes. The claim would be safer if phrased as \u201csubstantial improvements\u201d for task-specific metrics, or if corresponding statistical tests were reported.",
+          "comment_type": "logical",
+          "paragraph_index": 10,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_3",
+          "title": "Prefix-tuning parameterization is ambiguous relative to the stated 10M count",
+          "quote": "The technique concatenates a sequence (prefix) of virtual tokens (trainable parameters) to the front of the input of every encoder and decoder block. In our context, the intuition behind this approach is that the prefix embeds the properties of a specific project, which allows the model to generate customized responses for that repository. Practically, we set the prefix length to 200 tokens, and thus with an embedding size of 1024, this gives a total of 1024 _\u00d7_ 200 _\u00d7_ 24 _\u00d7_ 2 _\u2248_ 10M trainable parameters.",
+          "explanation": "The arithmetic in the displayed count is correct: 1024\u00d7200\u00d724\u00d72 is about 9.8M. What remains unclear is the exact prefix-tuning parameterization that makes this the right count. The prose says the prefix is concatenated to the input of every encoder and decoder block, which would suggest one 200\u00d71024 prefix per block, i.e. roughly 1024\u00d7200\u00d724 parameters before any extra factors. The additional \u00d72 presumably corresponds to key/value prefixes in attention, as in common implementations of Li and Liang-style prefix tuning, but that is not stated. For an encoder-decoder Transformer there is also a possible distinction among encoder self-attention, decoder self-attention, and decoder cross-attention; if prefixes are added to all relevant attention modules, the count could differ. This matters because Table 1 uses the 10M figure to compare methods by trainable-parameter budget. The issue is likely fixable by explicitly stating whether prefixes are learned as layer-wise key/value tensors, whether decoder cross-attention receives its own prefix, and whether any reparameterization MLP is used.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_4",
+          "title": "Prefix initialization may use information outside the training fold",
+          "quote": "The prefix is initialized to the most frequent words in the repository for which the model is customized.",
+          "explanation": "The idea of initializing project-specific prefixes from frequent project vocabulary is plausible and well motivated for personalization. However, in the experimental setup the models are evaluated with 4-fold cross-validation within each project. This sentence does not specify whether the frequent words are computed only from the training portion of the fold, from all non-test source files in the repository, or from the entire repository including held-out test cases/targets. If the initialization uses identifiers or tokens from developer-written tests in the held-out fold, it could leak evaluation-set vocabulary and style into the model, especially because one of the reported downstream metrics is identifier/style similarity. If the intended deployment scenario assumes access to the whole repository but not the specific target tests, that should be stated and the data source for frequency counts should be restricted accordingly. As written, the protocol is ambiguous in a way that could affect the validity of the reported personalization gains.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_5",
+          "title": "Validation procedure within 4-fold cross-validation is underspecified",
+          "quote": "For each project and fine-tuning strategy ( _e.g.,_ L-EO), we fine-tune and evaluate the models using 4-fold cross-validation. The models are trained until the best validation loss is reached, independently for every fold, every repository, and every customization approach.",
+          "explanation": "The authors correctly separate evaluation by project and by customization method, and early stopping on validation loss is a standard choice. The unresolved point is how the validation set is obtained inside the stated 4-fold cross-validation. In ordinary 4-fold CV, each fold serves as the test fold once and the remaining folds are used for training; early stopping then requires either a further split of the training folds, a nested validation fold, or some predefined validation data. If the held-out fold is used both for selecting the best checkpoint and reporting test performance, the reported metrics would be optimistically biased. If an internal split is used, the paper should specify it because it affects the amount of per-project customization data, comparability across methods, and reproducibility.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_6",
+          "title": "Layer-selection rationale from absolute parameter change is only a weak proxy for importance",
+          "quote": "We observe that, as we go through the transformer model, the average change in parameter values tends to increase, with the last decoder block showing the highest changes in parameter values. As a result, we hypothesize that it could be sufficient to tune the last decoder block and obtain performance improvements similar to the fully custom fine-tuned model.",
+          "explanation": "The authors are careful to phrase this as a hypothesis, and they later evaluate L-LDB empirically, so this is not a fatal methodological flaw. Still, the motivation is somewhat underjustified. Average absolute parameter change after full fine-tuning is not necessarily a reliable measure of a layer\u2019s causal importance for adaptation: it can depend on parameter scale, optimizer dynamics, layer normalization, learning-rate effects, and the number/type of parameters in each block. A layer that changes less in a full fine-tune may still be essential, and a layer that changes more may simply be more sensitive under the optimizer. The figure is useful as a heuristic, but the text risks making the last-decoder-block choice seem more directly supported than the evidence warrants unless the authors add normalization details or present an ablation over alternative layer subsets.",
+          "comment_type": "logical",
+          "paragraph_index": 19,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_7",
+          "title": "Kruskal-Wallis is not sufficient for the stated pairwise and repeated-measures comparisons",
+          "quote": "Next, we perform statistical tests to investigate whether the observed differences between the baseline and custom models are significant, as well as differences among the customization approaches. Specifically, we rely on the Kruskal-Wallis test, a non-parametric statistical test.",
+          "explanation": "I understand the authors' intent: they want a non-parametric test because BLEU/perplexity distributions over projects or folds may not be normal. However, the experimental design evaluates the same projects, and apparently the same cross-validation folds, under each customization strategy and the baseline. That makes the observations paired/repeated-measures rather than independent samples, whereas the standard Kruskal-Wallis test assumes independent groups. A Friedman test, aligned-rank test, paired Wilcoxon/permutation tests, or a mixed-effects model would better respect the paired structure. In addition, Kruskal-Wallis is an omnibus test; by itself it does not establish which specific method differs from baseline or which customization strategies differ from each other without post-hoc pairwise tests and multiple-comparison correction. This matters because the paper later interprets the tests as confirming baseline-vs-method improvements and no differences among methods.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_8",
+          "title": "Compute-cost approximation appears to ignore activation-gradient costs through frozen layers",
+          "quote": "The backward pass takes roughly twice the amount of compute, but it is unnecessary for layers that are frozen.",
+          "explanation": "The high-level idea of separating forward and backward costs for trainable versus frozen parameters is reasonable, and frozen weights do avoid computing and storing weight gradients. But the statement is too strong for several of the methods studied. If trainable parameters occur before or inside frozen computation\u2014e.g., trainable embeddings in L-EO, prefixes inserted into every layer, or any trainable input to a frozen block\u2014one still needs backpropagation through frozen operations to obtain gradients with respect to those trainable inputs or prefix vectors. Even when weight gradients are omitted, activation-gradient computation through frozen transformer layers can be a substantial fraction of the backward cost. Thus estimating training FLOPs by omitting the backward pass for all frozen layers may substantially understate the cost of L-EO and prefix tuning, and potentially distort the RQ3 comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_9",
+          "title": "Intrinsic metric computation is underspecified enough to affect reproducibility",
+          "quote": "We report the BLEU4 score and the mean perplexity per token on the test fold, for all the 20 projects.",
+          "explanation": "The choice of BLEU4 and perplexity is standard, so the intent is clear. What remains underspecified is how these metrics are computed. BLEU can vary substantially depending on tokenization, whether it is corpus-level BLEU or averaged sentence-level BLEU, smoothing, case handling, and treatment of generated code formatting. Perplexity likewise depends on whether it is computed over BPE/subword tokens, source-code lexical tokens, or another tokenizer, and whether padding/special tokens are excluded. Because the reported BLEU and perplexity values are central to RQ1 and later statistical comparisons, these implementation choices are not merely cosmetic; a reader would need them to reproduce or interpret the results.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_10",
+          "title": "Top-5 match metric is ambiguous and decoding details are missing",
+          "quote": "We report the proportion of perfect matches among the top 5 model predictions.",
+          "explanation": "The surrounding text and later reference to top-k accuracy suggest that the intended metric is likely whether at least one of the top-k predictions matches the target for each instance. However, the wording 'proportion of perfect matches among the top 5 model predictions' could also be read as counting matching predictions among all generated candidates, which would be a different denominator and interpretation. In addition, the method for obtaining the top 5 predictions is not specified here: beam search versus sampling, beam width, length penalty, duplicate handling, and whether invalid outputs are filtered can all materially affect perfect-match and abstracted-match rates. Since RQ2 relies on top-k comparisons across models, these choices should be made explicit.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_11",
+          "title": "Task-specific improvements are called significant without a described statistical test",
+          "quote": "All customization processes show significant improvement compared to the baseline.",
+          "explanation": "The plotted improvements described in the paragraph sound large and plausible, and the authors also state that improvements occur for every project. Still, in this context the word 'significant' is potentially misleading because the preceding RQ1 section explicitly discusses statistical significance, whereas no statistical test, confidence interval, or paired analysis for the RQ2 metrics is described in the passage. If 'significant' is intended in the statistical sense, the paper should specify the test and correction procedure. If it is intended informally, wording such as 'substantial' or 'consistent' would avoid overclaiming.",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_12",
+          "title": "Non-significance is overinterpreted as being within a margin of error",
+          "quote": "However, we do not observe statistical significance in the differences among the customization strategies, meaning that, in terms of intrinsic metrics performances, the differences are within margin of error.",
+          "explanation": "It is reasonable to report that the authors did not find statistically significant differences among customization strategies. The concern is the interpretation. A failure to reject a null hypothesis does not by itself show that differences are within a meaningful margin of error or practically equivalent; that would require an equivalence/non-inferiority analysis or at least confidence intervals around the pairwise differences and a pre-specified practical margin. This is especially relevant because Table 3 shows nontrivial average BLEU differences between some strategies, even if they may not be statistically reliable under the chosen test.",
+          "comment_type": "logical",
+          "paragraph_index": 39,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_13",
+          "title": "Coding-style metric supports lexical similarity, not necessarily developer style",
+          "quote": "For each project\u2019s custom model, we would like to determine how closely the model learns the developer\u2019s personal programming style and preferences. To this end, we extract the collection of all identifiers ( _i.e.,_ variables and functions\u2019 names) from the unit tests written by the developer as well as those generated by the models. We then pass these text outputs through a tf-idf vectorizer and compute the cosine similarity between them.",
+          "explanation": "The proposed identifier-based tf-idf similarity is a reasonable lightweight proxy for one aspect of project-specific adaptation, and the authors correctly describe it later as vocabulary similarity. The concern is that the earlier framing as 'developer\u2019s personal programming style and preferences' is broader than what the metric can establish. Identifier overlap can reflect copied or memorized project vocabulary, API names, exact/near-exact target overlap, or domain terminology, rather than style in the usual programming-language sense, which might include formatting, assertion patterns, test structure, fixture use, and idioms. The method is useful, but the claim should be narrowed to identifier/vocabulary similarity unless additional style features are analyzed.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_14",
+          "title": "Kruskal-Wallis test is not well matched to the paired experimental design or directional pairwise claims",
+          "quote": "Table 4: Kruskal-Wallis Test p-values testing the significance of the pairwise hypothesis that one customization method is superior than another. Custom strategies are significantly better than baseline.",
+          "explanation": "The table is trying to support an important conclusion: every customization method improves over the baseline, while the customization methods are not significantly different from one another. That is a reasonable thing to test, and the direction of the observed BLEU/perplexity differences in Table 3 is consistent with the prose. However, the stated test raises two methodological concerns that are not resolved by the surrounding context. First, Kruskal-Wallis is conventionally an omnibus non-parametric test for differences among independent groups; it does not by itself test a directional hypothesis that one method is \u201csuperior\u201d to another. Pairwise comparisons would normally require an explicit post-hoc procedure or a pairwise rank test, and the direction of superiority should be established separately from the p-value. Second, the measurements are naturally paired/repeated across the same projects and folds: baseline, Custom, L-EO, L-LDB, and Prefix are evaluated on the same project/fold structure. A paired non-parametric test such as Friedman for all methods, followed by Wilcoxon signed-rank/Nemenyi-style post-hoc comparisons, would more directly respect the design. Treating the samples as independent can misestimate significance. Because this table underpins the central claim that all customized models significantly outperform the baseline, the issue is methodologically important even if the very small p-values may make the baseline-vs-custom conclusion robust in practice.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_15",
+          "title": "No multiple-comparison procedure is specified for the pairwise p-values",
+          "quote": "Kruskal-Wallis Test p-values testing the significance of the pairwise hypothesis that one customization method is superior than another.",
+          "explanation": "I first read Table 4 as a compact matrix of pairwise comparisons for BLEU and perplexity, which is useful for seeing whether the customized methods differ from each other. But because the table reports many pairwise tests across five methods and two metrics, a reader would expect some mention of family-wise error or false-discovery-rate control, or a clear statement that these are uncorrected exploratory p-values. The context says the authors rely on Kruskal-Wallis tests, but it does not indicate any post-hoc correction. For the baseline comparisons, the reported p-values are so small that correction would likely not change the qualitative result. For comparisons among customization strategies, however, the interpretation of non-significance and any near-threshold results should still be tied to an explicit procedure. This is localized and fixable, but the current presentation leaves the statistical inference underspecified.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_16",
+          "title": "Task-specific \u201csignificant improvement\u201d is asserted without a described statistical test",
+          "quote": "All customization processes show significant improvement compared to the baseline. Specifically, these improvements are observed for every single project (full results will be available on our online appendix).",
+          "explanation": "The qualitative pattern in Figure 3 appears consistent with the authors\u2019 claim: the customized models have higher exact and abstracted match rates than the baseline, and the effect seems practically meaningful. I also checked whether the earlier methods section specified statistical testing for RQ2, but it only defines the task-specific metrics; the explicit statistical testing discussion is attached to RQ1 and the intrinsic metrics. Thus, the word \u201csignificant\u201d is ambiguous here. If the authors mean statistically significant, the paper needs to state the test, unit of analysis, pairing, and correction strategy. If they mean merely substantial or consistent, the wording should avoid the statistical implication. The statement that improvements occur for every project is helpful, but it is not the same as a statistical significance test, especially for top-k match proportions that may have different variances across projects and folds.",
+          "comment_type": "logical",
+          "paragraph_index": 40,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_17",
+          "title": "Prefix tuning\u2019s higher cost is attributed to \u201cpoor initialization\u201d without supporting evidence",
+          "quote": "Since the prefix parameters suffer from poor initialization, Prefix is the most expensive customization process.",
+          "explanation": "The surrounding figure and text do support the descriptive observation that Prefix requires more compute to reach comparable validation loss in these experiments. What remains under-justified is the causal explanation. Earlier, the paper says the prefix is initialized using the most frequent words in the repository, which sounds like a deliberate heuristic rather than an obviously poor initialization. The passage does not report an ablation comparing random initialization, frequent-token initialization, pre-trained prefixes, or alternative prefix lengths/learning rates. Without such evidence, it is not clear whether Prefix is expensive because of initialization specifically, because prefix tuning optimizes a harder parameterization, because the hyperparameters are less tuned, because 200 virtual tokens introduce optimization instability, or because the compute accounting treats prefix operations differently. The claim could be made safer by saying the observed curves are consistent with an initialization/optimization difficulty, rather than presenting poor initialization as established.",
+          "comment_type": "logical",
+          "paragraph_index": 49,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_18",
+          "title": "Speculative mitigation for prefix cost is presented without experimental support",
+          "quote": "To overcome this problem, it is possible to first train the prefix on a large generic dataset. Then, given proper hyperparameter tuning, it is possible to substantially cut down compute cost for customizing the prefix.",
+          "explanation": "The suggestion is plausible: prior work on prompt/prefix tuning often benefits from better initialization or multi-task pretraining. However, in this paper\u2019s experimental context it appears to be speculative. The authors do not report experiments with generic prefix pretraining, do not define the proposed pretraining objective or dataset, and do not quantify how much compute would be saved after including the cost of pretraining. The phrase \u201csubstantially cut down\u201d therefore overstates what has been demonstrated here. This does not undermine the main experimental comparison, but it does weaken the deployment-cost discussion for Prefix unless framed explicitly as a hypothesis or future optimization.",
+          "comment_type": "logical",
+          "paragraph_index": 49,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_19",
+          "title": "Claim that state-of-the-art code synthesis models have 10\u2013100 million parameters conflicts with the paper\u2019s own model scale",
+          "quote": "This paper does not evaluate methods for client side training with restricted resources, however, as the most powerful large language models which enable state of the art code synthesis have 10-100 million parameters.",
+          "explanation": "I considered whether this might be an OCR error, but the surrounding sentence makes the number consequential: it is used to argue that such models cannot reasonably run on consumer laptops. As written, \u201c10-100 million parameters\u201d is inconsistent with the paper\u2019s own experimental setup, which uses a 406M-parameter BART model before prefixes. It is also inconsistent with the broader state of large language models for code around the ICLR 2022 period, where prominent systems such as Codex/GPT-style models were far larger than 100M parameters. Moreover, 10\u2013100M-parameter models can often be run, at least for inference and sometimes fine-tuning with constraints, on consumer hardware, so the resource argument does not follow cleanly from that scale. The authors may have intended \u201c10\u2013100 billion\u201d or a broader \u201chundreds of millions to billions,\u201d but as written the numerical claim is wrong and weakens the justification for excluding client-side training.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_20",
+          "title": "Statistical significance is asserted for task-specific metrics without shown support",
+          "quote": "In our extensive empirical evaluation we found that all the customization strategies lead to significant model\u2019s improvements on a target project, in terms of both intrinsic and task-specific metrics, with the custom models adapting to the coding style of the target project.",
+          "explanation": "I initially read \"significant\" here in the ordinary academic sense of statistically significant. Looking back at the reported methodology and results, the paper does support statistical significance for intrinsic metrics: Section 3.2 says Kruskal-Wallis tests are used, and Section 4.1 reports p-values below 1e-7 for BLEU/perplexity against the baseline. For the task-specific metrics in Section 4.2, however, the provided context reports aggregate improvements in perfect matches, abstracted matches, and tf-idf cosine similarity, but does not describe a statistical test or confidence interval establishing significance for those metrics. The word could be intended informally as 'large' or 'meaningful,' and the empirical direction of the improvements is consistent with the claim. Still, in a conclusion, this phrasing can reasonably be read as extending the statistical-significance claim from RQ1 to RQ2 without the same support. A safer formulation would distinguish statistically significant intrinsic improvements from observed/substantial task-specific improvements, unless the omitted parts of the paper contain corresponding tests.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gpt-5.5_21",
+          "title": "Coding-style adaptation claim is broader than the measured evidence",
+          "quote": "with the custom models adapting to the coding style of the target project.",
+          "explanation": "The paper does measure a style-related quantity, and the conclusion is clearly trying to summarize that result. However, checking the earlier definition, the 'Coding Style' metric is specifically cosine similarity between tf-idf vectors built from identifiers in developer-written tests and generated tests. That is evidence that customized models use more similar identifier vocabulary, not necessarily that they adapt to broader coding style dimensions such as formatting conventions, assertion idioms, test organization, mocking patterns, naming schemas beyond token overlap, or API usage style. Because 'coding style' is a broad term in software engineering, a careful reader could take this as stronger than what was evaluated. This is fixable by saying the models adapt to the target project's identifier usage or to the paper's coding-style proxy.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 1.0081,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 70390,
+      "completion_tokens": 26245
+    }
+  }
+}

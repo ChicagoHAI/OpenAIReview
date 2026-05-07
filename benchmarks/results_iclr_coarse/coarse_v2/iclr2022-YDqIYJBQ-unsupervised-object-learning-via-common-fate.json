@@ -1,0 +1,1018 @@
+{
+  "slug": "iclr2022-YDqIYJBQ-unsupervised-object-learning-via-common-fate",
+  "title": "Unsupervised Object Learning via Common Fate",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## UNSUPERVISED OBJECT LEARNING VIA COMMON FATE\n\n## **Anonymous authors**"
+    },
+    {
+      "index": 1,
+      "text": "Paper under double-blind review\n\n## ABSTRACT\n\nLearning generative object models from unlabelled videos is a long standing problem and required for causal scene modeling. We decompose this problem into three easier subtasks, and provide candidate solutions for each of them. Inspired by the Common Fate Principle of Gestalt Psychology, we first extract (noisy) masks of moving objects via unsupervised motion segmentation. Second, generative models are trained on the masks of the background and the moving objects, respectively. Third, background and foreground models are combined in a conditional \u201cdead leaves\u201d scene model to sample novel scene configurations where occlusions and depth layering arise naturally. To evaluate the individual stages, we introduce the FISHBOWL dataset positioned between complex real-world scenes and common object-centric benchmarks of simplistic objects. We show that our approach allows learning generative models that generalize beyond the occlusions present in the input videos, and represent scenes in a modular fashion that allows sampling plausible scenes outside the training distribution by permitting, for instance, object numbers or densities not observed in the training set."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nMachine learning excels if sufficient training data is available that is representative of the task at hand. In recent years, this _i.i.d._ data paradigm has been shown not only to apply for pattern recognition problems, but also for generative modeling (Goodfellow et al., 2014). In practice, the amount of data required to reach a given level of performance will depend on the dimensionality of the data. The generation of high-dimensional images thus either requires huge amounts of data (Karras et al., 2020) or clever methods that exploit prior information, for instance on multi-scale structure or compositionality (Razavi et al., 2019)."
+    },
+    {
+      "index": 3,
+      "text": "Imagine we would like to automatically generate realistic images of yearbook group photos. A \u201cbrute force\u201d approach would be to collect a massive dataset and train a large GAN (Goodfellow et al., 2014), hoping that the model will not only learn typical backgrounds, but also the shape of individual humans (or human faces), and arrange them into a group. A more modular approach, in contrast, would be to learn _object models_ (e.g., for faces, or humans), and learn in which positions and arrangements they appear, as well as typical backgrounds. This approach would be more dataefficient: each training image would contain multiple humans, and we would thus effectively have more data for the object learning task. In addition, the sub-task would be lower-dimensional than the original task. Finally, if we leave the i.i.d. setting (by, say, having a second task with different group sizes), the modular approach would lend itself more readily to knowledge transfer."
+    },
+    {
+      "index": 4,
+      "text": "Object-centric approaches aim to capture this compositionality and have been considerably improved over the past few years (e.g., Locatello et al. 2020; Engelcke et al. 2021). However, these models tend to be difficult to train and do not yet scale well to visually more complex scenes. In addition, the commonly employed end-to-end learning approaches make it difficult to dissect the causes of these difficulties and what principles may be crucial to facilitate unsupervised object learning."
+    },
+    {
+      "index": 5,
+      "text": "In human vision, the _Principle of Common Fate_ of Gestalt Psychology (Wertheimer, 2012) has been shown to play an important role for object learning (Spelke, 1990). It posits that elements that are moving together tend to be perceived as one\u2014a perceptual bias that may have evolved to be able to recognize camouflaged predators (Troscianko et al., 2009)."
+    },
+    {
+      "index": 6,
+      "text": "In our work, we show that this principle can be successfully used also for machine vision by using it in a multi-stage object learning approach (Fig. 1): First, we use unsupervised motion segmentation to obtain a candidate segmentation of a video frame. Second, we train generative object and background models on this segmentation. While the regions obtained by the motion segmentation"
+    },
+    {
+      "index": 7,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\nFigure 1: We propose a multi-stage approach for learning object-centric generative scene models: (1) Motion segmentation detects moving objects in the input videos. The predicted (noisy) segmentation masks are used to (2A) extract object crops for training a generative object model and (2B) extract backgrounds for training a generative background model. (3) A scene model combines the object and background models to sample novel scenes, permitting interventions on variables such as the background and the number and locations of fish."
+    },
+    {
+      "index": 8,
+      "text": "are caused by objects moving in 3D, only _visible_ parts can be segmented. To learn the actual objects (i.e., the causes), a crucial task for the object model is learning to generalize beyond the occlusions present in its input data. To measure success, we provide a dataset including object ground truth. As the last stage, we show that the learned object and background models can be combined into a flexible scene model that allows _sampling manipulated_ novel scenes. Thus, in contrast to existing object-centric models trained end-to-end, our work aims at decomposing object learning into evaluable subproblems and testing the potential of exploiting object motions for building scalable object-centric models that allow for causally meaningful interventions in generation."
+    },
+    {
+      "index": 9,
+      "text": "Summing up, the present work makes the following contributions:\n\n- We provide the novel FISHBOWL dataset, positioned between simplistic toy scenarios and real world data, providing ground truth information for evaluating causal scene models."
+    },
+    {
+      "index": 10,
+      "text": "- We show that the _Common Fate Principle_ can be succesfully used for object learning by proposing a multi-stage object learning approach based on this principle."
+    },
+    {
+      "index": 11,
+      "text": "- We demonstrate that the generative object and background models learned in this way can be combined into flexible scene models allowing for controlled out-of-distribution sampling."
+    },
+    {
+      "index": 12,
+      "text": "The dataset with rendering code and models including training code will be made publicly available.\n\n## 2 RELATED WORK"
+    },
+    {
+      "index": 13,
+      "text": "**Modular scene modeling.** The idea to individually represent objects in a scene is not new. One approach, motivated by the analysis-by-synthesis paradigm from cognitive science (Bever & Poeppel, 2010), assumes a detailed specification of the generative process and infers a scene representation by trying to invert this process (Kulkarni et al., 2015; Wu et al., 2017; Jampani et al., 2015). Many methods instead aim to also learn the generative process in an unsupervised way, see Greff et al. (2020) for a recent survey. Several models use a recurrent approach to sequentially decompose a given scene into objects (Eslami et al., 2016; Stelzner et al., 2019; Kosiorek et al., 2018; Gregor et al., 2015; Mnih et al., 2014; Yuan et al., 2019; Engelcke et al., 2020; Weis et al., 2020; von K\u00fcgelgen et al., 2020; Burgess et al., 2019), or directly learn a partial ordering (Heess et al., 2011; Le Roux et al., 2011). This sequential approach has also been extended with spatially-parallel components in (Dittadi & Winther, 2019; Jiang et al., 2019; Lin et al., 2020b; Chen et al., 2020). Other methods infer all object representations in parallel (Greff et al., 2017; van Steenkiste et al., 2018), with subsequent iterative refinement (Greff et al., 2019; Veerapaneni et al., 2019; Locatello et al., 2020; Nanbo et al., 2020). Whereas most of the above models are trained using a reconstruction objective\u2014usually in a variational framework (Kingma & Welling, 2014; Rezende et al., 2014)\u2014several works have also extended GANs (Goodfellow et al., 2014) to generate scenes in a modular way (Yang et al., 2017; Turkoglu et al., 2019; Nguyen-Phuoc et al., 2020; Ehrhardt et al., 2020; Niemeyer & Geiger, 2021). Those approaches typically use additional supervision such as ground-truth segmentation or additional views, with Ehrhardt et al. (2020); Niemeyer & Geiger (2021) being notable exceptions. While most methods can decompose a given scene into its constituent objects, only few are fully-generative in the sense that they can generate novel scenes (Lin et al., 2020a; Ehrhardt et al., 2020; Engelcke et al., 2020; von K\u00fcgelgen et al., 2020; Engelcke et al., 2021; Niemeyer & Geiger, 2021; Dittadi & Winther, 2019)."
+    },
+    {
+      "index": 14,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\nFigure 2: The FISHBOWL dataset: each video contains 128 frames with ground truth segmentation; renderings and masks (without occlusion) of every fish and background are provided in the validation and test sets."
+    },
+    {
+      "index": 15,
+      "text": "Our approach differs from previous works in the following three key aspects. First, previous approaches typically train a full scene model in an end-to-end fashion and include architectural biases that lead to the models decomposing scenes into objects. While elegant in principle, those methods have not be shown to scale to more realistic datasets yet. Using a multi-stage approach, as in the present work, enables re-use of existing computer vision methods (such as unsupervised motion segmentation) for well-studied sub-tasks and therefore scales more easily to visually complex scenes. Second, while some existing methods make use of temporal information from videos (Lin et al., 2020a; Crawford & Pineau, 2020; Kosiorek et al., 2018; Weis et al., 2020), they do not explicitely use motion signals to discover (i.e., segment) objects. Inspired by the development of the human visual system (Spelke, 1990), we instead explicitly include this segmentation cue in our approach. Third, most existing fully-generative approaches use a spatial mixture model to compose objects into a scene (Ehrhardt et al., 2020; Engelcke et al., 2020; 2021). While this simplifies training, it clearly does not match the true, underlying scene generation process. In this work, we instead follow the dead leaves model-approach of von K\u00fcgelgen et al. (2020) and scale it to more complex scenes."
+    },
+    {
+      "index": 16,
+      "text": "**Motion Segmentation.** We require an unsupervised motion segmentation method that is able to segment multiple object instances. For this, we build on a line of work that tracks points with optical flow, and then performs clustering in the space of the resulting point trajectories (Brox & Malik, 2010; Ochs et al., 2014; Ochs & Brox, 2012; Keuper et al., 2015). Motion segmentation methods that require supervision (Dave et al., 2019; Xie et al., 2019; Tokmakov et al., 2017a;b) or only perform binary motion segmentation (Yang et al., 2021; 2019; Ranjan et al., 2019) are not applicable in our unsupervised setting."
+    },
+    {
+      "index": 17,
+      "text": "**Learning from motion.** In the present work, we propose exploiting motion information to decompose a scene into objects, and to learn generative object and scene models. Motion information is believed to be an important cue for the development of the human visual system (Spelke, 1990) and has also been used as a training signal for computer vision (Pathak et al., 2017; Dorfman et al., 2013; Mahendran et al., 2018a;b). While similar in spirit, these works however do not address learning of generative object and scene models."
+    },
+    {
+      "index": 18,
+      "text": "## 3 THE FISHBOWL DATASET\n\nSeveral video datasets have been used for object-centric represention learning before (Weis et al., 2020; Yi et al., 2019; Ehrhardt et al., 2020; Kosiorek et al., 2018). The ground truth object masks and appearances provided by those datasets, however, only cover the visible parts of the scene. In order to evaluate the capabilities of the object model to infer and represent the full objects even in the presence of occlusions, we propose the novel FISHBOWL dataset positioned between complex real world data and simplistic toy datasets. This dataset consist of 20 _,_ 000 training and 1 _,_ 000 validation and test videos recorded from a publicly available WebGL demo of an aquarium,[1] each with a resolution of 480 _\u00d7_ 320px and 128 frames. We adapted the rendering to obtain ground truth segmentations of the scene and the ground truth unoccluded background and objects (Fig. 2). More details regarding the recording setup can be found in the supplement."
+    },
+    {
+      "index": 19,
+      "text": "## 4 A MULTI-STAGE APPROACH FOR UNSUPERVISED SCENE MODELLING\n\nWe model an image **x** as a composition of a background ( **m** 0 = 1 _,_ **x** 0) and an ordered list of objects ( **m** _i,_ **x** _i_ ), each represented as a binary mask **m** _i_ and appearance **x** _i_ . The background and objects are composed into a scene using a simple \u201cdead leaves\u201d model, i.e., the value of each pixel ( _u, v_ ) is determined by the foremost object covering that pixel. We propose a multi-stage approach (Fig. 1) for learning generative models representing objects, backgrounds and scenes in this fashion."
+    },
+    {
+      "index": 20,
+      "text": "> 1http://webglsamples.org/aquarium/aquarium.html, 3-clause BSD license\n\n3\n\nUnder review as a conference paper at ICLR 2022"
+    },
+    {
+      "index": 21,
+      "text": "## STAGE 1: MOTION SEGMENTATION\u2014OBTAINING CANDIDATE OBJECTS FROM VIDEOS\n\nAs a first step, we use unsupervised motion segmentation to obtain candidate segmentations of the input videos. We build on the minimum cost multicut method by Keuper et al. (2015), which tracks a subset of the pixels through the video using optical flow and then, inspired by the _Common Fate Principle_ mentioned earlier, clusters the trajectories based on pairwise motion affinities. We use the original implementation of the authors, but replace the postprocessing required to obtain a dense segmentation with a simpler but faster non-parametric watershed algorithm (Beucher & Meyer, 1993) followed by computing spatiotemporal connected components (Silversmith, 2021)."
+    },
+    {
+      "index": 22,
+      "text": "The quality of the motion segmentation critically depends on the quality on the optical flow estimation, so we explore different models for that step. ARFlow (Liu et al., 2020) is the current state of the art self-supervised optical flow method that combines a common warping based objective with self-supervision using various augmentations. We use the published pretrained models as well as a variant trained on the Fishbowl dataset (see supplement for details). Similar augmentations as used by ARFlow can alternatively be used to synthesize training data for supervised methods, as done for generating the FlyingChairs and FlyingThings datasets (Dosovitskiy et al., 2015; Mayer et al., 2016). We experiment with FlowNet 2.0 (Ilg et al., 2017) and the more recent RAFT (Teed & Deng, 2020) trained on those two datasets."
+    },
+    {
+      "index": 23,
+      "text": "To obtain background masks for training the background model, it is not necessary to differentiate between multiple object instances. We aim for a low rate of foreground pixels being mistaken for background pixels, while background pixels mistaken for foreground are of less concern. Hence, we use an ensemble of different background-foreground segmentation models from the bgslibrary (Sobral, 2013). Based on early experiments, we used the PAWKS (St-Charles et al., 2016), LOBSTER (St-Charles & Bilodeau, 2014), \u03a3 _\u2212_ \u2206 estimation (Manzanera & Richefeu, 2007) and static frame differences and label every pixel detected as foreground by either of the methods as a foreground pixel. We found that this rather simple model can faithfully remove the foreground objects in most of the cases. We provide additional details in the appendix."
+    },
+    {
+      "index": 24,
+      "text": "## STAGE 2A: OBJECT MODEL\u2014LEARNING TO GENERATE UNOCCLUDED, MASKED OBJECTS\n\n**Object extraction.** We use the bounding boxes of the candidate segmentation to extract object crops from the original videos and rescale them to a common size of 128 _\u00d7_ 64px. We filter out degenerate masks by ignoring all masks with an area smaller than 64 pixels and only considering bounding boxes with a minimum distance of 16px to the frame boundary. Accordingly, we extract the candidate _segmentation masks_ **m** 0 _,...,_ **m** _K_ for each crop. For notational convenience, we take **m** 0 and **m** 1 to correspond to the background and the object of interest (i.e., that whose bounding box was used to create the crop), respectively, so that **m** _k_ with _k \u2265_ 2 correspond to the masks of other objects."
+    },
+    {
+      "index": 25,
+      "text": "**Task.** We use the segmented object crops for training a _\u03b2_ -VAE-based generative object model (Higgins et al., 2017). Input to the model is the object crop without the segmentation, output is the reconstructed object appearance including the binary object mask. We train the model with the standard _\u03b2_ -VAE loss with an adapted reconstruction term including both the appearance and the mask. For an input batch, let **c** and **m** 0: _K_ be the ground truth crops with candidate segmentations, and **c** \u02c6 and **m** \u02c6 the reconstructed object appearances (RGB values for each pixel) and shapes (foreground probabiliy for each each pixel). The reconstruction loss _LR_ for these objects is then the weighted sum of the pixel-wise MSE for the appearance and the pixel-wise binary cross entropy for the mask:"
+    },
+    {
+      "index": 26,
+      "text": "As the task for the object model is to only represent the central object in each crop, we restrict the appearance loss to the candidate mask of the object ( **m** 1) and the mask loss to the union of the candidates masks of the object and the background ( **m** 0 + **m** 1). Importantly, the reconstruction loss is not evaluated for pixels belonging to other objects according to the candidate masks. Therefore, the object model is not penalized for completing object parts that are occluded by another object."
+    },
+    {
+      "index": 27,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n|||||||||||||||\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n|z|[bg]|Table|1:|Segmentation|performance|of|the|unsupervised|motion|\n|segmentation (Keuper et al., 2015) for different optical flow estimators.Keuper et al., 2015) for different optical flow estimators., 2015) for different optical flow estimators. 2015) for different optical flow estimators.) for different optical flow estimators.|\n|z|[app]|k|z|[pos]|k|z|[scale]|k|x|0|Optical flow|IoU|Recall|\n|Estimator|Training data|Background|Objects|@0.0|@0.5|\n|o|k|x|ARFlow|KITTI|0.874|0.246|0.828|0.199|\n|k|= 1|,...,|K|ARFlowARFlow|SintelFishbowl|0.8900.873|0.2430.248|0.8090.842|0.2130.204|\n|Causal graph for our scene|RAFT|FlyingThings|0.930|0.318|0.663|0.351|\n|circles|and|diamonds|denote|FlowNet 2|FlyingThings|0.934|0.365|0.674|0.416|"
+    },
+    {
+      "index": 28,
+      "text": "**----- End of picture text -----**\n\nTable 1: Segmentation performance of the unsupervised motion segmentation (Keuper et al., 2015) for different optical flow estimators.Keuper et al., 2015) for different optical flow estimators., 2015) for different optical flow estimators. 2015) for different optical flow estimators.) for different optical flow estimators."
+    },
+    {
+      "index": 29,
+      "text": "Figure 3: Causal graph for our scene model; circles and diamonds denote random and deterministic quantities."
+    },
+    {
+      "index": 30,
+      "text": "**Learning object completion via artificial occlusions.** To encourage the model to correctly complete partial objects, we use artificial occlusions as an augmentation during training. Similar to a denoising autoencoder (Vincent et al., 2008), we compute the reconstruction loss using the unaugmented object crop. We consider two types of artificial occlusions: first, we use a _cutout_ augmentation (DeVries & Taylor, 2017) placing a variable number of grey rectangles on the input image. As an alternative, we use the candidate segmentation to place another, randomly shifted object from the same input batch onto each crop."
+    },
+    {
+      "index": 31,
+      "text": "**Model.** We use a _\u03b2_ -VAE with 128 latent dimensions. The encoder is a ten layer CNN, the appearance decoder is a corresponding CNN using transposed convolutions (Dumoulin & Visin, 2018) and one additional convolutional decoding layer. We use a second decoder with the same architecture but only a single output channel do decode the object masks. During each epoch, we use crops from two random frames from every object. We train our model for 60 epochs using Adam (Kingma & Ba, 2015) with a learning rate of 10 _[\u2212]_[4] , which we decrease by a factor of 10 after 40 epochs. We chose the optimal hyperparameters for this architecture using grid searches. More details regarding the model architecture and the hyperparameters are provided in the supplement."
+    },
+    {
+      "index": 32,
+      "text": "## STAGE 2B: BACKGROUND MODEL\u2014LEARNING TO GENERATE UNOCCLUDED BACKGROUNDS\n\n**Task.** We use an ensemble of background extraction techniques outlined above to estimate background scenes for each frame. We train a _\u03b2_ -VAE on these backgrounds using the appearance loss _LR,_ appear. with the inferred background mask, without any additional cutout or object augmentation."
+    },
+    {
+      "index": 33,
+      "text": "**Architecture.** The _\u03b2_ -VAE has the same architecture as the object model, but only uses a single decoder for the background appearance. We do not focus on a detailed reconstruction of background samples and limit the resolution to 96 _\u00d7_ 64px. When sampling scenes, the outputs are upsampled to the original resolution of 480 _\u00d7_ 320px using bilinear interpolation."
+    },
+    {
+      "index": 34,
+      "text": "## STAGE 3: SCENE MODEL\u2014LEARNING TO GENERATE COHERENT SCENES\n\nIn the final stage, we combine the object and background model into a scene model that allows sampling novel scenes. As the scene model can reuse the decoders from the previous stages, its main task is to model the parameters defining the scene composition such as object counts, locations and dependencies between the background and the object latents. Compared to an end-to-end approach, the complexity of the learning problem is greatly reduced in this setting. It is straightforward to generalize the scene model beyond the training distribution: E.g., it is easy to sample more objects than observed in the input scenes."
+    },
+    {
+      "index": 35,
+      "text": "We use a scene model following the causal graph depicted in Fig. 3: First, we sample a background latent **z**[bg] which describes global properties of the scene such as its composition and illumination; **z**[bg] is then decoded by the background model into a background image **x** 0. Conditioned on the background latent, we sequentially sample _K_ tuples ( **z**[app] _k[,]_ **[z]**[pos] _k[,]_ **[z]** _k_[scale] ) of latents encoding appearance, position, and scale of object _k_ , respectively; the number of objects _K_ is sampled conditional on **z**[bg] as well. Each appearance latent **z**[app] _k_ is decoded by the object model into a masked object **o** _k_ = ( **m** _i,_ **x** _i_ ), which is subsequently re-scaled by **z**[scale] _k_ and placed in the scene at position **z**[pos] _k_ according to a dead-leaves model (i.e., occluding previously visible pixels at the same location)."
+    },
+    {
+      "index": 36,
+      "text": "Due to the formulation of the model, we are flexible in specifying the conditional and prior distributions needed to generate samples. A particular simple special case is to sample all latents (indicated as circles in Fig. 3) independently. This can be done by informed prior distributions, or by leveraging the training dataset. In the former case, we sample **z**[bg] and all **z**[app] _k_ from the standard normal prior of the _\u03b2_ -VAE, but reject objects for which the binary entropy of the mask (averaged across all"
+    },
+    {
+      "index": 37,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\npixels) exceeds a threshold (for figures in the main paper, 100 bits). We found that empirically, this entropy threshold can be used to trade diversity of samples for higher-quality samples (cf. supplement). For the coordinates, a uniform prior within the image yields reasonable samples, and scales can be sampled from a uniform distribution between 64 _\u00d7_ 32px and 192 _\u00d7_ 96px and at fixed 2 : 1 ratio. Alternatively, all distributions can be fit based on values obtained from the motion segmentation (object and background latents, distribution of sizes, distribution of coordinates). We provide a detailed analysis in the supplement."
+    },
+    {
+      "index": 38,
+      "text": "## 5 EXPERIMENTS\n\n**Motion Segmentation.** We quantify the quality of the motion segmentation approach to understand which and how many errors are propagated to later stages. Motion segmentation was scored as follows: For every frame, we matched the predicted and ground truth masks using the Hungarian algorithm (Kuhn, 1955) with the pairwise IoU (Intersection over Union) as matching cost. The frame-wise IoU scores were then aggregated as in the DAVIS-2017 benchmark (Pont-Tuset et al., 2017) by first averaging IoUs over frames for each ground truth object, and then averaging over objects. In Tab. 1 we report the segmentation performance separately for the background and the foreground objects."
+    },
+    {
+      "index": 39,
+      "text": "The best performance is reached when using optical flow predicted by the FlowNet 2 model, thus we\u2019re using this model for all subsequent experiments. Our setting seems to be especially difficult for the ARFlow model. Different from the other networks, this model does not easily transfer from unrelated training settings and doesn\u2019t improve much when training on the Fishbowl data directly using the default hyperparameters. It might however be possible to improve the model by adapting the training setup to our dataset more closely."
+    },
+    {
+      "index": 40,
+      "text": "Overall, the evaluation reveals two types of errors: (1) even the best model variant only detected 67 _._ 4% of all objects, i.e., one third of the objects are missed and get included in the background masks. (2) The recall decreases when increasing the IoU threshold to 0 _._ 5, i.e., the predicted masks are often not precise. While the motion segmentation therefore induces a sort of label noise, it has to be considered that not all errors are problematic for the motion segmentation. In particular, this holds for all objects that have not been detected at all and unsystematic errors."
+    },
+    {
+      "index": 41,
+      "text": "**Object model.** To evaluate the capability of the object model to reconstruct unoccluded objects from occluded inputs, we extract object crops from the validation set using the bounding boxes of the ground truth unoccluded masks. For those crops, we compare the masks and appearances reconstructed by the model to the unoccluded ground truth (Fig. 2) using IoU and mean average error (MAE), respectively. As we are only interested in the reconstruction error within the object masks, we evaluate the MAE only on the intersection of the predicted and ground truth mask. We consider the ground truth unoccluded segmentation masks as our baseline: they correspond to a model that perfectly segments all visible object parts, but does not complete partial objects. We train variants of the object model using all augmentation strategies described above. For comparison, we also train each model variant using the ground truth occluded segmentation masks so that errors propagated from the motion segmentation can be differentiated from errors inherent to the object model."
+    },
+    {
+      "index": 42,
+      "text": "As the results in Tab. 2 show, using another object from the input batch as artificial occlusions results in the best IoU of 0.827. When considering only those objects that are occluded at least by 50%, the IoU drops to 0.705. This performance is substantially greater than the baseline (0.27), which indicates that the model learns to complete partial objects even for those hard cases. In terms of the appearance error, using the cutout augmentation performs best. Interestingly though, for both the mask and appearance error, training without any augmentation at all reduces the performance only slightly."
+    },
+    {
+      "index": 43,
+      "text": "When training on the ground truth segmentation instead of the motion segmentation, the error in terms of the IoU reduces by roughly one third. Performance gains can therefore be expected from improving the generative object model and, to a lesser extent, the motion segmentation. Overall, the object model seems to be quite robust to the label noise induced by the motion segmentation."
+    },
+    {
+      "index": 44,
+      "text": "We visualize reconstructions and samples from the object model in Fig. 4. In agreement with the quantitative results before, there is a visible quality difference between the model trained on motion segmentation and ground truth segmentation, respectively. In some cases, parts of the fish such as the tail fin is missing and in other cases, the mask covers areas not properly covered by the appearance. In particular this holds for the hard cases with substantial occlusions. Moreover, the samples from the model trained on motion segmentation masks seems to contain fewer sharks (a rare class). The"
+    },
+    {
+      "index": 45,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\nTable 2: Comparison of the reconstructions from the object model with the ground truth unoccluded objects. The reconstructed masks are evaluated using the intersection over union (IoU), the appearance is evaluated using the mean average error (MAE) of the RGB values (0\u2013255) on the intersection of the ground truth and predicted masks. Additionally, we report those metrics for hard samples in which at most half of the object is visible (IoU@0.5 and MAE@0.5). We consider model variants that use different artificial occlusions as augmentations during training. Furthermore, we compare the performance of each model variant when trained on the motion segmentation and the ground truth masks, respectively. All results are averaged over independent runs with 3 different seeds and reported with the standard error of the mean. As baseline we report the IoU of the ground truth occluded masks with the ground truth unoccluded masks."
+    },
+    {
+      "index": 46,
+      "text": "|**Training data**|**Augmentation**|**IoU**_\u2191_|**MAE**_\u2193_|**IoU@0.5**_\u2191_|**MAE@0.5**_\u2193_|\n|---|---|---|---|---|---|\n|Motion\nSegmentation|None\nCutout\nOther object|0.820_\u00b1_0.002\n0.822_\u00b1_0.001\n**0.827**_\u00b1_**0.001**|13.0_\u00b1_0.047\n**13.0**_\u00b1_**0.032**\n14.8_\u00b1_0.095|0.669_\u00b1_0.002\n0.677_\u00b1_0.002\n**0.705**_\u00b1_**0.001**|24.3_\u00b1_0.037\n24.0_\u00b1_0.017\n**23.4**_\u00b1_**0.049**|\n|Ground Truth\nSegmentation|None\nCutout\nOther object|0.885_\u00b1_0.001\n**0.887**_\u00b1_**0.001**\n0.883_\u00b1_0.001|12.4_\u00b1_0.144\n**12.3**_\u00b1_**0.035**\n14.1_\u00b1_0.250|0.738_\u00b1_0.002\n0.743_\u00b1_0.003\n**0.782**_\u00b1_**0.002**|17.5_\u00b1_0.210\n**17.3**_\u00b1_**0.087**\n17.7_\u00b1_0.197|\n|Baseline||0.915||0.271||"
+    },
+    {
+      "index": 47,
+      "text": "Figure 4: Qualitative results from the object model using another object as augmentation. _Left:_ Object model trained on the masks predicted by motion segmentation. _Right:_ Object model trained using ground truth segmentations. _Top:_ Reconstructions of validation set elements. _Middle:_ Reconstructions of validation set elements that are occluded by 0 _._ 5 _\u00b1_ 0 _._ 05. _Bottom:_ objects sampled from the respective model. The shown reconstructions and samples are not cherrypicked and do not use entropy filtering as in the scene model."
+    },
+    {
+      "index": 48,
+      "text": "majority of the reconstructions and samples however looks convincing, with the model capturing the relevant properties of the object masks and appearances."
+    },
+    {
+      "index": 49,
+      "text": "**Background model.** We train two variants of the background model using the foreground/background segmentation and the ground truth segmentation masks, respectively. We show samples from the former variants as part of the scene model in Fig. 5, and provide additional samples in the supplement. We deliberately chose to not exhaustively tune the background model and defer improvements (which are conceivable given the recent advances in high resolution image modeling with VAEs) to future work. Within the scope of this work, we limit ourselves to the constrained resolution resulting in blurry samples. They still reflect the main variations in the dataset, like the overall illumination and background color."
+    },
+    {
+      "index": 50,
+      "text": "**Scene model.** In Fig. 5 we visualize samples from the scene model following the scene statistics from the training dataset. As before, we consider two variants of the scene model using the background and object models trained on the motion segmentation and ground truth segmentation, respectively. The samples from both models nicely resemble the scenes from the training dataset. However, in both cases the errors from the object and the background model, as discussed before, are also observable in the generated scenes."
+    },
+    {
+      "index": 51,
+      "text": "A particular strength of our modular approach is that it allows to separately intervene on causally independent mechanisms (Pearl, 2009; Sch\u00f6lkopf et al., 2021) of the scene generation. In Fig. 6 we show such interventions on a sample from the unsupervised scene model. The number of objects, their positions and sizes are all represented explicitly by the scene model so that we can manipulate those scene properties separately. Moreover, the background and the objects are represented"
+    },
+    {
+      "index": 52,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\nFigure 5: Samples from the training dataset in comparison to the scene model using the background and object models trained on the motion segmentation and ground truth segmentation, respectively."
+    },
+    {
+      "index": 53,
+      "text": "Figure 6: Interventions on the scene properties of a sample from the unsupervised scene model. Top to bottom: (i) Varying the number of objects, (ii) varying the object identities, (iii) varying the scales of individual objects, (iv) changing backgrounds while keeping objects constant, (v) re-sampling locations of all objects."
+    },
+    {
+      "index": 54,
+      "text": "separately by their respective latent codes so that we can exchange and manipulate each of those scene components individually."
+    },
+    {
+      "index": 55,
+      "text": "**Modularity.** A downside of end-to-end models are non-trivial dependencies between individual components, making it harder to train and debug such models. In contrast, our modular approach allows to exchange individual components in the object learning pipeline. In Figure 7, we show a proof-of-concept for using a GAN (Mescheder et al., 2018) as part of a hybrid object model (image modeling: GAN, mask modeling: VAE) within our framework."
+    },
+    {
+      "index": 56,
+      "text": "**Comparison to prior work.** In the appendix, we further compare our approach with two recent end-to-end object-centric models (Lin et al., 2020b; Engelcke et al., 2021). Both models struggle to scale to the FISHBOWL dataset, highlighting the advantage of our multi-stage approach compared to end-to-end scene models. Moreover, we apply our method to the _RealTraffic_ dataset of real world videos captured by a traffic camera, showing that our approach transfers well to other datasets."
+    },
+    {
+      "index": 57,
+      "text": "## 6 DISCUSSION\n\nThe fields of machine learning and causal modeling have recently begun to cross-pollinate. Causality offers a principled framework to think about classes of distributions related to each other by domain shifts and interventions, and independent/modular components (e.g., objects) that are invariant across such changes. Vice versa, machine learning has something to offer to causality when it comes to learning causal variables and representations\u2014traditionally, research in causal discovery and inference built on the assumption that those variables be given a priori. Much like the shift from classic AI towards machine learning included a shift from processing human-defined symbols towards automatically learning features and _statistical_ representations, causal representation learning aims to learn _interventional_ representations from raw data (Sch\u00f6lkopf et al., 2021). It is in this"
+    },
+    {
+      "index": 58,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\nFigure 7: The modularity of our multi-stage approach allows to easily exchange individual components. Here, we replace the image-modeling part of the object model with a GAN instead of the previously used VAE. As in our main model, this allows meaningful traversals/interventions since objects and their positions/sizes are presented as individual entities."
+    },
+    {
+      "index": 59,
+      "text": "sense that we like to think of our scene model as a causal generative model, even though it is fairly straightforward from the causal point of view."
+    },
+    {
+      "index": 60,
+      "text": "We propose a multi-stage approach for learning generative object models from unlabelled videos. Inspired by the Gestalt _Principle of Common Fate_ , we use candidate segmentations obtained from unsupervised optic flow to weakly supervise generative object and background models, and combine them into a scene model. The scene model is causal/mechanistic in the sense that it (1) learns complete objects (although occlusions are abundant in the training data)[2] and (2) properly handles partial depth orderings in the scene, the latter through the dead leaves approach\u2014as opposed to the computationally simpler additive mixture approach which is common place in end-to-end scene models, but contradicts the physics of scene generation. Moreover, while many existing models only decompose and represent scenes, (3) our model can generate plausible novel and out-of-distribution scenes (e.g., higher fish density, different sizes). This showcases the challenges faced by end-to-end learning when not endowed with sufficient prior structure and inductive biases."
+    },
+    {
+      "index": 61,
+      "text": "While learning object models as part of an end-to-end trainable object centric scene model might be more elegant in principle, it has not been shown to scale to more realistic data yet. We instead chose a multi-stage approach that allows developing and analyzing the modeling stages individually. This approach allowed us to conclude that exploiting motion information for object discovery, as done in the motion segmentation stage, is a valuable cue that greatly simplifies object learning. Also, since the scene model uses the component models as modelling \u201catoms\u201d, this naturally permits intervening on the parameters defining the scene composition without side-effects, as stipulated by the principle of Independent Causal Mechanisms (Parascandolo et al., 2018; Peters et al., 2017)."
+    },
+    {
+      "index": 62,
+      "text": "We evaluated the modelling stages on the novel FISHBOWL dataset, consisting of short videos recorded from a synthetic 3D aquarium. Notably, we found that the generative object model proves to be fairly robust to errors in the motion segmentation. We expect further performance gains to be achievable by improving the visual fidelity of the generative object and background models (Razavi et al., 2019; Vahdat & Kautz, 2020); however, this was not the motivation for the present work."
+    },
+    {
+      "index": 63,
+      "text": "We see several ways to extend our model in the future, beyond improving the implementations of the individual stages by taking advantage of progress in computer vision. One limitation of using motion segmentation is that we can only decompose scenes of moving objects. This could be addressed by integrating object models trained using our approach into an end-to-end scene model, e.g., the work of Eslami et al. (2016) and its successors. When using a learning based motion segmentation approach, there could be a feedback circle with both models improving each other as training progresses and this way closing the observed gap to using ground truth segmentations. Finally, our object model does currently not capture object motions. Given that the motion segmentation yields temporally consistent segmentation masks, this could, in principle, well be included in our approach."
+    },
+    {
+      "index": 64,
+      "text": "> 2since inpainting takes place at the level of masks/shapes, rather than only for pixels as in most prior work."
+    },
+    {
+      "index": 65,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n**Ethics statement.** While there is some way to go when it comes to the generation of photorealistic scenes, we note that being able to automatically generate coherent scenes, including the interventional control that our approach pioneers, could be misused to synthesize or modify scenes, reinforcing the need to develop methods that allow to reliably detect manipulated content. On the other hand, the interpretability that comes with the modularity of our method can yield insights into scene perception, and could therefore facilitate better _explanations_ for model decisions."
+    },
+    {
+      "index": 66,
+      "text": "**Reproducibility statement.** We took several steps to make our work reproducible: For the dataset generation, we modified the Aquarium simulation on which our dataset is based, in order to make the rendering fully deterministic. The configuration files describing the recording settings for all samples will be published with the generation code along the dataset, which allows re-recording all videos. Moreover, the code for training our models is deterministic and will be made publicly available."
+    },
+    {
+      "index": 67,
+      "text": "## REFERENCES\n\nJimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E. Hinton. Layer Normalization. _arXiv:1607.06450_ , July 2016."
+    },
+    {
+      "index": 68,
+      "text": "- David Bau, Jun-Yan Zhu, Jonas Wulff, William Peebles, Hendrik Strobelt, Bolei Zhou, and Antonio Torralba. Seeing what a gan cannot generate. In _Proceedings of the IEEE/CVF International Conference on Computer Vision_ , pp. 4502\u20134511, 2019."
+    },
+    {
+      "index": 69,
+      "text": "- S. Beucher and F. Meyer. The Morphological Approach to Segmentation: The Watershed Transformation. In E. R. Dougherty (ed.), _Mathematical Morphology in Image Processing_ , pp. 433\u2013481. Marcel Dekker, New York, 1993."
+    },
+    {
+      "index": 70,
+      "text": "Thomas G. Bever and David Poeppel. Analysis by synthesis: A (re-)emerging program of research for language and vision. _Biolinguistics_ , 4(2):174\u2013200, 2010."
+    },
+    {
+      "index": 71,
+      "text": "- Thomas Brox and Jitendra Malik. Object Segmentation by Long Term Analysis of Point Trajectories. In Kostas Daniilidis, Petros Maragos, and Nikos Paragios (eds.), _Computer Vision \u2013 ECCV 2010_ , Lecture Notes in Computer Science, pp. 282\u2013295, Berlin, Heidelberg, September 2010. Springer."
+    },
+    {
+      "index": 72,
+      "text": "- Christopher P. Burgess, Loic Matthey, Nicholas Watters, Rishabh Kabra, Irina Higgins, Matt Botvinick, and Alexander Lerchner. MONet: Unsupervised Scene Decomposition and Representation. _arXiv:1901.11390_ , January 2019."
+    },
+    {
+      "index": 73,
+      "text": "- Chang Chen, Fei Deng, and Sungjin Ahn. Learning to infer 3d object models from images. _arXiv preprint arXiv:2006.06130_ , 2020."
+    },
+    {
+      "index": 74,
+      "text": "- Eric Crawford and Joelle Pineau. Spatiial invariant unsupervised object detection with convolutional neural networks. In _Thirty-Third AAAI Conference on Artificial Intelligence_ , 2019."
+    },
+    {
+      "index": 75,
+      "text": "- Eric Crawford and Joelle Pineau. Exploiting Spatial Invariance for Scalable Unsupervised Object Tracking. In _Proceedings of the AAAI Conference on Artificial Intelligence_ , volume 34(04), pp. 3684\u20133692, April 2020."
+    },
+    {
+      "index": 76,
+      "text": "- Achal Dave, Pavel Tokmakov, and Deva Ramanan. Towards Segmenting Anything That Moves. In _Proceedings of the IEEE/CVF International Conference on Computer Vision Workshops_ , October 2019."
+    },
+    {
+      "index": 77,
+      "text": "- Terrance DeVries and Graham W Taylor. Improved regularization of convolutional neural networks with cutout. _arXiv preprint arXiv:1708.04552_ , 2017."
+    },
+    {
+      "index": 78,
+      "text": "- Andrea Dittadi and Ole Winther. LAVAE: Disentangling Location and Appearance. _arXiv:1909.11813_ , September 2019."
+    },
+    {
+      "index": 79,
+      "text": "- Nimrod Dorfman, Daniel Harari, and Shimon Ullman. Learning to Perceive Coherent Objects. In Markus Knauff, Michael Pauen, Natalie Sebanz, and Ipke Wachsmuth (eds.), _Proceedings of the Annual Meeting of the Cognitive Science Society_ , volume 35(35), pp. 394\u2013399, Austin, TX, August 2013. Cognitive Science Society.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__qwen3-235b-a22b-2507": {
+      "label": "Coarse (qwen3-235b-a22b-2507)",
+      "model": "openrouter/qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a well-motivated and conceptually clear multi-stage approach to unsupervised object learning using motion cues, grounded in the Gestalt principle of Common Fate. It introduces a novel dataset with full ground truth for occluded objects, enabling evaluation of object completion\u2014a strength over prior work. The modular design allows for causal interventions and out-of-distribution sampling, demonstrating a compelling proof of concept. The work is well-structured and transparent about its components, with reproducibility measures in place.\n\nOverview issues:\n\n- Motion segmentation performance is too weak to support object learning claims: The motion segmentation stage achieves only 36.5% IoU on objects (Table 1) and misses one-third of objects entirely (Recall @0.0 = 67.4%). Such high error rates undermine the foundation of the entire pipeline: if the initial masks are mostly incorrect or incomplete, the object model is not learning from true object instances but from fragmented, merged, or missing regions. The paper acknowledges this but downplays it, stating that 'not all errors are problematic'. However, systematic under-segmentation or over-merging of objects violates the core assumption that motion cues cleanly isolate objects. This weak segmentation makes it unclear whether the object model is truly learning to complete objects or merely fitting noise patterns in corrupted inputs. The gap between motion-segmentation-trained and ground-truth-trained models (IoU 0.827 vs 0.883) confirms the impact, but the paper does not show whether the learned 'objects' correspond to real instances in the scene.\n\n- Object model evaluation conflates segmentation quality with generative performance: The evaluation of the object model uses ground truth unoccluded masks (from the Fishbowl dataset) to extract crops for testing, but training still relies on noisy motion segmentation masks. This creates an inconsistency: the model is tested on clean regions but trained on corrupted ones. As a result, the reported IoU and MAE metrics reflect both the model's ability to complete objects and the mismatch between training masks and test-time ground truth. The paper does not disentangle these effects. For instance, a high IoU could arise because the test crop aligns well with the true object, not because the model successfully completed a partially visible one. A proper evaluation would test the model on crops extracted via motion segmentation and compare reconstructions to the corresponding unoccluded ground truth, preserving the same data distribution as training.\n\n- Assumption that motion implies objecthood is not validated in the Fishbowl environment: The method assumes that coherently moving regions correspond to individual objects, but the Fishbowl dataset contains multiple fish that may move independently or in groups. The motion segmentation method (Keuper et al., 2015) clusters trajectories by motion affinity, but there is no evidence that these clusters align with object instances\u2014e.g., a school of fish moving together might be segmented as one blob, or a single fish might be split due to non-rigid motion. The paper does not report instance-level segmentation metrics (e.g., mAP or panoptic score) that would verify whether the motion cues recover object instances. Without this, the 'object-centric' nature of the learned model is not established. The qualitative results (Figure 4) suggest plausible outputs, but they do not prove that the model has learned disentangled object representations rather than statistical patterns in motion-induced noise.\n\n- Scene model does not demonstrate true generalization beyond training distribution: While the paper claims the scene model can generate out-of-distribution scenes (e.g., higher object density), it does not quantitatively evaluate whether such samples are plausible or coherent. Figure 5 shows samples that resemble training data, but Figure 6 only demonstrates interventions (e.g., changing object count) without assessing quality, diversity, or failure modes. There is no metric on how many generated scenes contain implausible overlaps, distorted objects, or unrealistic compositions. Moreover, the background and object models are trained on low-resolution inputs, leading to blurry outputs, and the scene model inherits this limitation. The claim of 'controlled out-of-distribution sampling' remains qualitative and unvalidated\u2014readers are expected to visually accept the samples as plausible, but no user study or automated measure (e.g., FID, LPIPS) is provided to support this.\n\n- Lack of comparison to motion-based baselines undermines novelty claim: The paper positions its use of motion cues as a key innovation, but does not compare to recent unsupervised video object discovery methods that also exploit motion, such as SAVi (Slot Attention for Video) or 4D Unsupervised Object Discovery. These models use temporal consistency and motion features within end-to-end architectures and have demonstrated object segmentation on complex videos. By only comparing to non-motion-based end-to-end models (Lin et al., 2020b; Engelcke et al., 2021) and showing they fail on Fishbowl, the paper creates a weak baseline. A fair comparison would include a motion-conditioned Slot Attention variant or a two-stream RGB+flow model trained on Fishbowl. Without this, it is unclear whether the multi-stage design or the motion cue itself is responsible for the improved performance.\n\n- Overstated causal interpretation of the scene model: The paper repeatedly refers to the scene model as 'causal' or 'mechanistic', citing Pearl and Sch\u00f6lkopf, but the model does not learn causal dependencies between variables\u2014only a generative process with modular components. Interventions (Figure 6) are performed on latent codes that are manually defined (e.g., object count, position), not discovered from data. The model does not infer causal structure (e.g., which objects influence others' motion) nor support counterfactual queries beyond simple resampling. While the dead leaves composition is physically plausible, calling the model 'causal' overreaches; it is better described as 'compositional' or 'structured'. This framing risks misleading readers about the model's capabilities and the level of causal understanding it affords.\n\n- No test of object model generalization under motion segmentation noise: The paper claims the object model learns to complete occluded objects, but all evaluation uses crops extracted from ground truth unoccluded masks, not from the motion segmentation masks used at training time. This setup tests reconstruction under ideal conditions, not the model\u2019s ability to generalize when trained on noisy segmentations. To validate the core claim, the authors should extract test crops using the same motion segmentation pipeline as in training, then compare reconstructions to the ground truth unoccluded objects. Without this, it remains unclear whether the model actually learns object completion or merely benefits from clean test inputs that mask training-time noise.\n\n- Missing instance-level segmentation evaluation: The motion segmentation stage is evaluated using frame-level IoU and recall, but these metrics do not verify whether individual moving entities are correctly segmented as distinct instances. In scenes with multiple fish, coherent motion might group several objects into one mask or split a single object. The paper should report instance-aware metrics like panoptic quality (PQ) or tracking AP (MOTAP) on the Fishbowl validation set to confirm that motion cues yield object-level decomposition. Without this, the assumption that motion clusters correspond to objects remains unverified, undermining the object-centric claim.\n\n- No quantitative assessment of out-of-distribution scene plausibility: The paper asserts the scene model supports controlled out-of-distribution sampling (e.g., higher object counts), but provides only qualitative examples. Readers cannot judge how often such samples are coherent or realistic. The authors should quantify plausibility using automated metrics like FID or LPIPS computed on generated scenes with elevated object density, or report human ratings on a sample of OOD outputs. Alternatively, they could measure the rate of severe artifacts (e.g., floating objects, extreme overlaps). Without such analysis, the claim of flexible generation lacks empirical support.\n\n- Failure to verify recovery of known motion patterns in Fishbowl: The method assumes that object motion is coherent and separable, but the Fishbowl dataset may contain complex interactions (e.g., schooling behavior, camera-relative motion). The authors should analyze whether the motion segmentation actually isolates individual fish by computing trajectory consistency within and across predicted masks. For example, they could report the mean within-mask vs. between-mask optical flow variance for ground truth fish instances. A simple test would be to compute the proportion of predicted motion segments that align with single ground truth fish over time. Without this, the validity of the Common Fate assumption in this setting is not demonstrated.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide instance-level segmentation metrics (e.g., panoptic quality, mAP) to validate that motion cues recover object instances in Fishbowl.\n\n- Re-evaluate the object model using crops extracted via motion segmentation and compare reconstructions to unoccluded ground truth, preserving training/test consistency.\n\n- Add quantitative evaluation of out-of-distribution scene generation (e.g., FID, user study) and report failure modes.\n\n- Include comparisons to recent motion-based unsupervised object discovery models like SAVi or 4D-UDOP on the Fishbowl dataset.\n\n- Revise claims about causality to accurately reflect the model as modular and compositional, not causally disentangled in the Pearl/Sch\u00f6lkopf sense.",
+      "comments": [
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_0",
+          "title": "Evaluation uses ground truth crops despite noisy training masks",
+          "quote": "To evaluate the capability of the object model to reconstruct unoccluded objects from occluded inputs, we extract object crops from the validation set using the bounding boxes of the ground truth unoccluded masks. For those crops, we compare the masks and appearances reconstructed by the model to the unoccluded ground truth (Fig. 2) using IoU and mean average error (MAE), respectively.",
+          "explanation": "The evaluation setup creates a mismatch between training and testing: the model is trained on crops extracted from noisy motion segmentation masks, but tested on crops defined by clean ground truth unoccluded masks. This gives an inflated estimate of performance because the test crops perfectly align with true object extent, bypassing the segmentation noise the model must handle during training. As a result, the reported IoU and MAE reflect not only completion ability but also the advantage of ideal spatial cropping at test time. To validate the core claim\u2014robust object completion under partial observability\u2014the authors should extract test crops using the same motion segmentation pipeline as in training and evaluate reconstructions against the corresponding unoccluded ground truth.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_1",
+          "title": "Claim of robustness to motion segmentation errors lacks support",
+          "quote": "Overall, the object model seems to be quite robust to the label noise induced by the motion segmentation.",
+          "explanation": "The claim of robustness is not supported by the data. While the model achieves 0.827 IoU with motion segmentation masks and 0.883 with ground truth masks, this 5.6-point gap indicates a meaningful sensitivity to segmentation quality. Robustness should be assessed relative to the oracle setting, not just by absolute performance. The authors interpret 0.827 as strong, but without isolating the effect of specific noise types (e.g., missing objects vs. boundary inaccuracies), the claim remains speculative. Either remove the robustness assertion or support it with a controlled study that varies segmentation noise and measures its impact on reconstruction.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_2",
+          "title": "Mask loss does not supervise occluded regions",
+          "quote": "$\\mathcal{L}_{R,\\text{mask.}}$ $=\\sum_{i}\\Big{(}\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\cdot\\text{BCE}\\big{[}\\mathbf{m}_{1}^{(i)}(u,v),\\hat{\\mathbf{m}}^{(i)}(u,v)]/\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\Big{)}.$",
+          "explanation": "The mask loss is computed over the union of background and visible object regions, but excludes pixels occupied by other objects\u2014precisely where the model is expected to complete the target object. Since the loss does not cover occluded parts of $\\mathbf{m}_1$, the model receives no direct supervision for shape completion in those areas. Completion must emerge solely from latent space regularization, not from reconstruction gradients. This undermines the stated objective of learning to complete occluded objects. The authors should extend the mask loss to include occluded regions using the full unoccluded ground truth mask, or define a visible/occluded decomposition and apply the loss accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_3",
+          "title": "Out-of-distribution generation lacks quantitative validation",
+          "quote": "(3) our model can generate plausible novel and out-of-distribution scenes (e.g., higher fish density, different sizes). This showcases the challenges faced by end-to-end learning when not endowed with sufficient prior structure and inductive biases.",
+          "explanation": "The claim that the model generates 'plausible' out-of-distribution scenes relies entirely on qualitative examples (Figures 5\u20136) without any quantitative assessment. There is no metric\u2014such as FID, LPIPS, or human ratings\u2014to evaluate the coherence or realism of high-density samples. Without such measures, it is impossible to judge how often generated scenes contain implausible overlaps, distortions, or artifacts. The argument that structured priors enable better generalization remains anecdotal. The authors should provide automated scores or perceptual studies to support the plausibility claim.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_4",
+          "title": "Causal model claim overreaches without mechanistic validation",
+          "quote": "The scene model is causal/mechanistic in the sense that it (1) learns complete objects (although occlusions are abundant in the training data) $^2$  and (2) properly handles partial depth orderings in the scene, the latter through the dead leaves approach\u2014as opposed to the computationally simpler additive mixture approach which is common place in end-to-end scene models, but contradicts the physics of scene generation.",
+          "explanation": "The paper labels the scene model as 'causal/mechanistic' based on architectural design choices\u2014modular composition and occlusion-consistent rendering\u2014but does not demonstrate that the learned representations support causal reasoning. Causality requires invariance, identifiability, or interventional validity, none of which are tested. The model allows manual manipulation of latents, but these are not discovered from data nor tied to causal structure. The dead leaves process is physically plausible, but that alone does not make the model causal. The authors should reframe this as a 'structured generative model' with design choices inspired by causal principles, rather than asserting causal semantics without empirical validation.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_5",
+          "title": "Interventions lack verification of independence",
+          "quote": "Also, since the scene model uses the component models as modelling \"atoms\", this naturally permits intervening on the parameters defining the scene composition without side-effects, as stipulated by the principle of Independent Causal Mechanisms (Parascandolo et al., 2018; Peters et al., 2017).",
+          "explanation": "The claim that interventions have 'no side-effects' is unsupported. While the architecture modularizes components, there is no evidence that changing one (e.g., object position) leaves the generative processes of others (e.g., appearance or background) invariant. Causal independence cannot be assumed from modularity alone. The authors should either test this empirically\u2014e.g., by measuring whether resampling one factor affects the likelihood of others\u2014or rephrase to state that the model enables explicit manipulation of scene factors, leaving independence as a design assumption rather than a verified property.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_6",
+          "title": "Object count sampling is underspecified",
+          "quote": "the number of objects  $K$  is sampled conditional on  $\\mathbf{z}^{\\mathrm{bg}}$  as well.",
+          "explanation": "The paper states that $K$ is sampled conditionally on $\\mathbf{z}^{\\mathrm{bg}}$, but does not specify the form of $p(K \\mid \\mathbf{z}^{\\mathrm{bg}})$. Is it a Poisson, categorical, or neural distribution? This omission prevents reproducibility and raises questions about how scene complexity is controlled. The supplement is cited, but the core generative process must be described in the main method. The authors should define the conditional distribution\u2014e.g., a categorical output from an MLP on $\\mathbf{z}^{\\mathrm{bg}}$\u2014trained on observed counts from motion segmentation.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_7",
+          "title": "No handling of object overlap constraints",
+          "quote": "Conditioned on the background latent, we sequentially sample  $K$  tuples  $(\\mathbf{z}_k^{\\mathrm{app}}, \\mathbf{z}_k^{\\mathrm{pos}}, \\mathbf{z}_k^{\\mathrm{scale}})$  of latents encoding appearance, position, and scale of object  $k$ , respectively; the number of objects  $K$  is sampled conditional on  $\\mathbf{z}^{\\mathrm{bg}}$  as well.",
+          "explanation": "Objects are sampled independently in position and scale, with no mechanism to prevent extreme overlap or implausible configurations\u2014e.g., multiple large objects centered in the same pixel. While occlusion is resolved at compositing, the lack of spatial regularization may lead to unnatural scenes. The model assumes the background latent implicitly controls spacing, but this is neither stated nor verified. A minimal constraint\u2014such as a minimum distance between centers scaled by size\u2014would improve plausibility. The authors should add such a rule or justify its absence.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_8",
+          "title": "Pixel-space scale sampling ignores latent geometry",
+          "quote": "scales can be sampled from a uniform distribution between $64\\times 32$px and $192\\times 96$px and at fixed $2:1$ ratio.",
+          "explanation": "Sampling scales directly in pixel space and mapping them to $\\mathbf{z}_k^{\\mathrm{scale}}$ without inverse encoding risks generating off-manifold latents. The VAE\u2019s latent space may not be uniformly aligned with pixel dimensions, so a uniform pixel-area distribution could correspond to a discontinuous or low-density path in $\\mathbf{z}_k^{\\mathrm{scale}}$. The correct approach is to fit a distribution (e.g., Gaussian or KDE) to the $\\mathbf{z}_k^{\\mathrm{scale}}$ values observed during motion segmentation and sample from that latent-space distribution to ensure coherent reconstructions.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_9",
+          "title": "Ambiguous notation for segmentation inputs",
+          "quote": "For an input batch, let $\\mathbf{c}$ and $\\mathbf{m}_{0,K}$ be the ground truth crops with candidate segmentations, and $\\hat{\\mathbf{c}}$ and $\\hat{\\mathbf{m}}$ the reconstructed object appearances (RGB values for each pixel) and shapes (foreground probabiliy for each each pixel).",
+          "explanation": "The notation $\\mathbf{m}_{0,K}$ is ambiguous and misleading. It appears to denote the sequence $\\{\\mathbf{m}_0, \\ldots, \\mathbf{m}_K\\}$, but the model only uses $\\mathbf{m}_0$ and $\\mathbf{m}_1$ for loss computation and does not reconstruct $k \\geq 2$. Including $K$ masks in the input description incorrectly suggests multi-object reconstruction. Replace $\\mathbf{m}_{0,K}$ with $\\mathbf{m}_0, \\mathbf{m}_1$ to accurately reflect the supervision signal and avoid confusion.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.0524,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "The paper proposes a multi-stage approach for unsupervised object learning using the 'common fate' principle from Gestalt psychology. While the concept is interesting and the modular design has merits, several critical issues undermine its contributions. The evaluation relies heavily on a synthetic dataset with limited generalizability, the motion segmentation stage performs poorly yet its errors are not adequately addressed, and the claimed advantages over end-to-end methods lack rigorous comparison. The paper also fails to sufficiently acknowledge the fundamental limitations of relying solely on motion cues for object discovery.\n\nThe paper presents a thoughtfully designed modular framework that decomposes unsupervised object learning into evaluable stages, which is a valuable contribution. The introduction of the Fishbowl dataset with unoccluded ground truth is also useful for evaluating object completion capabilities. However, the empirical validation is weak, with motion segmentation performing poorly (only 67.4% recall) and the paper not adequately addressing how this affects downstream performance. The generalizability claims are overstated given the synthetic nature of the dataset and lack of diverse real-world testing.\n\nOverview issues:\n\n- Inadequate Evaluation of Motion Segmentation Performance: The motion segmentation stage, which is foundational to the entire pipeline, achieves only 67.4% recall at IoU@0.0 and drops to 41.6% at IoU@0.5 (Table 1). This means one-third of objects are missed entirely, and detected masks are often imprecise. The paper dismisses this as 'label noise' without quantifying its impact on downstream stages. Given that the object model relies on these segmentations for training, such poor performance likely severely limits the quality of learned object representations. The paper should either (1) demonstrate that the object model is robust to this level of noise through controlled experiments, or (2) improve the motion segmentation performance before claiming the approach works.\n\n- Limited Generalizability Beyond Synthetic Aquarium Scenes: The entire evaluation is conducted on the introduced Fishbowl dataset - a synthetic aquarium with fish swimming against relatively static backgrounds. While the paper claims the approach 'transfers well' to RealTraffic dataset (mentioned briefly in Section 9), no quantitative results are provided. The common fate principle is known to fail for articulated objects, shadows, and reflections (as noted in the literature context), yet these limitations are not explored. The paper should include evaluations on diverse real-world datasets with complex backgrounds, non-rigid motions, and multiple moving objects to demonstrate the approach's practical applicability.\n\n- Insufficient Comparison to State-of-the-Art Baselines: The paper claims advantages over end-to-end approaches but provides only a cursory comparison in the appendix without quantitative metrics. Recent works like MONet, Slot Attention, and Bootstrapping Objectness from Videos (all cited) should be directly compared on the Fishbowl dataset using standard metrics. Without such comparisons, it's impossible to assess whether the multi-stage approach truly offers benefits over existing methods. The paper should include head-to-head comparisons with at least 3-4 strong baselines using the same evaluation protocol.\n\n- Unsubstantiated Claims About Causal Scene Understanding: The paper frames its scene model as 'causal' and claims it learns 'complete objects' and 'properly handles partial depth orderings'. However, there is no evaluation demonstrating causal understanding beyond the ability to intervene on object count/position. True causal understanding would require showing the model can reason about counterfactuals or handle interventions not seen during training. The paper should either tone down these claims or provide evidence of causal reasoning capabilities beyond basic scene manipulation.\n\n- Potential Information Leakage in Multi-Stage Training: The multi-stage approach trains components sequentially using outputs from previous stages. This creates a risk of information leakage, where later stages inadvertently learn dataset-specific artifacts from the noisy segmentations rather than general object properties. The paper does not analyze whether the object model is learning true object representations or simply memorizing patterns in the motion segmentation errors. A controlled experiment training the object model with randomized segmentations could help distinguish between these possibilities.\n\n- Missing demonstration of non-vacuous result: The paper claims the Common Fate Principle can be used for object learning, but doesn't demonstrate this is non-vacuous. We need an example showing the approach fails when motion coherence doesn't correspond to objecthood. For instance, apply the method to a video with shadows or reflections moving together across surfaces, which should violate the principle. Without such a failure case analysis, we cannot assess whether the method's success on Fishbowl is due to the principle or dataset-specific coincidences. The paper should include at least one counterexample where common fate leads to incorrect object segmentation.\n\n- No worked example of scene model computation: The scene model combines object and background models but never shows a complete worked example. We need to see how the model actually generates a scene: sample the latents, decode the background, place objects according to the dead leaves model, and show the final composition with the mathematical operations. This is crucial for understanding how depth layering emerges and whether the model truly handles occlusions. Without this concrete computation, readers cannot verify the implementation matches the claimed causal structure.\n\n- Underdeveloped causal intervention claims: The paper claims the model allows 'controlled out-of-distribution sampling' but only shows basic interventions like changing object count. A stronger demonstration would involve interventions that test causal understanding, such as swapping objects between scenes while maintaining physical consistency, or demonstrating that the model can generate scenes with novel object-background combinations that respect physical constraints. The current interventions don't clearly distinguish between causal reasoning and simple parameter manipulation.\n\n- Missing implementation guidance for real-world deployment: While the method works on synthetic Fishbowl data, there's no discussion of practical deployment challenges for real-world videos. The paper should address how to handle common real-world issues like camera motion, lighting changes, or partial occlusions that violate the static background assumption. Without this guidance, practitioners cannot assess whether the approach will work beyond controlled environments. A section discussing failure modes and adaptation strategies would make the contribution more complete.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Quantitatively evaluate the impact of motion segmentation errors on downstream object model performance through ablation studies\n\n- Include comprehensive evaluation on at least two diverse real-world datasets beyond the synthetic Fishbowl dataset\n\n- Provide direct quantitative comparisons with state-of-the-art unsupervised object discovery methods using standard metrics\n\n- Either provide evidence for causal understanding claims or moderate the framing to focus on the modular approach benefits\n\n- Analyze potential information leakage between stages and demonstrate that the object model learns generalizable representations",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Division by zero in reconstruction loss",
+          "quote": "$\\mathcal{L}_{R,\\text{appear.}}$ $=\\sum_{i}\\Big{(}\\sum_{u,v}\\mathbf{m}_{1}^{(i)}(u,v)\\left\\|\\mathbf{c}^{(i)}(u,v)-\\hat{\\mathbf{c}}^{(i)}(u,v)\\right\\|_{2}^{2}/\\sum_{u,v}\\mathbf{m}_{1}^{(i)}(u,v)\\Big{)},$\n$\\mathcal{L}_{R,\\text{mask.}}$ $=\\sum_{i}\\Big{(}\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\cdot\\text{BCE}\\big{[}\\mathbf{m}_{1}^{(i)}(u,v),\\hat{\\mathbf{m}}^{(i)}(u,v)]/\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\Big{)}.$",
+          "explanation": "The loss functions include normalization terms that could lead to division by zero. While the paper filters out masks smaller than 64 pixels, it doesn't guarantee these denominators are non-zero. If $\\mathbf{m}_{1}^{(i)}$ is all zeros or if both $\\mathbf{m}_{0}^{(i)}$ and $\\mathbf{m}_{1}^{(i)}$ are all zeros, division by zero occurs. Add a note about numerical stability: 'We ensure numerical stability by skipping samples where $\\sum_{u,v}\\mathbf{m}_{1}^{(i)}(u,v) = 0$ or $\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v) = 0$.'",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Contradiction in baseline IoU calculation",
+          "quote": "As baseline we report the IoU of the ground truth occluded masks with the ground truth unoccluded masks.",
+          "explanation": "The baseline IoU value of 0.915 in Table 2 contradicts the description. Occluded masks by definition have missing parts, so their IoU with unoccluded masks cannot be 0.915. More critically, the IoU@0.5 baseline is 0.271, which is inconsistent with the overall 0.915 baseline. The authors likely confused the baseline calculation. Rewrite the baseline description as: 'As baseline we report the IoU between the ground truth occluded masks and their corresponding unoccluded masks, averaged over all objects.' and verify the 0.915 value is correct.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "Inconsistent background mask definition",
+          "quote": "NE MODELLING\n\nWe model an image  $\\mathbf{x}$  as a composition of a background  $(\\mathbf{m}_0 = \\mathbb{1},\\mathbf{x}_0)$  and an ordered list of objects  $(\\mathbf{m}_i,\\mathbf{x}_i)$ , each represented as a binary mask  $\\mathbf{m}_i$  and appearance  $\\mathbf{x}_i$ . The back",
+          "explanation": "The paper defines the background mask as $\\mathbf{m}_0 = \\mathbb{1}$ (all ones), but later describes computing background masks through foreground-background segmentation methods. This creates a contradiction: if $\\mathbf{m}_0$ is always $\\mathbb{1}$, why compute background masks? The definition should distinguish between the conceptual background mask in the generative model and computed background masks for training. Rewrite as 'We model an image $\\mathbf{x}$ as a composition of a background $(\\mathbf{m}_0, \\mathbf{x}_0)$ where $\\mathbf{m}_0$ represents the background region, and an ordered list of objects $(\\mathbf{m}_i, \\mathbf{x}_i)$...' to resolve the conflict.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Undefined pixel composition rule",
+          "quote": "The background and objects are composed into a scene using a simple \"dead leaves\" model, i.e., the value of each pixel  $(u,v)$  is determined by the foremost object covering that pixel.",
+          "explanation": "The paper states pixel values are determined by the 'foremost object covering that pixel' but never provides the mathematical formulation. Given binary masks $\\mathbf{m}_i$ and appearances $\\mathbf{x}_i$, readers need the explicit composition rule. Add the mathematical formulation: 'Formally, let $z_i$ denote the depth ordering with $z_i > z_j$ meaning object $i$ is in front of object $j$. Then $\\mathbf{x}(u,v) = \\mathbf{x}_{k^*}(u,v)$ where $k^* = \\arg\\max_{i: \\mathbf{m}_i(u,v)=1} z_i$' after the quoted text.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Scale sampling uses pixel dimensions instead of scale factors",
+          "quote": "scales can be sampled from a uniform distribution between $64\\times 32$px and $192\\times 96$px and at fixed $2:1$ ratio",
+          "explanation": "The text describes sampling scales using absolute pixel dimensions rather than dimensionless scale factors. Since $\\mathbf{z}_k^{\\mathrm{scale}}$ is described as a latent that 're-scales' objects, it should represent multiplicative scale factors, not absolute sizes. Rewrite to specify dimensionless scale factors: 'scales can be sampled from a uniform distribution between 0.5 and 1.5' because scale factors should be multiplicative values applied to a base object size.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "Undefined entropy threshold units",
+          "quote": " reject objects for which the binary entropy of the mask (averaged across all\n\n<!-- PAGE BREAK -->\n\npixels) exceeds a threshold (for figures in the main paper, 100 bits). We found tha",
+          "explanation": "The entropy threshold of 100 bits is not justified. Binary entropy is measured per pixel, so averaging across all pixels yields a value between 0 and 1 bit per pixel. A threshold of 100 bits would only make sense if referring to total entropy, not averaged entropy. Clarify whether this is total entropy or specify the mask dimensions that make 100 bits meaningful. Add clarification: 'reject objects for which the total binary entropy of the mask exceeds 100 bits' because averaged entropy cannot exceed 1 bit per pixel.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Unsubstantiated transfer claim without evidence",
+          "quote": "Moreover, we apply our method to the RealTraffic dataset of real world videos captured by a traffic camera, showing that our approach transfers well to other datasets.",
+          "explanation": "The paper claims the approach 'transfers well' to RealTraffic dataset but provides no quantitative results or even qualitative examples. This is a significant claim about generalizability that requires evidence. Either provide specific metrics or visual results for RealTraffic, or remove the claim about transferring well. The current statement is unsubstantiated and contradicts the paper's focus on synthetic Fishbowl data.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Dataset size discrepancy",
+          "quote": "This dataset consists of 20,000 training and 1,000 validation and test videos recorded from a publicly available WebGL demo of an aquarium, each with a resolution of  $480 \\times 320\\mathrm{px}$  and 128 frames.",
+          "explanation": "The text states there are '1,000 validation and test videos' but doesn't specify how these are split between validation and test sets. This ambiguity makes it impossible to interpret evaluation results. The authors should clarify whether this means 1,000 validation videos AND 1,000 test videos (total 2,000), or 1,000 videos split between validation and test. Rewrite as '1,000 validation videos and 1,000 test videos' or '1,000 videos split between validation and test sets (500 each)' to resolve the ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Index inconsistency in object notation",
+          "quote": "h appearance latent  $\\mathbf{z}_k^{\\mathrm{app}}$  is decoded by the object model into a masked object  $\\mathbf{o}_k = (\\mathbf{m}_i, \\mathbf{x}_i)$ , which is subsequently re-scaled by  $\\mathbf{z}_k^{\\mathrm{scale}}$  and placed in the scene at position  $\\mathbf{z}_k^{\\mathrm{pos}}$  according to a dead-leaves model (i.",
+          "explanation": "The notation uses inconsistent indexing: object $\\mathbf{o}_k$ is indexed with $k$ but its components $(\\mathbf{m}_i, \\mathbf{x}_i)$ use index $i$. Since the context describes decoding appearance latent $\\mathbf{z}_k^{\\mathrm{app}}$ for object $k$, the mask and image should correspond to the same object. Rewrite $\\mathbf{o}_k = (\\mathbf{m}_i, \\mathbf{x}_i)$ as $\\mathbf{o}_k = (\\mathbf{m}_k, \\mathbf{x}_k)$ because the mask and image components should share the same index as their parent object.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Undefined BCE function in mask loss",
+          "quote": "$\\mathcal{L}_{R,\\text{mask.}}$ $=\\sum_{i}\\Big{(}\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\cdot\\text{BCE}\\big{[}\\mathbf{m}_{1}^{(i)}(u,v),\\hat{\\mathbf{m}}^{(i)}(u,v)]/\\sum_{u,v}[\\mathbf{m}_{0}^{(i)}+\\mathbf{m}_{1}^{(i)}](u,v)\\Big{)}.$",
+          "explanation": "The equation uses BCE[\u00b7,\u00b7] without defining what this function computes. While BCE typically refers to binary cross entropy in machine learning contexts, the mathematical notation BCE[x,y] is ambiguous. The paper should explicitly define the binary cross entropy function to ensure mathematical precision. Add after the equation: 'where $\\text{BCE}(p,q) = -p\\log q - (1-p)\\log(1-q)$ is the binary cross entropy function.'",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        }
+      ],
+      "cost_usd": 0.3463,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes a three-stage modular pipeline for unsupervised object-centric learning, utilizing motion segmentation (common fate) to guide the training of generative object and background models, which are then integrated into a 'dead leaves' scene model.\n\nThe paper provides a refreshing, modular alternative to the current trend of end-to-end slot-based models, which often struggle with scalability and training stability. The introduction of the Fishbowl dataset is a welcome contribution that allows for controlled evaluation of object-centric learning beyond simplistic benchmarks. However, the reliance on motion as the primary signal for object discovery limits the approach's generality and requires more rigorous validation of the 'common fate' assumption.\n\nOverview issues:\n\n- Dependence on Motion for Object Discovery: The methodology relies entirely on motion segmentation to identify object candidates. Section 4 and Section 5 imply that stationary objects, or objects that move in unison with the background, will be absorbed into the background model. This limitation is a significant drawback for a general-purpose object-centric learning system. The authors should explicitly address this failure mode and perhaps demonstrate how the model behaves when presented with scenes containing both static and dynamic objects.\n\n- Sensitivity to Optical Flow Quality: Table 1 shows that the segmentation performance is highly sensitive to the choice of optical flow estimator, with IoU scores for objects ranging from 0.24 to 0.36. The paper does not analyze how these segmentation errors (false negatives and misaligned masks) propagate through the subsequent generative stages. It is unclear if the object model's ability to 'complete' objects is a result of learning true object structure or merely a byproduct of the model smoothing over noisy, inconsistent segmentation masks.\n\n- Evaluation of 'Dead Leaves' Model Validity: The scene model in Section 8 assumes a dead-leaves model for composition. While this is physically more grounded than additive mixture models, the paper does not quantify how well this assumption holds for the Fishbowl dataset. If the depth ordering in the dataset does not strictly follow the layered assumptions of the dead-leaves model, the generative quality will suffer. A comparison between the learned scene composition and the ground truth depth ordering would clarify whether the model is actually learning 3D-aware representations.\n\n- Lack of Comparison to State-of-the-Art Baselines: While the paper mentions that end-to-end models struggle on the Fishbowl dataset, it lacks a formal, quantitative comparison with current standard models like SAVi++ or STEVE. Without these benchmarks, it is difficult to assess whether the performance gains are due to the modular architecture or simply the easier nature of the synthetic Fishbowl data. Including a comparative table with these models on the same metrics would significantly strengthen the claim that this multi-stage approach is superior for complex scenes.\n\n- Empirical validation of causal intervention claims: The paper claims that the modular scene model allows for 'causally meaningful interventions' and 'independent causal mechanisms'. However, the paper only provides qualitative visualizations of these interventions in Figure 6. To support the claim of causal independence, the authors should perform a quantitative evaluation, such as measuring the reconstruction error or latent distribution shift of a target object when the background or other objects are manipulated. This would demonstrate that the model successfully disentangles these factors rather than simply learning correlations between object identities and background statistics.\n\n- Analysis of the 'dead leaves' model's depth-ordering accuracy: The scene model relies on a 'dead leaves' composition, which fundamentally assumes a specific depth-ordering process. The paper asserts this is more physically grounded than additive models, yet it provides no evidence that the model correctly recovers or respects the actual depth layers of the Fishbowl dataset. The authors should compute the correlation between the model's inferred depth ordering (or the order in which objects are placed in the scene) and the ground-truth depth values provided in the Fishbowl dataset. This is necessary to confirm that the model is learning a 3D-aware representation rather than just an arbitrary layering heuristic.\n\n- Demonstration of generalization to unseen object densities: A key contribution claimed is the ability to sample novel scenes with object densities not observed in the training set. While the paper shows qualitative samples, it lacks a quantitative assessment of the model's generative performance under these out-of-distribution conditions. The authors should compute standard generative metrics, such as Fr\u00e9chet Inception Distance (FID) or a specialized object-centric consistency score, on scenes generated with object counts significantly higher than those found in the training data. This would provide concrete evidence that the model's modularity actually enables generalization rather than just producing plausible-looking but statistically ungrounded images.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a quantitative comparison against at least one state-of-the-art end-to-end object-centric model (e.g., SAVi++) on the Fishbowl dataset.\n\n- Add an analysis of how segmentation noise from the motion stage affects the final generative quality of the object model.\n\n- Include a discussion or experiment regarding the model's performance on static objects or scenes with mixed motion patterns to clarify the limitations of the 'common fate' assumption.\n\n- Clarify the depth-ordering assumptions in the dead-leaves model and provide evidence that the model correctly captures these relationships.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Unsubstantiated claim regarding Independent Causal Mechanisms",
+          "quote": "Also, since the scene model uses the component models as modelling \"atoms\", this naturally permits intervening on the parameters defining the scene composition without side-effects, as stipulated by the principle of Independent Causal Mechanisms (Parascandolo et al., 2018; Peters et al., 2017).",
+          "explanation": "The paper asserts that the modular architecture satisfies the principle of Independent Causal Mechanisms (ICM), but this claim is not formally established. Simply having modular components does not guarantee that the learned representations are causally independent or that the mechanisms are invariant under intervention. Please provide empirical evidence, such as measuring latent distribution shifts or reconstruction errors under intervention, to support this claim, or qualify the statement to acknowledge that the independence of the learned mechanisms remains to be verified.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inaccurate characterization of existing motion-based segmentation work",
+          "quote": "Second, while some existing methods make use of temporal information from videos (Lin et al., 2020a; Crawford & Pineau, 2020; Kosiorek et al., 2018; Weis et al., 2020), they do not explicitly use motion signals to discover (i.e., segment) objects.",
+          "explanation": "The assertion that existing temporal models do not explicitly use motion signals for object discovery is overly broad. Several works, such as 'Unsupervised Discovery of 3D Physical Objects from Video' (Ajay et al., 2021) and 'Guess What Moves' (Choudhury et al., 2022), explicitly leverage optical flow and motion prediction to segment objects in an unsupervised manner. Please revise this claim to accurately reflect the existing literature.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Misinterpretation of baseline in Table 2",
+          "quote": "As baseline we report the IoU of the ground truth occluded masks with the ground truth unoccluded masks.",
+          "explanation": "The baseline reported in Table 2 (0.915) measures the information content of the input (the overlap between occluded and unoccluded ground truth), not the performance of a completion model. Comparing this value directly to the model's reconstruction IoU (0.827) is misleading, as the baseline is not a model output but a measure of task difficulty. Please clarify that this baseline represents an upper bound for a model that cannot perform completion, rather than a performance metric for the model itself.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguity regarding dataset generation and ground truth",
+          "quote": "We adapted the rendering to obtain ground truth segmentations of the scene and the ground truth unoccluded background and objects (Fig. 2).",
+          "explanation": "The paper motivates the dataset by the need to evaluate amodal completion, yet it provides unoccluded ground truth for both background and objects. It is unclear if the model is trained to match these unoccluded ground truths directly, which would turn the task into a supervised reconstruction problem, or if they are used solely for validation. Please clarify the role of the unoccluded ground truth in the training process.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Unjustified exclusion of occluded pixels in reconstruction loss",
+          "quote": "Importantly, the reconstruction loss is not evaluated for pixels belonging to other objects according to the candidate masks. Therefore, the object model is not penalized for completing object parts that are occluded by another object.",
+          "explanation": "The loss function excludes occluded pixels, yet the model is expected to learn completion. If the model is not penalized for its predictions in occluded regions, it is unclear how it learns to complete them beyond the signal provided by artificial occlusions. Please clarify how the completion task is reconciled with the exclusion of occluded pixels in the loss function.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Ambiguity in mask summation and normalization",
+          "quote": "\\mathcal{L}_{R,\\text{mask.}} = \\sum_{i} \\left( \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\cdot \\text{BCE}\\left[ \\mathbf{m}_{1}^{(i)}(u,v), \\hat{\\mathbf{m}}^{(i)}(u,v) \\right] / \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\right).",
+          "explanation": "The notation [m0 + m1] implies a weighting factor. If the masks are not strictly disjoint, the sum can exceed 1, weighting overlapping pixels more heavily. Please clarify if the candidate masks are disjoint by definition and add a statement such as: 'We assume the candidate masks m_k are disjoint, such that sum_k m_k(u,v) <= 1 for all pixels (u,v).'",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_6",
+          "title": "Inconsistency in object mask indexing",
+          "quote": "Each appearance latent  $\\mathbf{z}_k^{\\mathrm{app}}$  is decoded by the object model into a masked object  $\\mathbf{o}_k = (\\mathbf{m}_i, \\mathbf{x}_i)$",
+          "explanation": "The index i in the tuple (m_i, x_i) appears to be a typographical error, as the model samples K tuples indexed by k. Please rewrite this as (m_k, x_k) to maintain consistent indexing throughout the scene model definition.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        }
+      ],
+      "cost_usd": 0.0743,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a multi-stage pipeline for unsupervised object-centric scene generation, leveraging motion segmentation as a proxy for the Gestalt Common Fate principle. The modular design separates motion detection, object/background modeling, and scene composition, aiming to improve scalability and enable causal interventions. While the pipeline is logically structured and the synthetic Fishbowl dataset provides a controlled evaluation environment, the manuscript lacks rigorous quantitative validation for its core generative claims and generalizability.\n\nThe multi-stage decomposition of unsupervised object learning is a practical and well-motivated engineering choice, and the Fishbowl dataset fills a useful niche between toy benchmarks and real-world complexity. The authors successfully demonstrate that motion cues can simplify object crop extraction and that the modular architecture permits straightforward scene interventions. The work would be significantly strengthened by adding quantitative scene evaluation metrics, validating the dead leaves composition against alternatives, and providing empirical evidence for generalization beyond the synthetic domain.\n\nOverview issues:\n\n- Missing quantitative evaluation of scene generation and intervention efficacy: The evaluation of the scene model relies entirely on qualitative samples and intervention demonstrations in Figures 5 and 6. The paper claims the model generates plausible novel and out-of-distribution scenes, yet provides no standard generative metrics such as FID, LPIPS, or perceptual quality scores. Without these numbers, readers cannot determine whether the dead leaves composition actually improves scene realism or diversity compared to baseline approaches. This gap is particularly problematic because the main contribution hinges on the scene model's ability to handle occlusions and enable causal interventions. The authors should compute standard generative metrics on the validation set and report them alongside the qualitative figures. Adding a human evaluation or a downstream task benchmark would further substantiate the claim of meaningful scene decomposition.\n\n- The Common Fate principle functions as motivation rather than an algorithmic mechanism: The abstract and introduction frame unsupervised motion segmentation via optical flow and multicut clustering as a direct implementation of the Gestalt Common Fate principle. In practice, the pipeline uses standard computer vision techniques without any novel mathematical encoding or optimization specific to the principle. The connection remains purely analogical, and the methodology does not differ fundamentally from existing motion segmentation approaches. This misalignment risks overstating the theoretical contribution and leaves the central premise underdeveloped. The authors should either formalize how the trajectory clustering or affinity computation explicitly encodes common fate beyond standard optical flow, or reframe the contribution as leveraging motion cues for modular scene decomposition. Removing the Gestalt framing from the title and core claims would better align the manuscript with its actual technical content.\n\n- Error propagation across the three-stage pipeline lacks rigorous analysis: The methodology trains motion segmentation, object models, and background models sequentially before composing them. Table 1 shows that object recall drops to roughly 0.2 to 0.35 at an IoU threshold of 0.5, and Table 2 reveals a noticeable performance gap between models trained on motion segmentation versus ground truth masks. The authors state the object model is fairly robust to this noise, but they do not quantify how segmentation errors compound when passed to the background model or the final scene composition. Sequential optimization in unsupervised settings frequently leads to degenerate solutions, such as the background absorbing unsegmented foreground pixels. A controlled experiment mapping segmentation error rates directly to scene generation quality would clarify the pipeline's reliability. Introducing a sensitivity analysis or a lightweight refinement step would further demonstrate that the approach does not collapse under realistic segmentation noise.\n\n- Generalizability claims are unsupported outside the synthetic dataset: The Fishbowl dataset features controlled lighting, uniform textures, and clear motion boundaries, which likely make motion-based object discovery easier than in natural videos. The manuscript claims the approach scales to visually complex scenes and mentions applying it to a RealTraffic dataset in the appendix, but provides no quantitative results or detailed qualitative analysis for RealTraffic in the main text. Unsupervised object-centric methods are notoriously sensitive to dataset characteristics, and performance on synthetic data rarely translates directly to real-world footage. Without empirical evidence on more complex or real-world benchmarks, the scalability claim remains speculative. The authors should move the RealTraffic evaluation to the main text with proper metrics, or test the pipeline on an established object-centric benchmark like DAVIS or Clevr. This would either substantiate the generalizability claim or clarify the specific conditions under which the method succeeds.\n\n- The dead leaves composition mechanism is not empirically validated against alternatives: Section 4 and the discussion argue that the dead leaves model better reflects the true scene generation process than additive mixture models, which they claim contradict the physics of scene generation. Despite this strong theoretical preference, the paper never compares dead leaves composition against additive mixing or other occlusion handling strategies on the Fishbowl dataset. Without an ablation study, it is unclear whether this architectural choice meaningfully improves reconstruction fidelity, occlusion handling, or sample plausibility. The added complexity of depth ordering and sequential occlusion is justified theoretically but remains unverified empirically. The authors should include a direct comparison between dead leaves and additive mixture baselines, reporting metrics on occlusion accuracy and generative quality. This ablation would either confirm the theoretical advantage or reveal that simpler composition strategies perform comparably on this dataset.\n\n- Quantitative assessment of intervention invariance is missing: The manuscript repeatedly frames the scene model as causal and mechanistic, emphasizing independent causal mechanisms and meaningful interventions. Figure 6 shows qualitative samples where the authors vary object counts or backgrounds, but these demonstrations do not verify that the mechanisms are truly independent. Without quantitative checks, readers cannot tell whether changing the background latent accidentally shifts object appearance distributions or introduces spurious correlations. This matters because the causal framing is a core theoretical claim that distinguishes the work from standard generative models. The authors should compute intervention invariance metrics, such as measuring the correlation between intervened and non-intervened latents or testing conditional independence across the scene parameters. Reporting these numbers would either substantiate the causal claims or force a more modest framing of the model's modularity.\n\n- Scene parameter inference procedure lacks specification: The methodology describes sampling scene parameters like object count, position, and scale from priors or empirical distributions, but it never specifies how these distributions are actually learned or inferred. The text states the scene model's main task is to model these composition parameters, yet it jumps straight to sampling from fitted statistics without detailing the training procedure. Readers will wonder whether a neural network predicts these parameters from the background latent, or if the pipeline simply extracts them via post-hoc histogram fitting from the motion segmentation stage. This gap is important because it determines whether the scene model learns genuine dependencies or merely memorizes training statistics. The authors should explicitly describe the inference architecture or loss function used to learn the conditional distributions, or clarify that the scene model relies entirely on Stage 1 statistics.\n\n- Occlusion completion in composed scenes lacks direct evaluation: The paper claims the object model learns to generalize beyond occlusions and that the scene model handles partial depth orderings, but the evaluation stops at single-crop reconstructions and full-scene samples. There is no direct experiment testing whether the learned completion capability actually functions when objects occlude each other in the dead-leaf composition. If the object model only sees unoccluded crops during training, it is unclear how it generates plausible hidden parts when pasted over another object in the final scene. This step requires justification because the central promise of the approach is modular completion that survives scene composition. The authors should construct a specific test case where two objects heavily overlap, feed only the visible portions to the object model, and report how the dead-leaf composition reconstructs the full overlapping shapes.\n\nRecommendation: Major revision. The multi-stage design is practical and the dataset addresses a real gap, but the manuscript lacks quantitative validation for its core generative claims, treats a standard motion segmentation pipeline as a novel implementation of a Gestalt principle, and provides no empirical evidence for generalization or architectural choices. Addressing these gaps is necessary before the work can meet the standards of a top venue.\n\nRevision targets:\n\n- Add quantitative generative metrics (FID, LPIPS, or perceptual similarity) for the scene model and report them alongside qualitative samples.\n\n- Include an ablation study comparing the dead leaves composition mechanism against an additive mixture baseline to validate the occlusion handling claim.\n\n- Provide a controlled error propagation analysis that maps motion segmentation noise levels directly to downstream object and scene generation quality.\n\n- Move the RealTraffic evaluation to the main text with quantitative metrics and detailed samples, or test the pipeline on an established object-centric benchmark to substantiate scalability claims.\n\n- Reframe the theoretical contribution to accurately reflect that motion segmentation serves as a practical cue rather than a formal algorithmic encoding of the Common Fate principle.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Mathematically impossible average binary entropy threshold",
+          "quote": "t objects for which the binary entropy of the mask (averaged across all\n\n<!-- PAGE BREAK -->\n\npixels) exceeds a threshold (for figures in the main paper, 100 bits). ",
+          "explanation": "The maximum binary entropy for a single pixel is 1 bit. Averaging across pixels cannot exceed this bound, making a threshold of 100 bits mathematically impossible. The authors likely intended to report the total entropy summed across pixels or the entropy of the latent code. Please correct this value or clarify the exact metric being used.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Baseline definition contradicts table values",
+          "quote": "We consider the ground truth unoccluded segmentation masks as our baseline: they correspond to a model that perfectly segments all visible object parts, but does not complete partial objects.",
+          "explanation": "The text incorrectly identifies the baseline as the unoccluded ground truth masks. If the baseline were unoccluded masks compared against unoccluded ground truth, the IoU would be 1.0, not the 0.915 reported in Table 2. The description actually matches the occluded ground truth masks. The table caption confirms this. Please correct the main text to refer to the ground truth occluded masks as the baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Mischaracterization of motion usage in prior video models",
+          "quote": "Second, while some existing methods make use of temporal information from videos (Lin et al., 2020a; Crawford & Pineau, 2020; Kosiorek et al., 2018; Weis et al., 2020), they do not explicitly use motion signals to discover (i.e., segment) objects.",
+          "explanation": "This assertion misrepresents SAVi (Weis et al., 2020) and similar video-based object-centric models. SAVi explicitly incorporates optical flow and motion consistency as a core mechanism to track and segment objects across frames. The recurrent slot attention module is specifically designed to leverage temporal motion cues for object discovery. Revise this passage to accurately reflect how prior video models utilize temporal dynamics, perhaps distinguishing your approach by how it integrates common fate into the segmentation stage rather than claiming prior work lacks motion-based discovery.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Incorrect attribution of the dead leaves model approach",
+          "quote": "In this work, we instead follow the dead leaves model-approach of von Kugelgen et al. (2020) and scale it to more complex scenes.",
+          "explanation": "Attributing the dead leaves model approach solely to von Kugelgen et al. (2020) is inaccurate. The dead leaves model for scene composition was originally introduced in computer vision literature and has been widely adopted in object-centric learning, notably in Slot Attention and MONet for handling occlusions. Citing von Kugelgen et al. (2020) as the origin misrepresents the literature. Acknowledge the foundational work on the dead leaves model and clarify how your specific implementation or scaling differs from existing models that already employ similar compositional priors.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Inaccurate grouping of MONet under sequential decomposition",
+          "quote": "Several models use a recurrent approach to sequentially decompose a given scene into objects (Eslami et al., 2016; Stelzner et al., 2019; Kosiorek et al., 2018; Gregor et al., 2015; Mnih et al., 2014; Yuan et al., 2019; Engelcke et al., 2020; Weis et al., 2020; von Kugelgen et al., 2020; Burgess et al., 2019), or directly learn a partial ordering (Heess et al., 2011; Le Roux et al., 2011).",
+          "explanation": "Listing Burgess et al. (2019) under recurrent sequential decomposition is misleading. MONet employs a variational autoencoder with a prior over object counts and a compositional decoder that generates objects in parallel, not sequentially. Grouping these works with autoregressive models like R2D2 or SOLO conflates fundamentally different architectural paradigms. Separate parallel or compositional models from truly recurrent decomposition methods to provide a more accurate taxonomy.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Inaccurate characterization of cited dataset masks",
+          "quote": "The ground truth object masks and appearances provided by those datasets, however, only cover the visible parts of the scene.",
+          "explanation": "This statement mischaracterizes several cited synthetic benchmarks. Datasets like Kosiorek et al. (2018) and Yi et al. (2019) are generated from known 3D scenes, which means they provide complete ground-truth masks for all objects regardless of occlusion. Claiming these references only cover visible parts is inaccurate and weakens the motivation for introducing Fishbowl. Rewrite this sentence to acknowledge that while synthetic benchmarks provide complete masks, evaluating occlusion handling remains challenging when models must infer full object representations from partially visible crops.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Conflating architectural modularity with causal invariance",
+          "quote": "\", this naturally permits intervening on the parameters defining the scene composition without side-effects, as stipulated by the principle of Independent Causal Mechanisms (Parascandolo et al., 2018; Peters et al., 2017).",
+          "explanation": "The authors equate the engineering choice of a multi-stage, modular architecture with the automatic satisfaction of the Independent Causal Mechanisms principle. ICM is a theoretical requirement that the mechanism generating an outcome must be independent of the value of its cause in the true data-generating process. Training separate modules sequentially does not guarantee that interventions on one component's parameters will remain invariant or free of side-effects in the learned representation. Clarify that architectural modularity is a design choice that facilitates interventions, but empirical verification is required to claim that ICM is actually satisfied.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Learning guarantees for object completeness and depth are asserted, not proven",
+          "quote": "l is causal/mechanistic in the sense that it (1) learns complete objects (although occlusions are abundant in the training data) $^2$  and (2) properly handles partial depth orderings in the scene, the latter through the dead leaves approach\u2014as opposed to the computationally simpler additive mixture approach which is common place in end-to-end scene models, but contradicts the physics of scene generation. Moreover,",
+          "explanation": "The discussion claims that the model formally learns complete objects and properly handles partial depth orderings as inherent properties of the causal formulation. The methodology section only specifies the dead leaves composition rule and the motion segmentation pipeline. It does not provide any theoretical guarantees or formal conditions under which complete object recovery or correct depth ordering is achieved. These statements read as empirical observations or design motivations rather than established formal results. Clarify that these are empirical capabilities demonstrated in experiments or architectural intentions, and remove the implication that they are mathematically guaranteed.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Ambiguous dataset split sizes",
+          "quote": "This dataset consists of 20,000 training and 1,000 validation and test videos recorded from a publicly available WebGL demo of an aquarium",
+          "explanation": "The phrase 1,000 validation and test videos fails to specify how the videos are divided between the validation and test sets. Readers cannot determine the size of each evaluation split without this breakdown. Explicit split sizes are necessary for reproducibility and standard reporting. Please specify the exact number of videos in each split.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        }
+      ],
+      "cost_usd": 0.1671,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper proposes a multi-stage approach for unsupervised object-centric scene learning, leveraging motion segmentation as a cue for object discovery. The work is clearly motivated by the Common Fate principle from Gestalt psychology and provides a novel dataset (Fishbowl) positioned between simplistic toy data and real-world scenes. The modular decomposition of the problem into motion segmentation, object/background modeling, and scene composition is a strength, enabling independent evaluation of each stage. However, the paper has several significant issues regarding the evaluation, the handling of motion segmentation errors, the limited scope of the approach, and the lack of rigorous comparison to existing methods.\n\nOverview issues:\n\n- Motion segmentation evaluation is incomplete and potentially misleading: The paper evaluates motion segmentation using IoU and recall, but the reported numbers (e.g., best object IoU of 0.365) are quite low, indicating that the segmentation is noisy and misses many objects. The authors acknowledge that one third of objects are missed but then claim that the object model is 'fairly robust to errors' without providing a thorough analysis of how segmentation errors propagate. A critical missing piece is an ablation study that systematically varies the quality of motion segmentation (e.g., by using different optical flow methods or artificially corrupting ground-truth masks) to quantify the impact on downstream object and scene modeling. Without this, it is unclear whether the approach would work with a better motion segmentation or if the current results are an artifact of the specific dataset and segmentation method used.\n\n- The Fishbowl dataset is not sufficiently challenging to demonstrate scalability: The Fishbowl dataset, while more complex than simplistic toy datasets, is still a synthetic 3D aquarium with relatively simple fish shapes, limited background variation, and controlled lighting. The paper claims the approach scales to 'more realistic data,' but the only real-world experiment is a brief mention of the RealTraffic dataset in the appendix with no quantitative results. To convincingly show scalability, the authors should evaluate on at least one additional real-world video dataset (e.g., DAVIS, YouTube-VOS) with quantitative metrics for object discovery or segmentation. Without this, the claim that the approach 'scales more easily to visually complex scenes' remains unsubstantiated.\n\n- Comparison to prior work is insufficient and lacks rigor: The paper compares to only two end-to-end models (Lin et al., 2020b; Engelcke et al., 2021) and states they 'struggle to scale' to Fishbowl, but provides no quantitative comparison. The authors should report standard metrics (e.g., segmentation IoU, FID for generated scenes, or object discovery scores) for these baselines on the Fishbowl dataset. Additionally, the paper does not compare to other unsupervised object-centric methods that use motion (e.g., SAVi, STEVE) or to simpler baselines like k-means on optical flow features. Without a comprehensive comparison, it is difficult to assess the relative merit of the proposed multi-stage approach.\n\n- The object model evaluation conflates segmentation with completion: The object model is evaluated by comparing reconstructed masks and appearances to ground-truth unoccluded objects, using crops from ground-truth bounding boxes. This evaluation does not measure the model's ability to discover objects in the first place, since the crops are provided by ground-truth masks. The paper should also evaluate the full pipeline end-to-end: given raw video frames, does the model produce correct object masks? This would require running motion segmentation, extracting crops, and then evaluating the reconstructed masks against ground-truth unoccluded masks. Without this, the reported object model performance (IoU up to 0.827) may not reflect actual performance in a fully unsupervised setting.\n\n- The scene model evaluation is purely qualitative: The paper shows qualitative samples from the scene model (Figures 5 and 6) but provides no quantitative evaluation of scene generation quality. Standard metrics such as FID, Inception Score, or user studies should be used to compare generated scenes to real data. Moreover, the paper claims the model allows 'controlled out-of-distribution sampling' (e.g., more objects than seen in training) but does not evaluate whether these samples are realistic or coherent. For example, do scenes with 20 fish (when training had at most 10) look plausible? Quantitative evaluation of out-of-distribution generalization is needed to support this claim.\n\n- The approach is limited to moving objects and does not address static objects: The paper explicitly relies on motion segmentation to discover objects, which means static objects cannot be learned. The authors briefly mention this limitation in the discussion but do not propose a solution or evaluate how many objects in Fishbowl are static. Since the dataset likely has all fish moving, this limitation is not tested. To strengthen the paper, the authors should either (a) demonstrate that the approach can be combined with a static object discovery method (e.g., by using the scene model to hallucinate missing objects) or (b) quantify the fraction of objects that are missed due to being static in a more realistic dataset. As it stands, the approach is not a general solution for unsupervised object learning.\n\n- Reproducibility details are insufficient for key components: While the paper promises code and dataset release, several critical implementation details are missing. For example, the motion segmentation pipeline uses a watershed algorithm and spatiotemporal connected components, but the exact parameters (e.g., watershed thresholds, connectivity kernel size) are not specified. The background extraction ensemble (PAWKS, LOBSTER, Sigma-Delta) is described only briefly, and the hyperparameters for these methods are not given. Without these details, it is difficult for other researchers to reproduce the results. The authors should provide a more detailed description in the supplement or release the code at the time of submission.\n\n- Missing end-to-end evaluation of full pipeline: The paper evaluates the object model on crops extracted using ground-truth bounding boxes, not on the outputs of the motion segmentation stage. This means the reported object model performance (IoU up to 0.827) does not reflect actual performance in a fully unsupervised setting, where motion segmentation errors propagate. The authors should run the full pipeline end-to-end: take raw video frames, apply motion segmentation, extract crops from predicted masks, reconstruct objects, and then compare the final reconstructed masks to ground-truth unoccluded masks. Without this evaluation, the claim that the approach works for unsupervised object learning is not properly supported.\n\n- No quantitative evaluation of scene generation quality: The scene model evaluation is purely qualitative, showing samples in Figures 5 and 6 but providing no quantitative metrics such as FID, Inception Score, or a user study to compare generated scenes to real data. The paper also claims the model allows controlled out-of-distribution sampling (e.g., more objects than seen in training) but does not evaluate whether these samples are realistic or coherent. The authors should compute standard generative quality metrics on generated scenes and, for out-of-distribution samples, report a measure of plausibility (e.g., using a trained discriminator or human evaluation).\n\n- Missing comparison to motion-based object-centric baselines: The paper compares only to two end-to-end models (Lin et al., 2020b; Engelcke et al., 2021) and states they struggle to scale, but provides no quantitative comparison. Moreover, it does not compare to other unsupervised object-centric methods that use motion, such as SAVi or STEVE, or to simpler baselines like k-means on optical flow features. Without a comprehensive comparison using standard metrics (e.g., segmentation IoU, FID for generated scenes, or object discovery scores) on the Fishbowl dataset, it is difficult to assess the relative merit of the proposed multi-stage approach. The authors should include quantitative results for at least two additional motion-based or object-centric baselines.\n\n- Lack of analysis on static objects limitation: The approach relies entirely on motion segmentation to discover objects, meaning static objects cannot be learned. The authors mention this limitation briefly in the discussion but do not quantify how many objects in Fishbowl are static or evaluate the impact on a dataset with static objects. Since the Fishbowl dataset likely has all fish moving, this limitation is not tested. The authors should either demonstrate that the approach can be combined with a static object discovery method, or quantify the fraction of objects missed due to being static in a more realistic dataset (e.g., by applying the method to a dataset with both moving and static objects and reporting recall). Without this, the claim that the approach is a general solution for unsupervised object learning is overstated.\n\nRecommendation: major revision. The paper presents an interesting multi-stage approach and a new dataset, but several key claims are not adequately supported by the experiments. The evaluation lacks rigor in comparing to baselines, quantifying the impact of motion segmentation errors, and assessing the scene model quantitatively. Additionally, the limited scope (moving objects only) and insufficient reproducibility details weaken the contribution. A major revision addressing these issues could make the paper suitable for publication.\n\nRevision targets:\n\n- 1. Provide a quantitative comparison to at least 3-4 prior unsupervised object-centric methods (including SAVi, STEVE, and a simple baseline) on the Fishbowl dataset using standard metrics (e.g., segmentation IoU, FID for generated scenes).\n\n- 2. Perform an end-to-end evaluation of the full pipeline (motion segmentation \u2192 object model \u2192 scene model) on Fishbowl and at least one real-world video dataset, reporting object discovery metrics (e.g., recall, precision, IoU).\n\n- 3. Include an ablation study that systematically varies motion segmentation quality (e.g., using different optical flow methods or synthetic noise) to quantify the robustness of the object model to segmentation errors.\n\n- 4. Add quantitative evaluation of scene generation quality (e.g., FID, diversity metrics) for both in-distribution and out-of-distribution samples (e.g., varying object counts).\n\n- 5. Provide complete implementation details for the motion segmentation pipeline and background extraction methods, and release code at the time of resubmission.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Mask loss weighting error",
+          "quote": "cal{L}_{R,\\text{mask.}} = \\sum_{i} \\left( \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\cdot \\text{BCE}\\left[ \\mathbf{m}_{1}^{(i)}(u,v), \\hat{\\mathbf{m}}^{(i)}(u,v) \\right] / \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\right).$",
+          "explanation": "The mask loss uses binary cross-entropy (BCE) with target m1, which is binary. However, the weighting factor [m0 + m1] can be 0, 1, or 2 because both masks are binary. A weight of 2 for pixels where both masks are 1 does not correspond to the stated goal of restricting the loss to the union of object and background masks. The union should be binary (0 or 1). This weighting error means overlapping pixels contribute double to the loss, which is inconsistent with the intended design. Rewrite the weighting as max(m0, m1) or use an indicator of the union to ensure binary weights.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Appearance loss denominator can be zero",
+          "quote": "$\\mathcal{L}_{R,\\text{appear.}} = \\sum_{i} \\left( \\sum_{u,v} \\mathbf{m}_{1}^{(i)}(u,v) \\left\\| \\mathbf{c}^{(i)}(u,v) - \\hat{\\mathbf{c}}^{(i)}(u,v) \\right\\|_{2}^{2} / \\sum_{u,v} \\mathbf{m}_{1}^{(i)}(u,v) \\right),$",
+          "explanation": "The appearance loss normalizes by the sum of m1 over pixels, which is the area of the object mask. If a crop has a degenerate object mask with zero area (e.g., after filtering degenerate masks, a mask could still be empty due to errors), the denominator is zero, causing division by zero. The paper filters masks with area smaller than 64 pixels, but does not guarantee that every crop has a non-zero object mask. This can lead to undefined loss values and training instability. Add a small epsilon to the denominator or ensure that crops with zero object mask area are excluded from the loss computation.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Mask loss denominator can be zero",
+          "quote": "$\\mathcal{L}_{R,\\text{mask.}} = \\sum_{i} \\left( \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\cdot \\text{BCE}\\left[ \\mathbf{m}_{1}^{(i)}(u,v), \\hat{\\mathbf{m}}^{(i)}(u,v) \\right] / \\sum_{u,v} [\\mathbf{m}_{0}^{(i)} + \\mathbf{m}_{1}^{(i)}](u,v) \\right).$",
+          "explanation": "Similar to the appearance loss, the mask loss normalizes by the sum of m0 + m1 over pixels. If a crop has no background pixels and no object pixels (e.g., a crop entirely outside the frame or with all masks zero), the denominator is zero. While such crops may be rare after filtering, the paper does not guarantee they never occur. A zero denominator would cause division by zero and training instability. Add a small epsilon to the denominator or exclude such crops from the loss.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Error reduction claim is ambiguous",
+          "quote": "When training on the ground truth segmentation instead of the motion segmentation, the error in terms of the IoU reduces by roughly one third.",
+          "explanation": "The phrase 'error in terms of the IoU reduces by roughly one third' is ambiguous. The IoU values for the 'Other object' augmentation are 0.827 (motion segmentation) and 0.883 (ground truth segmentation). The absolute increase in IoU is 0.056, a relative increase of about 6.8%, not one third. However, if 'error' is defined as (1 - IoU), the error decreases from 0.173 to 0.117, a reduction of about 32% (roughly one third). Rewrite the sentence to clarify that the reduction is in the error rate (1 - IoU), not in the IoU itself. For example: 'When training on the ground truth segmentation instead of the motion segmentation, the error (1 - IoU) reduces by roughly one third.'",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Robustness claim lacks quantitative support",
+          "quote": "Notably, we found that the generative object model proves to be fairly robust to errors in the motion segmentation.",
+          "explanation": "The paper claims robustness to motion segmentation errors, but the only evidence is the object model evaluation using ground-truth crops (IoU up to 0.827). This evaluation does not test the effect of segmentation errors because the crops are from ground-truth masks, not from the motion segmentation output. The paper does not provide an ablation study where segmentation quality is degraded (e.g., by using different flow methods or corrupting masks) to measure the impact on object model performance. Without such analysis, the robustness claim is not supported. Add an ablation study that systematically varies motion segmentation quality and reports object model performance, or remove the claim.",
+          "comment_type": "technical",
+          "paragraph_index": 62,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Unsubstantiated claim about out-of-distribution generation",
+          "quote": "our model can generate plausible novel and out-of-distribution scenes (e.g., higher fish density, different sizes).",
+          "explanation": "The paper claims the model can generate plausible out-of-distribution scenes, but the evaluation is purely qualitative (Figures 5 and 6). No quantitative metrics (e.g., FID, plausibility scores, human evaluation) are provided to support the claim that scenes with higher fish density or different sizes are 'plausible.' Without quantitative evaluation, this claim is not substantiated. Add quantitative evaluation of out-of-distribution generation quality, such as FID scores comparing generated scenes to real data, or human ratings of plausibility.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Motion segmentation quality claim unsupported by evidence",
+          "quote": "We found that this rather simple model can faithfully remove the foreground objects in most of the cases.",
+          "explanation": "The claim that the ensemble 'can faithfully remove the foreground objects in most of the cases' is not supported by any quantitative evidence in this section. The paper later reports that the motion segmentation misses about one third of objects, which directly contradicts the assertion of 'faithful' removal. Provide a quantitative evaluation of the background subtraction accuracy (e.g., precision/recall on a held-out set) or temper the claim to reflect the actual observed performance. Rewrite the sentence as: 'We found that this ensemble removes most foreground pixels, though it misses a non-negligible fraction of objects (see Section X for quantitative evaluation).'",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Dead leaves model composition order not specified",
+          "quote": "x}_i$ . The background and objects are composed into a scene using a simple \"dead leaves\" model, i.e., the value of each pixel  $(u,v)$  is determined by the foremost object covering that",
+          "explanation": "The description of the dead leaves model is incomplete: it does not specify the ordering of objects (e.g., by depth, by index, or by some learned priority). The phrase 'foremost object' implies an ordering but does not state how that ordering is determined. In the standard dead leaves model, objects are placed sequentially with later objects occluding earlier ones, but here the objects are extracted from video frames where depth ordering is ambiguous. Without specifying how the 'foremost' object is identified (e.g., by mask overlap, by learned depth, or by temporal consistency), the composition rule is underspecified and cannot be implemented. Add a sentence defining the ordering criterion, e.g., 'Objects are ordered by their average depth (estimated from optical flow divergence) or by the temporal order of their first appearance in the video.'",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Scale sampling range is inconsistent with object model training",
+          "quote": "scales can be sampled from a uniform distribution between $64\\times 32$px and $192\\times 96$px and at fixed $2:1$ ratio.",
+          "explanation": "The scale sampling range (64\u00d732 to 192\u00d796 pixels) is stated without reference to the object model's training resolution. The object model was trained on crops of a specific size (not specified in this section), and if the sampled scale range does not match the training resolution, the object decoder may produce artifacts. For example, if the object model was trained on 64\u00d764 crops, rescaling to 192\u00d796 would require upsampling, which may degrade quality. Specify the training resolution of the object model and ensure the scale range is compatible with it, or explain how the object model handles variable scales.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Baseline IoU value needs clarification",
+          "quote": "As baseline we report the IoU of the ground truth occluded masks with the ground truth unoccluded masks.",
+          "explanation": "The baseline IoU of 0.915 seems high if computed over all objects, but the IoU@0.5 of 0.271 is plausible for heavily occluded objects. The discrepancy suggests the baseline may be computed only on objects with little or no occlusion, which would make the comparison with model performance on occluded objects misleading. Clarify the occlusion distribution or specify the subset of objects used for the baseline. Rewrite the baseline definition to state explicitly which objects are included (e.g., 'all objects' or 'only objects with occlusion < 50%') and, if needed, recompute the baseline to ensure fair comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Dataset split numbers are ambiguous",
+          "quote": "This dataset consists of 20,000 training and 1,000 validation and test videos recorded from a publicly available WebGL demo of an aquarium, each with a resolution of  $480 \\times 320\\mathrm{px}$  and 128 frames.",
+          "explanation": "The text states '1,000 validation and test videos' but does not specify how those 1,000 videos are split between validation and test sets. This ambiguity makes it impossible to know whether the validation and test sets are 500 each, 700/300, or some other split. Clarify the exact number of videos in each of the three splits (training, validation, test) and ensure the total sums to 22,000 (20,000 + 1,000 + 1,000) or adjust the numbers accordingly. Rewrite as '20,000 training, 500 validation, and 500 test videos' or provide the precise split.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Missing MAE entries for baseline in Table 2",
+          "quote": "As baseline we report the IoU of the ground truth occluded masks with the ground truth unoccluded masks.",
+          "explanation": "The baseline row in Table 2 leaves the MAE and MAE@0.5 columns blank. Since the baseline does not produce a predicted appearance, MAE is not applicable. However, blank entries may be misinterpreted as missing data. Replace the blank cells with 'N/A' or a dash, and add a footnote explaining that MAE is not defined for the baseline because it does not predict appearance.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        }
+      ],
+      "cost_usd": 0.0539,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper proposes a multi-stage pipeline for unsupervised object learning, leveraging motion cues and a dead-leaves scene model, and introduces a synthetic dataset called FISHBOWL. It demonstrates that the pipeline can generate novel scenes and that motion segmentation provides a useful but noisy cue. However, the core technical claims regarding object discovery reliability and occlusion generalization are undermined by the poor performance of the optical flow baselines and the reliance on specific data augmentations. Additionally, the 'causal' framing lacks rigorous justification.\n\nThe paper makes a clear methodological contribution by decomposing object learning into tractable sub-tasks and introducing a valuable synthetic benchmark. The modular design allows for easy intervention and component swapping, which is a significant practical advantage. However, the empirical evidence for the core premise\u2014that motion segmentation reliably discovers objects\u2014is weak, and the 'causal' terminology is not substantiated by rigorous causal inference. The work is interesting but requires substantial strengthening to meet top-tier conference standards.\n\nOverview issues:\n\n- Motion Segmentation Quality Undermines Core Premise: The paper relies heavily on optical flow to extract the 'Common Fate' cue for object discovery, yet the reported performance of these methods is poor. Table 1 shows that even the best optical flow estimator (FlowNet 2.0) achieves an IoU of only 0.365 for object detection and a recall of 0.416 at a threshold of 0.5. This means the method misses over one-third of objects and has low precision. While the paper claims robustness to label noise, an object never detected by motion segmentation cannot be learned by the object model. This severely limits the applicability of the approach in complex scenes where motion is ambiguous or occluded.\n\n- Occlusion Handling Relies on Synthetic Data Augmentation: The paper claims the object model generalizes beyond occlusions (IoU@0.5 = 0.705), but this performance is largely driven by a specific augmentation strategy: placing a random object from the same input batch onto the crop. This effectively teaches the model to complete the visible parts of the specific fish it just saw, rather than learning the general shape of a fish from partial data. This is a form of in-context learning that risks overfitting to batch statistics rather than learning the underlying object identity. The paper needs to demonstrate whether the model can complete occluded objects when the occluder is not present in the batch.\n\n- Evaluation Limited to Synthetic Environments: The FISHBOWL dataset is a synthetic aquarium, which provides perfect ground truth but does not validate the method on real-world challenges like varying lighting, camera noise, or complex real-world motion. While the paper mentions applying the method to the RealTraffic dataset in the appendix, it provides no quantitative results or analysis on how well the motion segmentation (trained on fish) transfers to cars. The claims about scalability and generalization to complex scenes remain theoretical without robust evaluation on real-world video.\n\n- \"Causal\" Framing Lacks Rigorous Justification: The discussion frames the model as a 'causal generative model' and claims it adheres to the principle of Independent Causal Mechanisms. However, the interventions demonstrated (changing object count, background) are trivial because the model is explicitly factorized. There is no evidence that the learned latents correspond to actual causal variables (e.g., identifying the fish as a specific entity vs. just a texture patch). The term 'causal' is used more as a marketing term for modularity than a rigorous theoretical contribution. The paper should either provide a formal causal identification argument or remove the causal framing to avoid misleading the reader.\n\nRecommendation: Major Revision. The paper presents a modular and interesting approach to unsupervised object learning, but the empirical validation is insufficient to claim significant advances over end-to-end methods or to firmly establish the 'causal' nature of the model. The reliance on synthetic data and specific augmentations needs to be addressed.\n\nRevision targets:\n\n- Provide a more rigorous analysis of the 'Other object' augmentation to determine if it is a valid generalization strategy or just a data-dependent crutch.\n\n- Improve the motion segmentation baseline or acknowledge its severe limitations (IoU ~0.3) explicitly in the conclusion.\n\n- Add quantitative results on a real-world dataset (like RealTraffic) to substantiate the 'scalability' claim.\n\n- Clarify the 'causal' contribution: demonstrate that interventions actually change the causal variables (e.g., changing the fish identity changes the object, not just the texture).",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Occlusion Augmentation Contradicts Generalization Claim",
+          "quote": "we use the candidate segmentation to place another, randomly shifted object from the same input batch onto each crop.",
+          "explanation": "The paper claims the object model generalizes beyond occlusions present in the input videos, yet the primary augmentation strategy relies on placing objects from the *same* input batch. This effectively teaches the model to complete the specific fish it just saw, rather than learning the general shape of a fish from partial data. This is a form of in-context learning that risks overfitting to batch statistics. The authors should demonstrate whether the model can complete occluded objects when the occluder is not present in the batch, or clarify the scope of the generalization claim.",
+          "comment_type": "technical",
+          "paragraph_index": 30,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Robustness Claim Misaligned with Detection Performance",
+          "quote": "Overall, the object model seems to be quite robust to the label noise induced by the motion segmentation.",
+          "explanation": "While the paper claims the model is robust to label noise, Table 1 shows that even the best optical flow estimator (FlowNet 2.0) achieves a recall of only 0.416 at a threshold of 0.5, meaning over one-third of objects are missed entirely. If an object is never detected by motion segmentation, it cannot be learned by the object model. The term 'robust' is misleading here; the model may handle the noise well for detected objects, but the fundamental failure to detect 33% of objects undermines the core premise of learning complete objects from unlabelled videos.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Real-World Transfer Claims Lack Quantitative Support",
+          "quote": "apply our method to the RealTraffic dataset of real world videos captured by a traffic camera, showing that our approach transfers well to other datasets.",
+          "explanation": "The paper claims the method generalizes to complex real-world scenes by applying it to the RealTraffic dataset. However, no quantitative results or analysis are provided to support this claim. Without metrics showing how well the motion segmentation (trained on fish) transfers to cars, or how the object model performs on real-world data, the scalability and generalization claims remain theoretical. The authors should either provide quantitative results or remove the assertion that the method scales to complex scenes.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Causal Framing Lacks Rigorous Justification",
+          "quote": "we like to think of our scene model as a causal generative model, even though it is fairly straightforward from the causal point of view.",
+          "explanation": "The paper explicitly frames the model as a 'causal generative model' and claims it adheres to the principle of Independent Causal Mechanisms. However, the interventions demonstrated (changing object count, background) are trivial because the model is explicitly factorized. There is no evidence that the learned latents correspond to actual causal variables (e.g., identifying the fish as a specific entity vs. just a texture patch). The term 'causal' is used more as a marketing term for modularity than a rigorous theoretical contribution. The authors should either provide a formal causal identification argument or remove the causal framing to avoid misleading the reader.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        }
+      ],
+      "cost_usd": 0.1377,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

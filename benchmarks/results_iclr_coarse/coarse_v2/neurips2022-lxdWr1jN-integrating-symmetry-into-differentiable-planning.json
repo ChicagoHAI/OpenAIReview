@@ -1,0 +1,824 @@
+{
+  "slug": "neurips2022-lxdWr1jN-integrating-symmetry-into-differentiable-planning",
+  "title": "Integrating Symmetry into Differentiable Planning",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Integrating Symmetry into Differentiable Planning**\n\n**Anonymous Author(s)** Affiliation Address `email`"
+    },
+    {
+      "index": 1,
+      "text": "## **Abstract**\n\n1 2 3 4 5 6 7 8 9 10 11\n\nWe study how group symmetry helps improve data efficiency and generalization for end-to-end differentiable planning algorithms, specifically on 2D robotic path planning problems: navigation and manipulation. We first formalize the idea from Value Iteration Networks (VINs) on using convolutional networks for path planning, because it avoids explicitly constructing equivalence classes and enable endto-end planning. We then show that value iteration can always be represented as some convolutional form for (2D) path planning, and name the resulting paradigm Symmetric Planner (SymPlan). In implementation, we use steerable convolution networks to incorporate symmetry. Our algorithms on navigation and manipulation, with given or learned maps, improve training efficiency and generalization performance by large margins over non-equivariant counterparts, VIN and GPPN."
+    },
+    {
+      "index": 2,
+      "text": "## 12 **1 Introduction**\n\n- 13 Model-based planning usually struggles in complex prob14 lems, and planning in more structured and abstract space 15 is a major solution [1, 2, 3, 4]. Symmetry is ubiquitous 16 in learning and decision-making problems and can effec17 tively reduce search space for planning. However, ex18 isting planning algorithms using symmetry assumes per19 fect dynamics knowledge, needs to explicitly build equiv20 alence classes, or does not consider problem structure 21 [5, 4, 6, 7, 8]. For example, if we use A* on path plan22 ning, we cannot specify visually obvious rotation sym23 metry in Figure 1, and need to detect in manually from 24 the provided dynamics model. This would be even more 25 challenging to detect in differentiable planning."
+    },
+    {
+      "index": 3,
+      "text": "- 26 Nevertheless, symmetry in model-free deep reinforce27 ment learning (RL) has been studied recently [9, 10]. 28 However, it can only handle pixel-level \u201celement-wise\u201d 29 symmetry, such as flipping or rotating state and action 30 together. However, a critical benefit of model-free RL 31 agents that enables great asymptotic performance is its 32 end-to-end differentiability. This motivates us to com33 bine the spirit of both: _is it possible to design an end-to-_ 34 _end differentiable planning algorithm that makes use of_ 35 _symmetry in environments?_"
+    },
+    {
+      "index": 4,
+      "text": "Figure 1: The _path planning problem_ has symmetry, so we study how to _exploit_ its symmetry in (differentiable) _planning_ . Red dots are goal. The optimal actions (arrows) _A_ = `SymPlan` ( _M_ ) (bottom row) for the maps _M_ (top row) are guaranteed to be equivariant `SymPlan` ( _g.M_ ) = _g._ `SymPlan` ( _M_ ) under \u27f2 rotations for (2D) path planning. For example, the action in the NW corner of _A_ is the same as the action in the SW corner of _g.A_ , after also rotating the arrow \u27f2 90 _[\u25e6]_ ."
+    },
+    {
+      "index": 5,
+      "text": "- 36 In this work, we propose to (1) avoid explicitly building equivalence classes for symmetric states 37 while (2) realize planning in an end-to-end differentiable manner. We are motivated by work in 38 the equivariant network and geometric deep learning community [11, 12, 13, 14, 15, 16], which"
+    },
+    {
+      "index": 6,
+      "text": "Submitted to 36th Conference on Neural Information Processing Systems (NeurIPS 2022). Do not distribute."
+    },
+    {
+      "index": 7,
+      "text": "- 39 treat an RGB image as a mapping Z[2] _\u2192_ R[3] and apply equivariant convolutions between feature 40 maps. It satisfies our desiderata: equivariant networks on images do not need to explicitly consider 41 \u201csymmetric pixels\u201d while guarantee symmetry properties. Based on the intuition, we propose a 42 framework, _Symmetric Planning_ (SymPlan), to understand a straightforward but general problem, 43 path planning, as operating like images, called steerable feature fields [14, 16]. We focus on 2D 44 grid and prove that value iteration (VI) for 2D path planning is equivariant under the _isometries_ 45 of Z[2] : translations, rotations, and reflections, and further show that VI here is a special form of 46 steerable convolution network [14]. This provides us a foundation to equip Value Iteration Network 47 (VIN, [17]) with steerable convolution. We implement the equivariant steerable version of VIN, 48 named SymVIN, and use a variant, GPPN, to build SymGPPN. Both SymPlan methods achieve 49 great improvement on training efficiency and generalization performance to unseen random maps, 50 which showcases the advantage of exploiting symmetry from environments for planning."
+    },
+    {
+      "index": 8,
+      "text": "- 51 Our contributions are as follows:\n\n- 52 \u2022 Understand the inherent symmetry in path planning problems (on 2D grids), formulate value iter53 ation in as steerable convolution network, and connect both to incorporate symmetry into VI."
+    },
+    {
+      "index": 9,
+      "text": "- 54 \u2022 Based on the formulation, implement equivariant steerable version of VIN and GPPN.\n\n- 55 \u2022 Show significant improvement in training and generalization on 2D navigation and manipulation."
+    },
+    {
+      "index": 10,
+      "text": "- 56\n\n## **2 Related work**\n\n- 57 **Planning with symmetries (Symmetric Planning).** Symmetries widely exist in various domains, 58 and have been exploited in classic planning algorithms as well as model checking [5, 4, 6, 18, 19, 59 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]. Zinkevich and Balch [7] show the invariance of value function 60 for an MDP with symmetry. Narayanamurthy and Ravindran [8] prove that finding exact symmetry 61 in MDPs is graph isomorphism complete. However, they are based on classic planning algorithms, 62 such as A*, and have a fundamental issue with exploitation of symmetries: they explicitly construct 63 equivalence classes of symmetric states, which explicitly represents states and introduces symmetry 64 breaking. Therefore, they are intractable (NP-hard) in maintaining symmetries in trajectory rollout 65 and forward search (for large state space and symmetry group) and incompatible with differentiable 66 pipelines for representation learning, hindering it from wider applications in RL and robotics."
+    },
+    {
+      "index": 11,
+      "text": "- 67 **State abstraction for detecting symmetries.** Coarsest state abstraction aggregates all symmetric 68 states into equivalence classes, studied in MDP homomorphisms and bisimulation [3, 30, 2]. How69 ever, they usually require _perfect_ MDP dynamics knowledge and do not scale up well, because of the 70 complexity in maintaining abstraction mappings (homomorphisms) and abstracted MDPs. van der 71 Pol et al. [31] integrate symmetry into model-free RL based on MDP homomorphisms [3], which 72 avoids the challenges in handling symmetry in forward search. Park et al. [32] learn equivariant 73 transition models, but do not consider planning. Additionally, the formulation in commonly defined 74 symmetric MDPs [3, 9, 6, 7] is different from our symmetry formulation for path planning, since 75 they study \"element-wise\" symmetry for every state-action pairs and require reward to be symmet76 ric. Our reward is not symmetric and we mainly study symmetry of the underlying domain (2D 77 grid), as further discussed in Section B.1."
+    },
+    {
+      "index": 12,
+      "text": "- 78 **Symmetries and equivariance in deep learning.** Equivariant neural networks are used to incor79 porate symmetry in supervised learning for different domains (e.g. grid and sphere), symmetry 80 groups (e.g. translations and rotations), and group representation on feature spaces [33]. Cohen and 81 Welling [15] introduce G-CNNs, followed by Steerable CNNs [14] which generalizes from scalar 82 feature fields to vector fields with induced representations. Kondor and Trivedi [13], Cohen et al. 83 [12] study theory on the relation between equivariant maps and convolutions. Weiler and Cesa [16] 84 propose to solve kernel constraints under arbitrary representations for _E_ (2) and its subgroups by 85 decomposing into irreducible representations, named _E_ (2)-CNN."
+    },
+    {
+      "index": 13,
+      "text": "- 86 **Differentiable planning.** Our pipeline is based on learning to plan in a neural network in a differ87 entiable manner. Value iteration network (VIN) [34] is a representative work that performs value 88 iteration using convolution on lattice grids, and has been further extended [35, 36, 37, 38]. Other than 89 using convolution network, works on integrating learning and planning into differentiable networks 90 include [39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49]. In the theoretical side, Grimm et al. [50, 51] 91 propose to understand the differentiable planning algorithms from value equivalence perspective, 92 while Gehring et al. [52] study its gradient dynamics."
+    },
+    {
+      "index": 14,
+      "text": "2\n\n## 93 **3 Preliminaries**\n\n94 **Markov decision processes.** We model the path planning problems as Markov decision processes 95 (MDP) [1]. An MDP is a 5-tuple _M_ = _\u27e8S, A, P, R, \u03b3\u27e9_ , with state space _S_ , action space _A_ , transition 96 probability function _P_ : _S \u00d7 A \u00d7 S \u2192_ R+, reward function _R_ : _S \u00d7 A \u2192_ R, and discount factor 97 _\u03b3 \u2208_ [0 _,_ 1]. Value functions _V_ : _S \u2192_ R and _Q_ : _S \u00d7 A \u2192_ R represent expected future returns [1]."
+    },
+    {
+      "index": 15,
+      "text": "- 98 **Symmetry groups and equivarance.** A symmetry _group_ is defined as a set _G_ together with a binary 99 composition map satisfying the axioms of associativity, identity, and inverse. A (left) _group action_"
+    },
+    {
+      "index": 16,
+      "text": "- 100 of _G_ on a set _X_ is defined as the mapping ( _g, x_ ) _\ufffd\u2192 g.x_ which is compatible with composition. 101 Given a function _f_ : _X \u2192Y_ and _G_ acting on _X_ and _Y_ , then _f_ is _G-equivariant_ if it commutes 102 with group actions: _g.f_ ( _x_ ) = _f_ ( _g.x_ ) _, \u2200g \u2208 G, \u2200x \u2208X_ . In the special case the action on _Y_ is trivial 103 _g.y_ = _y_ , then _f_ ( _x_ ) = _f_ ( _g.x_ ) holds, and we say _f_ is _G-invariant_ ."
+    },
+    {
+      "index": 17,
+      "text": "- 104 **Group representations.** We mainly use two groups: dihedral group _D_ 4 and cyclic group _C_ 4. The 105 cyclic group of 4 elements is _C_ 4 = _\u27e8r | r_[4] = 1 _\u27e9_ , a symmetry group of rotating a square. The 106 dihedral group _D_ 4 = _\u27e8r, s | r_[4] = _s_[2] = ( _sr_ )[2] = 1 _\u27e9_ includes both rotations _r_ and reflections _s_ , 107 and has size _|D_ 4 _|_ = 8. A group representation defines how a group action transforms on a set 108 _G \u00d7 S \u2192 S_ . These groups have three types of representations of our interest: _trivial_ , _regular_ , 109 and _quotient_ representations, see [16]. The _trivial representation \u03c1_ triv maps each _g \u2208 G_ to 1 and 110 hence fixes all _s \u2208 S_ . The _regular representation \u03c1_ reg of _C_ 4 group sends each _g \u2208 C_ 4 to a 4 _\u00d7_ 4 111 permutation matrix that cyclically permutes a 4-element vector, such as a one-hot 4-direction action. 112 The regular representation of _D_ 4 maps each element to an 8 _\u00d7_ 8 permutation matrix which does 113 not act on 4-direction actions, which requires the _quotient representations_ (quotienting out _fr_[2] ) and 114 forming a 4 _\u00d7_ 4 permutation matrix. It is worth mentioning the _standard representation_ of the cyclic 115 groups, which are 2 _\u00d7_ 2 rotation matrices, only used for visualization (Figure 2 middle)."
+    },
+    {
+      "index": 18,
+      "text": "- 116 **Steerable feature fields and Steerable CNNs.** The concept of _feature fields_ is used in (equivariant) 117 CNNs [11, 12, 13, 14, 15, 16]. The pixels of an 2D RGB image _x_ : Z[2] _\u2192_ R[3] on a domain \u2126= Z[2] 118 is a feature field. In steerable CNNs for 2D grid, features are formed as _steerable feature fields_ 119 _f_ : Z[2] _\u2192_ R _[C]_ that associate a _C_ -dimensional feature vector _f_ ( _x_ ) _\u2208_ R _[C]_ to each element on a 120 base space, such as Z[2] . Defined like this, we know how to transform a steerable feature field and 121 also the feature field after applying CNN on it, using some group [14]. The type of CNNs that 122 operates on steerable feature fields is called Steerable CNN [14], which is equivariant to groups 123 including _translations_ as subgroup (Z[2] _,_ +), extending [15]. It needs to satisfy a _kernel steerability_ 124 constraint, where the R[2] and Z[2] cases are considered in [16]. We consider the 2D grid as our domain 125 \u2126= _S_ = Z[2] and use _G_ = _p_ 4 _m_ group as the running example. The group _p_ 4 _m_ = (Z[2] _,_ +) \u22ca _D_ 4 126 (wallpaper group) is semi-direct product of discrete translation group Z[2] and dihedral group _D_ 4, see 127 [15, 14]. We visualize the _transformation law_ of _p_ 4 _m_ on a feature field on \u2126= Z[2] in **Figure 2** 128 **(Middle)** , usually referred as _induced representation_ [14, 16]. Additional details in Section C."
+    },
+    {
+      "index": 19,
+      "text": "- 129 **Planning as convolution.** The core component behind dynamic programming (DP) based algo130 rithms in planning or reinforcement learning is _Bellman (optimality) equation_ [53, 1]: _V_ ( _s_ ) = 131 max _a R_ ( _s, a_ ) + _\u03b3_[\ufffd] _s[\u2032][ P]_[(] _[s][\u2032][|][s, a]_[)] _[V]_[ (] _[s][\u2032]_[)][.][Value][Iteration][(VI)][iteratively][applies][Bellman][operator] 132 and converges to fixed points [1, 53]. The key component of our interest is[\ufffd] _s[\u2032][ P]_[(] _[s][\u2032][|][s, a]_[)] _[V]_[ (] _[s][\u2032]_[)] 133 that aggregates values _V_ ( _s[\u2032]_ ) from adjacent states by expectation using transition probabilities, here 134 referred as **expected value operation** . Tamar et al. [17] propose Value Iteration Network (VIN) that 135 uses convolution (networks) for planning, as an instance of differentiable planning, by recursively 136 applying planar convolutions and max-pooling over feature spaces on 2D grid Z[2] ."
+    },
+    {
+      "index": 20,
+      "text": "137\n\n## **4 Symmetric Planning Framework**\n\n- 138 This section formulates the notion of Symmetric Planning (SymPlan). We expand the understanding 139 of path planning in neural networks by planning as convolution on steerable feature fields ( _steerable_ 140 _planning_ ). We use that to build _steerable value iteration_ and show it is equivariant."
+    },
+    {
+      "index": 21,
+      "text": "- 141 **4.1 Steerable Planning: planning on steerable feature fields**\n\n- 142 We start the discussion based on Value Iteration Networks (VINs, [17]) and use a running example 143 of planning on the 2D grid Z[2] . We aim to understand (1) how VIN-style networks embed planning"
+    },
+    {
+      "index": 22,
+      "text": "3\n\n**----- Start of picture text -----**\n\nConstruct\nSpatial MDP\n**----- End of picture text -----**\n\nFigure 2: **(Left)** Construction of spatial MDPs from path planning problems, enabling _G_ -invariant transition. **(Middle)** The group acts on a feature field (MDP actions). We need to find the element in the original field by _f_ ( _r[\u2212]_[1] _x_ ), and also rotate the arrow by _\u03c1_ ( _r_ ), where _r \u2208 D_ 4. We represent one-hot actions as arrows (vector field, using _\u03c1_ std) for visualization. **(Right)** Equivariance of _V \ufffd\u2192 Q_ in Bellman operator on feature fields, under \u27f2 90 _[\u25e6] \u2208 C_ 4 rotation, which visually explains Theorem 4.1. The example simulates VI for one step (see red circles; minus signs omitted) with true transition _P_ using \u27f2 N-W-S-E actions. The Q-value field are for 4 actions and can be viewed as either Z[2] _\u2192_ R[4] ([14, 16]) or Z[2] \u22ca _C_ 4 _\u2192_ R (on _p_ 4 group, [15]). See Appendix D for more details."
+    },
+    {
+      "index": 23,
+      "text": "- 144 and how its idea generalizes, (2) how is symmetry structure defined in path planning and how could 145 it be injected into such planning networks."
+    },
+    {
+      "index": 24,
+      "text": "- 146 **Constructing** _G_ **-invariant transition: spatial MDP.** Intuitively, the embedded MDP in a VIN 147 is different from the original path planning problem, since (planar) convolutions are translation 148 equivariant but there are different obstacles in different regions."
+    },
+    {
+      "index": 25,
+      "text": "- 149 We found the key insight in VINs is that it implicitly uses an MDP that has translation equivariance. 150 The core idea behind the construction is that it converts _obstacles_ (encoded in transition probability 151 _P_ , by _blocking_ ) into \u201c _traps_ \u201d (encoded in reward _R_[\u00af] , by _\u2212\u221e reward_ ). This allows to use planar con152 volutions with translation equivariance, and also enables use to further use steerable convolutions."
+    },
+    {
+      "index": 26,
+      "text": "- 153 The demonstration of the idea is shown in\u00af **Figure 2 (Left)** . We call it _spatial MDP_ , with different 154 transition and reward function _M_ = _\u27e8S, A, P,_[\u00af] _R_[\u00af] _m, \u03b3\u27e9_ , which converts the \u201ccomplexity\u201d in the 155 transition function _P_ in _M_ to the reward function _R_[\u00af] _m_ in _M_[\u00af] . The state and action space are kept 156 the same: state _S_ = Z[2] and action _A \u2282_ Z[2] to move \u2206 _s_ in four directions in a 2D grid. We provide 157 the detailed construction of the spatial MDP in Appendix D.1."
+    },
+    {
+      "index": 27,
+      "text": "- 158 **Steerable features fields.** We generalize the idea from VIN, by viewing functions (in RL and 159 planning) as _steerable feature fields_ , motivated by [11, 12, 14]. This is analogous to pixels on images 160 \u2126 _\u2192_ [255][3] , and would allow us to apply convolution on it. The state value function is expressed 161 as a field _V_ : _S \u2192_ R, while the _Q_ -value function needs a field with _|A|_ channels: _Q_ : _S \u2192_ R _[|A|]_ . 162 Similarly, a policy field[1] has probability logits of selecting _|A|_ actions. For the transition probability 163 _P_ ( _s[\u2032] |s, a_ ), we can use action to index it as _P[a]_ ( _s[\u2032] |s_ ), similarly for reward _R[a]_ ( _s_ ). The next section 164 will show that we can convert the transition function to field and even convolutional filter. Additional 165 details are in Appendix D."
+    },
+    {
+      "index": 28,
+      "text": "## 166 **4.2 Symmetric Planning: symmetry by equivariance**\n\n- 167 The seemingly slight change in the construction of spatial MDPs brings important symmetry struc168 ture. The general idea in exploiting symmetry in path planning is to use _equivariance_ to avoid 169 explicitly constructing equivalence classes of symmetric states. To this end, we construct value 170 iteration over steerable feature fields, and show it is _equivariant_ for path planning."
+    },
+    {
+      "index": 29,
+      "text": "- 171 In VIN, the convolution is over 2D grid Z[2] , which is symmetric under _D_ 4 (rotations and reflections). 172 However, we also know that VIN is already equivariant under translations. To consider all symme173 tries, as in [14, 16], we understand the group _p_ 4 _m_ = _G_ = _B_ \u22ca _H_ as constructed by a _base space_ 174 _B_ = _G/H_ = (Z[2] _,_ +) and a _fiber_ group _H_ = _D_ 4, which is a _stabilizer subgroup_ that fixes the origin 175 **0** _\u2208_ Z[2] . We could then formally study such symmetry in the spatial MDP, since we construct it to"
+    },
+    {
+      "index": 30,
+      "text": "> 1We avoid the symbol _\u03c0_ for policy since it is used for induced representation in [14, 16].\n\n4\n\n176 ensure that the transition probability function in _M_ \u00af is _G_ -invariant. Specifically, we can uniquely 177 decompose any _g \u2208_ Z[2] \u22ca _D_ 4 as _t \u2208_ Z[2] and _r \u2208 D_ 4 (and translations act \"trivially\" on action), so \u00af \u00af \u00af _P_ ( _s[\u2032] | s, a_ ) = _P_ ( _g.s[\u2032] | g.s, g.a_ ) _\u2261 P_ (( _tr_ ) _.s[\u2032] |_ ( _tr_ ) _.s, r.a_ ) _, \u2200g_ = _tr \u2208_ Z[2] \u22ca _D_ 4 _, \u2200s, a, s[\u2032] ._ (1)"
+    },
+    {
+      "index": 31,
+      "text": "178 **Expected value operator as steerable convolution.** The equivariance property can be shown step179 by-step: (1) _expected value operation_ , (2) _Bellman operator_ , and (3) full _value iteration_ . First, we 180 use _G_ -invariance to prove that the expected value operator[\ufffd] _s[\u2032][ P]_[(] _[s][\u2032][|][s, a]_[)] _[V]_[ (] _[s][\u2032]_[)][ is equivariant.]"
+    },
+    {
+      "index": 32,
+      "text": "181 **Theorem 4.1.** _If transition is G-invariant, the expected value operator E over_ Z[2] _is G-equivariant._"
+    },
+    {
+      "index": 33,
+      "text": "182 The proof is in Appendix E.1 and visual understanding is in Figure 2 left. However, this provides 183 intuition but is inadequate since we do not know: (1) how to implement it with CNNs, (2) how to use 184 multiple feature channels like VINs, since it shows for scalar-valued transition probability and value 185 function (corresponding to trivial representation). To this end, we next prove that we can implement 186 value iteration using steerable convolution with general steerable kernels."
+    },
+    {
+      "index": 34,
+      "text": "187 **Theorem 4.2.** _If transition is G-invariant, there exists a (one-argument, isotropic) matrix-valued_ 188 _steerable kernel P[a]_ ( _s \u2212 s[\u2032]_ ) _(for every action), such that the expected value operator can be written_ 189 _as a steerable convolution and is G-equivariant:_"
+    },
+    {
+      "index": 35,
+      "text": "190 The full derivation is provided in Appendix E. We write the transition probability as _P[a]_ ( _s, s[\u2032]_ ), and 191 we show it only depends on _state difference P[a]_ ( _s \u2212 s[\u2032]_ ) (or _one-argument_ kernel [12]) using _G_ - 192 invariance, which is the key step to show it is some _convolution_ . Note that we use one kernel _P[a]_ 193 for each action (four directions), and when the group acts on _E_ , it also acts on the action _P[g.a]_ (and 194 state, so technically acting on _S \u00d7 A_ ). Additionally, if the steerable kernel also satisfies the _D_ 4 _-_ 195 _steerability constraint_ [16, 54], the steerable convolution is _equivariant_ under _p_ 4 _m_ = Z[2] \u22ca _D_ 4. We 196 can then extend VINs from Z[2] translation equivariance to _p_ 4 _m_ -equivariance (translations, rotations, 197 reflections). The derivation follows the existing work on steerable CNNs [15, 14, 16, 12], while this 198 is our goal: to justify the close connection between path planning and steerable convolutions."
+    },
+    {
+      "index": 36,
+      "text": "199 **Steerable Bellman operator and value iteration.** We can now represent all operations in Bellman 200 (optimality) operator on steerable feature fields over Z[2] (or _steerable Bellman operator_ ) as follows:"
+    },
+    {
+      "index": 37,
+      "text": "201\n\n202 where _V, R[a] , P_[\u00af] _[a]_ are steerable feature fields over Z[2] . As for the operations, max _a_ is (max) pooling 203 (over group channel), + _, \u00d7_ are point-wise operations, and _\u22c6_ is convolution. As the second step, 204 the main idea is to prove every operation in Bellman (optimality) operator on steerable fields is 205 equivariant, including the nonlinear max _a_ operator and + _, \u00d7_ . Then, iteratively applying Bellman 206 operator forms value iteration and is also equivariant, as shown below and proved in Appendix E.4."
+    },
+    {
+      "index": 38,
+      "text": "207 **Proposition 4.3.** _For a spatial MDP with G-invariant transition, the optimal value function can be_ 208 _found through G-steerable value iteration._"
+    },
+    {
+      "index": 39,
+      "text": "209 **Remark.** Our framework generalizes the idea behind VINs and enables us to understand its appli210 cability and restrictions. More importantly, this allows us to integrate symmetry but avoid explicitly 211 building equivalence classes and enables planning with symmetry in end-to-end fashion. We em212 phasize that the _symmetry in spatial MDPs_ is different from _symmetric MDPs_ [7, 3, 9], since our 213 reward function is _not G_ -invariant. Although we focus on Z[2] , we can generalize to path planning 214 on higher-dimensional or even continuous Euclidean spaces (like R[3] space [54] or spatial graphs in 215 R)[3] [55]), and use _equivariant operations_ on _steerable feature fields_ (such as steerable convolutions, 216 pooling, and point-wise non-linearities) from steerable CNNs. We refer the readers to Appendix D 217 and to [15, 14, 56, 16] for more details."
+    },
+    {
+      "index": 40,
+      "text": "## 218 **5 Symmetric Planning in Practice**\n\n219 In this section, we discuss how to achieve Symmetric Planning on 2D grids with E(2)-steerable 220 CNNs [16]. We focus on implementing symmetric version of value iteration, SymVIN, and gener221 alize the methodology to make a symmetric version of a popular follow-up of VIN, GPPN [36]."
+    },
+    {
+      "index": 41,
+      "text": "5\n\nFigure 3: Commutative diagram for the full pipeline of SymVIN on steerable feature fields over Z[2] (every grid). If rotating the input map _M_ by _\u03c0M_ ( _g_ ) of any _g_ , the output action _A_ = `SymVIN` ( _M_ ) is guaranteed to be transformed by _\u03c0A_ ( _g_ ), i.e. the entire steerable SymVIN is equivariant under induced representations _\u03c0M_ and _\u03c0A_ : `SymVIN` ( _\u03c0M_ ( _g_ ) _M_ ) = _\u03c0A_ ( _g_ ) `SymVIN` ( _M_ ). We use stacked feature fields to emphasize that SymVIN supports direct-sum of representations beyond scalar-valued."
+    },
+    {
+      "index": 42,
+      "text": "222 **Steerable value iteration.** We have showed that, value iteration for path planning problems on Z[2] 223 consists of equivariant maps between steerable feature fields. It can be implemented as an equivari224 ant steerable CNN, with recursively applying two alternating (equivariant) layers:"
+    },
+    {
+      "index": 43,
+      "text": "225 where _k \u2208_ [ _K_ ] indexes iteration, _Vk, Q[a] k[, R] m[a]_[are steerable feature fields over][ Z][2][output by equiv-] 226 ariant layers, _P\u03b8[a]_[is a learned kernel in neural network, and][ +] _[,][ \u00d7]_[ are element-wise operations.]"
+    },
+    {
+      "index": 44,
+      "text": "227 **Pipeline.** We follow the pipeline in VIN [17]. The commutative diagram for the full pipeline is 228 shown in Figure 3. The path planning task is given by a _m \u00d7 m_ spatial binary obstacle occupancy 229 map and one-hot goal map, represented as a feature field _M_ : Z[2] _\u2192{_ 0 _,_ 1 _}_[2] . For the iterative 230 process _Q[a] k[\ufffd\u2192][V][k][\ufffd\u2192][Q][a] k_ +1[, the reward field] _[ R][M]_[is predicted from map] _[ M]_[(by a][ 1] _[ \u00d7]_[ 1][ convolution] 231 layer) and the value field _V_ 0 is initialized as zeros. The network output is (logits of) planned actions 232 for all locations[2] , represented as _A_ : Z[2] _\u2192_ R _[|A|]_ , predicted from the final Q-value field _QK_ (by 233 another 1 _\u00d7_ 1 convolution layer). The number of iterations _K_ and the convolutional kernel size _F_ 234 of _P\u03b8[a]_[are set based on map size] _[ M]_[, and the spatial dimension] _[ m][ \u00d7][ m]_[ is kept consistent.]"
+    },
+    {
+      "index": 45,
+      "text": "235 **Building Symmetric Value Iteration Networks.** Given the pipeline of VIN fully on steerable 236 feature fields, we are ready to build equivariant version with E(2)-steerable CNNs [16]. The idea 237 is to replace every `Conv2d` with a steerable convolution layer between steerable feature fields, and 238 associate the fields with proper fiber representations _\u03c1_ ( _h_ )."
+    },
+    {
+      "index": 46,
+      "text": "239 VINs use ordinary CNNs and can choose the size of intermediate feature maps. The design choices 240 in steerable CNNs is the feature fields and fiber representations (or _type_ ) for every layer [14, 16]. 241 The main difference[3] in steerable CNNs is that we also need to tell the network how to _transform_ 242 every _feature field_ , by specifying _fiber representations_ , as shown in Figure 3."
+    },
+    {
+      "index": 47,
+      "text": "- 242\n\n243 **Specification of input map and output action.** We first specify _fiber representations_ for the input 244 and output field of the network: map _M_ and action _A_ . For input **occupancy map and goal** _M_ : 245 Z[2] _\u2192{_ 0 _,_ 1 _}_[2] , it does not _D_ 4 to act on the 2 channels, so we use two copies of trivial representations 246 _\u03c1M_ = _\u03c1_ triv _\u2295 \u03c1_ triv. For **action** , the final action output _A_ : Z[2] _\u2192_ R _[|A|]_ is for logits of four actions 247 _A_ = `(north, west, south, east)` for every location. If we use _H_ = _C_ 4, it naturally acts on 248 the four actions (ordered \u27f2) by _cyclically_ \u27f2 _permuting_ the R[4] channels. However, since the _D_ 4 249 group has 8 elements, we need a _quotient representation_ , see [16] and Appendix F."
+    },
+    {
+      "index": 48,
+      "text": "250 **Specification of intermediate fields: value and reward.** Then, for the intermediate feature fields: 251 Q-values _Qk_ , state value _Vk_ , and reward _Rm_ , we are free to choose fiber representations, as well as 252 the width (number of copies). For example, if we want 2 copies of regular representation of _D_ 4, the 253 feature field has 2 _\u00d7_ 8 = 16 channels and the stacked representation is 16 _\u00d7_ 16 (by direct-sum)."
+    },
+    {
+      "index": 49,
+      "text": "> 254 For the _Q_ **-value field** _Q[a] k_[(] _[s]_[)][, we use representation] _[ \u03c1][Q]_[ and its size as] _[ C][Q]_[. We need at least] _[ C][A][\u2265|A|]_ 255 channels for all actions of _Q_ ( _s, a_ ) as in VIN and GPPN, then stacked together and denoted as 256 _Qk_ \u225c[\ufffd] _a[Q] k[a]_[with][dimension] _[Q][k]_[:][Z][2] _[\u2192]_[R] _[C][Q][\u2217][C][A]_[.][Therefore,][the][representation][is][direct-sum]"
+    },
+    {
+      "index": 50,
+      "text": "2Technically, it also includes values or actions for obstacles, since the network needs to learn to approximate the reward _RM_ ( _s,_ \u2206 _s_ ) = _\u2212\u221e_ with enough small reward and avoid obstacles."
+    },
+    {
+      "index": 51,
+      "text": "6\n\n- 257 \ufffd _\u03c1Q_ for _CA_ copies. The **reward** is implemented similarly as _RM_ \u225c \ufffd _a[R] M[a]_[and must have same] 258 dimension and representation to add element-wisely. For **state value** field, we denote the choose as 259 fiber representation as _\u03c1V_ and its size _CV_ . It has size _Vk_ : Z[2] _\u2192_ R _[C][V]_ Thus, the steerable kernel 260 is _matrix-valued_ with dimension _P\u03b8_ : Z[2] _\u2192_ R[(] _[C][Q][\u2217][C][A]_[)] _[\u00d7][C][V]_ . In practice, we found using _regular_ 261 _representations_ for all three works the best. It can be viewed as \"augmented\" state and is related to 262 group convolution, detailed in Appendix F."
+    },
+    {
+      "index": 52,
+      "text": "- 263 **Other operations.** We now visit the remained (equivariant) operations. (1) The max **operation in** 264 _Qk \ufffd\u2192 Vk_ +1 **.** While we have showed the max operation in _Vk_ +1( _s_ ) = max _a Q[a] k_[(] _[s]_[)][ is equivariant] 265 in Theorem 4.3, we need to apply max(-pooling) for all actions along the \"representation channel\" 266 from stacked representations _CA \u2217 CQ_ to one _CQ_ . More details are in Appendix F.5. (2) The **final** 267 **output layer** _QK \ufffd\u2192 A_ **.** After the final iteration, the _Q_ -value field _Qk_ is fed into the policy layer 268 with 1 _\u00d7_ 1 convolution to convert the action logit field Z[2] _\u2192_ R _[|A|]_ ."
+    },
+    {
+      "index": 53,
+      "text": "- 269 **Extended method: Symmetric GPPN.** Gated path planning network (GPPN [36]) proposes to use 270 LSTM to alleviate the issue of unstable gradient in VINs. Although it does not strictly follow value 271 iteration, it still follows the spirit of steerable planning. Thus, we first obtained a fully convolutional 272 variant of GPPN from [Redacted for anonymous review], called ConvGPPN. It replaces the MLPs 273 in the original LSTM cell with convolutional layers, and then replaces convolutions with equivariant 274 steerable convolutions, resulting in a fully equivariant SymGPPN. See Appendix F.3 for details."
+    },
+    {
+      "index": 54,
+      "text": "- 275 **Extended tasks: planning on learned maps with mapper networks.** We consider two planning 276 tasks on 2D grids: 2D navigation and 2-DOF manipulation. To demonstrate the ability of handling 277 symmetry in differentiable planning, we consider more complicated state space input: visual nav278 igation and workspace manipulation, and discuss how to use mapper networks to convert the state 279 input and use end-to-end learned maps, as in [36, 37]. See Appendix F.2 for details."
+    },
+    {
+      "index": 55,
+      "text": "## 280\n\n## **6 Experiments**\n\n- 281 We experiment VIN, GPPN and our SymPlan methods on four path planning tasks, including using 282 _given_ or _learned_ maps. The additional experiments and ablation studies are in Appendix G."
+    },
+    {
+      "index": 56,
+      "text": "- 283 **Environments and datasets.** We demonstrate the idea in two major robotics tasks: _navigation_ and 284 _manipulation_ . We focus on the 2D regular grid setting for path planning, as adopted in prior work 285 [17, 36, 37]. For each task, we consider using either _given_ (2D navigation and 2-DOF configuration286 space manipulation) or _learned_ maps (visual navigation and 2-DOF workspace manipulation). In 287 the latter case, the planner needs to jointly learn a mapper that converts egocentric panoramic images 288 (visual navigation) or workspace states (workspace manipulation) into plannable loss, as in [36, 37]. 289 In both cases, we randomly generate training, validation and test data of 10 _K/_ 2 _K/_ 2 _K_ maps for all 290 map sizes, to demonstrate data efficiency and generalization ability of symmetric planning. Note 291 that the test maps are unlikely to be symmetric to the training maps by any transformation from the 292 symmetry groups _G_ . For all environments, the planning domain is the 2D regular grid _S_ = \u2126= Z[2] , 293 and the action space is to move in 4 \u27f2 directions[4] : _A_ = `(north, west, south, east)` ."
+    },
+    {
+      "index": 57,
+      "text": "- 294 **Methods: planner networks.** We compare five planner methods, where two are our SymPlan 295 version of their non-equivariant counterparts. Our equivariant implementation is based on _Value_ 296 _Iteration Networks_ ( **VIN** , [17]) and _Gated Path Planning Networks_ ( **GPPN** , [36]). We implement 297 the equivariant version of VIN, named **SymVIN** . For GPPN, we first obtained a _fully convolutional_ 298 version, named **ConvGPPN** [Redacted for anonymous review], and furthermore **SymGPPN** with 299 steerable CNNs. All methods use (equivariant) convolutions with _circular padding_ in planning 300 in configuration spaces for the manipulation tasks, except GPPN that is not fully convolutional. 301 Chaplot et al. [37] propose SPT based on Transformers, while integrating symmetry to Transformers 302 is beyond steerable convolutions, thus we do not consider it but still adopt some useful setup."
+    },
+    {
+      "index": 58,
+      "text": "303 **Training and evaluation.** We report successful rate and its training curves over 3 seeds for each 304 setup. The training process of the given map setup follows [17, 36], where we train 30 epochs with 305 batch size 32, and use kernel size _F_ = 3 by default. The gradient clip threshold is set to 5. The"
+    },
+    {
+      "index": 59,
+      "text": "> 4Note that the MDP action space _A_ needs to be _compatible_ with the group action _G \u00d7 A \u2192A_ . Since the E2CNN package [16] uses _counterclockwise_ rotations \u27f2 as generators for rotation groups _Cn_ , the action space needs to be _counterclockwise_ \u27f2."
+    },
+    {
+      "index": 60,
+      "text": "7\n\nFigure 4: **(Left)** A visual navigation environment rendered from a randomly generated 7 _\u00d7_ 7 maze **(Middle)** , where the hover is the visualization of four views at position (5 _,_ 3). **(Right)** A 2-joint manipulation task in workspace (topdown) and configuration space (2 DOFs) in 18 _\u00d7_ 18 resolution."
+    },
+    {
+      "index": 61,
+      "text": "**----- Start of picture text -----**\n\n1.0 1.0\n0.8 0.8 model\nVIN\n0.6 model 0.6 SymVIN\nVIN GPPN\n0.4 SymVIN 0.4 ConvGPPN\nGPPN SymGPPN\n0.2 ConvGPPN 0.2\nSymGPPN\n0.0\n0 5 10 15 20 25 30 0 5 10 15 20 25 30\nEpochs Epochs\nSuccessful Rate Successful Rate\n**----- End of picture text -----**"
+    },
+    {
+      "index": 62,
+      "text": "Figure 5: Training curves on **(Left)** 2D navigation with 10K of 15 _\u00d7_ 15 maps and on **(Right)** 2DoFs manipulation with 10K of 18 _\u00d7_ 18 maps in configuration space. Faded areas indicate standard error."
+    },
+    {
+      "index": 63,
+      "text": "306 default batch size is 32, while we need to reduce for some GPPN variants, since LSTM consumes 307 much more memory."
+    },
+    {
+      "index": 64,
+      "text": "## 308 **6.1 Planning on given maps**\n\n309 **Environmental setup.** In the **2D navigation** task, the map and goal are randomly generated, where 310 the map size is _{_ 15 _,_ 28 _,_ 50 _}_ . In **2-DOF manipulation** in configuration space, we adopt the setting 311 in [37] and train networks to take as input of configuration space, represented by two joints. We 312 randomly generate 0 to 5 obstacles in the manipulator workspace. Then the 2 degree-of-freedom 313 (DOF) configuration space is constructed from workspace and discretized into 2D grid with sizes 314 _{_ 18 _,_ 36 _}_ , corresponding to bins of 20 _[\u25e6]_ and 10 _[\u25e6]_ , respectively. All methods are trained using the same 315 network size, where for equivariant versions, we use _regular_ representations for all layers, which has 316 size _|D_ 4 _|_ = 8. We keep the same parameters for all methods, so all equivariant convolution layers 317 with _regular_ representations will have higher embedding sizes. Due to memory constraint, we use 318 _K_ = 30 iterations for 2D maze navigation, and _K_ = 27 for manipulation. We use kernel sizes 319 _F_ = _{_ 3 _,_ 5 _,_ 5 _}_ for _m_ = _{_ 15 _,_ 28 _,_ 50 _}_ navigation, and _F_ = _{_ 3 _,_ 5 _}_ for _m_ = _{_ 18 _,_ 36 _}_ manipulation."
+    },
+    {
+      "index": 65,
+      "text": "320 **Results.** We show the averaged test results for both 2D navigation and C-space manipulation tasks 321 on generalizing to unseen maps (Table 1) and the training curves for all methods (Figure 5). For 322 VIN series, our SymVIN is much better than the vanilla VIN in terms of generalization and training 323 performance in both environments, which learns much faster and achieves almost perfect asymptotic 324 performance. As for GPPN, we found the fully convolutional variant ConvGPPN actually works bet325 ter than the original one in [36], especially in learning speed. SymGPPN further boosts ConvGPPN 326 and outperforms all other methods, including our SymVIN. One exception is GPPN learns poorly 327 in C-space manipulation. For GPPN, the added circular padding in the convolution encoder leads to 328 gradient vanishing problem."
+    },
+    {
+      "index": 66,
+      "text": "329 Additionally, we found using regular representations (for _D_ 4 or _C_ 4) for state value _V_ : Z[2] _\u2192_ R _[C][V]_ 330 (and for _Q_ -value) works better than trivial representations. This is counterintuitive since we expect 331 the _V_ value to be scalar Z[2] _\u2192_ R. One reason is that switching between regular (for _Q_ ) and trivial 332 (for _V_ ) representation introduces unnecessary bottleneck. Depending on the choose of representa333 tions, we implement different max-pooling, with details in Appendix F.5. We also empirically found 334 using FC only in the final layer _QK \ufffd\u2192 A_ helps stabilize the training a bit. The ablation study on 335 this and more are in Appendix G."
+    },
+    {
+      "index": 67,
+      "text": "336 **Remark.** Two symmetric planners are both significantly better than their counterparts. Notably, 337 we did not include any symmetric maps to the test data that symmetric planners would perform 338 much better. There are several potential sources of advantages: (1) SymPlan allows parameter 339 sharing across positions and maps and implicitly enables planning in a reduced space: every ( _s, a, s[\u2032]_ )"
+    },
+    {
+      "index": 68,
+      "text": "8\n\nTable 1: Averaged test success rate (%) for using 10K/2K/2K dataset for all four types of tasks.\n\n|Method\n(10K Data)|Navigation\nManipulation\n15_\u00d7_15\n28_\u00d7_28\n50_\u00d7_50\nVisual\n18_\u00d7_18\n36_\u00d7_36\nWorkspace|Navigation\nManipulation\n15_\u00d7_15\n28_\u00d7_28\n50_\u00d7_50\nVisual\n18_\u00d7_18\n36_\u00d7_36\nWorkspace|Navigation\nManipulation\n15_\u00d7_15\n28_\u00d7_28\n50_\u00d7_50\nVisual\n18_\u00d7_18\n36_\u00d7_36\nWorkspace|Navigation\nManipulation\n15_\u00d7_15\n28_\u00d7_28\n50_\u00d7_50\nVisual\n18_\u00d7_18\n36_\u00d7_36\nWorkspace|\n|---|---|---|---|---|\n||||||\n|VIN\n**SymVIN**|66.97\n67.57\n57.92\n98.99\n98.14\n86.20|50.83\n95.50|77.82\n84.32\n99.98\n99.36|80.44\n**91.10**|\n||||||\n|GPPN\nConvGPPN\n**SymGPPN**|96.36\n95.77\n91.84\n99.75\n99.09\n97.21\n**99.98**\n**99.86**\n**99.49**|93.13\n98.55\n**99.78**|2.62\n1.68\n99.98\n99.95\n**100.00**\n**99.99**|3.67\n89.88\n90.50|"
+    },
+    {
+      "index": 69,
+      "text": "340 seamlessly generalizes to ( _g.s, g.a, g.s[\u2032]_ ) for any _g \u2208 G_ , (2) thus it uses training data more efficiently, 341 (3) it reduces the space of hypothesis class and facilitate generalization to unseen maps."
+    },
+    {
+      "index": 70,
+      "text": "## 342 **6.2 Planning on learned maps: simultaneously planning and mapping**\n\n343 **Environmental setup.** For **visual navigation** , we randomly generate maps using the same strategy 344 as before, and then render four egocentric panoramic views for each location from produced 3D 345 environments with _Gym-MiniWorld_ [57], since it allows to generate 3D mazes with any layout. For 346 _m \u00d7 m_ maps, all egocentric views for a map is represented by _m \u00d7 m \u00d7_ 4 RGB images. For 347 **workspace manipulation** , we randomly generate 0 to 5 obstacles in workspace as before. We use a 348 mapper network to convert the 96 _\u00d7_ 96 workspace (image of obstacles) to the _m \u00d7 m_ 2 degree-of349 freedom (DOF) configuration space (2D occupancy grid). In both environments, the setup is similar 350 to Section 6.1, while we only use _m_ = 15 maps but longer 100 epochs for visual navigation and 351 _m_ = 18 maps still with 30 epochs for workspace manipulation."
+    },
+    {
+      "index": 71,
+      "text": "352 **Methods: mapper networks and setup.** For **visual navigation** , we follow the mapper network 353 setup in [36]. A mapper network converts every image into a 256-dimensional embedding _m \u00d7 m \u00d7_ 354 4 _\u00d7_ 256 and then predicts map layout _m \u00d7 m \u00d7_ 1. For **workspace manipulation** , we use U-net [58] 355 with residual-connection [59] as a mapper. See Section G for details."
+    },
+    {
+      "index": 72,
+      "text": "356 **Results.** The results are also shown in Table 1, denoted as Visual (navigation, 15 _\u00d7_ 15) and 357 Workspace (manipulation, 18 _\u00d7_ 18). In visual navigation, the trends are similar to 2D case: two 358 symmetric planners both train much faster. Besides vanilla VIN, all approaches finally converge to 359 near-optimal successful rate (around 95%), while the validation and test results show large gaps. 360 SymGPPN has almost no generalization gap, while VIN does not generalize well to new 3D visual 361 navigation environments. Our SymVIN improves test successful rate from less than 50% to 90% 362 and is comparable with GPPN. Since the input is raw images and a mapper is used to learn end-to363 end, it potentially causes one major source of generalization gap for some approaches. In workspace 364 manipulation, the results are also analogous to C-space, while ours advantages over baselines are 365 smaller. In our inspection, we found the mapper network is the bottleneck, since the mapping for 366 obstacles from workspace to C-space is nontrivial to learn."
+    },
+    {
+      "index": 73,
+      "text": "367 **Remark.** The SymPlan models demonstrate end-to-end planning and learning ability, potentially 368 enabling further applications to other tasks as a differentiable component for planning. The addi369 tional results and ablation studies are provided in Appendix G."
+    },
+    {
+      "index": 74,
+      "text": "## 370 **7 Discussion**\n\n371 In this work, we study the symmetry in 2D path planning problem, and build a framework using 372 the theory of steerable CNNs to prove that value iteration in path planning is actually a form of 373 steerable CNN (on 2D grids). Although we focus on Z[2] , we can generalize to path planning on 374 higher-dimensional or even continuous Euclidean spaces [54, 55], and use _equivariant operations_ on 375 _steerable feature fields_ (such as steerable convolutions, pooling, and point-wise non-linearities) from 376 steerable CNNs. We practically show that the SymPlan algorithms exactly motivated by the theory 377 provide great improvement. We hope the framework along with the design of practical algorithm 378 can enable new perspective to exploit the symmetry structure in path planning problems. Although 379 it still has some limitations, such as (1) that the action needs to be known as moving on the domain 380 (2D), and (2) that it is not sampling-based and may struggle for high-dimensional problems, we 381 believe that it has potential extensions to more general formulation."
+    },
+    {
+      "index": 75,
+      "text": "9\n\n382 **References**\n\n- 383 [1] Richard S. Sutton and Andrew G. Barto. _Reinforcement learning: an introduction_ . Adaptive 384 computation and machine learning series. The MIT Press, Cambridge, Massachusetts, second 385 edition edition, 2018. ISBN 978-0-262-03924-6."
+    },
+    {
+      "index": 76,
+      "text": "- 386 [2] Lihong Li, Thomas J. Walsh, and M. Littman. Towards a Unified Theory of State Abstraction 387 for MDPs. In _AI&M_ , 2006."
+    },
+    {
+      "index": 77,
+      "text": "- 388 [3] Balaraman Ravindran and Andrew G Barto. _An algebraic approach to abstraction in rein-_ 389 _forcement learning_ . PhD thesis, University of Massachusetts at Amherst, 2004."
+    },
+    {
+      "index": 78,
+      "text": "- 390 [4] Maria Fox and Derek Long. Extending the exploitation of symmetries in planning. In _In_ 391 _Proceedings of AIPS\u201902_ , pages 83\u201391, 2002."
+    },
+    {
+      "index": 79,
+      "text": "- 392 [5] Maria Fox and Derek Long. The Detection and Exploitation of Symmetry in Planning Prob393 lems. In _In IJCAI_ , pages 956\u2013961. Morgan Kaufmann, 1999."
+    },
+    {
+      "index": 80,
+      "text": "- 394 [6] Nir Pochter, Aviv Zohar, and Jeffrey S. Rosenschein. Exploiting Problem Symmetries in State395 Based Planners. In _Twenty-Fifth AAAI Conference on Artificial Intelligence_ , August 2011. 396 URL `https://www.aaai.org/ocs/index.php/AAAI/AAAI11/paper/view/3732` ."
+    },
+    {
+      "index": 81,
+      "text": "- 397 [7] Martin Zinkevich and Tucker Balch. Symmetry in Markov decision processes and its impli398 cations for single agent and multi agent learning. In _In Proceedings of the 18th International_ 399 _Conference on Machine Learning_ , pages 632\u2013640. Morgan Kaufmann, 2001."
+    },
+    {
+      "index": 82,
+      "text": "- 400 [8] Shravan Matthur Narayanamurthy and Balaraman Ravindran. On the hardness of finding 401 symmetries in Markov decision processes. In _Proceedings of the 25th international confer-_ 402 _ence on Machine learning - ICML \u201908_ , pages 688\u2013695, Helsinki, Finland, 2008. ACM Press. 403 ISBN 978-1-60558-205-4. doi: 10/bkswc2. URL `http://portal.acm.org/citation.` 404 `cfm?doid=1390156.1390243` ."
+    },
+    {
+      "index": 83,
+      "text": "- 405 [9] Elise van der Pol, Daniel E. Worrall, Herke van Hoof, Frans A. Oliehoek, and Max 406 Welling. MDP Homomorphic Networks: Group Symmetries in Reinforcement Learning. 407 _arXiv:2006.16908 [cs, stat]_ , June 2020. URL `http://arxiv.org/abs/2006.16908` . arXiv: 408 2006.16908."
+    },
+    {
+      "index": 84,
+      "text": "- 408\n\n- 409 [10] Dian Wang, Robin Walters, and Robert Platt. $\\mathrm{SO}(2)$-Equivariant Reinforcement 410 Learning. September 2021. URL `https://openreview.net/forum?id=7F9cOhdvfk_` ."
+    },
+    {
+      "index": 85,
+      "text": "- 410\n\n- 411 [11] Michael M Bronstein, Joan Bruna, Taco Cohen, and Petar Veli\u02c7ckovi\u00b4c. Geometric deep learn412 ing: Grids, groups, graphs, geodesics, and gauges. _arXiv preprint arXiv:2104.13478_ , 2021."
+    },
+    {
+      "index": 86,
+      "text": "- 413 [12] Taco Cohen, Mario Geiger, and Maurice Weiler. A General Theory of Equivariant CNNs on 414 Homogeneous Spaces. _arXiv:1811.02017 [cs, stat]_ , January 2020. URL `http://arxiv.` 415 `org/abs/1811.02017` . arXiv: 1811.02017."
+    },
+    {
+      "index": 87,
+      "text": "- 415\n\n- 416 [13] Risi Kondor and Shubhendu Trivedi. On the Generalization of Equivariance and Convolution 417 in Neural Networks to the Action of Compact Groups. _arXiv:1802.03690 [cs, stat]_ , November 418 2018. URL `http://arxiv.org/abs/1802.03690` . arXiv: 1802.03690."
+    },
+    {
+      "index": 88,
+      "text": "- 419 [14] Taco S. Cohen and Max Welling. Steerable CNNs. November 2016. URL `https:` 420 `//openreview.net/forum?id=rJQKYt5ll` ."
+    },
+    {
+      "index": 89,
+      "text": "- 421 [15] Taco S. Cohen and Max Welling. Group Equivariant Convolutional Networks. 422 _arXiv:1602.07576 [cs, stat]_ , June 2016. URL `http://arxiv.org/abs/1602.07576` . arXiv: 423 1602.07576."
+    },
+    {
+      "index": 90,
+      "text": "- 423\n\n- 424 [16] Maurice Weiler and Gabriele Cesa. General $E(2)$-Equivariant Steerable CNNs. 425 _arXiv:1911.08251 [cs, eess]_ , April 2021. URL `http://arxiv.org/abs/1911.08251` . 426 arXiv: 1911.08251.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes SymPlan, a framework that integrates steerable convolutional networks into differentiable planning (VIN/GPPN) to enforce equivariance under group symmetries in 2D grid-based path planning. By reformulating value iteration as a sequence of steerable convolutions, the authors demonstrate improved sample efficiency and generalization on navigation and manipulation tasks.\n\nThe paper provides a compelling synthesis of equivariant deep learning and differentiable planning, effectively bridging the gap between group-equivariant CNNs and classical value iteration. The empirical results are strong and the theoretical connection between the Bellman operator and steerable convolutions is a significant contribution to the field.\n\nOverview issues:\n\n- Ambiguity in the Definition of 'Spatial MDP' Transitions: In Section 4.1, the authors define a 'spatial MDP' to convert obstacle-dependent transitions into reward-based 'traps'. While this is a clever re-parameterization, the paper fails to explicitly state the constraints on the transition kernel P required for this transformation to remain valid across different maps. If the transition probability is truly invariant under the group action, then the obstacle configuration must be fully encoded in the reward. The paper should clarify whether this formulation holds when the transition dynamics themselves are non-homogeneous or if the 'spatial MDP' is strictly limited to grid-world environments where movement is uniform.\n\n- Justification of the 'Regular Representation' Choice: In Section 5, the authors mention that using regular representations for the value and Q-value fields works better than trivial representations, despite the value function being scalar-valued. This choice is counterintuitive and lacks a rigorous explanation. If the value field V is expected to be scalar, using a higher-dimensional regular representation effectively increases model capacity significantly. The authors need to perform an ablation study comparing the performance of SymVIN with regular representations against a non-equivariant baseline with equivalent parameter counts to ensure the gains are due to symmetry and not just increased network capacity.\n\n- Sensitivity to Boundary Conditions: The paper assumes the planning domain is a 2D grid with circular padding for convolutions. However, in many real-world navigation tasks, the boundary conditions are not periodic, and the presence of walls breaks the assumed symmetry of the space. The current framework does not address how the equivariance property degrades near these boundaries. A discussion or empirical analysis of how the model performs in environments where the symmetry group is naturally broken by the domain geometry would greatly strengthen the paper's claims regarding generalization.\n\n- Computational Overhead of Steerable Convolutions: While the paper highlights the benefits of SymPlan for sample efficiency, it remains silent on the computational cost of steerable convolutions compared to standard CNNs during the iterative planning loop. Given that VINs and GPPNs already require multiple forward passes through the network, the added complexity of steerable kernels could make the method prohibitively slow for real-time applications. Including a table comparing wall-clock training and inference time per iteration between the baseline and the symmetric versions would provide a more balanced view of the method's practical utility.\n\n- Lack of quantitative analysis on the symmetry-capacity trade-off: The authors attribute the performance gains of SymPlan to the exploitation of symmetry, yet they acknowledge that using regular representations increases the number of channels and parameter count compared to trivial representations. To demonstrate that the result has bite and is not merely a consequence of increased model capacity, the paper needs a controlled ablation. Specifically, I suggest comparing SymVIN with regular representations against a standard VIN (non-equivariant) that has been widened to match the total number of parameters in the SymVIN model. This would isolate the architectural benefit of equivariance from the simple effect of having more learnable weights.\n\n- Missing empirical validation of equivariance on OOD test environments: The paper claims that SymPlan improves generalization to unseen maps, but it does not formally verify if the learned policy maintains the expected equivariant properties on these OOD environments. A simple and standard test would be to compute the equivariance error, defined as the norm of the difference between the output of the planner on a rotated input and the rotated output of the planner on the original input. Including a plot of this error across different rotation/reflection angles for both SymPlan and the baseline on the 50x50 navigation task would provide a direct, quantitative demonstration that the model is actually leveraging the symmetry group as claimed.\n\n- Underdeveloped implications for boundary condition handling: The use of circular padding is a standard trick to maintain translation equivariance on grids, but it is physically inconsistent with most navigation environments that feature fixed boundaries. The paper claims robustness, yet it remains unclear how the steerable kernels behave when the symmetry is broken by the environment edges. Providing a worked example or a small experiment that compares performance on a 'walled' maze versus a 'toroidal' maze would clarify the limits of the proposed symmetry exploitation. This is necessary to calibrate reader expectations regarding the method's applicability to non-periodic, finite-sized robotic workspaces.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Perform a controlled ablation study comparing SymPlan models to non-equivariant baselines with matched parameter counts to isolate the effect of symmetry from model capacity.\n\n- Include a discussion or empirical analysis of how the equivariance property holds (or fails) near non-periodic boundaries in the 2D navigation task.\n\n- Provide a computational complexity analysis (wall-clock time) comparing the proposed steerable convolutions against standard convolutions in the iterative planning loop.\n\n- Clarify the mathematical conditions under which the 'spatial MDP' transformation is valid, specifically regarding the homogeneity of the transition dynamics.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistent parameter count controls",
+          "quote": "spectively. All methods are trained using the same network size, where for equivariant versions, we use regular representations for all layers, which has size  $|D_4| = 8$ . We keep the same parameters for all methods, so all equivariant convolution layers with regular representations will have higher embedding",
+          "explanation": "The claim that the methods are compared under the same parameter budget is contradictory. If the equivariant layers use regular representations, the number of channels\u2014and thus the total parameter count\u2014is necessarily higher than in the non-equivariant baseline. This makes it impossible to isolate whether performance gains stem from symmetry exploitation or simply from increased model capacity. Please clarify whether the baseline models were widened to match the parameter count of the equivariant models, or revise the claim to acknowledge the difference in capacity.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Unsubstantiated claim regarding the representation of value iteration",
+          "quote": "We then show that value iteration can always be represented as some convolutional form for (2D) path planning, and name the resulting paradigm Symmetric Planner (SymPlan).",
+          "explanation": "The assertion that value iteration can 'always' be represented as a convolutional form is too broad. This representation relies on the assumption of a spatially invariant transition kernel, which holds for grid-world navigation but fails for general robotic manipulation where transition dynamics depend on the specific configuration of the robot and objects. Please qualify this statement to specify that it applies only to environments with spatially invariant transition dynamics.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in max-pooling operation over representation channels",
+          "quote": "}$. While we have showed the $\\max$ operation in $V_{k+1}(s)=\\max_{a}Q_{k}^{a}(s)$ is equivariant in Theorem 4.3, we need to apply max(-pooling) for all actions along the \"representation channel\" from stacked representations $C_{A}*C_{Q}$ to one $C_{Q}$. More details are in Appendix F.5. (2) The fin",
+          "explanation": "The text conflates the action index 'a' with the internal representation channels of the steerable feature field. If Q_k is a stacked field, the reduction V_{k+1}(s) = max_a Q_k^a(s) is a reduction over the action index, whereas 'max-pooling' over representation channels implies a reduction over the internal dimensions of the field itself. Please clarify whether the reduction is a max over the action index or a pooling operation over the internal representation channels, and rewrite the sentence to distinguish between these two operations.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Unjustified assumption of stationarity in transition kernel",
+          "quote": "E. We write the transition probability as $P^{a}(s,s^{\\prime})$, and we show it only depends on state difference $P^{a}(s-s^{\\prime})$ (or one-argument kernel *[12]*) using $G$-invariance, which is the key step to show it is some convolution. Note that w",
+          "explanation": "The claim that G-invariance implies the transition kernel depends only on the state difference s-s' is a strong assumption. While G-invariance implies P^a(s, s') = P^{r.a}(g.s, g.s'), this only reduces to a translation-invariant kernel P^a(s-s') if the group G includes the full translation group Z^2 acting on the state space. In bounded grids with fixed boundaries, the transition probability is generally not a function of s-s'. Please clarify if this assumption holds only for infinite grids or if it assumes specific boundary conditions (e.g., periodic) that preserve translation invariance.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistent claim regarding symmetry detection in A*",
+          "quote": "or example, if we use  $\\mathbf{A}^*$  on path planning, we cannot specify visually obvious rotation symmetry in Figure 1, and need to detect in manually from the provided dynamics model. Thi",
+          "explanation": "The claim that A* cannot utilize rotation symmetry is misleading. A* is a search algorithm that operates on a graph; if the graph is constructed to be symmetric, A* will naturally exploit that symmetry. The difficulty lies in the state-space representation, not in the A* algorithm itself. Please rephrase to clarify that the limitation is in the manual construction of the state-space graph.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0758,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes SymPlan, a framework that integrates steerable convolutions into differentiable planning algorithms like VIN and GPPN. It correctly identifies that value iteration on 2D grids can be formulated as a sequence of equivariant operations and demonstrates empirical gains in data efficiency and generalization. The theoretical connection between dynamic programming and steerable feature fields is a clean and valuable contribution to geometric deep learning.\n\nThe paper proposes SymPlan, a framework that integrates steerable convolutions into differentiable planning algorithms like VIN and GPPN. It correctly identifies that value iteration on 2D grids can be formulated as a sequence of equivariant operations and demonstrates empirical gains in data efficiency and generalization. The theoretical connection between dynamic programming and steerable feature fields is a clean and valuable contribution to geometric deep learning.\n\nOverview issues:\n\n- Boundary conditions break the assumed translation invariance: The theoretical foundation in Section 4 relies on Theorem 4.2, which treats the expected value operator as a steerable convolution. This derivation assumes a translation-invariant transition kernel $P^a(s-s')$, which inherently requires an infinite grid or periodic boundary conditions. The experimental setup uses finite grids for navigation, where walls and boundaries naturally break this invariance. The authors mention applying circular padding for manipulation tasks but omit this detail for navigation, creating a disconnect between the theoretical claims of $p4m$ equivariance and the actual implementation. The paper needs to explicitly analyze how boundary handling affects equivariance and clarify whether the theoretical guarantees hold under the specific padding strategies used in each task.\n\n- Parameter count disparity undermines the fairness of the baseline comparison: Section 6.1 states that the equivariant models use regular representations for all layers, which multiplies the channel dimension by $|D_4| = 8$. The text then notes, \"We keep the same parameters for all methods, so all equivariant convolution layers with regular representations will have higher embedding sizes.\" This phrasing is contradictory and suggests the non-equivariant baselines were forced into a lower capacity to match parameter counts, or vice versa. If the baselines have significantly fewer parameters, the observed performance gains may simply reflect increased model capacity rather than the inductive bias of symmetry. The authors should report the exact channel widths, total parameter counts, and FLOPs for all methods, and ideally retrain the baselines with matched capacities to isolate the true effect of equivariance.\n\n- Mapping errors confound the evaluation of learned-map planning: The visual navigation and workspace manipulation experiments require the network to learn a mapper from raw observations to a plannable configuration space. Section 6.2 acknowledges that the mapper acts as a bottleneck, yet the paper does not disentangle planning failures from mapping inaccuracies. Without reporting mapping quality metrics or evaluating the planners on ground-truth maps versus learned maps, it is impossible to determine whether the symmetric planners genuinely improve planning efficiency or merely benefit from a mapper that inadvertently learns symmetric features. A controlled analysis that isolates the planner's performance given fixed, noisy, or ground-truth maps would clarify the source of the generalization gains.\n\n- The choice of regular representations for scalar value functions lacks justification: In Section 6.1, the authors observe that using regular representations for the state value field $V$ outperforms the theoretically expected trivial representation. They attribute this to a bottleneck when mixing representation types but provide no ablation study or theoretical explanation. This design choice directly impacts memory usage and computational overhead, as it forces the value field to carry eight times the information of a scalar. The paper should include a systematic ablation comparing trivial, regular, and mixed representations for $V$ and $Q$, and discuss why higher-dimensional equivariant embeddings prove beneficial for a quantity that is mathematically a scalar.\n\n- Insufficient statistical reporting limits confidence in the generalization claims: The experimental results in Section 6 and Table 1 report averages over only three random seeds. Given the high variance typical in deep reinforcement learning and the sensitivity of planning algorithms to map generation, this sample size is too small to establish statistical significance. The paper also lacks robustness tests against environmental perturbations, such as training on rotated maps or testing with noisy obstacle detections. Adding more independent runs, reporting confidence intervals, and including perturbation robustness experiments would provide stronger evidence for the claimed data efficiency and generalization benefits.\n\n- Computational overhead and scalability are not discussed: The framework extends naturally to higher-dimensional or continuous spaces, as noted in the discussion, but the paper does not address the computational implications of steerable convolutions. Steerable layers typically require larger kernel matrices and more complex weight-sharing constraints, which can increase memory footprint and inference latency compared to standard CNNs. A brief analysis of training time, memory consumption, and scaling behavior as grid resolution increases would help readers assess the practical feasibility of SymPlan for larger state spaces. The authors should also clarify whether the $8\\times$ channel expansion from regular representations introduces bottlenecks at larger grid sizes.\n\n- Concrete worked example for the steerable kernel derivation: The theoretical claim that value iteration reduces to a steerable convolution (Theorem 4.2) remains abstract. Readers cannot easily verify how the transition kernel $P^a(s-s')$ or the steerability constraints manifest for a finite grid with obstacles. Computing equation (2) for a fully specified small grid, such as a 5x5 layout with a single obstacle and a goal, would demonstrate how the $D_4$ constraints shape the kernel weights and how the spatial MDP construction converts obstacle blocking into the reward field. This would ground the high-level group-theoretic derivation in a tangible example that standard readers can reproduce.\n\n- Mechanism for non-invariant rewards in equivariant updates: The authors explicitly note that the reward function $\bar{R}_m$ is not $G$-invariant, yet the Bellman operator $V_{k+1}(s) = \text{max}_a \bar{R}^a(s) + \text{gamma} [P^a \text{star} V_k](s)$ is claimed to be equivariant. Adding a non-invariant field to an equivariant one generally breaks equivariance unless the reward itself transforms under a specific representation or the max operation compensates. The paper does not explain how the planner maintains equivariance when the goal and obstacle locations encoded in $\bar{R}_m$ change arbitrarily. A derivation showing how the reward field is treated as an equivariant input, or a simulation demonstrating the planner's behavior when the goal is placed asymmetrically, would clarify this critical gap in the theoretical pipeline.\n\n- Equivariance guarantees in the end-to-end mapper network: The visual navigation and workspace manipulation experiments rely on a mapper network that converts raw observations into a plannable configuration space map. The paper claims the overall SymPlan framework is end-to-end equivariant, but it does not specify whether the mapper itself is constrained to be equivariant. If the mapper is a standard CNN, it will not commute with rotations or reflections, meaning the planner's equivariance will be broken at the input stage. The authors should either implement an equivariant mapper using steerable convolutions for the vision encoder or explicitly discuss how a non-equivariant mapper affects the end-to-end symmetry guarantees and generalization performance.\n\n- Verification that standard VIN/GPPN are recovered as special cases: The paper positions SymPlan as a direct generalization of VIN and GPPN. To validate this claim, the authors should verify that the proposed architecture reduces to the standard non-equivariant networks when the symmetry group is restricted to translations or when fiber representations are set to trivial. Providing a brief ablation or architectural mapping that shows how setting specific representation types collapses the steerable convolution back to a standard Conv2d layer would strengthen the connection to prior work and reassure readers that the framework is a strict superset rather than a loosely related modification.\n\nRecommendation: Major revision. The theoretical claims regarding translation invariance and boundary handling require clarification, and the experimental comparison is compromised by unreported parameter count disparities. The paper also needs stronger statistical reporting and a clearer disentanglement of mapping versus planning errors in the learned-map settings.\n\nRevision targets:\n\n- Report exact parameter counts, channel widths, and FLOPs for all baselines, and retrain non-equivariant models with matched capacity to isolate the effect of symmetry.\n\n- Analyze how boundary conditions and circular padding affect the $p4m$ equivariance guarantee, and clarify the theoretical scope of Theorem 4.2.\n\n- Disentangle mapping errors from planning errors by evaluating planners on ground-truth maps versus learned maps, and report mapping accuracy metrics.\n\n- Include a systematic ablation study on the choice of fiber representations for the value field $V$, explaining why regular representations outperform trivial ones.\n\n- Increase the number of random seeds to at least 5-10, report statistical significance tests, and add robustness experiments against map perturbations.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Reward field breaks equivariance",
+          "quote": "mphasize that the symmetry in spatial MDPs is different from symmetric MDPs *[7, 3, 9]*, since our reward function is not $G$-invariant. Although",
+          "explanation": "The theoretical framework claims that the Bellman operator and value iteration are G-equivariant. The reward field encodes goal locations and obstacle traps, which are generally not invariant under rotations or reflections. Adding a non-invariant reward field to an equivariant value propagation step breaks the equivariance of the overall update. The paper does not explain how the planner maintains equivariance when the goal is placed asymmetrically. You need to clarify whether the reward is treated as an equivariant input field or if the theoretical guarantees only hold for symmetric reward structures. Without this clarification, the claimed p4m equivariance of the full planner is mathematically unsound.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Max pooling collapses equivariance",
+          "quote": "1}$. While we have showed the $\\max$ operation in $V_{k+1}(s)=\\max_{a}Q_{k}^{a}(s)$ is equivariant in Theorem 4.3, we need to apply max(-pooling) for all actions along the \"representation channel\" from stacked representations $C_{A}*C_{Q}$ to one $C_{",
+          "explanation": "The claim that max-pooling over action channels is equivariant is technically imprecise. Max pooling over a permuted channel set yields an invariant scalar field, not an equivariant vector field. This operation collapses the steerable feature space into a trivial representation. While this matches the fact that the optimal value function V* is a scalar, labeling the step as equivariant confuses the pipeline's symmetry properties. Correct the terminology to reflect that max-pooling acts as a G-invariant channel reduction. Clarify how this interacts with the equivariant steerable convolutions in the subsequent iterations.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Parameter count and capacity mismatch",
+          "quote": "We keep the same parameters for all methods, so all equivariant convolution layers with regular representations will have higher embedding sizes.",
+          "explanation": "This statement is contradictory and obscures the experimental setup. Regular representations expand the channel dimension by |D4|=8. Maintaining a fixed parameter budget forces the non-equivariant baselines to use significantly smaller embedding sizes. The current phrasing suggests the equivariant models simply have larger embeddings. This would make the performance gains attributable to increased capacity rather than the inductive bias of symmetry. Report the exact channel widths and total parameter counts for all methods. Retrain the baselines with matched capacities to isolate the true effect of equivariance.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Contradictory convergence claims",
+          "quote": "sides vanilla VIN, all approaches finally converge to near-optimal successful rate (around  $95\\%$ ), while the validation and test results show large gaps.",
+          "explanation": "This sentence contains a direct logical contradiction. It claims uniform convergence to a 95% success rate while simultaneously stating that validation and test results exhibit large gaps. These two statements cannot both be true. The authors likely mean that the training success rate converges to 95%, but generalization performance falls short. Rewrite this to explicitly distinguish the training metric from the generalization metrics. This will resolve the confusion and accurately reflect the reported results.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Overstated generalization to continuous spaces",
+          "quote": "rids). Although we focus on  $\\mathbb{Z}^2$ , we can generalize to path planning on higher-dimensional or even continuous Euclidean spaces [54, 55], and use equivariant operations on steerable feature fields (",
+          "explanation": "The claim that the framework directly generalizes to continuous Euclidean spaces overlooks the critical role of boundary conditions. The theoretical derivation relies on translation-invariant transition kernels over an infinite or periodic grid. In continuous spaces with arbitrary obstacle layouts, the reward and transition fields become highly non-invariant. Simply applying steerable convolutions to a continuous domain does not automatically preserve the equivariance guarantees. Temper this statement to reflect that such an extension remains an open direction. Clarify how the transition kernel and reward field are constructed to maintain G-equivariance in non-grid environments.",
+          "comment_type": "technical",
+          "paragraph_index": 74,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.2235,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper attempts to connect differentiable planning (VINs) with steerable CNNs to enforce rotational/reflectional equivariance in 2D path planning. The core idea\u2014that value iteration on a spatial MDP can be expressed as a steerable convolution\u2014is plausible and potentially interesting. The empirical results show large improvements over baselines on several tasks. However, the paper has significant gaps in its theoretical justification, experimental rigor, and acknowledgment of limitations that prevent it from being publishable in its current form.\n\nOverview issues:\n\n- Theoretical claim that value iteration is a steerable convolution is not rigorously proven: The paper claims that value iteration for 2D path planning can be represented as a steerable convolution (Theorems 4.1, 4.2, Proposition 4.3). However, the proofs are relegated to the appendix, and the main text provides only a sketch. The critical step\u2014showing that the transition probability P^a(s,s') depends only on the state difference (s-s') and satisfies the steerability constraint under D_4\u2014is asserted but not fully justified. The construction of the spatial MDP that converts obstacles from the transition to the reward function is described only briefly, and it is not shown that this transformation preserves the optimal value function. Without a complete, self-contained proof in the main paper or a clear reference to a known result, the reader cannot verify the central theoretical contribution. The paper should either provide a complete proof or state the result as a conjecture supported by empirical evidence.\n\n- Insufficient isolation of the effect of symmetry from increased model capacity: The equivariant models (SymVIN, SymGPPN) use regular representations of D_4, which have 8 channels per feature field, while the non-equivariant baselines use standard convolutions with fewer channels. The paper states that 'all equivariant convolution layers with regular representations will have higher embedding sizes.' This means the symmetric models have strictly more parameters and representational capacity than the baselines. The observed improvements could be due to this increased capacity rather than the symmetry constraint. A proper ablation would compare an equivariant model against a non-equivariant model with the same number of parameters and channels, or use a controlled experiment where the only difference is the equivariance constraint (e.g., using steerable convolutions with trivial representations vs. regular representations). Without such an ablation, the claim that symmetry improves performance is confounded.\n\n- No analysis of computational cost or training overhead: The paper claims improved training efficiency, but it does not report training time, inference time, or memory usage for any method. Steerable convolutions typically have higher computational cost per layer than standard convolutions due to the kernel constraints and the use of regular representations (8 channels per feature). The paper should report wall-clock time per epoch, total training time, and memory consumption for all methods. It is possible that the symmetry benefits come at a significant computational cost that would limit practical applicability. This is a standard expectation for papers proposing new architectures in this field.\n\n- Generalization evaluation is limited to random maps with similar structure: The paper evaluates generalization on unseen random maps generated from the same distribution as the training data. This is a weak test of generalization. A stronger evaluation would include out-of-distribution scenarios such as maps with different obstacle densities, different topologies (e.g., mazes vs. open spaces), or maps with asymmetric features that violate the assumed symmetries. The paper should include experiments on maps with varying obstacle densities, different corridor widths, or structured environments (e.g., rooms and corridors) to demonstrate that the symmetry bias does not hurt performance when the environment is not symmetric. Additionally, the test maps are described as 'unlikely to be symmetric to the training maps by any transformation from the symmetry groups G,' but this does not guarantee they are out-of-distribution in terms of map complexity or structure.\n\n- No statistical significance or confidence intervals reported for main results: Table 1 reports success rates averaged over 3 seeds, but no standard deviations, confidence intervals, or statistical tests are provided. With only 3 seeds, the reported differences between methods could be within the noise. For example, SymGPPN achieves 99.98% on 15x15 navigation, while ConvGPPN achieves 99.75%; it is unclear if this difference is significant. The paper should report mean and standard deviation over at least 5-10 seeds, and ideally include a statistical test (e.g., paired t-test) to support claims of improvement. The training curves in Figure 5 show shaded standard error, which is good, but the final test results lack this information.\n\n- The spatial MDP construction that enables symmetry is not validated: The paper constructs a 'spatial MDP' by moving obstacle information from the transition function to the reward function (giving -infinity reward for obstacles). This is a key step that enables the transition to be G-invariant. However, the paper does not prove that this transformation preserves the optimal value function or policy. It is not obvious that setting the reward to -infinity for obstacle states is equivalent to having an absorbing state with zero reward. If the transformation changes the optimal policy, then the theoretical results about equivariance may not apply to the original problem. The paper should provide a formal proof or at least a rigorous argument that the spatial MDP is equivalent to the original MDP in terms of optimal actions.\n\n- Limited discussion of when symmetry might hurt performance: The paper assumes that enforcing rotational and reflectional equivariance is always beneficial for path planning. However, in many real-world environments, the optimal policy may not be equivariant. For example, if the goal is in a specific location and the obstacles are arranged asymmetrically, the optimal action at symmetric states may differ. The paper acknowledges this briefly in the discussion but does not analyze the conditions under which the equivariance constraint could lead to suboptimal performance. The paper should include experiments on environments with asymmetric obstacles or goals to show that the symmetric planner does not perform worse than the non-equivariant baselines in such cases. Alternatively, the paper should discuss how the learned reward map (R_m) can break the symmetry by encoding goal location, which is a crucial point that is not clearly explained.\n\n- Missing comparison with other equivariant planning approaches: The literature context mentions concurrent work on E(2)-equivariant graph planning for navigation (Li et al., 2023). The paper does not compare with this or other equivariant planning methods. While the paper focuses on steerable convolutions, it should at least discuss how its approach differs from graph-based equivariant methods and why the convolutional approach is preferable. A comparison on common benchmarks would strengthen the paper. Additionally, the paper does not compare with simpler data augmentation baselines (e.g., training VIN with random rotations of the input maps), which would be a natural baseline to isolate the benefit of architectural symmetry.\n\n- No worked concrete example of the spatial MDP construction: The paper introduces a 'spatial MDP' that moves obstacle information from the transition function to the reward function, which is critical for achieving G-invariant transitions. However, it does not compute this construction for any explicit, fully-specified grid environment. A natural addition would be to take a simple 3x3 grid with one obstacle, write down the original MDP and the spatial MDP explicitly, and verify that the optimal value function and policy are identical. Without this, the reader cannot assess whether the transformation is valid or whether it introduces approximation errors that affect the theoretical claims.\n\n- Missing demonstration that the result has bite via a counterexample: The paper claims that value iteration for 2D path planning is equivariant under isometries of Z^2, but it never shows a concrete DGP where a non-equivariant planner fails while the equivariant one succeeds. A standard test would be to construct a set of maps that are rotations or reflections of each other, train a non-equivariant VIN and SymVIN on only one orientation, and test on all orientations. The paper should report the success rate on rotated test maps to demonstrate that the equivariant architecture generalizes across symmetries while the non-equivariant one does not. This would directly validate the central claim of improved generalization from symmetry.\n\n- No computational cost analysis for steerable convolutions: The paper claims improved training efficiency and generalization, but it does not report any computational cost metrics such as training time per epoch, inference time, or memory usage. Steerable convolutions with regular representations of D_4 (8 channels per feature) are more expensive than standard convolutions. Without reporting wall-clock time and memory consumption, the reader cannot evaluate whether the symmetry benefits justify the overhead. The paper should include a table comparing training time per epoch, total training time, and peak GPU memory for VIN, SymVIN, ConvGPPN, and SymGPPN across all map sizes.\n\n- Missing comparison with data augmentation baseline: The paper does not compare against a simple data augmentation baseline, such as training a standard VIN with random rotations and reflections of the input maps. Data augmentation is a standard alternative to architectural equivariance and would directly isolate the benefit of the symmetry constraint. The paper should include experiments where VIN is trained with on-the-fly D_4 augmentation (rotating maps and corresponding actions) and compare its performance to SymVIN. If SymVIN outperforms augmented VIN, that would strengthen the claim that architectural symmetry provides additional benefits beyond data augmentation.\n\nRecommendation: major revision. The core idea is promising and the empirical results are suggestive, but the paper has several critical gaps: the theoretical proof is incomplete, the effect of symmetry is confounded with increased model capacity, and the experimental evaluation lacks statistical rigor and out-of-distribution testing. A major revision addressing these issues is necessary before the paper can be considered for publication.\n\nRevision targets:\n\n- Provide a complete, self-contained proof that value iteration on the spatial MDP is a steerable convolution, or clearly state the result as a conjecture supported by empirical evidence. Include the proof in the main paper or a detailed appendix.\n\n- Add an ablation study that compares equivariant and non-equivariant models with matched parameter counts and channel sizes. This could be done by using steerable convolutions with trivial representations (which have the same number of channels as the non-equivariant baseline) and comparing to regular representations.\n\n- Report training time, inference time, and memory usage for all methods. Include wall-clock time per epoch and total training time.\n\n- Add out-of-distribution generalization experiments, including maps with different obstacle densities, different topologies (e.g., mazes vs. open rooms), and environments with asymmetric obstacles or goals. Report performance on these to demonstrate robustness.\n\n- Report mean and standard deviation over at least 5 seeds for all main results, and include statistical significance tests (e.g., paired t-test) for the comparison between SymPlan and baselines.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Spatial MDP equivalence to original MDP is unproven",
+          "quote": "The core idea behind the construction is that it converts obstacles (encoded in transition probability  $P$ , by blocking) into \"traps\" (encoded in reward  $\\bar{R}$ , by  $-\\infty$  reward).",
+          "explanation": "The paper claims that converting obstacle information from the transition function to the reward function (by assigning -\u221e reward to obstacle states) yields an equivalent MDP, but it does not prove that this transformation preserves the optimal value function or policy. In the original MDP, an obstacle state is typically absorbing with zero reward; assigning -\u221e reward changes the value of that state and may alter the optimal policy in neighboring states. The paper should provide a formal proof or rigorous argument that the spatial MDP is equivalent to the original MDP in terms of optimal actions.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Transition function notation inconsistency",
+          "quote": "We call it spatial MDP, with different transition and reward function  $\\hat{\\mathcal{M}} = \\langle S, \\mathcal{A}, P, \\bar{R}_m, \\gamma \\rangle$ , which converts the \"complexity\" in the transition function  $P$  in  $\\mathcal{M}$  to the reward function  $\\bar{R}_m$  in  $\\hat{\\mathcal{M}}$",
+          "explanation": "The notation uses the same symbol P for the transition function in both the original MDP and the spatial MDP, but the text claims the transition function is 'different' in the spatial MDP. This is contradictory: if P is unchanged, then the obstacles are not removed from the transition function, and the claim that the transition becomes G-invariant is false. The paper should either define a new symbol for the spatial MDP's transition function (e.g., \\bar{P}) and specify how it differs from P, or clarify that P remains the same and only the reward changes.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Max pooling equivariance not justified",
+          "quote": "As for the operations, $\\max_{a}$ is (max) pooling (over group channel), $+,\\times$ are point-wise operations, and $\\star$ is convolution. As the second step, the main idea is to prove every operation in Bellman (optimality) operator on steerable fields is equivariant, including the nonlinear $\\max_{a}$ operator and $+,\\times$.",
+          "explanation": "The paper claims that the max pooling over actions is equivariant, but does not justify this. For the Bellman operator to be equivariant, we need $\\max_{a} (g.R^{a})(g.s) = g.(\\max_{a} R^{a})(s)$. This requires that the group action permutes the action indices in a way that is compatible with the max operation. The paper does not define how the group acts on the action set $\\mathcal{A}$ (only that translations act 'trivially' on actions). Add a definition: 'The group $G$ acts on actions by $g.a = r.a$ where $r\\in D_4$ is the rotation/reflection component, and translations act trivially. Then $\\max_{a}$ is equivariant because $\\max_{a} f(g.a)(g.s) = \\max_{a'} f(a')(g.s) = g.(\\max_{a'} f(a'))(s)$ after re-indexing.'",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Action representation under D_4 is underspecified",
+          "quote": "For action, the final action output  $A: \\mathbb{Z}^2 \\to \\mathbb{R}^{|\\mathcal{A}|}$  is for logits of four actions  $\\mathcal{A} = (\\text{north}, \\text{west}, \\text{south}, \\text{east})$  for every location. If we use $H = C_4$, it naturally acts on the four actions (ordered $\\circlearrowleft$) by cyclically $\\circlearrowleft$ permuting the $\\mathbb{R}^4$ channels. However, since the  $D_4$  group has 8 elements, we need a quotient representation, see [16] and Appendix F.",
+          "explanation": "The paper states that for C_4, the group cyclically permutes the four action channels, which is correct. However, it then says that because D_4 has 8 elements, a quotient representation is needed, but it does not specify what quotient representation is used or how it acts on the four actions. D_4 includes reflections, which would swap pairs of actions (e.g., north\u2194south, east\u2194west) in addition to rotations. The paper does not clarify whether the action space is closed under reflections, which is necessary for the representation to be well-defined. The authors should explicitly define the quotient representation and verify that it is consistent with the action set.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Regular representation choice lacks justification",
+          "quote": "In practice, we found using regular representations for all three works the best. It can be viewed as \"augmented\" state and is related to group convolution, detailed in Appendix F.",
+          "explanation": "The paper claims that using regular representations for the value, Q-value, and reward fields works best, but it does not provide any theoretical or empirical justification for this choice. The regular representation of D_4 has 8 channels per feature, which significantly increases the model capacity compared to using, e.g., trivial representations. The paper does not compare different representation choices (e.g., regular vs. trivial vs. irreducible) to show that the improvement is due to the symmetry properties of the regular representation rather than simply increased capacity. The authors should include an ablation study comparing different fiber representations for the intermediate fields, or at least discuss the trade-offs.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Equivariance of 1x1 convolution for reward prediction",
+          "quote": "the reward field  $R_M$  is predicted from map  $M$  (by a  $1 \\times 1$  convolution layer)",
+          "explanation": "The paper states that the reward field R_M is predicted from the input map M using a 1x1 convolution layer. For the overall pipeline to be equivariant, this 1x1 convolution must be equivariant under the group action. A 1x1 convolution is a pointwise linear map, which is equivariant if and only if it commutes with the group representation on the input and output fields. The paper specifies that the input M uses two copies of the trivial representation, and the reward field uses some representation (e.g., regular). The paper does not verify that a 1x1 convolution between these representations is equivariant. The authors should either specify that the 1x1 convolution uses a kernel that satisfies the steerability constraint, or clarify that the reward prediction is not required to be equivariant.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Missing success rate table and numerical results",
+          "quote": "We report successful rate and its training curves over $3$ seeds for each setup.",
+          "explanation": "The section states that success rate is reported, but no table of numerical results (e.g., mean and standard deviation across seeds) appears in the main text. Training curves in Figure 5 show standard error, but the final test performance is not tabulated. Without a table, the reader cannot compare methods quantitatively. Add a table (e.g., Table 1) reporting mean success rate and standard deviation for all methods and map sizes, as is standard in this field.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Inconsistent map sizes in Table 1",
+          "quote": "Table 1: Averaged test success rate (%) for using  ${10}\\mathrm{\\;K}/{2}\\mathrm{\\;K}/{2}\\mathrm{\\;K}$  dataset for all four types of tasks.",
+          "explanation": "The table header lists map sizes for navigation as 15\u00d715, 28\u00d728, 50\u00d750, and for manipulation as 18\u00d718, 36\u00d736. However, the section text earlier states that the map sizes are {15,28,50} for navigation and {18,36} for manipulation. The table includes an extra column labeled \"Visual\" under navigation and a column labeled \"Workspace\" under manipulation. The text does not define what \"Visual\" and \"Workspace\" columns represent, nor does it explain the corresponding map sizes or task conditions. This inconsistency makes the table difficult to interpret. The authors should either remove these undefined columns or add a clear description of what they measure, including the map sizes or task parameters used.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Contradiction in GPPN performance description",
+          "quote": "As for GPPN, we found the fully convolutional variant ConvGPPN actually works better than the original one in [36], especially in learning speed. SymGPPN further boosts ConvGPPN and outperforms all other methods, including our SymVIN. One exception is GPPN learns poorly in C-space manipulation. For GPPN, the added circular padding in the convolution encoder leads to gradient vanishing problem.",
+          "explanation": "The text first states that ConvGPPN works better than the original GPPN, and SymGPPN outperforms all methods. Then it says \"One exception is GPPN learns poorly in C-space manipulation.\" It is unclear whether this exception refers to the original GPPN, ConvGPPN, or both. The table shows GPPN achieving 2.62%, 1.68%, and 3.67% on manipulation tasks, while ConvGPPN achieves 99.98%, 99.95%, and 89.88%. So the poor performance applies only to the original GPPN, not to ConvGPPN. The sentence \"For GPPN, the added circular padding in the convolution encoder leads to gradient vanishing problem\" also seems to refer only to the original GPPN, but the wording is ambiguous. The authors should clarify which variant suffers from gradient vanishing and rewrite the paragraph to avoid conflating GPPN and ConvGPPN.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Missing quantitative results for generalization gap claims",
+          "quote": "In visual navigation, the trends are similar to 2D case: two symmetric planners both train much faster. Besides vanilla VIN, all approaches finally converge to near-optimal successful rate (around  $95\\%$ ), while the validation and test results show large gaps. SymGPPN has almost no generalization gap, while VIN does not generalize well to new 3D visual navigation environments. Our SymVIN improves test successful rate from less than  $50\\%$  to  $90\\%$  and is comparable",
+          "explanation": "The text makes strong quantitative claims ('less than 50% to 90%', 'almost no generalization gap') but does not report the actual numerical values for validation and test success rates in this section. Table 1 is referenced, but the reader cannot verify the claimed gaps without the table being present in the text or the specific numbers being stated. The authors should either include the exact success rates (e.g., 'SymVIN: train 99%, validation 98%, test 90%') in the prose or ensure Table 1 is placed immediately after this paragraph.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Unsupported claim about mapper network being the bottleneck",
+          "quote": "In our inspection, we found the mapper network is the bottleneck, since the mapping for obstacles from workspace to C-space is nontrivial to learn.",
+          "explanation": "The claim that the mapper network is the bottleneck is presented as a finding from 'inspection' but no evidence is provided. The authors do not show any ablation study (e.g., comparing SymPlan with a perfect oracle mapper vs. the learned mapper) or report mapper accuracy. Without such evidence, this statement is speculative. The authors should either remove the claim or support it with quantitative results, such as the mapper's prediction error or an ablation where the mapper is replaced with ground-truth C-space.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Overclaiming generalization to higher dimensions",
+          "quote": "Although we focus on  $\\mathbb{Z}^2$ , we can generalize to path planning on higher-dimensional or even continuous Euclidean spaces [54, 55], and use equivariant operations on steerable feature fields (such as steerable convolutions, pooling, and point-wise non-linearities) from steerable CNNs.",
+          "explanation": "The paper claims that the framework generalizes to higher-dimensional or continuous spaces, but this is not supported by any theoretical or experimental evidence in the paper. The core theoretical results (Theorems 4.1, 4.2, Proposition 4.3) are proven only for 2D grids with D_4 symmetry. Extending to higher dimensions (e.g., 3D) would require different symmetry groups (e.g., O(3)) and a different steerable CNN theory. The paper does not provide any proof sketch, reference, or even a discussion of the challenges involved. Rewrite the quoted text as: 'While our theoretical analysis focuses on $\\mathbb{Z}^2$, the steerable CNN framework can in principle be extended to other homogeneous spaces [12, 16]; we leave the investigation of higher-dimensional or continuous path planning to future work.'",
+          "comment_type": "technical",
+          "paragraph_index": 74,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        }
+      ],
+      "cost_usd": 0.0668,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper presents a novel framework for incorporating group symmetry into differentiable planning, specifically Value Iteration Networks (VINs) and Gated Path Planning Networks (GPPNs), using steerable convolutions. The authors demonstrate significant improvements in training efficiency and generalization on 2D path planning tasks. However, the work relies heavily on a strict grid-based abstraction and a specific symmetry group (D4/C4), which limits the applicability of the results. The theoretical contribution is strong, but the empirical validation is somewhat narrow, and the connection between the theoretical convolutional formulation and the practical implementation requires careful scrutiny regarding potential information loss.\n\nThis paper makes a valuable theoretical contribution by formally connecting value iteration to steerable convolutions, providing a principled way to inject symmetry into differentiable planning. The empirical results are compelling, showing clear gains over non-equivariant baselines. However, the focus on 2D grid environments with perfect rotational symmetry is a significant limitation. The paper claims generalization to unseen maps, but the test maps are generated by the same process and are unlikely to be symmetric, which masks the true generalization capability of the method. Furthermore, the computational overhead of steerable convolutions is not adequately analyzed.\n\nOverview issues:\n\n- Convolutional Representation of Value Iteration is Lossy: The paper claims that value iteration can always be represented as a convolution (Theorem 4.2), but this relies on the spatial MDP construction where obstacles are converted to infinite penalties. This transformation is highly lossy and may not preserve the optimal solution structure for all maps. The paper does not analyze whether the convolutional approximation introduces suboptimal paths or fails to find the true optimal policy in complex environments. A rigorous analysis or counter-example demonstrating the lossiness of this approximation is missing.\n\n- Test Data Generation Masks True Generalization: The paper claims generalization to unseen maps, but the test maps are generated using the same random process as the training maps. Since the test maps are unlikely to be symmetric, the performance gains of SymVIN and SymGPPN are attributed to the symmetry of the method itself, rather than its ability to generalize to structurally different environments. To truly demonstrate generalization, the test maps should be generated from a different distribution or should be structurally asymmetric. The current setup conflates 'generalization to unseen instances' with 'generalization to unseen distributions'.\n\n- Computational Overhead of Steerable Convolutions: The paper mentions that steerable convolutions are used to incorporate symmetry but does not provide a detailed analysis of the computational overhead compared to standard convolutions. The use of regular representations for intermediate fields significantly increases the number of parameters and channels (e.g., $C_Q \times C_A$ channels for Q-values), which could lead to higher computational costs and memory usage. A comparative analysis of training time, inference time, and memory footprint between SymVIN/SymGPPN and their non-equivariant counterparts is essential to assess the practical utility of the method.\n\n- Limited Scope: Strict Grid-Based and Perfect Symmetry Assumptions: The paper focuses exclusively on 2D grid environments with perfect rotational symmetry (D4/C4). This is a major limitation as real-world robotic environments are rarely perfectly symmetric and often involve continuous spaces or irregular topologies. The paper acknowledges this limitation but does not explore how the method would perform in more realistic settings, such as 3D navigation, maps with partial symmetry, or continuous configuration spaces. The results are therefore limited in scope and may not translate well to practical robotic applications.\n\n- Lack of Ablation Studies on Representation Choice: The paper states that using regular representations for state value $V$ and Q-value $Q$ works better than trivial representations, which is counterintuitive. While this is an interesting empirical finding, the paper does not provide a thorough ablation study to understand why this is the case. It could be due to the max-pooling operation or the nature of the steerable kernel. A deeper analysis of the impact of representation choice on the equivariance property and the final performance would strengthen the paper's contribution.\n\nRecommendation: Major revision. The theoretical contribution is strong and the empirical results are promising, but the paper requires significant revisions to address the limitations in scope, generalization testing, and computational analysis. The current focus on 2D grids with perfect symmetry limits the impact of the work, and the test data generation method obscures the true generalization capability of the method. A major revision is necessary to broaden the scope, provide a more rigorous analysis of the convolutional approximation, and include a comprehensive computational overhead analysis.\n\nRevision targets:\n\n- Broaden the scope of experiments to include 3D environments, continuous spaces, or maps with partial symmetry to demonstrate the method's robustness beyond the strict 2D grid assumption.\n\n- Re-evaluate the test data generation strategy to ensure that the generalization claims are valid, for example, by testing on maps generated from a different distribution or by explicitly testing on asymmetric maps.\n\n- Provide a detailed computational analysis comparing the training time, inference time, and memory usage of SymVIN/SymGPPN with their non-equivariant counterparts to assess the practical utility of the method.\n\n- Conduct a more rigorous ablation study on the choice of representation (trivial vs. regular) to understand the underlying reasons for the empirical findings and provide a theoretical justification.\n\n- Include a more thorough analysis of the lossiness of the convolutional approximation, potentially by providing counter-examples or theoretical bounds on the optimality gap introduced by the spatial MDP construction.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Kernel dimension mismatch contradicts equation",
+          "quote": " Thus, the steerable kernel is matrix-valued with dimension $P_{\\theta}:\\mathbb{Z}^{2}\\to\\mathbb{R}^{(C_{Q}*C_{A})\\times C_{V}}$.",
+          "explanation": "Equation (4) defines the update for a single action's value field $Q_k^a$, which has dimension $C_Q$. The equation states that $Q_k^a$ is updated by adding the result of a convolution $P_\theta^a \\\\[star] V_k$ to a reward field $R^a$. For this addition to be valid, the convolution output must have the same dimension as $Q_k^a$, which is $C_Q$. Since $V_k$ has dimension $C_V$, the kernel $P_\theta^a$ must map from $C_V$ to $C_Q$, implying a kernel dimension of $C_Q \\\\[times] C_V$. The text claims the kernel dimension is $(C_Q \\\\[times] C_A) \\\\[times] C_V$, which would imply the kernel maps from $C_V$ to $C_Q \\\\[times] C_A$. This contradicts the equation (4) and the definition of $Q_k^a$ as a field of size $C_Q$.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "G-invariance does not imply translation invariance",
+          "quote": "d we show it only depends on state difference $P^{a}(s-s^{\\prime})$ (or one-argument kernel *[12]*) using $G$-invariance, which is the key step to show it is some convolution.",
+          "explanation": "The claim that $G$-invariance (rotational and reflectional symmetry) establishes the convolutional form is mathematically incorrect. The dependence on the state difference $s-s'$ is a property of the grid world structure (translation invariance), not the group symmetry. $G$-invariance is used to ensure the kernel is steerable (isotropic), but it does not imply the transition probability depends only on the difference. The paper should attribute the difference dependence to the grid structure or the construction of the spatial MDP.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Q-value representation maps to scalar",
+          "quote": "actions. The Q-value field are for 4 actions and can be viewed as either  $\\mathbb{Z}^2 \\to \\mathbb{R}^4$  ([14, 16]) or  $\\mathbb{Z}^2 \\rtimes C_4 \\to \\mathbb{R}$  (on  $p4$  group, [15]).",
+          "explanation": "The second representation maps to a scalar $\\\\[mathbb{R}$, which is mathematically inconsistent with the definition of a Q-value field for 4 actions. A Q-value function for 4 actions should output a 4-dimensional vector. The scalar representation likely corresponds to the state-value function $V$, not $Q$. The text should correct the second representation to explicitly state that it refers to the state-value function $V$, or correct the mapping to reflect the 4-dimensional output for Q-values.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Missing formal definition of SymPlan",
+          "quote": "This section formulates the notion of Symmetric Planning (SymPlan). We expand the understanding of path planning in neural networks by planning as convolution on steerable feature fields (steerable planning). We use that to build steerable value iteration and show it is equivariant.",
+          "explanation": "The section introduces the term 'Symmetric Planning (SymPlan)' and claims to formulate it, but the body contains no formal definition, mathematical formulation, or algorithmic description of SymPlan. Readers cannot verify the claims made in the abstract or other sections without a concrete definition here. Add a formal definition of SymPlan immediately after the introduction sentence, specifying the input (steerable feature field), the operation (convolution with steerable kernels), and the output (equivariant policy/value field).",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.7-flash_4",
+          "title": "NP-hard claim conflates finding and maintaining symmetries",
+          "quote": "intractable (NP-hard) in maintaining symmetries in trajectory rollout and forward search (for large state space and symmetry group) and incompatible with differentiable pipelines for representation learning, hindering it from wider applications in RL and robotics.",
+          "explanation": "The assertion that maintaining symmetries in forward search is NP-hard is misleading. While finding exact symmetries (graph isomorphism) is NP-hard, many classic planning algorithms (like A*) implicitly exploit symmetries without explicitly constructing equivalence classes. The intractability usually arises from *detecting* the symmetry, not *maintaining* it during search. Furthermore, the statement that explicit equivalence classes are required is misleading; many algorithms handle symmetry implicitly. The paper should clarify that the difficulty lies in *detecting* or *abstracting* symmetries, not necessarily in the search process itself.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.7-flash_5",
+          "title": "State abstraction does not require perfect dynamics",
+          "quote": "er, they usually require *perfect* MDP dynamics knowledge and do not scale up well, because of the complexity in maintaining abstraction mappings (homomorphisms) and abstracted MDPs. van",
+          "explanation": "The statement that state abstraction requires 'perfect MDP dynamics knowledge' is incorrect. Many state abstraction techniques, such as bisimulation or coarsening based on state features, do not require exact knowledge of transition probabilities. They often rely on sampling or approximations. The complexity mentioned is valid for *exact* homomorphisms, but the paper should distinguish between exact and approximate abstraction methods. Claiming perfect knowledge is required is a strong and likely false restriction that limits the applicability of the cited work.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.7-flash_6",
+          "title": "Regular representation description is confusing",
+          "quote": " regular representation of $D_{4}$ maps each element to an $8\\times 8$ permutation matrix which does not act on 4-direction actions, which requires the quotient representations (quotienting out $fr^{2}$) and forming a $4\\times 4$ permutation matrix. It is worth mentioning th",
+          "explanation": "The description of the regular representation for D4 is confusing and potentially misleading. The regular representation of a group of size N is an NxN permutation matrix. For D4 (size 8), the regular representation is indeed an 8x8 matrix. However, the claim that it 'does not act on 4-direction actions' is misleading. The regular representation acts on the *group elements* themselves (e.g., mapping rotation r to a permutation of the 8 group elements). If the paper intends to represent actions (which form a set of size 4, e.g., N, E, S, W), the regular representation of the *action group* (C4) is a 4x4 matrix, not the regular representation of D4. The paper should clarify whether it is discussing the regular representation of the action group C4 or the full D4 group acting on the state space.",
+          "comment_type": "technical",
+          "paragraph_index": 17,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.7-flash_7",
+          "title": "Generalization claim is ambiguous",
+          "quote": "SymGPPN has almost no generalization gap, while VIN does not generalize well to new 3D visual navigation environments.",
+          "explanation": "The statement that SymGPPN has 'almost no generalization gap' is ambiguous without specifying the metric or the distribution of test maps. Since the paper previously noted that test maps are generated from the same random process as training maps, this statement conflates generalization to unseen instances with generalization to unseen distributions. To clarify, rewrite the sentence to specify the test distribution: 'SymGPPN has almost no generalization gap when tested on maps generated from the same distribution as training maps, while VIN does not generalize well to new 3D visual navigation environments.'",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.7-flash_8",
+          "title": "Abstract improvement claim lacks specificity",
+          "quote": "Our algorithms on navigation and manipulation, with given or learned maps, improve training efficiency and generalization performance by large margins over non-equivariant counterparts, VIN and GPPN.",
+          "explanation": "The abstract claims that the SymPlan algorithms provide 'great improvement' over non-equivariant counterparts, but this is a qualitative claim that lacks specific quantitative benchmarks or comparisons. The reader cannot verify the magnitude of improvement without seeing concrete numbers or metrics. Additionally, the abstract mentions 'generalization to unseen maps' in the full paper scope, but the provided text does not detail how this generalization is measured or demonstrated.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.7-flash_9",
+          "title": "Grammar error in abstract",
+          "quote": "We first formalize the idea from Value Iteration Networks (VINs) on using convolutional networks for path planning, because it avoids explicitly constructing equivalence classes and enable end-to-end planning.",
+          "explanation": "The phrase 'enable end-to-end planning' is grammatically incorrect; it should be 'enables' to match the singular subject 'it'. Rewrite the sentence as 'We first formalize the idea from Value Iteration Networks (VINs) on using convolutional networks for path planning, because it avoids explicitly constructing equivalence classes and enables end-to-end planning.'",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__glm-4.7-flash_10",
+          "title": "Map size specification is ambiguous",
+          "quote": "In both environments, the setup is similar to Section 6.1, while we only use  $m = 15$  maps but longer 100 epochs for visual navigation and  $m = 18$  maps still with 30 epochs for workspace manipulation.",
+          "explanation": "The text states $m = 15$ maps for visual navigation but does not specify the grid resolution (e.g., $15 \\\\[times] 15$) in this sentence. Section 6.1 mentions $m \\\\[times] m$ maps, but this sentence is ambiguous. To fix, rewrite the sentence to explicitly state the grid resolution: '...while we only use $15 \\\\[times] 15$ maps but longer 100 epochs for visual navigation and $18 \\\\[times] 18$ maps still with 30 epochs for workspace manipulation.'",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__glm-4.7-flash_11",
+          "title": "Bottleneck claim lacks quantitative evidence",
+          "quote": "In our inspection, we found the mapper network is the bottleneck, since the mapping for obstacles from workspace to C-space is nontrivial to learn.",
+          "explanation": "The claim that the mapper network is the bottleneck is an empirical observation but lacks quantitative evidence. The paper does not provide ablation studies or metrics comparing the performance of the mapper network to the planner network. To support this claim, add specific data or a comparison: 'In our inspection, we found the mapper network is the bottleneck, with a validation error of X% compared to Y% for the planner network, since the mapping for obstacles from workspace to C-space is nontrivial to learn.'",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "minor",
+          "confidence": "low",
+          "status": "Pending",
+          "coarse_number": 12
+        }
+      ],
+      "cost_usd": 0.1187,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

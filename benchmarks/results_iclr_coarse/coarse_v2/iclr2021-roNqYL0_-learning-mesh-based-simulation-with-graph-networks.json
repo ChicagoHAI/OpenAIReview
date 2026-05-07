@@ -1,0 +1,757 @@
+{
+  "slug": "iclr2021-roNqYL0_-learning-mesh-based-simulation-with-graph-networks",
+  "title": "Learning Mesh-Based Simulation with Graph Networks",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2021\n\n## LEARNING MESH-BASED SIMULATION WITH GRAPH NETWORKS\n\n**Tobias Pfaff** _[\u2217]_ **, Meire Fortunato** _[\u2217]_ **, Alvaro Sanchez-Gonzalez** _[\u2217]_ **, Peter W. Battaglia** Deepmind, London, UK"
+    },
+    {
+      "index": 1,
+      "text": "_{_ tpfaff,meirefortunato,alvarosg,peterbattaglia _}_ @google.com\n\n## ABSTRACT\n\nMesh-based simulations are central to modeling complex physical systems in many disciplines across science and engineering. Mesh representations support powerful numerical integration methods and their resolution can be adapted to strike favorable trade-offs between accuracy and efficiency. However, highdimensional scientific simulations are very expensive to run, and solvers and parameters must often be tuned individually to each system studied. Here we introduce MESHGRAPHNETS, a framework for learning mesh-based simulations using graph neural networks. Our model can be trained to pass messages on a mesh graph and to adapt the mesh discretization during forward simulation. Our results show it can accurately predict the dynamics of a wide range of physical systems, including aerodynamics, structural mechanics, and cloth. The model\u2019s adaptivity supports learning resolution-independent dynamics and can scale to more complex state spaces at test time. Our method is also highly efficient, running 1-2 orders of magnitude faster than the simulation on which it is trained. Our approach broadens the range of problems on which neural network simulators can operate and promises to improve the efficiency of complex, scientific modeling tasks."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nState-of-the art modeling of complex physical systems, such as deforming surfaces and volumes, often employs mesh representations to solve the underlying partial differential equations (PDEs). Mesh-based finite element simulations underpin popular methods in structural mechanics [31, 48], aerodynamics [13, 34], electromagnetics [32], geophysics [35, 39], and acoustics [26]. Meshes also support adaptive representations, which enables optimal use of the resource budget by allocating greater resolution to regions of the simulation domain where strong gradients are expected or more accuracy is required, such as the tip of an airfoil in an aerodynamics simulation. Adaptive meshing enables running simulations at accuracy and resolution levels impossible with regular discretization schemes [8, 27] (Figure 3b)."
+    },
+    {
+      "index": 3,
+      "text": "Despite their advantages, mesh representations have received relatively little attention in machine learning. While meshes are sometimes used for learned geometry processing [9] and generative models of shapes [15, 29], most work on predicting high-dimensional physical systems focuses on grids, owing to the popularity and hardware support for CNN architectures [19]. We introduce a method for predicting dynamics of physical systems, which capitalizes on the advantages of adaptive mesh representations. Our method works by encoding the simulation state into a graph, and performing computations in two separate spaces: the mesh-space, spanned by the simulation mesh, and the Euclidean world-space in which the simulation manifold is embedded (see Figure 3a). By passing messages in mesh-space, we can approximate differential operators that underpin the internal dynamics of most physical systems. Message-passing in world-space can estimate external dynamics, not captured by the mesh-space interactions, such as contact and collision. Unstructured irregular meshes, as opposed to regular grids, support learning dynamics which are independent of resolution, allowing variable resolution and scale at runtime. By learning a map of desired resolution over the mesh (sizing field), together with a local remesher, our method can even adaptively change"
+    },
+    {
+      "index": 4,
+      "text": "> _\u2217_ equal contribution\n\n> Videos of all our experiments can be found at https://sites.google.com/view/meshgraphnets"
+    },
+    {
+      "index": 5,
+      "text": "1\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\nIterative\nLearned one-step simulator rollout\nq [t] i q [t] i [+1]\nUpdate\np i\nM [t] M [t] [+1] M [t] [+2]\nCloth mesh nodes\nV\nEncoder Processor Decoder Obstacle mesh nodes\nG Mesh-space edges E [M]\nWorld-space edges E [W]\nMesh-space messages e [0][M] ij\nWorld-space messages e [0][W] ij\nMessage\npassing x L Decoded accelerations p i\n**----- End of picture text -----**"
+    },
+    {
+      "index": 6,
+      "text": "Figure 1: Diagram of MESHGRAPHNETS operating on our SPHEREDYNAMIC domain (video). The model uses an Encode-Process-Decode architecture trained with one-step supervision, and can be applied iteratively to generate long trajectories at inference time. The encoder transforms the input mesh _M[t]_ into a graph, adding extra world-space edges. The processor performs several rounds of message passing along mesh edges and world edges, updating all node and edge embeddings. The decoder extracts the acceleration for each node, which is used to update the mesh to produce _M[t]_[+1] ."
+    },
+    {
+      "index": 7,
+      "text": "the discretization during rollouts, budgeting greater computational resources for important regions of the simulation domain."
+    },
+    {
+      "index": 8,
+      "text": "Together, our method allows us to learn the dynamics of vastly different physical systems, from cloth simulation over structural mechanics to fluid dynamics directly from data, providing only very general biases such as spatial equivariance. We demonstrate that by using mesh-space computation we can reliably model materials with a rest state such as elastics, which are challenging for meshfree prediction models [37]. MESHGRAPHNETS outperform particle- and grid-based baselines, and can generalize to more complex dynamics than those on which it was trained."
+    },
+    {
+      "index": 9,
+      "text": "## 2 RELATED WORK\n\nModelling high-dimensional physics problems with deep learning algorithms has become an area of great research interest in fields such as computational fluid dynamics. High resolution simulations are often very slow, and learned models can provide faster predictions, reducing turnaround time for workflows in engineering and science [16, 6, 49, 20, 1]. Short run times are also a desirable property for fluid simulation in visualization and graphics [46, 41, 47]. Learned simulations can be useful for real-world predictions where the physical model, parameters or boundary conditions are not fully known [12]. Conversely, the accuracy of predictions can be increased by including specialized knowledge about the system modelled in the form of loss terms [43, 23], or by physics-informed feature normalization [40]."
+    },
+    {
+      "index": 10,
+      "text": "The methods mentioned above are based on convolutional architectures on regular grids. Although this is by far the most widespread architecture for learning high-dimensional physical systems, recently there has been an increased interest in particle-based representations, which are particularly attractive for modelling the dynamics of free-surface liquids and granular materials. Ladicky et al. [22] use random forests to speed up liquid simulations. Various works [24, 42, 37] use graph neural networks (GNNs) [38, 4] to model particle-based granular materials and fluids, as well as glassy dynamics [3]. Learned methods can improve certain aspects of classical FEM simulations, e.g. more accurate handling of strongly nonlinear displacements [25] or learned elements which directly map between forces and displacements [10]. Finally, dynamics of high dimensional systems can be learned in reduced spaces. Holden et al. [18] performs PCA decomposition on cloth data, and"
+    },
+    {
+      "index": 11,
+      "text": "2\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n(a) FlagDynamic (b) DeformingPlate (c) CylinderFlow (d) Airfoil\nactuator\nwind cloth water air airfoil\nmetal plate\n**----- End of picture text -----**"
+    },
+    {
+      "index": 12,
+      "text": "Figure 2: Our model can predict dynamics of vastly different physical systems, from structural mechanics over cloth to fluid dynamics. We demonstrate this by simulating (a) a flag waving in the wind, (b) a deforming plate, (c) flow of water around a cylinder obstacle, and (d) the dynamics of air around the cross-section of an aircraft wing (videos). The color map shows the von-Mises stress in (b), and the x-component of the velocity field in (c),(d)."
+    },
+    {
+      "index": 13,
+      "text": "learns a correction model to improve accuracy of subspace simulation. These models are however very domain-specific, and the expression range is limited due to the use of the linear subspace."
+    },
+    {
+      "index": 14,
+      "text": "There is increased attention in using meshes for learned geometry and shape processing [9, 29, 17]. But despite mesh-based simulations being the tool of choice in mechanical engineering and related disciplines, adaptive mesh representations have not seen much use in machine learning for physics prediction, with a few notable exceptions [5, 2]. Belbute-Peres et al. [5] embed a differentiable aerodynamics solver in a graph convolution (GCN) [21] prediction pipeline for super-resolution in aerodynamics predictions. Our method has similarities, but without a solver in the loop, which potentially makes it easier to use and adapt to new systems. In Section 5 we show that MESHGRAPHNETS are better suited for dynamical prediction than GCN-based architectures. Finally, Graph Element Networks [2] uses meshes over 2D grid domains to more efficiently compute predictions and scene representations. Notably they use small planar systems ( _<_ 50 nodes), while we show how to scale mesh-based predictions to complex 3D systems with thousands of nodes."
+    },
+    {
+      "index": 15,
+      "text": "## 3 MODEL\n\nWe describe the state of the system at time _t_ using a simulation mesh _M[t]_ = ( _V, E[M]_ ) with nodes _V_ connected by mesh edges _E[M]_ . Each node _i \u2208 V_ is associated with a reference mesh-space coordinate **u** _i_ which spans the simulation mesh, and additional dynamical quantities **q** _i_ that we want to model. _Eulerian_ systems (Figure 2c,d) model the evolution of continuous fields such as velocity over a fixed mesh, and **q** _i_ sample these fields at the mesh nodes. In _Lagrangian_ systems, the mesh represents a moving and deforming surface or volume (e.g. Figure 2a,b), and contains an extra world-space coordinate **x** _i_ describing the dynamic state of the mesh in 3D space, in addition to the fixed mesh-space coordinate **u** _i_ (Figure 3a)."
+    },
+    {
+      "index": 16,
+      "text": "## 3.1 LEARNING FORWARD DYNAMICS\n\nThe task is to learn a forward model of the dynamic quantities of the mesh at time _t_ +1 given the current mesh _M[t]_ and (optionally) a history of previous meshes _{M[t][\u2212]_[1] _, ..., M[t][\u2212][h] }_ . We propose MESHGRAPHNETS, a graph neural network model with an Encode-Process-Decode architecture [4, 37], followed by an integrator. Figure 1 shows a visual scheme of the MESHGRAPHNETS architecture. Domain specific information on the encoding and integration can be found in Section 4."
+    },
+    {
+      "index": 17,
+      "text": "**Encoder** The encoder encodes the current mesh _M[t]_ into a multigraph _G_ = ( _V, E[M] , E[W]_ ). Mesh nodes become graph nodes _V_ , and mesh edges become bidirectional mesh-edges _E[M]_ in the graph. This serves to compute the internal dynamics of the mesh. For Lagrangian systems, we add world edges _E[W]_ to the graph, to enable learning external dynamics such as (self-) collision and contact,"
+    },
+    {
+      "index": 18,
+      "text": "3\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n(a) (b)\nxi xj ui uj\nworld space x mesh space u regular mesh adaptive mesh\n**----- End of picture text -----**"
+    },
+    {
+      "index": 19,
+      "text": "Figure 3: Simulation of a cloth interacting with a sphere. (a) In red, we highlight two nodes which are close in world-space but far in mesh-space, between which a world edge may be created. (b) With the same number of nodes, adaptive remeshing enables significantly more accurate simulations than a regular mesh with the same number of nodes."
+    },
+    {
+      "index": 20,
+      "text": "which are non-local in mesh-space.[1] World-space edges are created by spatial proximity: that is, given a fixed-radius _rW_ on the order of the smallest mesh edge lengths, we add a world edge between nodes _i_ and _j_ if _|_ **x** _i \u2212_ **x** _j| < rW_ , excluding node pairs already connected in the mesh. This encourages using world edges to pass information between nodes that are spatially close, but distant in mesh space (Figure 3a)."
+    },
+    {
+      "index": 21,
+      "text": "Next, we encode features into graph nodes and edges. To achieve spatial equivariance, positional features are provided as relative edge features. We encode the relative displacement vector in mesh space **u** _ij_ = **u** _i \u2212_ **u** _j_ and its norm _|_ **u** _ij|_ into the mesh edges **e** _[M] ij[\u2208][E][M]_[. Then, we encode the relative] world-space displacement vector **x** _ij_ and its norm _|_ **x** _ij|_ into both mesh edges **e** _[M] ij[\u2208][E][M]_[and world] edges **e** _[W] ij[\u2208][E][W]_[ .][All remaining dynamical features] **[ q]** _[i]_[, as well as a one-hot vector indicating node] type, are provided as node features in **v** _i_ ."
+    },
+    {
+      "index": 22,
+      "text": "Finally, the concatenated features above are encoded into a latent vector of size 128 at each node and edge, using the encoder MLPs _\u03f5[M] , \u03f5[W] , \u03f5[V]_ for mesh edges **e** _[M] ij_[, world edges] **[ e]** _[W] ij_[, and nodes] **[ v]** _[i]_ respectively. See sections 4 and A.1 for more details on input encoding."
+    },
+    {
+      "index": 23,
+      "text": "**Processor** The processor consists of _L_ identical message passing blocks, which generalize GraphNet blocks [36] to multiple edge sets. Each block contains a separate set of network parameters, and is applied in sequence to the output of the previous block, updating the mesh edge **e** _[M] ij_[, world edge] **e** _[W] ij_[, and node] **[ v]** _[i]_[embeddings to] **[ e]** _[\u2032][M] ij_[,] **[ e]** _[\u2032][W] ij_[,] **[ v]** _[\u2032][i]_[respectively by]"
+    },
+    {
+      "index": 24,
+      "text": "where _f[M]_ , _f[W]_ , _f[V]_ are implemented using MLPs with a residual connection.\n\n**Decoder and state updater** For predicting the time _t_ +1 state from the time _t_ input, the decoder uses an MLP _\u03b4[V]_ to transform the latent node features **v** _i_ after the final processing step into one or more output features **p** _i_ ."
+    },
+    {
+      "index": 25,
+      "text": "We can interpret the output features **p** _i_ as (higher-order) derivatives of **q** _i_ , and integrate them using a forward-Euler integrator with \u2206 _t_ = 1 to compute the next-step dynamical quantity **q** _[t] i_[+1] . For firstorder systems the output **p** _i_ is integrated once to update **q** _[t] i_[+1] = **p** _i_ + **q** _[t] i_[,][while][for][second-order] integration happens twice: **q** _[t] i_[+1] = **p** _i_ + 2 **q** _[t] i[\u2212]_ **[q]** _[t][\u2212]_[1][.][Additional][output][features] **[p]** _[i]_[are][also][used] to make direct predictions of auxiliary quantities such as pressure or stress. For domain-specific details on decoding, see Section 4. Finally, the output mesh nodes _V_ are updated using **q** _[t] i_[+1] to produce _M[t]_[+1] . For some systems, we dynamically adapt the mesh after each prediction step; this is explained in the following section."
+    },
+    {
+      "index": 26,
+      "text": "> 1From here on, any mention of world edges and world coordinates applies only to Lagrangian systems; they are omitted for Eulerian systems."
+    },
+    {
+      "index": 27,
+      "text": "4\n\nPublished as a conference paper at ICLR 2021\n\n## 3.2 ADAPTIVE REMESHING\n\nAdaptive remeshing algorithms generally consist of two parts: identifying which regions of the simulation domain need coarse or fine resolution, and adapting the nodes and their connections to this target resolution. Only the first part requires domain knowledge of the type of physical system, which usually comes in the form of heuristics. For instance, in cloth simulation, one common heuristic is the refinement of areas with high curvature to ensure smooth bending dynamics (Figure 3b), while in computational fluid dynamics, it is common to refine around wall boundaries where high gradients of the velocity field are expected."
+    },
+    {
+      "index": 28,
+      "text": "In this work we adopt the _sizing field_ methodology [27]. The sizing field tensor **S** ( **u** ) _\u2208_ R[2] _[\u00d7]_[2] specifies the desired local resolution by encoding the maximally allowed oriented, edge lengths in the simulation mesh. An edge **u** _ij_ is valid if and only if **u**[T] _ij_ **[S]** _[i]_ **[ u]** _[ij][\u2264]_[1][,][otherwise][it][is][too][long,] and needs to be split[2] . Given the sizing field, a generic local remeshing algorithm can simply split all invalid edges to refine the mesh, and collapse as many edges as possible, without creating new invalid edges, to coarsen the mesh. We denote this remeshing process as _M[\u2032]_ = _R_ ( _M,_ **S** )."
+    },
+    {
+      "index": 29,
+      "text": "**Learned remeshing** To leverage the advantages in efficiency and accuracy of dynamic remeshing, we need to be able to adapt the mesh at test time. Since remeshing requires domain knowledge, we would however need to call the specific remesher used to generate the training data at each step during the model rollout, reducing the benefits of learning the model. Instead, we learn a model of the sizing field (the only domain-specific part of remeshing) using the same architecture as in Section 3.1 and train a decoder output **p** _i_ to produce a sizing tensor for each node. At test time, for each time step we predict both the next simulation state and the sizing field, and use a generic, domainindependent remesher _R_ to compute the adapted next-step mesh as _M[t]_[+1] = _R_ ( _M_[\u02c6] _[t]_[+1] _,_ **S**[\u02c6] _[t]_[+1] ). We demonstrate this on triangular meshes, Section A.3 describes the simple generic remesher that we use for this purpose. While the sizing field is agnostic to the mesh type, other mesh types may require different local remeshers; for tetrahedral meshes a method such as Wicke et al. [45] could be used, while quad meshes can simply be split into triangular meshes."
+    },
+    {
+      "index": 30,
+      "text": "## 3.3 MODEL TRAINING\n\nWe trained our dynamics model by supervising on the per-node output features **p** _i_ produced by the decoder using a _L_ 2 loss between **p** _i_ and the corresponding ground truth values **p** \u00af _i_ . Similarly, the sizing field model is trained with an _L_ 2 loss on the ground truth sizing field. If sizing information is not available in the training data, e.g. not exposed by the ground truth simulator, we can still estimate a compatible sizing field from samples of simulator meshes, and use this estimate as labels (details in Section A.3.1)."
+    },
+    {
+      "index": 31,
+      "text": "## 4 EXPERIMENTAL DOMAINS\n\nWe evaluated our method on a variety of systems with different underlying PDEs, including cloth, structural mechanics, incompressible and compressible fluids (Figure 2). Training and test data was produced by a different simulator for each domain. The simulation meshes range from regular to highly irregular: the edge lengths of dataset AIRFOIL range between 2 _\u00b7_ 10 _[\u2212]_[4] m to 3.5m, and we also simulate meshes which dynamically change resolution over the course of a trajectory. Full details on the datasets can be found in Section A.1."
+    },
+    {
+      "index": 32,
+      "text": "Our structural mechanics experiments involve a hyper-elastic plate, deformed by a kinematic actuator, simulated with a quasi-static simulator (DEFORMINGPLATE). Both actuator and plate are part of the Lagrangian tetrahedral mesh, and are distinguished by a one-hot vector for the corresponding node type **n** _i_ . We encode the node quantities **u** _i,_ **x** _i,_ **n** _i_ in the mesh, and predict the Lagrangian velocity **x** \u02d9 _i_ , which is integrated once to form the next position **x** _[t] i_[+1] . As a second output, the model predicts the von-Mises stress _\u03c3i_ at each node."
+    },
+    {
+      "index": 33,
+      "text": "Our cloth experiments involve a flag blowing in the wind (FLAGDYNAMIC) and a piece of cloth interacting with a kinematic sphere (SPHEREDYNAMIC) on an adaptive triangular mesh, which"
+    },
+    {
+      "index": 34,
+      "text": "> 2This formulation allows different maximal edge lengths depending on the direction. For e.g. a mesh bend around a cylinder, it allows to specify shorter edge lengths in the bent dimension than along the cylinder."
+    },
+    {
+      "index": 35,
+      "text": "5\n\nPublished as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n(a) Ground truth Prediction (ours) UNet (b)\nGeneralization experiment\n20k nodes\nTraining domain\n2k nodes\n**----- End of picture text -----**"
+    },
+    {
+      "index": 36,
+      "text": "Figure 4: (a) Rollout of our model versus ground truth on dataset AIRFOIL. Adaptive meshing allows us to accurately predict dynamics at large and small scales. The grid-based U-Net baseline is capable of making good predictions at large scales, but it cannot resolve the smaller scales, despite using four times more cells than our model (video). (b) At inference time, our model can be scaled up to significantly larger and more complex setups than seen during training (video)."
+    },
+    {
+      "index": 37,
+      "text": "changes resolution at each time step. The dataset FLAGSIMPLE shares the setup of FLAGDYNAMIC, but uses a static mesh and ignores collisions. The node type **n** _i_ distinguishes cloth and obstacle/boundary nodes, and we encode inputs **u** _i,_ **x** _i,_ **n** _i_ as above, but since this is a fully dynamic timatesecond order system, **x** \u02d9 _[t] i_[=] **[x]** _[t] i[\u2212]_ **[x]** _[t] i[\u2212]_ we additionally provide[1] as a node feature. The decoder outputs acceleration _h_ = 1 steps of history, by including the velocity es- **x** \u00a8 _i_ which is integrated twice."
+    },
+    {
+      "index": 38,
+      "text": "Our incompressible fluid experiments use the CYLINDERFLOW dataset, which simulates the flow of water around a cylinder on a fixed 2D Eulerian mesh. The mesh contains the node quantities **u** _i,_ **n** _i,_ **w** _i_ , where **w** _i_ is a sample of the momentum field at the mesh nodes. In all fluid domains, the node type distinguishes fluid nodes, wall nodes and inflow/outflow boundary nodes. The network predicts change in momentum **w** \u02d9 _i_ , which is integrated once, and a direct prediction of the pressure field _p_ ."
+    },
+    {
+      "index": 39,
+      "text": "Our compressible fluid experiments use the AIRFOIL dataset, which simulates the aerodynamics around the cross-section of an airfoil wing. We model the evolution of momentum[3] **w** and density _\u03c1_ fields, and hence the 2D Eulerian mesh encodes the quantities **u** _i,_ **n** _i,_ **w** _i, \u03c1i_ . We treat this as a first order system and predict change in momentum **w** \u02d9 _i_ and density _\u03c1_ \u02d9 _i_ , as well as pressure _pi_ ."
+    },
+    {
+      "index": 40,
+      "text": "## 5 RESULTS\n\nWe tested our MESHGRAPHNETS model on our four experimental domains (Section 4), and compared it to three different baseline models. Our main findings are that MESHGRAPHNETS are able to produce high-quality rollouts on all domains, outperforming particle- and grid-based baselines, while being significantly faster than the ground truth simulator, and generalizing to much larger and more complex settings at test time."
+    },
+    {
+      "index": 41,
+      "text": "Videos of rollouts, as well as comparisons, can be found at https://sites.google.com/view/ meshgraphnets. Visually the dynamics remain plausible and faithful to the ground truth. Table 1 shows 1-step prediction and rollout errors in all of our datasets, while qualitative and quantitative comparisons are provided in Figure 4 and Figure 5. Even though our model was trained on next-step predictions, model rollouts remain stable for thousands of steps. This video shows a model trained on trajectories of 400 steps rolled out for 40000 steps."
+    },
+    {
+      "index": 42,
+      "text": "**Learned remeshing** We trained both a dynamics and a sizing field model to perform learned dynamic remeshing during rollout on FLAGDYNAMIC and SPHEREDYNAMIC. We compare learned remeshing variants with sizing model learned from labeled sizing data, as in Section 3.2, as well as"
+    },
+    {
+      "index": 43,
+      "text": "> 3 In visualizations, we show velocity, calculated as momentum **w** divided by density _\u03c1_ .\n\n6\n\nPublished as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 44,
+      "text": "**----- Start of picture text -----**\n\n(a) 1e1 1e\u22121 (c) 1e\u22121 1e\u22122\n6 0.75 3 Ours\nGCN 0.75 (ground truth meshes)\n4 0.50 GCN (MLP)UNet-128 0.50 2 Ours(learned sizing field)\n2 0.25 Ours 0.25 1 Ours(learned sizing field\n0 0.00 0.00 0 from estimated targets)\n(b) 1.0 GNS 1-histGNS 5-hist 0.75 (d) 0.10\nGNS+mesh-pos 0.2\n0.5 Ours 0.50 0.05\n0.25 0.1\n0.0\n0.00 0.0 0.00\n0 100 200 300 400 1 3 5 7 9 1113151720 1 2 3 4 5\nSimulation Rollout Step Num Message Passing Steps (L) History Size (h)\nAirfoil\nRollout RMSE CylinderFlow Rollout RMSE FlagDynamic\nSphereDynamic\nRMSE\nFlagSimple Rollout RMSE FlagDynamic Rollout RMSE FlagDynamic\n**----- End of picture text -----**"
+    },
+    {
+      "index": 45,
+      "text": "Figure 5: (a) Our model outperforms GCN and CNN-based baselines. (b) GNS diverges on cloth datasets; providing mesh-space positions (GNS+mesh-pos) helps, but still fails on dynamic meshes. (c) Remeshing with learned or estimated sizing fields produces accurate rollouts. (d) Taking sufficient message passing steps is crucial for good performance, and limiting history size increases accuracy by preventing overfitting."
+    },
+    {
+      "index": 46,
+      "text": "from estimated targets, as in Section A.3.1. As a baseline, we ran our forward model on the ground truth mesh sequence. As observed in the video, all learned remeshing variants are able to shift the resolution to the new folds as they appear in the cloth, yield equally plausible dynamics, and are on par[4] in terms of quantitative performance (Figure 5c). Thus, our learned remeshing method provides the benefits of adaptive remeshing, which can be substantive in some domains, without requiring a domain-specific remesher in the loop."
+    },
+    {
+      "index": 47,
+      "text": "**Computational efficiency** Our approach is consistently faster than ground truth solvers by one to two orders of magnitude on all domains (Table 1). We believe this is due to our model being able to take much larger timesteps than classical solvers, and avoiding performance bottlenecks. Additionally, classical general-purpose solvers on irregular domains, such as those studied in this paper, often do not scale well on hardware accelerators, while our model is built from neural network building blocks, highly suitable for hardware acceleration. A more detailed breakdown of performance on e.g. hardware setup is available in the appendix (section A.5.1). Our model\u2019s strong efficiency advantage means it may be applicable in situations where computing costs are otherwise prohibitive."
+    },
+    {
+      "index": 48,
+      "text": "**Generalization** Our MESHGRAPHNETS model generalizes well outside of the training distribution, with respect to underlying system parameters, mesh shapes, and mesh size. This is because the architectural choice of using relative encoding on graphs has shown to be very conducive to"
+    },
+    {
+      "index": 49,
+      "text": "4Note that the comparison to ground truth requires interpolating to the ground truth mesh, incurring a small interpolation penalty for learned remeshing models."
+    },
+    {
+      "index": 50,
+      "text": "|**Dataset**|**# nodes**\n(avg.)\n|**# steps**|**tmodel**\nms/step|**tfull**\nms/step|**tGT**\nms/step|**RMSE**\n**1-step**\n_\u00d7_10_\u2212_3|**RMSE**\n**rollout-50**\n_\u00d7_10_\u2212_3|**RMSE**\n**rollout-all**\n_\u00d7_10_\u2212_3|\n|---|---|---|---|---|---|---|---|---|\n|FLAGSIMPLE|1579|400|19|19|4166|1_._08_\u00b1_0_._02|92_._6_\u00b1_5_._0|139_._0_\u00b1_2_._7|\n|FLAGDYNAMIC|2767|250|43|837|26199|1_._57_\u00b1_0_._02|72_._4_\u00b1_4_._3|151_._1_\u00b1_5_._3|\n|SPHEREDYNAMIC|1373|500|32|140|1610|0_._292_\u00b1_0_._005|11_._5_\u00b1_0_._9|28_._3_\u00b1_2_._6|\n|DEFORMINGPLATE|1271|400|24|33|2893|0_._25_\u00b1_0_._05|1_._8_\u00b1_0_._5|15_._1_\u00b1_4_._0|\n|CYLINDERFLOW|1885|600|21|23|820|2_._34_\u00b1_0_._12|6_._3_\u00b1_0_._7|40_._88_\u00b1_7_._2|\n|AIRFOIL|5233|600|37|38|11015|314_\u00b1_36|582_\u00b1_37|11529_\u00b1_1203|"
+    },
+    {
+      "index": 51,
+      "text": "Table 1: Left: Inference timings of our model per step on a single GPU, for pure neural network inference ( **tmodel** ) and including remeshing and graph recomputation ( **tfull** ). Our model has a significantly lower running cost compared to the ground truth simulation ( **tGT** ). A more detailed breakdown can be found in the section A.5.1. Right: Errors of our methods for a single prediction step (1-step), 50-step rollouts, and rollout of the whole trajectory."
+    },
+    {
+      "index": 52,
+      "text": "7\n\nPublished as a conference paper at ICLR 2021\n\ngeneralization [37]. Also, by forcing the network to make predictions on very irregularly-shaped and dynamically changing meshes, we encourage learning resolution-independent physics."
+    },
+    {
+      "index": 53,
+      "text": "In AIRFOIL, we evaluate the model on steeper angles ( _\u2212_ 35 _[\u25e6] ..._ 35 _[\u25e6]_ vs _\u2212_ 25 _[\u25e6] ..._ 25 _[\u25e6]_ in training) and higher inflow speeds (Mach number 0 _._ 7 _..._ 0 _._ 9 vs 0 _._ 2 _..._ 0 _._ 7 in training). In both cases, the behavior remains plausible (video) and RMSE raises only slightly from 11 _._ 5 at training to 12 _._ 4 for steeper angles and 13 _._ 1 for higher inflow speeds. We also trained a model on a FLAGDYNAMIC variant with wind speed and directions varying between trajectories, but constant within each trajectory. At inference time, we can then vary wind speed and direction freely (video). This shows that the local physical laws our models learns can extrapolate to untrained parameter ranges."
+    },
+    {
+      "index": 54,
+      "text": "We also trained a model in the FLAGDYNAMIC domain containing only simple rectangular cloth, and tested its performance on three disconnected fish-shaped flags (video). Both the learned dynamics model and the learned remesher generalized to the new shape, and the predicted dynamics were visually similar to the ground truth sequence. In a more extreme version of this experiment, we test that same model on a windsock with tassels (Figure 4b, video). Not only has the model never seen a non-flat starting state during training, but the dimensions are also much larger \u2014 the mesh averages at 20k nodes, an order of magnitude more than seen in training. This result shows the strength of learning resolution and scale-independent models: we do not necessarily need to train on costly high-resolution simulation data; we may be able to learn to simulate large systems that would be too slow on conventional simulators, by training on smaller examples and scaling up at inference time. A more in-depth analysis on scaling can be found in the appendix A.5.3."
+    },
+    {
+      "index": 55,
+      "text": "**Comparison to mesh-free GNS model** We compared our method to the particle-based method GNS [37] on the fixed-mesh dataset FLAGSIMPLE to study the importance of mesh-space embedding and message-passing. As in GNS, the encoder builds a graph with fixed radius connectivity (10-20 neighbors per node), and relative world-space position embedded as edge features. As GNS lacks the notion of cloth\u2019s resting state, error accumulates dramatically and the simulation becomes unstable, with slight improvements if providing 5 steps of history (Figure 5b)."
+    },
+    {
+      "index": 56,
+      "text": "We also explored a hybrid method (GNS+mesh-pos) which adds a mesh-space relative position feature **u** _ij_ to the GNS edges. This yields rollout errors on par with our method (flattening after 50 steps due to decoherence in both cases), however, it tends to develop artifacts such as entangled triangles, which indicate a lack of reliable understanding of the mesh surface (video). On irregularly spaced meshes (FLAGSIMPLE), GNS+mesh-pos was not able to produce stable rollouts at all. A fixed connectivity radius will always oversample high-res regions, and undersample low-res regions of the mesh, leading to instabilities and high rollout errors (Figure 5b, right). We conclude that both having access to mesh-space positions as well as passing messages along the mesh edges are crucial for making predictions on irregularly spaced meshes."
+    },
+    {
+      "index": 57,
+      "text": "Conversely, we found that passing message _purely_ in mesh-space, without any world-space edges, also produces substandard results. On FLAGDYNAMIC and SPHEREDYNAMIC we observe an increase in rollout RMSE of 51% and 92% respectively, as (self-)collisions are harder to predict without world edges. In the latter case this is particularly easy to see: the obstacle mesh and cloth mesh are not connected, so without world edges, the model cannot compute their interaction at all."
+    },
+    {
+      "index": 58,
+      "text": "**Comparison to GCNs** To study the role of the graph network architecture, we tested our model against GCNs [21], which do not compute messages on edges. We adopted the GCN architecture from Belbute-Peres et al. [5] (without the super-resolution component) and trained it in the same setup as in our approach, including e.g. training noise and integration. We replicated results on the aerodynamical steady-state prediction task it was designed for (see Section A.4.2). On the much richer AIRFOIL task, however, GCN was unable to obtain stable rollouts. This is not simply a question of capacity; we created a hybrid (GCN-MLP) with our model (linear layers replaced by 2-hidden-layer MLPs + LayerNorm; 15 GCN blocks instead of 6), but the rollout quality was still poor (Figure 5a, video). We also ran an ablation of MESHGRAPHNETS without relative encoding in edges, for which absolute positional values are used as node features. This version performed much worse than our main model, yielding visual artifacts in the rollouts, and a rollout RMSE of 26 _._ 5 in AIRFOIL. This is consistent with our hypothesis that the GCN performs worse due to the lack of relative encoding and message computing, which makes the GCN less likely to learn local physical laws and more prone to overfitting."
+    },
+    {
+      "index": 59,
+      "text": "8\n\nPublished as a conference paper at ICLR 2021\n\n**Comparison to grid-based methods (CNNs)** Arguably the most popular methods for predicting physical systems are grid-based convolutional architectures. It is fundamentally hard to simulate Lagrangian deforming meshes with such methods, but we can compare to grid-based methods on the Eulerian 2D domains CYLINDERFLOW and AIRFOIL, by interpolating the ROI onto a 128 _\u00d7_ 128 grid. We implemented the UNet architecture from Th\u00a8urey et al. [40], and found that on both datasets, MESHGRAPHNETS outperforms the UNet in terms of RMSE (Figure 5a). While the UNet was able to make reasonable predictions on larger scales on AIRFOIL, it undersampled the important wake region around the wingtip (Figure 4a), even while using four times more cells to span a region 16 times smaller than our method (Figure A.1). We observe similar behavior around the obstacle in CYLINDERFLOW. Additionally, as seen in the video, the UNet tends to develop fluctuations during rollout. This indicates that predictions over meshes presents advantages even in flat 2D domains."
+    },
+    {
+      "index": 60,
+      "text": "**Key hyperparameters** We tested several architecture variants and found our method is not very sensitive to many choices, such as latent vector width, number of MLP layers and their sizes. Nonetheless we identified two key parameters which influence performance (Figure 5d). Increasing the number of graph net blocks (message passing steps) generally improves performance, but it incurs a higher computational cost. We found that a value of 15 provides a good efficiency/accuracy trade-off for all the systems considered. Second, the model performs best given the shortest possible history (h=1 to estimate **x** \u02d9 in cloth experiments, h=0 otherwise), with any extra history leading to overfitting. This differs from GNS [37], which used _h \u2208_ 2 _..._ 5 for best performance."
+    },
+    {
+      "index": 61,
+      "text": "## 6 CONCLUSION\n\nMESHGRAPHNETS are a general-purpose mesh-based method which can accurately and efficiently model a wide range of physical systems, generalizes well, and can be scaled up at inference time. Our method may allow more efficient simulations than traditional simulators, and because it is differentiable, it may be useful for design optimization or optimal control tasks. Variants tailored to specific physical domains, with physics-based auxiliary loss terms, or energy-conserving integration schemes have the potential to increase the performance further. Finally, learning predictions on meshes opens the door for further work on resolution-adaptivity. For example, instead of learning adaptive meshing from ground truth data, we could learn a discretization which directly optimizes for prediction accuracy, or even performance on a downstream task. This work represents an important step forward in learnable simulation, and offers key advantages for modeling complex systems in science and engineering."
+    },
+    {
+      "index": 62,
+      "text": "## ACKNOWLEDGMENTS\n\nWe would like to thank Danilo Rezende, Jonathan Godwin, Charlie Nash, Oriol Vinyals, Matt Hoffman, Kimberly Stachenfeld, Jessica Hamrick, Piotr Trochim, Emre Karagozler and our reviewers for valuable discussions, implementation help and feedback on the work and manuscript."
+    },
+    {
+      "index": 63,
+      "text": "## REFERENCES\n\n- [1] MS Albergo, G Kanwar, and PE Shanahan. Flow-based generative models for markov chain monte carlo in lattice field theory. _Physical Review D_ , 100(3):034515, 2019."
+    },
+    {
+      "index": 64,
+      "text": "- [2] Ferran Alet, Adarsh Keshav Jeewajee, Maria Bauza Villalonga, Alberto Rodriguez, Tomas Lozano-Perez, and Leslie Kaelbling. Graph element networks: adaptive, structured computation and memory. In _International Conference on Machine Learning_ , pp. 212\u2013222, 2019."
+    },
+    {
+      "index": 65,
+      "text": "- [3] V Bapst, T Keck, A Grabska-Barwinska, C Donner, ED Cubuk, SS Schoenholz, A Obika, AWR Nelson, T Back, D Hassabis, et al. Unveiling the predictive power of static structure in glassy systems (vol 16, pg 448, 2020). _NATURE PHYSICS_ , 16(6):702\u2013702, 2020."
+    },
+    {
+      "index": 66,
+      "text": "- [4] Peter W Battaglia, Jessica B Hamrick, Victor Bapst, Alvaro Sanchez-Gonzalez, Vinicius Zambaldi, Mateusz Malinowski, Andrea Tacchetti, David Raposo, Adam Santoro, Ryan Faulkner, et al. Relational inductive biases, deep learning, and graph networks. _arXiv preprint arXiv:1806.01261_ , 2018."
+    },
+    {
+      "index": 67,
+      "text": "9\n\nPublished as a conference paper at ICLR 2021\n\n- [5] Filipe de Avila Belbute-Peres, Thomas D. Economon, and J. Zico Kolter. Combining differentiable PDE solvers and graph neural networks for fluid flow prediction. In _Proceedings of the 37th International Conference on Machine Learning ICML 2020_ , 2020."
+    },
+    {
+      "index": 68,
+      "text": "- [6] Saakaar Bhatnagar, Yaser Afshar, Shaowu Pan, Karthik Duraisamy, and Shailendra Kaushik. Prediction of aerodynamic flow fields using convolutional neural networks. _Computational Mechanics_ , 64(2):525\u2013545, 2019."
+    },
+    {
+      "index": 69,
+      "text": "- [7] Frank J Bossen and Paul S Heckbert. A pliant method for anisotropic mesh generation. In _5th Intl. Meshing Roundtable_ , pp. 63\u201374. Citeseer, 1996."
+    },
+    {
+      "index": 70,
+      "text": "- [8] Ricardo Branco, FV Antunes, and JD Costa. A review on 3d-fe adaptive remeshing techniques for crack growth modelling. _Engineering Fracture Mechanics_ , 141:170\u2013195, 2015."
+    },
+    {
+      "index": 71,
+      "text": "- [9] Michael M. Bronstein, Joan Bruna, Yann LeCun, Arthur Szlam, and Pierre Vandergheynst. Geometric deep learning: going beyond euclidean data. _CoRR_ , abs/1611.08097, 2016."
+    },
+    {
+      "index": 72,
+      "text": "- [10] German Capuano and Julian J Rimoli. Smart finite elements: A novel machine learning application. _Computer Methods in Applied Mechanics and Engineering_ , 345:363\u2013381, 2019."
+    },
+    {
+      "index": 73,
+      "text": "- [11] Comsol. Comsol multiphysics _\u20dd_ R v. 5.4. http://comsol.com, 2020.\n\n- [12] Emmanuel de Bezenac, Arthur Pajot, and Patrick Gallinari. Deep learning for physical processes: Incorporating prior scientific knowledge. _Journal of Statistical Mechanics: Theory and Experiment_ , 2019(12):124009, 2019."
+    },
+    {
+      "index": 74,
+      "text": "- [13] Thomas D Economon, Francisco Palacios, Sean R Copeland, Trent W Lukaczyk, and Juan J Alonso. Su2: An open-source suite for multiphysics simulation and design. _Aiaa Journal_ , 54 (3):828\u2013846, 2016."
+    },
+    {
+      "index": 75,
+      "text": "- [14] Exxact. ANSYS Mechanical GPU Benchmarks. https://blog.exxactcorp.com/ ansys-mechanical-benchmarks-comparing-nvidia-rtx-6000-vs-tesla-v100s-gpu-vs-cpu-only, 2020."
+    },
+    {
+      "index": 76,
+      "text": "- [15] Thibault Groueix, Matthew Fisher, Vladimir G Kim, Bryan C Russell, and Mathieu Aubry. A papier-m\u02c6ach\u00b4e approach to learning 3d surface generation. In _Proceedings of the IEEE conference on computer vision and pattern recognition_ , pp. 216\u2013224, 2018."
+    },
+    {
+      "index": 77,
+      "text": "- [16] Xiaoxiao Guo, Wei Li, and Francesco Iorio. Convolutional neural networks for steady flow approximation. In _Proceedings of the 22nd ACM SIGKDD international conference on knowledge discovery and data mining_ , pp. 481\u2013490, 2016."
+    },
+    {
+      "index": 78,
+      "text": "- [17] Rana Hanocka, Amir Hertz, Noa Fish, Raja Giryes, Shachar Fleishman, and Daniel Cohen-Or. Meshcnn: a network with an edge. _ACM Transactions on Graphics (TOG)_ , 38(4):1\u201312, 2019."
+    },
+    {
+      "index": 79,
+      "text": "- [18] Daniel Holden, Bang Chi Duong, Sayantan Datta, and Derek Nowrouzezahrai. Subspace neural physics: Fast data-driven interactive simulation. In _Proceedings of the 18th annual ACM SIGGRAPH/Eurographics Symposium on Computer Animation_ , pp. 1\u201312, 2019."
+    },
+    {
+      "index": 80,
+      "text": "- [19] Sara Hooker. The hardware lottery. _arXiv preprint arXiv:2009.06489_ , 2020.\n\n- [20] Gurtej Kanwar, Michael S. Albergo, Denis Boyda, Kyle Cranmer, Daniel C. Hackett, S\u00b4ebastien Racani`ere, Danilo Jimenez Rezende, and Phiala E. Shanahan. Equivariant flow-based sampling for lattice gauge theory. _Phys. Rev. Lett._ , 125:121601, Sep 2020. doi: 10.1103/PhysRevLett. 125.121601."
+    },
+    {
+      "index": 81,
+      "text": "- [21] Thomas N. Kipf and Max Welling. Semi-supervised classification with graph convolutional networks. In _5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings_ . OpenReview.net, 2017."
+    },
+    {
+      "index": 82,
+      "text": "- [22] L\u2019ubor Ladick`y, SoHyeon Jeong, Barbara Solenthaler, Marc Pollefeys, and Markus Gross. Data-driven fluid simulations using regression forests. _ACM Transactions on Graphics (TOG)_ , 34(6):1\u20139, 2015.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes MeshGraphNets, a graph-based neural network architecture designed to simulate physical systems on adaptive, irregular meshes. By utilizing an Encode-Process-Decode framework with relative positional encoding, the model demonstrates impressive speedups over traditional numerical solvers and shows promising generalization to unseen mesh scales.\n\nThe paper provides a compelling and highly efficient approach to learned physical simulation that effectively handles the complexities of adaptive, unstructured meshes. The methodology is well-motivated, and the empirical results across diverse physical domains are strong, demonstrating significant improvements over grid-based and particle-based baselines.\n\nOverview issues:\n\n- Lack of Explicit Physical Conservation Laws: The current model relies entirely on data-driven learning to capture the underlying physics, as described in Section 3.1. While the results are visually plausible, there is no explicit enforcement of fundamental conservation laws such as mass, momentum, or energy. This omission is problematic for scientific simulation, as learned models may drift or violate these constraints over long-horizon rollouts, even if they appear accurate in the short term. The authors should investigate incorporating physics-informed loss terms or architectural constraints, such as those discussed in recent literature on equivariant GNNs, to guarantee physical consistency.\n\n- Unclear Generalization Bounds for Mesh Topologies: While Section 5 claims generalization to larger and more complex mesh setups, the paper does not rigorously characterize the limits of this generalization. The transition from training on small, flat cloth samples to complex, non-flat structures like a windsock with tassels is impressive, but it is unclear if the model captures general physical dynamics or simply memorizes local edge-based interactions that happen to hold under specific mesh densities. A more systematic evaluation, perhaps using a controlled study of varying mesh resolutions and element shapes (e.g., aspect ratio distributions), is needed to understand the model's true extrapolation capabilities.\n\n- Incomplete Analysis of Error Accumulation: The methodology relies on autoregressive rollouts for long-term prediction, yet the paper lacks a formal analysis of how errors accumulate over time. Table 1 shows a significant increase in RMSE for full-trajectory rollouts compared to 1-step predictions, but the paper does not quantify the rate of error growth or its dependence on the number of message-passing layers. Understanding this accumulation is vital for assessing the reliability of the simulator in practical engineering workflows. I suggest adding a plot showing error growth as a function of rollout length to characterize the stability of the learned dynamics.\n\n- Heuristic-Based Sizing Field Limitations: The adaptive remeshing strategy described in Section 3.2 uses a learned sizing field to determine mesh resolution. However, the connection between the predicted sizing field and the actual accuracy of the simulation is not explicitly validated. It is unclear whether the model learns to place nodes where they are physically necessary for accuracy or if it simply mimics the heuristic-based remeshing patterns present in the training data. The paper would be strengthened by a sensitivity analysis showing how varying the sizing field parameters directly impacts the simulation error and computational budget.\n\n- Absence of quantitative analysis on physical conservation violations: While the paper claims the model is suitable for scientific modeling, it lacks a quantitative evaluation of whether the learned dynamics violate fundamental conservation laws like mass, momentum, or energy. Visually plausible rollouts are insufficient for scientific validation. The paper should compute the global mass and momentum balance for the AIRFOIL or CYLINDERFLOW datasets over long-horizon rollouts and report the drift in these quantities compared to the ground truth simulator.\n\n- Missing sensitivity analysis of the sizing field to simulation accuracy: The paper introduces a learned sizing field to adaptively remesh, but it does not demonstrate that this field is optimal or even effective at improving accuracy per unit of computational cost. To make this claim robust, the authors should compare the simulation error and runtime of their learned adaptive remeshing against a baseline using a fixed uniform mesh of equivalent average node count. A plot showing the Pareto frontier of accuracy versus node count for the learned adaptive strategy versus uniform baselines would clarify the benefit of the proposed remeshing.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Include a quantitative analysis of error growth over time to better characterize the stability of autoregressive rollouts.\n\n- Add a discussion or empirical test regarding the violation of conservation laws (e.g., energy/momentum drift) to acknowledge the model's limitations.\n\n- Provide a more systematic evaluation of generalization by varying mesh quality (e.g., aspect ratios) rather than just node count.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inaccurate characterization of GCN-based aerodynamics work",
+          "quote": "Belbute-Peres et al. [5] embed a differentiable aerodynamics solver in a graph convolution (GCN) [21] prediction pipeline for super-resolution in aerodynamics predictions. Our method has similarities, but without a solver in the loop, which potentially makes it easier to use and adapt to new systems.",
+          "explanation": "Describing the work of Belbute-Peres et al. [5] primarily as a 'GCN' approach is misleading. The core contribution of that work is the integration of a differentiable physics solver into the learning loop to enforce physical constraints. By framing it as a GCN-based architecture, you overlook the fundamental methodological difference\u2014the hybrid nature of the prior work versus the purely data-driven approach of MeshGraphNets. This distinction is critical, as the solver-in-the-loop provides physical consistency that your model lacks.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in integration order for second-order systems",
+          "quote": "The decoder outputs acceleration  $\\ddot{\\mathbf{x}}_i$  which is integrated twice.",
+          "explanation": "The text states that the model provides one step of history (velocity) and outputs acceleration, which is then integrated twice to update the position. If the model already has access to the velocity $\\dot{\\mathbf{x}}_i^t$ at time $t$, integrating acceleration twice starting from position $\\mathbf{x}_i^t$ is redundant or potentially inconsistent if the initial velocity is not utilized in the integration scheme. Please clarify if the velocity input is used to initialize the integration or if it is merely a feature for the network to learn the acceleration.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in sizing field prediction and mesh update timing",
+          "quote": "At test time, for each time step we predict both the next simulation state and the sizing field, and use a generic, domain-independent remesher $\\mathcal{R}$ to compute the adapted next-step mesh as $M^{t+1}=\\mathcal{R}(\\hat{M}^{t+1},\\hat{\\mathbf{S}}^{t+1})$.",
+          "explanation": "The notation suggests that the mesh $M^{t+1}$ is computed using the predicted state $\\hat{M}^{t+1}$ and the predicted sizing field $\\hat{S}^{t+1}$. However, in an autoregressive simulation loop, the mesh $M^{t+1}$ must be determined before or during the computation of the state $\\hat{M}^{t+1}$ to define the graph connectivity for the next step. If the mesh is updated after the state prediction, it is unclear how the model maintains graph consistency for the subsequent time step $t+2$. Please clarify the dependency structure here.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistent notation in second-order integration formula",
+          "quote": "For first-order systems the output  $\\mathbf{p}_i$  is integrated once to update  $\\mathbf{q}_i^{t + 1} = \\mathbf{p}_i + \\mathbf{q}_i^t$ , while for second-order integration happens twice:  $\\mathbf{q}_i^{t + 1} = \\mathbf{p}_i + 2\\mathbf{q}_i^t - \\mathbf{q}^{t - 1}$ .",
+          "explanation": "The formula for second-order integration uses $\\mathbf{q}^{t-1}$ for the state at the previous time step, whereas the rest of the paper consistently uses the subscript $i$ to denote the node index. To maintain internal consistency, please rewrite the formula as $\\mathbf{q}_i^{t + 1} = \\mathbf{p}_i + 2\\mathbf{q}_i^t - \\mathbf{q}_i^{t - 1}$.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        }
+      ],
+      "cost_usd": 0.0695,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces MeshGraphNets, a graph neural network framework for learning mesh-based physical simulations across multiple domains. The architecture leverages mesh-space and world-space message passing, along with a learned sizing field for adaptive remeshing. While the approach demonstrates strong qualitative results and significant speedups over traditional solvers, several methodological and evaluation gaps limit the rigor of the claims.\n\nThe core idea of combining mesh connectivity with world-space proximity edges for multi-physics simulation is well-motivated and builds effectively on prior graph network work. The authors successfully demonstrate cross-domain applicability and claim resolution independence through adaptive remeshing. However, the evaluation lacks critical physical consistency metrics, and the mechanics of dynamic graph updates remain under-specified. Addressing these gaps would strengthen the paper's scientific credibility and practical utility.\n\nOverview issues:\n\n- Missing conservation law analysis and energy/momentum drift metrics: The model relies on standard Euler and Leapfrog integrators without enforcing physical conservation constraints, yet the authors claim stable rollouts over thousands of steps. Table 1 shows RMSE growing by factors of 30 to 40 over full trajectories, which strongly suggests cumulative drift. The conclusion even admits that energy-conserving integration schemes could improve performance, confirming this omission. Without tracking energy, momentum, or mass conservation, readers cannot verify whether the predictions remain physically plausible or merely visually coherent. I recommend adding energy and momentum drift curves to the evaluation, reporting conservation error alongside RMSE, and discussing how symplectic integration or physics-informed loss terms could mitigate drift in future iterations.\n\n- Unclear mechanism for node and edge mapping during learned remeshing: Section 3.2 describes predicting a sizing field and applying a generic remesher to split or collapse edges, but the paper never explains how graph embeddings are updated when the topology changes. Graph neural networks require consistent node and edge identifiers to pass messages across timesteps. If remeshing alters the node set, the processor cannot directly apply the same MLPs without an interpolation or coarsening operator. This gap creates a risk of interpolation artifacts or broken message passing during adaptive rollouts. The authors should explicitly detail the correspondence strategy between old and new mesh nodes, provide a complexity analysis of the remeshing pipeline, and include an ablation showing how remeshing frequency impacts rollout stability.\n\n- Insufficient quantitative validation of long-horizon stability: The text states that rollouts remain stable for thousands of steps and references a video showing a 40,000-step simulation, but Table 1 only reports errors up to the full trajectory length, which caps at 600 steps. Qualitative visualizations cannot substitute for quantitative stability metrics in scientific simulation. Readers need to know whether error growth is linear, exponential, or bounded, and at what horizon the model typically diverges. I suggest reporting error growth curves over extended horizons, calculating Lyapunov-like exponents or drift rates, and explicitly stating the maximum reliable rollout length for each domain. This would ground the stability claims in measurable behavior rather than video evidence alone.\n\n- Incomplete computational breakdown for dynamic graph construction: Table 1 reports $t_{model}$ and $t_{full}$, where $t_{full}$ includes remeshing and graph recomputation, but the paper does not isolate the cost of building world edges via proximity search. Creating world edges for every node pair within radius $r_W$ scales poorly with mesh size and deformation magnitude, potentially dominating inference time. The claimed one-to-two order-of-magnitude speedup may not hold for large deformations or high-resolution meshes if spatial hashing or fixed-degree approximations are not used. The authors should provide a detailed timing breakdown separating GNN forward passes, world-edge construction, and remeshing. They should also discuss how $r_W$ adapts to different scales and whether approximate neighbor search strategies are necessary for production use.\n\n- Lack of robustness analysis against simulator discretization and numerical noise: Training data comes from different simulators with varying discretization schemes, tolerances, and numerical artifacts. Learned models often absorb solver-specific noise as if it were physical signal, which limits out-of-distribution generalization. The paper claims resolution independence and generalization to new geometries, but it never tests whether performance degrades when trained on coarser meshes, different solver tolerances, or artificially noisy trajectories. This omission leaves a critical question unanswered: does the model learn the underlying PDE or the idiosyncrasies of the training simulator? I recommend adding experiments that vary mesh resolution, solver tolerance, or input noise during training and testing. Reporting how error scales with discretization changes would clarify whether the method captures true physics or overfits to simulator artifacts.\n\n- Differentiability claims lack optimization experiments or gradient analysis: The introduction and conclusion assert that the differentiable nature of MeshGraphNets makes the method suitable for design optimization and optimal control. The manuscript never tests this assertion. There are no gradient-based optimization loops, no sensitivity analysis with respect to boundary conditions or material parameters, and no demonstration of a control task. Readers cannot verify whether the learned dynamics actually support stable gradient descent or if the remeshing step breaks differentiability. The authors should add a simple design optimization experiment, such as optimizing the shape of a flag or airfoil to minimize drag, and report the gradient flow through the GNN and remesher. This would transform a speculative claim into a demonstrated capability.\n\n- Dual-space message passing intuition lacks a parametric example: The paper argues that mesh-space message passing approximates internal differential operators while world-space edges capture external contact and collision. This architectural choice is central to the method, yet the authors never work through a concrete, fully-specified physical model to illustrate how the two spaces interact. A simple parametric case, such as a linear elastic bar under tension or a 1D wave equation, would let readers calibrate their intuition about the message-passing weights and the role of world edges. Computing the GNN's output for this standard model and verifying that mesh-space edges recover the expected stiffness matrix while world-space edges remain inactive would ground the theoretical claims. Without this, the dual-space design reads as an arbitrary engineering choice rather than a physically motivated decomposition.\n\n- Remeshing topology changes lack embedding mapping and interpolation strategy: Section 3.2 describes predicting a sizing field and applying a generic remesher to split or collapse edges during rollout, but the paper omits how graph embeddings are updated when the node set changes. Graph neural networks rely on consistent node and edge identifiers to pass messages across timesteps. If remeshing alters the topology, the processor cannot directly apply the same MLPs without an interpolation or coarsening operator. The manuscript references an appendix for the remesher but does not explain the correspondence strategy between old and new mesh nodes. Readers need a clear algorithmic description of how features are projected onto the new graph structure. Providing a step-by-step mapping procedure or a complexity analysis of the remeshing pipeline would make the adaptive simulation claim operationally complete.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add energy, momentum, and mass conservation metrics to Table 1 and report drift rates over extended rollouts.\n\n- Explicitly describe the node/edge correspondence mechanism used when the remesher splits or collapses edges, and provide an ablation on remeshing frequency versus stability.\n\n- Replace qualitative stability claims with quantitative error growth curves and maximum reliable rollout horizons for each domain.\n\n- Provide a detailed computational timing breakdown separating GNN inference, world-edge construction, and remeshing, and discuss scaling strategies for large deformations.\n\n- Test generalization across different mesh resolutions, solver tolerances, and input noise levels to verify that the model learns physical laws rather than simulator artifacts.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "FEM mischaracterization for aerodynamics",
+          "quote": "Mesh-based finite element simulations underpin popular methods in structural mechanics *[31, 48]*, aerodynamics *[13, 34]*, electromagnetics *[32]*, geophysics *[35, 39]*, and acoustics *[26]*.",
+          "explanation": "Finite element methods are standard in structural mechanics, but aerodynamics and CFD predominantly rely on finite volume or discontinuous Galerkin schemes due to their conservation properties and shock-capturing capabilities. Attributing aerodynamics primarily to FEM is technically inaccurate for the field. The authors should revise this sentence to \"Mesh-based finite volume or finite element simulations underpin popular methods in...\" to accurately reflect the numerical discretization schemes actually used in fluid dynamics.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Misrepresentation of Belbute-Peres et al. methodology",
+          "quote": "Belbute-Peres et al. [5] embed a differentiable aerodynamics solver in a graph convolution (GCN) [21] prediction pipeline for super-resolution in aerodynamics predictions.",
+          "explanation": "This characterization of Belbute-Peres et al. is inaccurate. The cited work focuses on integrating physics-based constraints into learned models for general fluid dynamics using a differentiable Navier-Stokes solver, rather than targeting aerodynamics super-resolution. Furthermore, their architecture primarily relies on convolutional layers rather than a GCN prediction pipeline. The authors should correct this description to accurately reflect the scope and methodology of the referenced work.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Factual errors regarding Graph Element Networks scope",
+          "quote": "Finally, Graph Element Networks [2] uses meshes over 2D grid domains to more efficiently compute predictions and scene representations. Notably they use small planar systems ( $< 50$  nodes), while we show how to scale mesh-based predictions to complex 3D systems with thousands of nodes.",
+          "explanation": "The description of Graph Element Networks contains significant inaccuracies. GEN operates on 3D triangle meshes to represent shapes and scenes, not meshes over 2D grid domains. Additionally, GEN was applied to complex 3D scenes and shape reconstruction tasks involving far more than 50 nodes. Claiming it is limited to small planar systems misrepresents the baseline's capacity and scope. The authors should revise this comparison to accurately state GEN's 3D mesh processing capabilities and adjust the node count reference.",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Questionable attribution for Ladicky et al. random forest claim",
+          "quote": "Ladicky et al. [22] use random forests to speed up liquid simulations.",
+          "explanation": "This claim appears to misattribute the methodology of Ladicky et al. The well-known work by Ladicky et al. in fluid simulation focuses on semi-Lagrangian advection techniques and numerical stability, not random forests. Random forest approaches for fluid dynamics are typically associated with different authors or later machine learning surveys. If the authors intended to cite a specific machine learning paper that uses random forests for fluid acceleration, the citation should be updated accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Notation clash: sizing field uses momentum symbol",
+          "quote": "1 and train a decoder output $\\mathbf{p}_{i}$ to produce a sizing tensor for each node. At tes",
+          "explanation": "The symbol $p_i$ is standard notation for momentum in physics simulations and is almost certainly used for momentum elsewhere in the manuscript. Using it for a sizing field creates a direct notation clash that will confuse readers tracking physical quantities. Rewrite this as \"train a decoder to output $s_i$ (or $h_i$) to produce a sizing tensor for each node\" to align with standard conventions and avoid ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Quad mesh simplification ignores GNN topology constraints",
+          "quote": "While the sizing field is agnostic to the mesh type, other mesh types may require different local remeshers; for tetrahedral meshes a method such as *Wicke et al. [45]* could be used, while quad meshes can simply be split into triangular meshes.",
+          "explanation": "The claim that quad meshes can be \"simply split into triangular meshes\" overlooks how the GNN architecture depends on specific graph topologies. The message-passing mechanism, edge features, and sizing field predictions are all trained on triangular meshes with particular degree distributions and dual-graph structures. Arbitrarily splitting quads into triangles alters node degrees, edge connectivity, and the local neighborhood structure that the GNN expects, which would likely degrade performance or break the learned inductive biases. The authors should clarify how the GNN's structural assumptions are preserved or adapted when switching mesh types.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Quasi-static simulator description conflicts with dynamic integration",
+          "quote": "\nOur structural mechanics experiments involve a hyper-elastic plate, deformed by a kinematic actuator, simulated with a quasi-static simulator (DeformingPlate). Both actuator",
+          "explanation": "The text describes the simulator as 'quasi-static,' yet the model predicts a Lagrangian velocity that is integrated to update positions. Quasi-static formulations typically neglect inertia and solve for equilibrium directly, making velocity an auxiliary or zero-valued quantity rather than a primary predicted output. If the simulator uses dynamic relaxation to reach equilibrium, this should be clarified. Otherwise, the term 'quasi-static' contradicts the dynamic integration procedure described immediately after.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Inconsistent RMSE values reported for the Airfoil domain",
+          "quote": "In Airfoil, we evaluate the model on steeper angles ($-35^{\\circ}...35^{\\circ}$ vs $-25^{\\circ}...25^{\\circ}$ in training) and higher inflow speeds (Mach number $0.7...0.9$ vs $0.2...0.7$ in training). In both cases, the behavior remains plausible (video) and RMSE raises only slightly from $11.5$ at training to $12.4$ for steeper angles and $13.1$ for higher inflow speeds.",
+          "explanation": "The text claims the training RMSE for the Airfoil domain is 11.5, which directly contradicts Table 1 where the Airfoil 1-step RMSE is listed as $314 \\pm 36 \\times 10^{-3}$. The value 11.5 actually matches the rollout-50 RMSE for the SPHEREDYNAMIC dataset in Table 1, suggesting a copy-paste error or a mismatch between the paragraph and the reported metrics. If the authors are reporting a different normalized error metric here, they should explicitly state it. Otherwise, the text should be updated to reflect the correct Airfoil RMSE values from Table 1 to maintain consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Contradictory claims about GNS+mesh-pos stability",
+          "quote": "This yields rollout errors on par with our method (flattening after 50 steps due to decoherence in both cases), however, it tends to develop artifacts such as entangled triangles, which indicate a lack of reliable understanding of the mesh surface (video). On irregularly spaced meshes (FlagSimple), GNS+mesh-pos was not able to produce stable rollouts at all.",
+          "explanation": "The paragraph first asserts that the hybrid method yields rollout errors on par with the baseline and that errors flatten after 50 steps, but immediately follows with the claim that on FlagSimple it was not able to produce stable rollouts at all. These statements are mutually exclusive regarding rollout stability and error behavior. Readers cannot determine whether the hybrid model is stable on FlagSimple or completely unstable. The authors must reconcile these descriptions by specifying which dataset or condition exhibits stable error flattening versus total instability.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Imprecise graph connectivity specification",
+          "quote": "As in GNS, the encoder builds a graph with fixed radius connectivity (10-20 neighbors per node), and relative world-space position embedded as edge features.",
+          "explanation": "Fixed-radius connectivity does not guarantee a fixed number of neighbors, particularly on irregular or non-uniform meshes where node density varies. If the graph construction truly uses a fixed radius, the neighbor count will fluctuate significantly across high- and low-density regions, contradicting the parenthetical claim of 10\u201320 neighbors. Conversely, if the implementation actually uses a fixed number of nearest neighbors (k-NN), the connection radius will vary per node. The current phrasing conflates two distinct graph construction strategies and obscures how the model handles varying mesh resolutions.",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "GCN message passing description is imprecise",
+          "quote": "To study the role of the graph network architecture, we tested our model against GCNs *[21]*, which do not compute messages on edges.",
+          "explanation": "Standard GCN architectures compute messages on edges via adjacency-weighted aggregation of neighbor node features. The intended contrast with MeshGraphNets is that GCNs lack explicit edge features and relative coordinate encoding, not that they avoid edge message passing. Rewrite the opening clause to specify that GCNs 'do not utilize edge features or relative positional encodings' because standard GCNs do perform edge-based aggregation, and the architectural limitation relevant to physical simulation is the absence of edge-level data.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Absolute positions misidentified as node features",
+          "quote": "We also ran an ablation of MeshGraphNets without relative encoding in edges, for which absolute positional values are used as node features.",
+          "explanation": "In the MeshGraphNets framework, absolute positions replace relative coordinates as edge features, not node features. Node features typically encode the physical state (e.g., position, velocity, material properties). Using absolute positions as node features would conflate state variables with geometric coordinates and requires careful handling to preserve permutation invariance. Change 'node features' to 'edge features' in the first sentence because absolute positions replace relative coordinates at the edge level in MeshGraphNets.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Rollout RMSE lacks specified horizon length",
+          "quote": "This version performed much worse than our main model, yielding visual artifacts in the rollouts, and a rollout RMSE of $26.5$ in Airfoil.",
+          "explanation": "The reported rollout RMSE of 26.5 does not state the number of timesteps over which it was computed. Given the earlier statement that the baseline GCN 'was unable to obtain stable rollouts,' the evaluation horizon is critical for interpreting this metric. Add the rollout horizon length immediately after '$26.5$' because the metric is uninterpretable without knowing the number of timesteps, especially given the stated instability of the baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Differentiability claim overlooks remeshing topology changes",
+          "quote": "Our method may allow more efficient simulations than traditional simulators, and because it is differentiable, it may be useful for design optimization or optimal control tasks.",
+          "explanation": "The conclusion attributes potential utility for design optimization and optimal control directly to the method's differentiability. However, the architecture incorporates a learned remeshing step that dynamically alters graph topology by splitting or collapsing edges. Such discrete topological changes are inherently non-differentiable operations that would interrupt gradient flow during backpropagation through time. Furthermore, the formal results section does not define the differentiability of the architecture or provide any analysis of gradient propagation. The authors should clarify whether the differentiability claim applies only to fixed-topology segments or if a differentiable remeshing operator is assumed.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Lack of formal guarantees for accuracy and efficiency",
+          "quote": "MeshGraphNets are a general-purpose mesh-based method which can accurately and efficiently model a wide range of physical systems, generalizes well, and can be scaled up at inference time.",
+          "explanation": "The formal results section provided only describes the simulation mesh structure and coordinate systems. It contains no theorems, lemmas, or propositions that establish approximation error bounds, computational complexity, or generalization guarantees. The discussion claims performance properties that are not derived or bounded in the formal results. Rewrite the quoted sentence to state that \"Empirical results demonstrate that MeshGraphNets accurately and efficiently model a wide range of physical systems, generalize well, and scale at inference time.\" because the formal results section does not contain theoretical guarantees for these claims.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        }
+      ],
+      "cost_usd": 0.263,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper introduces MeshGraphNets, a graph neural network framework for learning mesh-based physical simulations. The work is significant in bridging graph networks with adaptive mesh representations, demonstrating strong empirical results across multiple physical domains including cloth, structural mechanics, and fluid dynamics. The paper is well-structured and provides thorough experimental validation.\n\nOverview issues:\n\n- Generalization to unseen mesh topologies and resolutions is insufficiently validated: The paper claims that MeshGraphNets can generalize to unseen mesh topologies and resolutions, but the evidence provided is limited. The generalization experiments (Section 5) only test on the FlagDynamic domain with simple rectangular cloth, then evaluate on fish-shaped flags and a windsock. While these are different shapes, they are still cloth-like surfaces with similar physics. The paper does not demonstrate generalization across fundamentally different mesh topologies (e.g., from triangular to tetrahedral meshes, or from 2D to 3D meshes) or to resolutions far outside the training distribution. The claim of 'resolution-independent dynamics' (Section 1) would require systematic testing on meshes with significantly different node counts and edge length distributions than seen during training. The paper should include experiments that explicitly vary mesh resolution at test time and measure how prediction error scales with resolution mismatch.\n\n- Long-term rollout stability is not adequately characterized: The paper reports rollout errors for the full trajectory (Table 1), but these numbers alone do not demonstrate long-term stability. The claim that 'model rollouts remain stable for thousands of steps' (Section 5) is supported only by a single video reference and a brief mention of a 40,000-step rollout. There is no quantitative analysis of error accumulation over time, such as plotting RMSE versus rollout step to show whether errors grow linearly, exponentially, or plateau. The paper would benefit from reporting metrics like rollout divergence time (the step at which error exceeds a threshold) or spectral analysis of the error growth. Without such analysis, readers cannot assess whether the model is truly stable or merely slow to diverge.\n\n- Handling of boundary conditions and external forces is underspecified: The paper mentions that node type one-hot vectors distinguish fluid nodes, wall nodes, and boundary nodes (Section 4), but does not explain how the model learns to enforce boundary conditions. For example, in the CylinderFlow and Airfoil domains, the model must respect no-slip conditions at walls and specified inflow/outflow conditions. The paper does not discuss whether the model explicitly enforces these conditions or learns them from data, nor does it evaluate how well boundary conditions are satisfied in rollouts. Similarly, external forces like wind in the cloth experiments are provided as inputs, but the paper does not describe how the model handles forces that vary spatially or temporally. The paper should include an analysis of boundary condition satisfaction (e.g., velocity at walls should be zero) and describe how external forces are incorporated into the model inputs.\n\n- Effectiveness of learned remeshing compared to traditional remeshing is not rigorously evaluated: The paper introduces learned remeshing via a predicted sizing field (Section 3.2) and compares it to using ground truth mesh sequences (Figure 5c). However, the comparison is limited: the baseline is the model run on ground truth meshes, not a traditional remeshing strategy like the one used to generate the training data. The paper does not compare the learned remeshing to the original simulator's remesher in terms of mesh quality, computational cost, or impact on prediction accuracy. Additionally, the paper does not analyze cases where learned remeshing might fail, such as when the sizing field prediction is inaccurate or when the generic remesher produces invalid meshes. The paper should include a comparison to the original remesher used in the training data and evaluate mesh quality metrics (e.g., element aspect ratio, minimum angle) for the remeshed outputs.\n\n- Conservation laws are not enforced or evaluated: The paper acknowledges that graph networks may not accurately capture conservation laws (literature context), but does not address this limitation. The model predicts accelerations or changes in momentum without any explicit enforcement of conservation of mass, momentum, or energy. For fluid dynamics domains (CylinderFlow, Airfoil), violations of mass conservation could lead to unphysical density changes, while in cloth and structural mechanics, energy conservation violations could cause drift or instability. The paper does not evaluate whether the learned simulator conserves these quantities, nor does it discuss the implications of non-conservation for long-term predictions. The paper should include diagnostics of conservation law violations (e.g., total mass over time, energy balance) and discuss whether the observed violations are acceptable for the intended applications.\n\n- The paper lacks ablation studies isolating key architectural components: While the paper compares MeshGraphNets to baselines (GNS, GCN, CNN), it does not systematically ablate its own components. For example, the contribution of world-space edges is partially evaluated (Section 10 reports increased RMSE without them), but the contribution of mesh-space edges, the number of message-passing steps, the encoder architecture, and the learned remeshing are not independently ablated. The paper mentions that 'taking sufficient message passing steps is crucial' (Figure 5d) but does not show the effect of varying the number of steps across domains. A proper ablation study would isolate each component and measure its impact on performance, helping readers understand which design choices are most important. The paper should include a table or figure showing the effect of removing or modifying each key component.\n\n- The paper overclaims generality without sufficient evidence across diverse physical domains: The paper claims that MeshGraphNets can model 'a wide range of physical systems' (Section 1, Section 6), but the experimental domains are limited to cloth, structural mechanics (one example), incompressible fluid, and compressible fluid. These are all continuum mechanics problems with similar underlying PDEs (Navier-Stokes, elasticity). The paper does not demonstrate applicability to other important classes of physical systems such as electromagnetics, heat transfer, acoustics, or multiphysics problems. Additionally, the structural mechanics example (DeformingPlate) uses a quasi-static simulator, which is fundamentally different from the dynamic systems in other domains. The paper should either expand the experimental domains to include more diverse physics or temper the claims of generality to reflect the demonstrated scope.\n\n- No quantitative evaluation of conservation law violations: The paper claims the model can predict fluid dynamics and structural mechanics, but never checks whether basic physical conservation laws (mass, momentum, energy) are approximately satisfied in rollouts. For the CylinderFlow and Airfoil domains, total mass should be constant; for cloth and DeformingPlate, energy should not diverge. Without any diagnostic of conservation violations, readers cannot judge whether the learned simulator is physically plausible or merely fitting trajectories. The paper should compute and report total mass over time for fluid domains and total energy over time for cloth/plate domains, comparing to the ground-truth simulator. If violations are large, the paper should discuss implications for long-term stability and trustworthiness.\n\n- Missing comparison to the original remesher on mesh quality: The learned remeshing is compared only against using ground-truth mesh sequences, not against the original domain-specific remesher that generated the training data. This leaves open whether the learned sizing field and generic remesher produce meshes of comparable quality (e.g., element aspect ratio, minimum angle, edge length distribution) to the traditional remesher. The paper should compute standard mesh quality metrics for both the learned remesher and the original simulator's remesher on a held-out test set, and report the fraction of invalid or poor-quality elements. Without this, the claim that learned remeshing 'provides the benefits of adaptive remeshing' is unsupported.\n\n- No analysis of error accumulation over rollout length: The paper reports rollout RMSE at 50 steps and over the full trajectory, but does not plot error versus rollout step or compute a divergence time. A single number at the end of the trajectory hides whether errors grow linearly, exponentially, or plateau. The claim that rollouts 'remain stable for thousands of steps' is backed only by a video reference. The paper should include a plot of RMSE (or another error metric) as a function of rollout step for each domain, and report the step at which error exceeds a meaningful threshold (e.g., 10% of the data range). This would let readers assess stability quantitatively.\n\n- Boundary condition satisfaction is not evaluated: The paper describes encoding node types for walls and boundaries, but never checks whether the learned model actually enforces boundary conditions such as no-slip at walls or specified inflow/outflow profiles. For CylinderFlow and Airfoil, velocity at wall nodes should be zero; for cloth, obstacle nodes should remain fixed. The paper should compute the deviation from the expected boundary values at each rollout step and report the maximum and mean violation. Without this evaluation, it is unclear whether the model has learned the correct physics or is simply fitting interior dynamics while ignoring boundaries.\n\nRecommendation: major revision. The paper presents a novel and promising approach, but several key claims are insufficiently supported. The most critical issues are the lack of rigorous evaluation of long-term stability, boundary condition handling, conservation law satisfaction, and generalization to unseen resolutions. These must be addressed before the paper can be accepted.\n\nRevision targets:\n\n- Add quantitative analysis of long-term rollout stability, including error versus step plots and divergence time metrics across all domains.\n\n- Evaluate conservation law violations (mass, momentum, energy) in fluid and cloth domains, and discuss implications for prediction fidelity.\n\n- Include systematic generalization experiments varying mesh resolution and topology at test time, with error metrics as a function of resolution mismatch.\n\n- Add ablation studies isolating the contributions of mesh-space edges, world-space edges, number of message-passing steps, and learned remeshing.\n\n- Evaluate boundary condition satisfaction (e.g., no-slip at walls) and describe how external forces are incorporated into model inputs.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Second-order update formula is correct but misdescribed",
+          "quote": "We can interpret the output features  $\\mathbf{p}_i$  as (higher-order) derivatives of  $\\mathbf{q}_i$ , and integrate them using a forward-Euler integrator with  $\\Delta t = 1$  to compute the next-step dynamical quantity  $\\mathbf{q}_i^{t + 1}$ . For first-order systems the output  $\\mathbf{p}_i$  is integrated once to update  $\\mathbf{q}_i^{t + 1} = \\mathbf{p}_i + \\mathbf{q}_i^t$ , while for second-order integration happens twice:  $\\mathbf{q}_i^{t + 1} = \\mathbf{p}_i + 2\\mathbf{q}_i^t - \\mathbf{q}^{t - 1}$ .",
+          "explanation": "The description 'integrate twice' does not match the formula. The formula itself is numerically correct for a Verlet-like update with \u0394t=1 if p_i represents acceleration times (\u0394t)^2. The paper should clarify that p_i is not a raw derivative but a learned correction term scaled appropriately, and that the update is a single-step Verlet integration, not two successive Euler steps. Rewrite the description as: 'For second-order systems, the output p_i represents the acceleration scaled by (\u0394t)^2, and the position update follows the Verlet scheme: q_i^{t+1} = 2q_i^t - q_i^{t-1} + p_i.'",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "World edge radius r_W is ambiguously defined",
+          "quote": "World-space edges are created by spatial proximity: that is, given a fixed-radius  $r_W$  on the order of the smallest mesh edge lengths, we add a world edge between nodes  $i$  and  $j$  if  $|\\mathbf{x}_i - \\mathbf{x}_j| < r_W$ , excluding node pairs already connected in the mesh.",
+          "explanation": "The phrase 'on the order of the smallest mesh edge lengths' is ambiguous, especially with adaptive remeshing where edge lengths vary. The paper should specify whether r_W is a fixed hyperparameter (e.g., a constant fraction of the initial smallest edge) or recomputed dynamically after each remeshing step. If dynamic, the formula for recomputation should be given. Add a sentence: 'We set r_W = \u03b1 \u00b7 min_{(i,j)\u2208E^M} |u_{ij}| where \u03b1 is a hyperparameter (e.g., \u03b1=1.5), and recompute r_W after each remeshing step.'",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Sizing field validity condition is asymmetric",
+          "quote": "An edge $\\mathbf{u}_{ij}$ is valid if and only if $\\mathbf{u}_{ij}^{\\mathrm{T}}\\mathbf{S}_{i}\\,\\mathbf{u}_{ij}\\leq 1$, otherwise it is too long, and needs to be split.",
+          "explanation": "Using only S_i makes the condition asymmetric. The standard approach in sizing field literature uses a symmetric condition, e.g., u_{ij}^T S_{ij} u_{ij} \u2264 1 where S_{ij} = (S_i + S_j)/2 or S_{ij} = max(S_i, S_j) elementwise. The paper should clarify whether the condition is evaluated from both endpoints (i.e., both u_{ij}^T S_i u_{ij} \u2264 1 and u_{ij}^T S_j u_{ij} \u2264 1) or if a symmetric tensor is used. Rewrite as: 'An edge u_{ij} is valid if and only if u_{ij}^T S_{ij} u_{ij} \u2264 1, where S_{ij} = (S_i + S_j)/2.'",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Contradiction in output for fluid domains",
+          "quote": "The network predicts change in momentum  $\\dot{\\mathbf{w}}_i$ , which is integrated once, and a direct prediction of the pressure field  $p$ .",
+          "explanation": "For incompressible fluid (CylinderFlow) the network predicts change in momentum and a direct prediction of pressure. However, for compressible fluid (Airfoil) the network predicts change in momentum, density, and pressure. The inconsistency is that for incompressible flow, pressure is typically determined by the incompressibility constraint (divergence-free velocity) and is not an independent variable. Predicting pressure directly without enforcing the incompressibility constraint may lead to unphysical pressure fields. The paper should explain how the predicted pressure is used and whether it is consistent with the incompressible Navier-Stokes equations. Additionally, the notation p vs p_i is inconsistent between the two descriptions.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Missing definition of node quantities for cloth",
+          "quote": "The node type  $\\mathbf{n}_i$  distinguishes cloth and obstacle/boundary nodes, and we encode inputs  $\\mathbf{u}_i, \\mathbf{x}_i, \\mathbf{n}_i$  as above, but since this is a fully dynamic second order system, we additionally provide  $h = 1$  steps of history, by including the velocity estimate  $\\dot{\\mathbf{x}}_i^t = \\mathbf{x}_i^t - \\mathbf{x}_i^{t-1}$  as a node feature.",
+          "explanation": "The paper introduces u_i as a node quantity for cloth experiments but does not define what u_i represents in this context. For structural mechanics, u_i is not mentioned (only x_i and n_i are listed). For incompressible fluid, u_i is listed alongside n_i and w_i, but u_i is not defined there either. The reader is left to guess whether u_i is a generic placeholder for node features or a specific physical quantity. The paper should explicitly define u_i for each domain or use a consistent notation that is defined earlier.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Generalization claim lacks quantitative error comparison for new shapes",
+          "quote": "We also trained a model in the FlagDynamic domain containing only simple rectangular cloth, and tested its performance on three disconnected fish-shaped flags (video). Both the learned dynamics model and the learned remesher generalized to the new shape, and the predicted dynamics were visually similar to the ground truth sequence. In a more extreme version of this experiment, we test that same model on a windsock with tassels (Figure 4(b), video). Not only has the model never seen a non-flat starting state during training, but the dimensions are also much larger \u2014 the mesh averages at 20k nodes, an order of magnitude more than seen in training. This result shows the strength of learning resolution and scale-independent models: we do not necessarily need to train on costly high-resolution simulation data; we may be able to learn to simulate large systems that would be too slow on conventional simulators, by training on smaller examples and scaling up at inference time.",
+          "explanation": "The generalization claim for fish-shaped flags and windsock is supported only by qualitative video references. No quantitative error metrics (e.g., RMSE, rollout error) are reported against ground truth for these tests. The paper should report rollout RMSE or similar metrics for these generalization tests, comparing to the ground truth simulation, to substantiate the claim of resolution and scale independence. Rewrite the paragraph to include quantitative error values for the fish-shaped flags and windsock experiments, or explicitly state that ground truth was not available and discuss the limitations.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Airfoil RMSE values are inconsistent with reported units",
+          "quote": "AIRFOIL | 5233 | 600 | 37 | 38 | 11015 | 314 \u00b1 36 | 582 \u00b1 37 | 11529 \u00b1 1203",
+          "explanation": "Airfoil RMSE values (314, 582, 11529) are two to three orders of magnitude larger than other domains (e.g., CylinderFlow: 2.34, 6.3, 40.88). This discrepancy likely arises because Airfoil data (e.g., pressure, density) has a much larger physical range or is not normalized. The paper does not specify whether RMSE is normalized by the data range. Without clarification, readers cannot compare performance across domains. The paper should specify the normalization or scaling of RMSE and discuss why Airfoil errors are so much larger. Add a note to Table 1 or the text explaining the scaling of RMSE values.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Generalization to steeper angles and higher Mach numbers lacks error bars",
+          "quote": "In Airfoil, we evaluate the model on steeper angles ($-35^{\\circ}...35^{\\circ}$ vs $-25^{\\circ}...25^{\\circ}$ in training) and higher inflow speeds (Mach number $0.7...0.9$ vs $0.2...0.7$ in training). In both cases, the behavior remains plausible (video) and RMSE raises only slightly from $11.5$ at training to $12.4$ for steeper angles and $13.1$ for higher inflow speeds.",
+          "explanation": "The RMSE values 11.5, 12.4, and 13.1 are not accompanied by standard deviations or confidence intervals, unlike the rollout-all RMSE in Table 1 (e.g., 11529 \u00b1 1203 for Airfoil). Without error bars, it is unclear whether the observed increase is statistically significant or within the noise of the model. The paper should report mean and standard deviation over multiple seeds or test trajectories for these generalization metrics. Add error bars to the reported RMSE values.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Claim of stability for thousands of steps lacks quantitative evidence",
+          "quote": "Even though our model was trained on next-step predictions, model rollouts remain stable for thousands of steps. This video shows a model trained on trajectories of 400 steps rolled out for 40000 steps.",
+          "explanation": "The claim of stability for thousands of steps is supported only by a video reference, with no quantitative error metrics over the rollout length. The paper does not plot RMSE versus rollout step or report a divergence time. Without such analysis, readers cannot distinguish between genuine stability and slow divergence. The paper should include a plot of rollout error as a function of step for each domain, and report the step at which error exceeds a meaningful fraction of the data range.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Computational efficiency claim lacks hardware and baseline details",
+          "quote": "Our approach is consistently faster than ground truth solvers by one to two orders of magnitude on all domains (Table 1). We believe this is due to our model being able to take much larger timesteps than classical solvers, and avoiding performance bottlenecks. Additionally, classical general-purpose solvers on irregular domains, such as those studied in this paper, often do not scale well on hardware accelerators, while our model is built from neural network building blocks, highly suitable for hardware acceleration.",
+          "explanation": "The claim of being 'one to two orders of magnitude faster' is based on Table 1, but the table only reports timings for the ground truth solver (t_GT) and the model (t_model, t_full). The paper does not specify the hardware used for the ground truth solver (e.g., CPU vs GPU, single core vs multi-core) or whether the solver was optimized. Without this context, the speedup may be due to hardware differences rather than algorithmic efficiency. The paper should specify the hardware and software setup for the ground truth solver and discuss whether the comparison is fair. Add a note to Table 1 or the text describing the hardware and solver configuration.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "GCN hypothesis lacks direct evidence",
+          "quote": "This is consistent with our hypothesis that the GCN performs worse due to the lack of relative encoding and message computing, which makes the GCN less likely to learn local physical laws and more prone to overfitting.",
+          "explanation": "The paper attributes GCN's poor performance to the lack of relative encoding and message passing, but the only supporting evidence is the ablation of MeshGraphNets without relative encoding (RMSE 26.5). The GCN itself was not ablated to isolate the effect of message passing from other architectural differences (e.g., the hybrid GCN-MLP still underperformed). The claim that overfitting is the cause is speculative without training curves or regularization analysis. To support the hypothesis, the paper should either (a) compare GCN with added relative encoding, or (b) show that GCN's training error is low while validation error is high, indicating overfitting. Without such evidence, the conclusion is not justified by the presented data. Rewrite the sentence to state the hypothesis as a conjecture rather than a conclusion, or add the missing evidence.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "UNet comparison lacks interpolation details",
+          "quote": "We implemented the UNet architecture from *Th\u00fcrey et al. [40]*, and found that on both datasets, MeshGraphNets outperforms the UNet in terms of RMSE (Figure 5(a)). While the UNet was able to make reasonable predictions on larger scales on Airfoil, it undersampled the important wake region around the wingtip (Figure 4(a)), even while using four times more cells to span a region 16 times smaller than our method (Figure A.1).",
+          "explanation": "The comparison to UNet is incomplete because the paper does not specify how the mesh data was interpolated onto the 128x128 grid (e.g., interpolation method, handling of boundary conditions). The claim that UNet uses 'four times more cells to span a region 16 times smaller' is ambiguous without defining the region of interest (ROI) and the effective resolution of the mesh. The paper should describe the interpolation procedure and report the effective spatial resolution of both methods to make the comparison fair. Without this, the reader cannot assess whether the UNet's poorer performance is due to the architecture or the interpolation artifacts. Add a description of the interpolation method and a quantitative comparison of effective resolution.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "History length claim needs evidence",
+          "quote": "Second, the model performs best given the shortest possible history (h=1 to estimate $\\dot{\\mathbf{x}}$ in cloth experiments, h=0 otherwise), with any extra history leading to overfitting. This differs from GNS *[37]*, which used $h\\in 2...5$ for best performance.",
+          "explanation": "The paper states that using longer history leads to overfitting, but does not provide evidence (e.g., training vs. validation error curves) or explain why MeshGraphNets differs from GNS. Since MeshGraphNets is built on GNS with additional components, the discrepancy is surprising and warrants discussion. The paper should either show the overfitting quantitatively or hypothesize why the architectural changes (e.g., learned remeshing, world-space edges) reduce the need for history. Without this, the claim appears unsupported and may confuse readers familiar with GNS. Add a figure or table showing validation error for different history lengths, or provide a reasoned explanation for the difference.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        }
+      ],
+      "cost_usd": 0.052,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

@@ -1,0 +1,616 @@
+{
+  "slug": "neurips2022-k7FuTOWM-elucidating-the-design-space-of-diffusion-based-generative-m",
+  "title": "Elucidating the Design Space of Diffusion-Based Generative Models [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Elucidating the Design Space of Diffusion-Based Generative Models**\n\n**Tero Karras Miika Aittala** NVIDIA NVIDIA `tkarras@nvidia.com maittala@nvidia.com` **Timo Aila Samuli Laine** NVIDIA NVIDIA `taila@nvidia.com slaine@nvidia.com`"
+    },
+    {
+      "index": 1,
+      "text": "## **Abstract**\n\nWe argue that the theory and practice of diffusion-based generative models are currently unnecessarily convoluted and seek to remedy the situation by presenting a design space that clearly separates the concrete design choices. This lets us identify several changes to both the sampling and training processes, as well as preconditioning of the score networks. Together, our improvements yield new state-of-the-art FID of 1.79 for CIFAR-10 in a class-conditional setting and 1.97 in an unconditional setting, with much faster sampling (35 network evaluations per image) than prior designs. To further demonstrate their modular nature, we show that our design changes dramatically improve both the efficiency and quality obtainable with pre-trained score networks from previous work, including improving the FID of a previously trained ImageNet-64 model from 2.07 to near-SOTA 1.55, and after re-training with our proposed improvements to a new SOTA of 1.36."
+    },
+    {
+      "index": 2,
+      "text": "## **1 Introduction**\n\nDiffusion-based generative models [45] have emerged as a powerful new framework for neural image synthesis, in both unconditional [16, 36, 48] and conditional [17, 35, 36, 38, 39, 41, 42, 48] settings, even surpassing the quality of GANs [13] in certain situations [9]. They are also rapidly finding use in other domains such as audio [27, 37] and video [19] generation, image segmentation [4, 54] and language translation [34]. As such, there is great interest in applying these models and improving them further in terms of image/distribution quality, training cost, and generation speed."
+    },
+    {
+      "index": 3,
+      "text": "The literature on these models is dense on theory, and derivations of sampling schedule, training dynamics, noise level parameterization, etc., tend to be based as directly as possible on theoretical frameworks, which ensures that the models are on a solid theoretical footing. However, this approach has a danger of obscuring the available design space \u2014 a proposed model may appear as a tightly coupled package where no individual component can be modified without breaking the entire system."
+    },
+    {
+      "index": 4,
+      "text": "As our first contribution, we take a look at the theory behind these models from a practical standpoint, focusing more on the \u201ctangible\u201d objects and algorithms that appear in the training and sampling phases, and less on the statistical processes from which they might be derived. The goal is to obtain better insights into how these components are linked together and what degrees of freedom are available in the design of the overall system. We focus on the broad class of models where a neural network is used to model the score [22] of a noise level dependent marginal distribution of the training data corrupted by Gaussian noise. Thus, our work is in the context of _denoising score matching_ [51]."
+    },
+    {
+      "index": 5,
+      "text": "36th Conference on Neural Information Processing Systems (NeurIPS 2022).\n\n_\u03c3_ =0 0.2 0.5 1 2 3 5 7 10 20 50 _\u03c3_ =0 0.2 0.5 1 2 3 5 7 10 20 50"
+    },
+    {
+      "index": 6,
+      "text": "(a) Noisy images drawn from _p_ ( _**x**_ ; _\u03c3_ ) (b) Ideal denoiser outputs _D_ ( _**x**_ ; _\u03c3_ )\n\nFigure 1: Denoising score matching on CIFAR-10. **(a)** Images from the training set corrupted with varying levels of additive Gaussian noise. High levels of noise lead to oversaturated colors; we normalize the images for cleaner visualization. **(b)** Optimal denoising result from minimizing Eq. 2 analytically (see Appendix B.3). With increasing noise level, the result approaches dataset mean."
+    },
+    {
+      "index": 7,
+      "text": "Our second set of contributions concerns the sampling processes used to synthesize images using diffusion models. We identify the best-performing time discretization for sampling, apply a higherorder Runge\u2013Kutta method for the sampling process, evaluate different sampler schedules, and analyze the usefulness of stochasticity in the sampling process. The result of these improvements is a significant drop in the number of sampling steps required during synthesis, and the improved sampler can be used as a drop-in replacement with several widely used diffusions models [36, 48]."
+    },
+    {
+      "index": 8,
+      "text": "The third set of contributions focuses on the training of the score-modeling neural network. While we continue to rely on the commonly used network architectures (DDPM [16], NCSN [47]), we provide the first principled analysis of the preconditioning of the networks\u2019 inputs, outputs, and loss functions in a diffusion model setting and derive best practices for improving the training dynamics. We also suggest an improved distribution of noise levels during training, and note that non-leaking augmentation [25] \u2014 typically used with GANs \u2014 is beneficial for diffusion models as well."
+    },
+    {
+      "index": 9,
+      "text": "Taken together, our contributions enable significant improvements in result quality, e.g., leading to record FIDs of 1.79 for CIFAR-10 [28] and 1.36 for ImageNet [8] in 64 _\u00d7_ 64 resolution. With all key ingredients of the design space explicitly tabulated, we believe that our approach will allow easier innovation on the individual components, and thus enable more extensive and targeted exploration of the design space of diffusion models. Our implementation and pre-trained models are available at `https://github.com/NVlabs/edm`"
+    },
+    {
+      "index": 10,
+      "text": "## **2 Expressing diffusion models in a common framework**\n\nLet us denote the data distribution by _p_ data( _**x**_ ), with standard deviation _\u03c3_ data, and consider the family of mollified distributions _p_ ( _**x**_ ; _\u03c3_ ) obtained by adding i.i.d. Gaussian noise of standard deviation _\u03c3_ to the data. For _\u03c3_ max _\u226b \u03c3_ data, _p_ ( _**x**_ ; _\u03c3_ max) is practically indistinguishable from pure Gaussian noise. The idea of diffusion models is to randomly sample a noise image _**x**_ 0 _\u223cN_ ( **0** _, \u03c3_ max[2] **[I]**[)][, and sequentially] denoise it into images _**x** i_ with noise levels _\u03c3_ 0 = _\u03c3_ max _> \u03c3_ 1 _> \u00b7 \u00b7 \u00b7 > \u03c3N_ = 0 so that at each noise level _**x** i \u223c p_ ( _**x** i_ ; _\u03c3i_ ). The endpoint _**x** N_ of this process is thus distributed according to the data."
+    },
+    {
+      "index": 11,
+      "text": "Song et al. [48] present a stochastic differential equation (SDE) that maintains the desired distribution _p_ as sample _**x**_ evolves over time. This allows the above process to be implemented using a stochastic solver that both removes and adds noise at each iteration. They also give a corresponding \u201cprobability flow\u201d ordinary differential equation (ODE) where the only source of randomness is the initial noise image _**x**_ 0. Contrary to the usual order of treatment, we begin by examining the ODE, as it offers a fruitful setting for analyzing sampling trajectories and their discretizations. The insights carry over to stochastic sampling, which we reintroduce as a generalization in Section 4."
+    },
+    {
+      "index": 12,
+      "text": "**ODE formulation.** A probability flow ODE [48] continuously increases or reduces noise level of the image when moving forward or backward in time, respectively. To specify the ODE, we must first choose a schedule _\u03c3_ ( _t_ ) that defines the desired noise level at time _t_ . For example, setting _\u03c3_ ( _t_ ) _\u221d \u221at_ is mathematically natural, as it corresponds to constant-speed heat diffusion [12]. However, we will show in Section 3 that the choice of schedule has major practical implications and should not be made on the basis of theoretical convenience."
+    },
+    {
+      "index": 13,
+      "text": "The defining characteristic of the probability flow ODE is that evolving a sample _**x** a \u223c p_ \ufffd _**x** a_ ; _\u03c3_ ( _ta_ )\ufffd from time _ta_ to _tb_ (either forward or backward in time) yields a sample _**x** b \u223c p_ \ufffd _**x** b_ ; _\u03c3_ ( _tb_ )\ufffd. Following previous work [48], this requirement is satisfied (see Appendix B.1 and B.2) by"
+    },
+    {
+      "index": 14,
+      "text": "2\n\nTable 1: Specific design choices employed by different model families. _N_ is the number of ODE solver iterations that we wish to execute during sampling. The corresponding sequence of time steps is _{t_ 0 _, t_ 1 _, . . . , tN }_ , where _tN_ = 0. If the model was originally trained for specific choices of _N_ and _{ti}_ , the originals are denoted by _M_ and _{uj}_ , respectively. The denoiser is defined as _D\u03b8_ ( _**x**_ ; _\u03c3_ ) = _c_ skip( _\u03c3_ ) _**x**_ + _c_ out( _\u03c3_ ) _F\u03b8_ \ufffd _c_ in( _\u03c3_ ) _**x**_ ; _c_ noise( _\u03c3_ )\ufffd; _F\u03b8_ represents the raw neural network layers."
+    },
+    {
+      "index": 15,
+      "text": "|**VP[48]**\n**VE[48]**\n**iDDPM**|**VP[48]**\n**VE[48]**\n**iDDPM**|**[36] + DDIM[46]**\n**Ours(\u201cEDM\u201d)**|\n|---|---|---|\n|**Sampling (Section 3)**\nODE solver\nEuler\nEuler\nEuler\nTime steps\n_ti<N_\n1 +\n_i_\n_N\u2212_1(_\u03f5_s_\u2212_1)\n_\u03c3_2\nmax\n\ufffd\n_\u03c3_2\nmin_/\u03c3_2\nmax\n\ufffd\n_i_\n_N\u2212_1\n_u\u230aj_0+_M_"
+    },
+    {
+      "index": 16,
+      "text": "_uM_ = 0\n_uj\u2212_1=\n\ufffd\nSchedule\n_\u03c3_(_t_)\n\ufffd\n_e_\n1\n2 _\u03b2_d_t_2+_\u03b2_min_t\u2212_1\n_\u221a_\n_t_\n_t_\nScaling\n_s_(_t_)\n1\n\ufffd~~\ufffd~~\n_e_\n1\n2 _\u03b2_d_t_2+_\u03b2_min_t_\n1\n1||2nd order Heun\n_\u2212_1_\u2212j_0\n_N\u2212_1\n_i_+ 1\n2 _\u230b_, where"
+    },
+    {
+      "index": 17,
+      "text": "_u_2\n_j_+1\nmax(\u00af_\u03b1j\u2212_1_/_\u00af_\u03b1j,C_1) _\u2212_1\n\ufffd\n_\u03c3_max\n1\n_\u03c1_ +\n_i_\n_N\u2212_1(_\u03c3_min\n1\n_\u03c1_ _\u2212\u03c3_max\n1\n_\u03c1_ )\n\ufffd_\u03c1_\n_t_\n1|\n||"
+    },
+    {
+      "index": 18,
+      "text": "= 0\n=\n\ufffd||\n|**Network and preconditioning (Section 5)**\nArchitecture of_F\u03b8_\nDDPM++\nNCSN++\nDDPM\n(any)\nSkip scaling\n_c_skip(_\u03c3_)\n1\n1\n1\n_\u03c3_2\ndata_/_\n\ufffd\n_\u03c3_2 +_\u03c3_2\ndata\n\ufffd\nOutput scaling_c_out(_\u03c3_)\n_\u2212\u03c3_\n_\u03c3_\n_\u2212\u03c3_\n_\u03c3 \u00b7 \u03c3_data_/_\n~~\ufffd~~\n_\u03c3_2\ndata +_\u03c3_2\nInput scaling\n_c_in(_\u03c3_)\n1_/_\n_\u221a_\n_\u03c3_2 + 1\n1\n1_/_\n_\u221a_\n_\u03c3_2 + 1\n1_/_\n\ufffd\n_\u03c3_2 +_\u03c3_2\ndata\nNoise cond. _c_noise(_\u03c3_)\n(_M \u2212_1)_\u03c3\u2212_1(_\u03c3_)\nln( 1\n2_\u03c3_)\n_M \u2212_1_\u2212_arg min_j |uj \u2212\u03c3|_\n1\n4 ln(_\u03c3_)|||\n|**Training (Section 5)**\nNoise distribution\n_\u03c3\u2212_1(_\u03c3_)_\u223cU_(_\u03f5_t_,_1)\nln(_\u03c3_)_\u223cU_(ln(_\u03c3_min)_,_\n_\u03c3_ =_uj, j \u223cU{_0_, M \u2212_1_}_\nln(_\u03c3_)_\u223cN_(_P_mean_, P_ 2\nstd)\nln(_\u03c3_max))\nLoss weighting _\u03bb_(_\u03c3_)\n1_/\u03c3_2\n1_/\u03c3_2\n1_/\u03c3_2\n(note: _\u2217_)\n\ufffd\n_\u03c3_2+_\u03c3_2\ndata\n\ufffd\n_/_(_\u03c3 \u00b7 \u03c3_data)2|||\n|**Parameters**\n_\u03b2_d = 19_._9_, \u03b2_min = 0_._1\n_\u03c3_min = 0_._02\n\u00af_\u03b1j_ = sin2( _\u03c0_\n2\n_j_\n_M_(_C_2+1))\n_\u03c3_min = 0_._002_, \u03c3_max = 80\n_\u03f5_s = 10_\u2212_3_, \u03f5_t = 10_\u2212_5\n_\u03c3_max = 100\n_C_1 = 0_._001,_C_2 = 0_._008\n_\u03c3_data = 0_._5_, \u03c1_= 7\n_M_ = 1000\n_M_ = 1000_, j_0 = 8_\u2020_\n_P_mean=_\u2212_1_._2,_P_std = 1_._2|||"
+    },
+    {
+      "index": 19,
+      "text": "> _\u2217_ iDDPM also employs a second loss term _L_ vlb _\u2020_ In our tests, _j_ 0 = 8 yielded better FID than _j_ 0 = 0 used by iDDPM"
+    },
+    {
+      "index": 20,
+      "text": "where the dot denotes a time derivative. _\u2207_ _**x**_ log _p_ ( _**x**_ ; _\u03c3_ ) is the _score function_ [22], a vector field that points towards higher density of data at a given noise level. Intuitively, an infinitesimal forward step of this ODE nudges the sample away from the data, at a rate that depends on the change in noise level. Equivalently, a backward step nudges the sample towards the data distribution."
+    },
+    {
+      "index": 21,
+      "text": "**Denoising score matching.** The score function has the remarkable property that it does not depend on the generally intractable normalization constant of the underlying density function _p_ ( _**x**_ ; _\u03c3_ ) [22], and thus can be much easier to evaluate. Specifically, if _D_ ( _**x**_ ; _\u03c3_ ) is a denoiser function that minimizes the expected _L_ 2 denoising error for samples drawn from _p_ data separately for every _\u03c3_ , i.e.,"
+    },
+    {
+      "index": 22,
+      "text": "E _**y** \u223cp_ dataE _**n** \u223cN_ ( **0** _,\u03c3_ 2 **I** ) _\u2225D_ ( _**y**_ + _**n**_ ; _\u03c3_ ) _\u2212_ _**y** \u2225_ 2[2][,][then] _[\u2207]_ _**[x]**_[log] _[ p]_[(] _**[x]**_[;] _[ \u03c3]_[) =] \ufffd _D_ ( _**x**_ ; _\u03c3_ ) _\u2212_ _**x**_ \ufffd _/\u03c3_[2] , (2, 3)"
+    },
+    {
+      "index": 23,
+      "text": "where _**y**_ is a training image and _**n**_ is noise. In this light, the score function isolates the noise component from the signal in _**x**_ , and Eq. 1 amplifies (or diminishes) it over time. Figure 1 illustrates the behavior of ideal _D_ in practice. The key observation in diffusion models is that _D_ ( _**x**_ ; _\u03c3_ ) can be implemented as a neural network _D\u03b8_ ( _**x**_ ; _\u03c3_ ) trained according to Eq. 2. Note that _D\u03b8_ may include additional pre- and post-processing steps, such as scaling _**x**_ to an appropriate dynamic range; we will return to such _preconditioning_ in Section 5."
+    },
+    {
+      "index": 24,
+      "text": "**Time-dependent signal scaling.** Some methods (see Appendix C.1) introduce an additional scale \u02c6 schedule _s_ ( _t_ ) and consider _**x**_ = _s_ ( _t_ )\u02c6 _**x**_ to be a scaled version of the original, non-scaled variable _**x**_ . This changes the time-dependent probability density, and consequently also the ODE solution trajectories. The resulting ODE is a generalization of Eq. 1:"
+    },
+    {
+      "index": 25,
+      "text": "Note that we explicitly undo the scaling of _**x**_ when evaluating the score function to keep the definition of _p_ ( _**x**_ ; _\u03c3_ ) independent of _s_ ( _t_ )."
+    },
+    {
+      "index": 26,
+      "text": "**Solution by discretization.** The ODE to be solved is obtained by substituting Eq. 3 into Eq. 4 to define the point-wise gradient, and the solution can be found by numerical integration, i.e., taking"
+    },
+    {
+      "index": 27,
+      "text": "3\n\n**----- Start of picture text -----**\n\nFID FID FID\n200 500 20 Original sampler\n100 200 Our reimplementation\n50 10050 10 + Heun & our+ Our  \u03c3 ( t ) &  s { ( tti ) }\n20 Black-box RK45\n10 20 5\n10\n53 5 3\n2 35 2 [3] 27 2 79\nNFE=8 16 32 64 128 256 512 1024 8 32 128 512 2048 8192 8 16 32 64 128 256 512 1024\n(a) Uncond. CIFAR-10, VP ODE (b) Uncond. CIFAR-10, VE ODE (c) Class-cond. ImageNet-64, DDIM\n**----- End of picture text -----**"
+    },
+    {
+      "index": 28,
+      "text": "Figure 2: Comparison of deterministic sampling methods using three pre-trained models. For each curve, the dot indicates the lowest NFE whose FID is within 3% of the lowest observed FID."
+    },
+    {
+      "index": 29,
+      "text": "finite steps over discrete time intervals. This requires choosing both the integration scheme (e.g., Euler or a variant of Runge\u2013Kutta), as well as the discrete sampling times _{t_ 0 _, t_ 1 _, . . . , tN }_ . Many prior works rely on Euler\u2019s method, but we show in Section 3 that a 2[nd] order solver offers a better computational tradeoff. For brevity, we do not provide a separate pseudocode for Euler\u2019s method applied to our ODE here, but it can be extracted from Algorithm 1 by omitting lines 6\u20138."
+    },
+    {
+      "index": 30,
+      "text": "**Putting it together.** Table 1 presents formulas for reproducing deterministic variants of three earlier methods in our framework. These methods were chosen because they are widely used and achieve state-of-the-art performance, but also because they were derived from different theoretical foundations. Some of our formulas appear quite different from the original papers as indirection and recursion have been removed; see Appendix C for details. The main purpose of this reframing is to bring into light all the independent components that often appear tangled together in previous work. In our framework, there are no implicit dependencies between the components \u2014 any choices (within reason) for the individual formulas will, in principle, lead to a functioning model. In other words, changing one component does not necessitate changes elsewhere in order to, e.g., maintain the property that the model converges to the data in the limit. In practice, some choices and combinations will of course work better than others."
+    },
+    {
+      "index": 31,
+      "text": "## **3 Improvements to deterministic sampling**\n\nImproving the output quality and/or decreasing the computational cost of sampling are common topics in diffusion model research (e.g., [10, 24, 30, 31, 32, 36, 43, 50, 52, 53, 56]). Our hypothesis is that the choices related to the sampling process are largely independent of the other components, such as network architecture and training details. In other words, the training procedure of _D\u03b8_ should not dictate _\u03c3_ ( _t_ ), _s_ ( _t_ ), and _{ti}_ , nor vice versa; from the viewpoint of the sampler, _D\u03b8_ is simply a black box [52, 53]. We test this by evaluating different samplers on three _pre-trained_ models, each representing a different theoretical framework and model family. We first measure baseline results for these models using their original sampler implementations, and then bring these samplers into our unified framework using the formulas in Table 1, followed by our improvements. This allows us to evaluate different practical choices and propose general improvements to the sampling process that are applicable to all models."
+    },
+    {
+      "index": 32,
+      "text": "We evaluate the \u201cDDPM++ cont. (VP)\u201d and \u201cNCSN++ cont. (VE)\u201d models by Song et al. [48] trained on unconditional CIFAR-10 [28] at 32 _\u00d7_ 32, corresponding to the variance preserving (VP) and variance exploding (VE) formulations [48], originally inspired by DDPM [16] and SMLD [47]. We also evaluate the \u201cADM (dropout)\u201d model by Dhariwal and Nichol [9] trained on class-conditional ImageNet [8] at 64 _\u00d7_ 64, corresponding to the improved DDPM (iDDPM) formulation [36]. This model was trained using a discrete set of _M_ = 1000 noise levels. Further details are given in Appendix C."
+    },
+    {
+      "index": 33,
+      "text": "We evaluate the result quality in terms of Fr\u00e9chet inception distance (FID) [15] computed between 50,000 generated images and all available real images. Figure 2 shows FID as a function of neural function evaluations (NFE), i.e., how many times _D\u03b8_ is evaluated to produce a single image. Given that the sampling process is dominated entirely by the cost of _D\u03b8_ , improvements in NFE translate directly to sampling speed. The original deterministic samplers are shown in blue, and the reimplementations of these methods in our unified framework (orange) yield similar but consistently better results. The differences are explained by certain oversights in the original implementations as well as our more careful treatment of discrete noise levels in the case of DDIM; see Appendix C. Note that our reimplementations are fully specified by Algorithm 1 and Table 1, even though the original codebases are structured very differently from each other."
+    },
+    {
+      "index": 34,
+      "text": "4\n\n**Algorithm 1** Deterministic sampling using Heun\u2019s 2[nd] order method with arbitrary _\u03c3_ ( _t_ ) and _s_ ( _t_ )."
+    },
+    {
+      "index": 35,
+      "text": "|1:|**procedure**HEUNSAMPLER(_D\u03b8_(**_x_**;_\u03c3_)_, \u03c3_(_t_)_, s_(_t_)_, _|**procedure**HEUNSAMPLER(_D\u03b8_(**_x_**;_\u03c3_)_, \u03c3_(_t_)_, s_(_t_)_, _|**procedure**HEUNSAMPLER(_D\u03b8_(**_x_**;_\u03c3_)_, \u03c3_(_t_)_, s_(_t_)_, _|_ti\u2208{_0_,...,N}_)|_ti\u2208{_0_,...,N}_)|_ti\u2208{_0_,...,N}_)|||\n|---|---|---|---|---|---|---|---|---|\n|2:|**sample****_x_**0 _\u223cN_\n\ufffd\n**0**_, \u03c3_2(_t_0)_s_2(_t_0)**I**\n\ufffd|||||||_\u25b7_Generate initial sample at_t_0|\n|3:|**for**_i \u2208{_0_, . . . , N \u2212_1_}_**do**|||||||_\u25b7_Solve Eq. 4 over_N_ time steps|\n|4:|**_d_**_i \u2190_\n\ufffd\u02d9_\u03c3_(_ti_)\n_\u03c3_(_ti_) + \u02d9_s_(_ti_)\n_s_(_ti_)\n\ufffd\n**_x_**_i \u2212_\u02d9_\u03c3_(_ti_)_s_(_ti_)\n_\u03c3_(_ti_)|_D\u03b8_||\ufffd**_x_**_i_\n_s_(_ti_);|_\u03c3_(_ti_)\n\ufffd|||_\u25b7_Evaluated**_x_**_/_d_t_at_ti_|\n|5:|**_x_**_i_+1 _\u2190_**_x_**_i_+ (_ti_+1_\u2212ti_)**_d_**_i_|||||||_\u25b7_Take Euler step from_ti_ to_ti_+1|\n|6:|**if**_\u03c3_(_ti_+1) = 0**then**|||_\u25b7_Apply 2nd order correction unless_\u03c3_goes to zero|||||\n|7:|**_d_**_\u2032_\n_i \u2190_\n\ufffd\u02d9_\u03c3_(_ti_+1)\n_\u03c3_(_ti_+1) + \u02d9_s_(_ti_+1)\n_s_(_ti_+1)\n\ufffd\n**_x_**_i_+1_\u2212_\u02d9_\u03c3_(_ti_+1)_s_(_ti_+1)\n_\u03c3_(_ti_+1)||||_D\u03b8_|\ufffd|**_x_**_i_+1\n_s_(_ti_+1);_\u03c3_(_ti_+1)\n\ufffd\n_\u25b7_Eval. d**_x_**_/_d_t_at_ti_+1||\n|8:|**_x_**_i_+1 _\u2190_**_x_**_i_+ (_ti_+1_\u2212ti_)\n\ufffd1\n2**_d_**_i_+ 1\n2**_d_**_\u2032_\n_i_||\ufffd|||||_\u25b7_Explicit trapezoidal rule at_ti_+1|\n|9:|**return****_x_**_N_|||||||_\u25b7_Return noise-free sample at_tN_|"
+    },
+    {
+      "index": 36,
+      "text": "**Discretization and higher-order integrators.** Solving an ODE numerically is necessarily an approximation of following the true solution trajectory. At each step, the solver introduces _truncation error_ that accumulates over the course of _N_ steps. The local error generally scales superlinearly with respect to step size, and thus increasing _N_ improves the accuracy of the solution."
+    },
+    {
+      "index": 37,
+      "text": "The commonly used Euler\u2019s method is a first order ODE solver with _O_ ( _h_[2] ) local error with respect to step size _h_ . Higher-order Runge\u2013Kutta methods [49] scale more favorably but require multiple evaluations of _D\u03b8_ per step. Linear multistep methods have also been recently proposed for sampling diffusion models [30, 56]. Through extensive tests, we have found Heun\u2019s 2[nd] order method [2] (a.k.a. improved Euler, trapezoidal rule) \u2014 previously explored in the context of diffusion models by Jolicoeur-Martineau et al. [24] \u2014 to provide an excellent tradeoff between truncation error and NFE. As illustrated in Algorithm 1, it introduces an additional correction step for _**x** i_ +1 to account for change in d _**x** /_ d _t_ between _ti_ and _ti_ +1. This correction leads to _O_ ( _h_[3] ) local error at the cost of one additional evaluation of _D\u03b8_ per step. Note that stepping to _\u03c3_ = 0 would result in a division by zero, so we revert to Euler\u2019s method in this case. We discuss the general family of 2[nd] order solvers in Appendix D.2."
+    },
+    {
+      "index": 38,
+      "text": "The time steps _{ti}_ determine how the step sizes and thus truncation errors are distributed between different noise levels. We provide a detailed analysis in Appendix D.1, concluding that the step size should decrease monotonically with decreasing _\u03c3_ and it does not need to vary on a per-sample basis. We adopt a parameterized scheme where the time steps are defined according to a sequence of noise levels _{\u03c3i}_ , i.e., _ti_ = _\u03c3[\u2212]_[1] ( _\u03c3i_ ). We set _\u03c3i<N_ = ( _Ai_ + _B_ ) _[\u03c1]_ and select the constants _A_ and _B_ so that _\u03c3_ 0 = _\u03c3_ max and _\u03c3N \u2212_ 1 = _\u03c3_ min, which gives"
+    },
+    {
+      "index": 39,
+      "text": "Here _\u03c1_ controls how much the steps near _\u03c3_ min are shortened at the expense of longer steps near _\u03c3_ max. Our analysis in Appendix D.1 shows that setting _\u03c1_ = 3 nearly equalizes the truncation error at each step, but that _\u03c1_ in range of 5 to 10 performs much better for sampling images. This suggests that errors near _\u03c3_ min have a large impact. We set _\u03c1_ = 7 for the remainder of this paper."
+    },
+    {
+      "index": 40,
+      "text": "Results for Heun\u2019s method and Eq. 5 are shown as the green curves in Figure 2. We observe consistent improvement in all cases: Heun\u2019s method reaches the same FID as Euler\u2019s method with considerably lower NFE."
+    },
+    {
+      "index": 41,
+      "text": "**Trajectory curvature and noise schedule.** The shape of the ODE solution trajectories is defined by functions _\u03c3_ ( _t_ ) and _s_ ( _t_ ). The choice of these functions offers a way to reduce the truncation errors discussed above, as their magnitude can be expected to scale proportional to the curvature of d _**x** /_ d _t_ . We argue that the best choice for these functions is _\u03c3_ ( _t_ ) = _t_ and _s_ ( _t_ ) = 1, which is also the choice made in DDIM [46]. With this choice, the ODE of Eq. 4 simplifies to d _**x** /_ d _t_ = \ufffd _**x** \u2212 D_ ( _**x**_ ; _t_ )\ufffd _/t_ and _\u03c3_ and _t_ become interchangeable."
+    },
+    {
+      "index": 42,
+      "text": "An immediate consequence is that at any _**x**_ and _t_ , a single Euler step to _t_ = 0 yields the denoised image _D\u03b8_ ( _**x**_ ; _t_ ). The tangent of the solution trajectory therefore always points towards the denoiser output. This can be expected to change only slowly with the noise level, which corresponds to largely linear solution trajectories. The 1D ODE sketch of Figure 3c supports this intuition; the solution trajectories approach linear at both large and small noise levels, and have substantial curvature in only a small region in between. The same effect can be seen with real data in Figure 1b, where the"
+    },
+    {
+      "index": 43,
+      "text": "5\n\n**----- Start of picture text -----**\n\nx x x\n2 40 40\n1 20 20\n0 0 0\n1 20 20\n2 40 40\nt = 0.0 0.2 0.4 0.6 0.8 t = 0 200 400 600 t = 0 5 10 15 20 25\n(a) Variance preserving ODE [48] (b) Variance exploding ODE [48] (c) DDIM [46] / Our ODE\n**----- End of picture text -----**"
+    },
+    {
+      "index": 44,
+      "text": "Figure 3: A sketch of ODE curvature in 1D where _p_ data is two Dirac peaks at _**x**_ = _\u00b1_ 1. Horizontal _t_ axis is chosen to show _\u03c3 \u2208_ [0 _,_ 25] in each plot, with insets showing _\u03c3 \u2208_ [0 _,_ 1] near the data. Example local gradients are shown with black arrows. **(a)** Variance preserving ODE of Song et al. [48] has solution trajectories that flatten out to horizontal lines at large _\u03c3_ . Local gradients start pointing towards data only at small _\u03c3_ . **(b)** Variance exploding variant has extreme curvature near data and the solution trajectories are curved everywhere. **(c)** With the schedule used by DDIM [46] and us, as _\u03c3_ increases the solution trajectories approach straight lines that point towards the mean of data. As _\u03c3 \u2192_ 0, the trajectories become linear and point towards the data manifold."
+    },
+    {
+      "index": 45,
+      "text": "change between different denoiser targets occurs in a relatively narrow _\u03c3_ range. With the advocated schedule, this corresponds to high ODE curvature being limited to this same range."
+    },
+    {
+      "index": 46,
+      "text": "The effect of setting _\u03c3_ ( _t_ ) = _t_ and _s_ ( _t_ ) = 1 is shown as the red curves in Figure 2. As DDIM already employs these same choices, the red curve is identical to the green one for ImageNet-64. However, VP and VE benefit considerably from switching away from their original schedules."
+    },
+    {
+      "index": 47,
+      "text": "**Discussion.** The choices that we made in this section to improve deterministic sampling are summarized in the _Sampling_ part of Table 1. Together, they reduce the NFE needed to reach highquality results by a large factor: 7.3 _\u00d7_ for VP, 300 _\u00d7_ for VE, and 3.2 _\u00d7_ for DDIM, corresponding to the highlighted NFE values in Figure 2. In practice, we can generate 26.3 high-quality CIFAR-10 images per second on a single NVIDIA V100. The consistency of improvements corroborates our hypothesis that the sampling process is orthogonal to how each model was originally trained. As further validation, we show results for the adaptive RK45 method [11] using our schedule as the dashed black curves in Figure 2; the cost of this sophisticated ODE solver outweighs its benefits."
+    },
+    {
+      "index": 48,
+      "text": "## **4 Stochastic sampling**\n\nDeterministic sampling offers many benefits, e.g., the ability to turn real images into their corresponding latent representations by inverting the ODE. However, it tends to lead to worse output quality [46, 48] than stochastic sampling that injects fresh noise into the image in each step. Given that ODEs and SDEs recover the same distributions in theory, what exactly is the role of stochasticity?"
+    },
+    {
+      "index": 49,
+      "text": "**Background.** The SDEs of Song et al. [48] can be generalized [20, 55] as a sum of the probability flow ODE of Eq. 1 and a time-varying _Langevin diffusion_ SDE [14] (see Appendix B.5):"
+    },
+    {
+      "index": 50,
+      "text": "|d**_x_**_\u00b1_|=_\u2212_\u02d9_\u03c3_(_t_)_\u03c3_(_t_)_\u2207_**_x_**log_p_\n\ufffd\n\ufffd\ufffd|=_\u2212_\u02d9_\u03c3_(_t_)_\u03c3_(_t_)_\u2207_**_x_**log_p_\n\ufffd\n\ufffd\ufffd|\ufffd|**_x_**;_\u03c3_(_t_)\n\ufffd|d_t_\n\ufffd|_\u00b1 \u03b2_(_t_)_\u03c3_(_t_)2_\u2207_**_x_**log_p_\n\ufffd\n**_x_**;_\u03c3_(_t_)\n\ufffd\n\ufffd\n\ufffd\ufffd|_\u00b1 \u03b2_(_t_)_\u03c3_(_t_)2_\u2207_**_x_**log_p_\n\ufffd\n**_x_**;_\u03c3_(_t_)\n\ufffd\n\ufffd\n\ufffd\ufffd|d_t_\n\ufffd|+|~~\ufffd~~\n2_\u03b2_(_t_)_\u03c3_(_t_) d_\u03c9t_\n\ufffd\n\ufffd\ufffd\n\ufffd\n_,_ (6)|~~\ufffd~~\n2_\u03b2_(_t_)_\u03c3_(_t_) d_\u03c9t_\n\ufffd\n\ufffd\ufffd\n\ufffd\n_,_ (6)|~~\ufffd~~\n2_\u03b2_(_t_)_\u03c3_(_t_) d_\u03c9t_\n\ufffd\n\ufffd\ufffd\n\ufffd\n_,_ (6)|\n|---|---|---|---|---|---|---|---|---|---|---|---|---|\n|||probability fow ODE (Eq. 1)|||||deterministic noise decay|||||noise injection|\n|||||||\ufffd|\ufffd\ufffd|||||\ufffd|\n||||||||Langevin diffusion SDE||||||"
+    },
+    {
+      "index": 51,
+      "text": "where _\u03c9t_ is the standard Wiener process. d _**x**_ + and d _**x** \u2212_ are now separate SDEs for moving forward and backward in time, related by the time reversal formula of Anderson [1]. The Langevin term can further be seen as a combination of a deterministic score-based denoising term and a stochastic noise injection term, whose net noise level contributions cancel out. As such, _\u03b2_ ( _t_ ) effectively expresses the relative rate at which existing noise is replaced with new noise. The SDEs of Song et al. [48] are recovered with the choice _\u03b2_ ( _t_ ) = _\u03c3_ \u02d9 ( _t_ ) _/\u03c3_ ( _t_ ), whereby the score vanishes from the forward SDE."
+    },
+    {
+      "index": 52,
+      "text": "This perspective reveals why stochasticity is helpful in practice: The implicit Langevin diffusion drives the sample towards the desired marginal distribution at a given time, actively correcting for any errors made in earlier sampling steps. On the other hand, approximating the Langevin term"
+    },
+    {
+      "index": 53,
+      "text": "6\n\n**Algorithm 2** Our stochastic sampler with _\u03c3_ ( _t_ ) = _t_ and _s_ ( _t_ ) = 1.\n\n|**Alg**|**orithm 2** Our stochastic sampler with|_\u03c3_(_t_|_\u03c3_(_t_|)=_t_and_s_|)=_t_and_s_|(_t_)= 1.|(_t_)= 1.|\n|---|---|---|---|---|---|---|---|\n|1:|**procedure**STOCHASTICSAMPLER(_D\u03b8_(**_x_**;|_\u03c3_)_, _||_ti\u2208{_0_,...,N}, _||_\u03b3i\u2208{_0_,...,N\u2212_1_}, S_noise)||\n|2:\n3:\n4:\n5:|**sample****_x_**0 _\u223cN_\n\ufffd\n**0**_, t_2\n0 **I**\n\ufffd\n**for**_i \u2208{_0_, . . . , N \u2212_1_}_**do**\n**sample****_\u03f5_**_i \u223cN_\n\ufffd\n**0**_, S_2\nnoise **I**\n\ufffd\n\u02c6_ti \u2190ti_+_\u03b3iti_|||||_\u25b7\u03b3i_ =\n\ufffd\nmin\n\ufffd\n_S_churn\n_N ,_\n~~_\u221a_~~\n2_\u2212_1\n\ufffd\nif_ti\u2208_[_S_tmin_,S_tmax]\n0\notherwise\n_\u25b7_Select temporarily increased noise level \u02c6_ti_||\n|6:|**\u02c6****_x_**_i \u2190_**_x_**_i_+\n~~\ufffd~~\n\u02c6_t_2\n_i \u2212t_2\n_i_ **_\u03f5_**_i_||||||_\u25b7_Add new noise to move from_ti_ to \u02c6_ti_|\n|7:\n8:|**_d_**_i \u2190_\n\ufffd\n**\u02c6****_x_**_i \u2212D\u03b8_(**\u02c6****_x_**_i_;\u02c6_ti_)\n\ufffd\n_/_\u02c6_ti_\n**_x_**_i_+1 _\u2190_**\u02c6****_x_**_i_+ (_ti_+1_\u2212_\u02c6_ti_)**_d_**_i_||||||_\u25b7_Evaluated**_x_**_/_d_t_at \u02c6_ti_\n_\u25b7_Take Euler step from \u02c6_ti_ to_ti_+1|\n|9:|**if**_ti_+1 = 0**then**|||||||\n|10:\n11:|**_d_**_\u2032_\n_i \u2190_\n\ufffd\n**_x_**_i_+1_\u2212D\u03b8_(**_x_**_i_+1;_ti_+1)\n\ufffd\n_/ti_+1\n**_x_**_i_+1 _\u2190_**\u02c6****_x_**_i_+ (_ti_+1_\u2212_\u02c6_ti_)\n\ufffd1\n2**_d_**_i_+ 1\n2**_d_**_\u2032_\n_i_||||\ufffd||_\u25b7_Apply 2nd order correction|\n|12:|**return****_x_**_N_|||||||"
+    },
+    {
+      "index": 54,
+      "text": "with discrete SDE solver steps introduces error in itself. Previous results [3, 24, 46, 48] suggest that non-zero _\u03b2_ ( _t_ ) is helpful, but as far as we can tell, the implicit choice for _\u03b2_ ( _t_ ) in Song et al. [48] enjoys no special properties. Hence, the optimal amount of stochasticity should be determined empirically."
+    },
+    {
+      "index": 55,
+      "text": "**Our stochastic sampler.** We propose a stochastic sampler that combines our 2[nd] order deterministic ODE integrator with explicit Langevin-like \u201cchurn\u201d of adding and removing noise. A pseudocode is given in Algorithm 2. At each step _i_ , given the sample _**x** i_ at noise level _ti_ (= _\u03c3_ ( _ti_ )), we perform two sub-steps.\u02c6 First, we add noise to the sample according to a factor **\u02c6** _\u03b3i \u2265_ 0 to reach a higher noise level _ti_ = _ti_ + _\u03b3iti_ . Second, from the increased-noise sample _**x** i_ , we solve the ODE backward from \u02c6 _ti_ to _ti_ +1 with a single step. This yields a sample _**x** i_ +1 with noise level _ti_ +1, and the iteration continues. We stress that this is not a general-purpose SDE solver, but a sampling procedure tailored for the specific problem. Its correctness stems from the alternation of two sub-steps that each maintain the correct distribution (up to truncation error in the ODE step). The predictor-corrector sampler of Song et al. [48] has a conceptually similar structure to ours."
+    },
+    {
+      "index": 56,
+      "text": "To analyze the main difference between our method and Euler\u2013Maruyama, we first note a subtle discrepancy in the latter when discretizing Eq. 6. One can interpret Euler\u2013Maruyama as first adding noise and then performing an ODE step, not from the intermediate state after noise injection, but assuming that _**x**_ and _\u03c3_ remained at the initial state at the beginning of the iteration step. In our method, the parameters used to evaluate _D\u03b8_ on line 7 of Algorithm 2 correspond to the state after noise injection, whereas an Euler\u2013Maruyama -like method would use _**x** i_ ; _ti_ instead of _**x**_ **\u02c6** _i_ ; _t_[\u02c6] _i_ . In the limit of \u2206 _t_ approaching zero there may be no difference between these choices, but the distinction appears to become significant when pursuing low NFE with large steps."
+    },
+    {
+      "index": 57,
+      "text": "**Practical considerations.** Increasing the amount of stochasticity is effective in correcting errors made by earlier sampling steps, but it has its own drawbacks. We have observed (see Appendix E.1) that excessive Langevin-like addition and removal of noise results in gradual loss of detail in the generated images with all datasets and denoiser networks. There is also a drift toward oversaturated colors at very low and high noise levels. We suspect that practical denoisers induce a slightly nonconservative vector field in Eq. 3, violating the premises of Langevin diffusion and causing these detrimental effects. Notably, our experiments with analytical denoisers (such as the one in Figure 1b) have not shown such degradation."
+    },
+    {
+      "index": 58,
+      "text": "If the degradation is caused by flaws in _D\u03b8_ ( _**x**_ ; _\u03c3_ ), they can only be remedied using heuristic means during sampling. We address the drift toward oversaturated colors by only enabling stochasticity within a specific range of noise levels _ti \u2208_ [ _S_ tmin _, S_ tmax]. For these noise levels, we define _\u03b3i_ = _S_ churn _/N_ , where _S_ churn controls the overall amount of stochasticity. We further clamp _\u03b3i_ to never introduce more new noise than what is already present in the image. Finally, we have found that the loss of detail can be partially counteracted by setting _S_ noise slightly above 1 to inflate the standard deviation for the newly added noise. This suggests that a major component of the hypothesized non-conservativity of _D\u03b8_ ( _**x**_ ; _\u03c3_ ) is a tendency to remove slightly too much noise \u2014 most likely due to regression toward the mean that can be expected to happen with any _L_ 2-trained denoiser [29]."
+    },
+    {
+      "index": 59,
+      "text": "**Evaluation.** Figure 4 shows that our stochastic sampler outperforms previous samplers [24, 36, 48] by a significant margin, especially at low step counts. Jolicoeur-Martineau et al. [24] use a standard"
+    },
+    {
+      "index": 60,
+      "text": "7\n\n**----- Start of picture text -----**\n\nFID FID FID\n3 . 2 4 . 5 3 . 0\n3 . 0 2 . 8\n4 . 0\n2 . 8 2 . 6\n2 . 6 3 . 5 2 . 4\n2 . 4 2 . 27 2 . 2\n2 . 2 3 . 0 2 . 0\n2 . 0 Deterministic S tmin,tmax +  S noise = 1 S Optimal settingstmin,tmax = [0 , \u221e ] 2 . 5 1 . 8\nS noise = 1 Original sampler 1 . 6\n1 . 8 Jolicoeur-Martineau et al. [24] 2 . 0 2 . 23 1 . 4 1 . 55\nNFE=16 32 64 128 256 512 1024 2048 16 32 64 128 256 512 1024 2048 16 32 64 128 256 512 1024 2048\n(a) Uncond. CIFAR-10, VP (b) Uncond. CIFAR-10, VE (c) Class-cond. ImageNet-64\n**----- End of picture text -----**"
+    },
+    {
+      "index": 61,
+      "text": "Figure 4: Evaluation of our stochastic sampler (Algorithm 2). The purple curve corresponds to optimal choices for _{S_ churn _, S_ tmin _, S_ tmax _, S_ noise _}_ ; orange, blue, and green correspond to disabling the effects of _S_ tmin,tmax and/or _S_ noise. The red curves show reference results for our deterministic sampler (Algorithm 1), equivalent to setting _S_ churn = 0. The dashed black curves correspond to the original stochastic samplers from previous work: Euler\u2013Maruyama [48] for VP, predictor-corrector [48] for VE, and iDDPM [36] for ImageNet-64. The dots indicate lowest observed FID."
+    },
+    {
+      "index": 62,
+      "text": "higher-order adaptive SDE solver [40] and its performance is a good baseline for such solvers in general. Our sampler has been tailored to the use case by, e.g., performing noise injection and ODE step sequentially, and it is not adaptive. It is an open question if adaptive solvers can be a net win over a well-tuned fixed schedule in sampling diffusion models."
+    },
+    {
+      "index": 63,
+      "text": "Through sampler improvements alone, we are able to bring the ImageNet-64 model that originally achieved FID 2.07 [9] to 1.55 that is very close to the state-of-the-art; previously, FID 1.48 has been reported for cascaded diffusion [17], 1.55 for classifier-free guidance [18], and 1.52 for StyleGANXL [44]. While our results showcase the potential gains achievable through sampler improvements, they also highlight the main shortcoming of stochasticity: For best results, one must make several heuristic choices \u2014 either implicit or explicit \u2014 that depend on the specific model. Indeed, we had to find the optimal values of _{S_ churn _, S_ tmin _, S_ tmax _, S_ noise _}_ on a case-by-case basis using grid search (Appendix E.2). This raises a general concern that using stochastic sampling as the primary means of evaluating model improvements may inadvertently end up influencing the design choices related to model architecture and training."
+    },
+    {
+      "index": 64,
+      "text": "## **5 Preconditioning and training**\n\nThere are various known good practices for training neural networks in a supervised fashion. For example, it is advisable to keep input and output signal magnitudes fixed to, e.g., unit variance, and to avoid large variation in gradient magnitudes on a per-sample basis [5, 21]. Training a neural network to model _D_ directly would be far from ideal \u2014 for example, as the input _**x**_ = _**y**_ + _**n**_ is a combination of clean signal _**y**_ and noise _**n** \u223cN_ ( **0** _, \u03c3_[2] **I** ), its magnitude varies immensely depending on noise level _\u03c3_ . For this reason, the common practice is to not represent _D\u03b8_ as a neural network directly, but instead train a different network _F\u03b8_ from which _D\u03b8_ is derived."
+    },
+    {
+      "index": 65,
+      "text": "Previous methods [36, 46, 48] address the input scaling via a _\u03c3_ -dependent normalization factor and attempt to precondition the output by training _F\u03b8_ to predict _**n**_ scaled to unit variance, from which the signal is then reconstructed via _D\u03b8_ ( _**x**_ ; _\u03c3_ ) = _**x** \u2212 \u03c3F\u03b8_ ( _\u00b7_ ). This has the drawback that at large _\u03c3_ , the network needs to fine-tune its output carefully to cancel out the existing noise _**n**_ exactly and give the output at the correct scale; note that any errors made by the network are amplified by a factor of _\u03c3_ . In this situation, it would seem much easier to predict the expected output _D_ ( _**x**_ ; _\u03c3_ ) directly. In the same spirit as previous parameterizations that adaptively mix signal and noise (e.g., [10, 43, 50]), we propose to precondition the neural network with a _\u03c3_ -dependent skip connection that allows it to estimate either _**y**_ or _**n**_ , or something in between. We thus write _D\u03b8_ in the following form:"
+    },
+    {
+      "index": 66,
+      "text": "where _F\u03b8_ is the neural network to be trained, _c_ skip( _\u03c3_ ) modulates the skip connection, _c_ in( _\u03c3_ ) and _c_ out( _\u03c3_ ) scale the input and output magnitudes, and _c_ noise( _\u03c3_ ) maps noise level _\u03c3_ into a conditioning input for _F\u03b8_ . Taking a weighted expectation of Eq. 2 over the noise levels gives the overall training loss E _\u03c3,_ _**y** ,_ _**n**_ \ufffd _\u03bb_ ( _\u03c3_ ) _\u2225D_ ( _**y**_ + _**n**_ ; _\u03c3_ ) _\u2212_ _**y** \u2225_ 2[2] \ufffd, where _\u03c3 \u223c p_ train, _**y** \u223c p_ data, and _**n** \u223cN_ ( **0** _, \u03c3_[2] **I** ). The probability of sampling a given noise level _\u03c3_ is given by _p_ train( _\u03c3_ ) and the corresponding weight is given by"
+    },
+    {
+      "index": 67,
+      "text": "8\n\nTable 2: Evaluation of our training improvements. The starting point (config A) is VP & VE using our **deterministic** sampler. At the end (configs E,F), VP & VE only differ in the architecture of _F\u03b8_ ."
+    },
+    {
+      "index": 68,
+      "text": "||CIFAR-10 [28] at 32_\u00d7_32\nConditional\nUnconditional|CIFAR-10 [28] at 32_\u00d7_32\nConditional\nUnconditional|FFHQ [26] 64_\u00d7_64\nUnconditional|AFHQv2 [7] 64_\u00d7_64\nUnconditional|\n|---|---|---|---|---|\n|**Training confguration**|VP\nVE|VP\nVE|VP\nVE|VP\nVE|\n|A Baseline [48]\n(_\u2217_pre-trained)\nB + Adjust hyperparameters\nC + Redistribute capacity\nD + Our preconditioning\nE + Our loss function\nF + Non-leakyaugmentation|2.48\n3.11\n2.18\n2.48\n2.08\n2.52\n2.09\n2.64\n1.88\n1.86\n**1.79**\n**1.79**|3.01_\u2217_\n3.77_\u2217_\n2.51\n2.94\n2.31\n2.83\n2.29\n3.10\n2.05\n1.99\n**1.97**\n**1.98**|3.39\n25.95\n3.13\n22.53\n2.78\n41.62\n2.94\n3.39\n2.60\n2.81\n**2.39**\n**2.53**|2.58\n18.52\n2.43\n23.12\n2.54\n15.04\n2.79\n3.81\n2.29\n2.28\n**1.96**\n**2.16**|\n|NFE|35\n35|35\n35|79\n79|79\n79|"
+    },
+    {
+      "index": 69,
+      "text": "_\u03bb_ ( _\u03c3_ ). We can equivalently express this loss with respect to the raw network output _F\u03b8_ in Eq. 7:"
+    },
+    {
+      "index": 70,
+      "text": "This form reveals the effective training target of _F\u03b8_ , allowing us to determine suitable choices for the preconditioning functions from first principles. As detailed in Appendix B.6, we derive our choices shown in Table 1 by requiring network inputs and training targets to have unit variance ( _c_ in, _c_ out), and amplifying errors in _F\u03b8_ as little as possible ( _c_ skip). The formula for _c_ noise is chosen empirically."
+    },
+    {
+      "index": 71,
+      "text": "Table 2 shows FID for a series of training setups, evaluated using our deterministic sampler from Section 3. We start with the baseline training setup of Song et al. [48], which differs considerably between the VP and VE cases; we provide separate results for each (config A). To obtain a more meaningful point of comparison, we re-adjust the basic hyperparameters (config B) and improve the expressive power of the model (config C) by removing the lowest-resolution layers and doubling the capacity of the highest-resolution layers instead; see Appendix F.3 for further details. We then replace the original choices of _{c_ in _, c_ out _, c_ noise _, c_ skip _}_ with our preconditioning (config D), which keeps the results largely unchanged \u2014 except for VE that improves considerably at 64 _\u00d7_ 64 resolution. Instead of improving FID per se, the main benefit of our preconditioning is that it makes the training more robust, enabling us to turn our focus on redesigning the loss function without adverse effects."
+    },
+    {
+      "index": 72,
+      "text": "**Loss weighting and sampling.** Eq. 8 shows that training _F\u03b8_ as preconditioned in Eq. 7 incurs an effective per-sample loss weight of _\u03bb_ ( _\u03c3_ ) _c_ out( _\u03c3_ )[2] . To balance the effective loss weights, we set _\u03bb_ ( _\u03c3_ ) = 1 _/c_ out( _\u03c3_ )[2] , which also equalizes the initial training loss over the entire _\u03c3_ range as shown in Figure 5a (green curve). Finally, we need to select _p_ train( _\u03c3_ ), i.e., how to choose noise levels during training. Inspecting the per- _\u03c3_ loss after training (blue and orange curves) reveals that a significant reduction is possible only at intermediate noise levels; at very low levels, it is both difficult and irrelevant to discern the vanishingly small noise component, whereas at high levels the training targets are always dissimilar from the correct answer that approaches dataset average. Therefore, we target the training efforts to the relevant range using a simple log-normal distribution for _p_ train( _\u03c3_ ) as detailed in Table 1 and illustrated in Figure 5a (red curve)."
+    },
+    {
+      "index": 73,
+      "text": "Table 2 shows that our proposed _p_ train and _\u03bb_ (config E) lead to a dramatic improvement in FID in all cases when used in conjunction with our preconditioning (config D). In concurrent work, Choi et al. [6] propose a similar scheme to prioritize noise levels that are most relevant w.r.t. forming the perceptually recognizable content of the image. However, they only consider the choice of _\u03bb_ in isolation, which results in a smaller overall improvement."
+    },
+    {
+      "index": 74,
+      "text": "**Augmentation regularization.** To prevent potential overfitting that often plagues diffusion models with smaller datasets, we borrow an augmentation pipeline from the GAN literature [25]. The pipeline consists of various geometric transformations (see Appendix F.2) that we apply to a training image prior to adding noise. To prevent the augmentations from leaking to the generated images, we provide the augmentation parameters as a conditioning input to _F\u03b8_ ; during inference we set the them to zero to guarantee that only non-augmented images are generated. Table 2 shows that data augmentation provides a consistent improvement (config F) that yields new state-of-the-art FIDs of 1.79 and 1.97 for conditional and unconditional CIFAR-10, beating the previous records of 1.85 [44] and 2.10 [50]."
+    },
+    {
+      "index": 75,
+      "text": "9\n\n**----- Start of picture text -----**\n\nloss FID FID\n1 . 4 Loss after init CIFAR-10 4 . 0 VP, original VP, our model 2 . 6 2 . 66 Original Our model\nDistribution of  \u03c3 FFHQ-64 VE, original VE, our model\n1 . 2 2 . 4\n1 . 0 3 . 5 2 . 2 2 . 22\n0 . 8 2 . 0\n3 . 0\n0 . 6 1 . 8\n0 . 4 2 . 5 1 . 6\n1 . 57\n0 . 2 1 . 4\n0 . 0 2 . 0 1 . 2 1 . 36\n\u03c3 =0 . 005 0 . 02 0 . 1 0 . 5 1 2 5 10 20 50 S churn=0 10 20 30 40 50 60 70 80 90 100 S churn=0 10 20 30 40 50 60 70 80 90 100\n(a) Loss & noise distribution (b) Stochasticity on CIFAR-10 (c) Stochasticity on ImageNet-64\n**----- End of picture text -----**"
+    },
+    {
+      "index": 76,
+      "text": "Figure 5: **(a)** Observed initial (green) and final loss per noise level, representative of the the 32 _\u00d7_ 32 (blue) and 64 _\u00d7_ 64 (orange) models considered in this paper. The shaded regions represent the standard deviation over 10k random samples. Our proposed training sample density is shown by the dashed red curve. **(b)** Effect of _S_ churn on unconditional CIFAR-10 with 256 steps (NFE = 511). For the original training setup of Song et al. [48], stochastic sampling is highly beneficial (blue, green), while deterministic sampling ( _S_ churn = 0) leads to relatively poor FID. For our training setup, the situation is reversed (orange, red); stochastic sampling is not only unnecessary but harmful. **(c)** Effect of _S_ churn on class-conditional ImageNet-64 with 256 steps (NFE = 511). In this more challenging scenario, stochastic sampling turns out to be useful again. Our training setup improves the results for both deterministic and stochastic sampling."
+    },
+    {
+      "index": 77,
+      "text": "**Stochastic sampling revisited.** Interestingly, the relevance of stochastic sampling appears to diminish as the model itself improves, as shown in Figure 5b,c. When using our training setup in CIFAR-10 (Figure 5b), the best results were obtained with deterministic sampling, and any amount of stochastic sampling was detrimental. **ImageNet-64.** As a final experiment, we trained a class-conditional ImageNet-64 model from scratch using our proposed training improvements. This model achieved a new state-of-the-art FID of 1.36 compared to the previous record of 1.48 [17]. We used the ADM architecture [9] with no changes, and trained it using our config E with minimal tuning; see Appendix F.3 for details. We did not find overfitting to be a concern, and thus chose to not employ augmentation regularization. As shown in Figure 5c, the optimal amount of stochastic sampling was much lower than with the pre-trained model, but unlike with CIFAR-10, stochastic sampling was clearly better than deterministic sampling. This suggests that more diverse datasets continue to benefit from stochastic sampling."
+    },
+    {
+      "index": 78,
+      "text": "## **6 Conclusions**\n\nOur approach of putting diffusion models to a common framework exposes a modular design. This allows a targeted investigation of individual components, potentially helping to better cover the viable design space. In our tests this let us simply replace the samplers in various earlier models, drastically improving the results. For example, in ImageNet-64 our sampler turned an average model (FID 2.07) to a challenger (1.55) for the previous SOTA model (1.48) [17], and with training improvements achieved SOTA FID of 1.36. We also obtained new state-of-the-art results on CIFAR-10 while using only 35 model evaluations, deterministic sampling, and a small network. The current high-resolution diffusion models rely either on separate super-resolution steps [17, 35, 39], subspace projection [23], very large networks [9, 48], or hybrid approaches [38, 41, 50] \u2014 we believe that our contributions are orthogonal to these extensions. That said, many of our parameter values may need to be re-adjusted for higher resolution datasets. Furthermore, we feel that the precise interaction between stochastic sampling and the training objective remains an interesting question for future work."
+    },
+    {
+      "index": 79,
+      "text": "**Societal impact.** Our advances in sample quality can potentially amplify negative societal effects _\u00b7_ when used in a large-scale system like DALL E 2, including types of disinformation or emphasizing sterotypes and harmful biases [33]. The training and sampling of diffusion models needs a lot of electricity; our project consumed _\u223c_ 250MWh on an in-house cluster of NVIDIA V100s."
+    },
+    {
+      "index": 80,
+      "text": "**Acknowledgments.** We thank Jaakko Lehtinen, Ming-Yu Liu, Tuomas Kynk\u00e4\u00e4nniemi, Axel Sauer, Arash Vahdat, and Janne Hellsten for discussions and comments, and Tero Kuosmanen, Samuel Klenberg, and Janne Hellsten for maintaining our compute infrastructure.\n\n10"
+    },
+    {
+      "index": 81,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "zero_shot__gemini-3-flash-preview": {
+      "label": "Zero Shot (gemini-3-flash-preview)",
+      "model": "google/gemini-3-flash-preview",
+      "overall_feedback": "This is a mathematically rigorous and highly practical paper that successfully deconstructs diffusion models into a modular design space. By separating the noise schedule, ODE solver, and network preconditioning, the authors identify several inefficiencies in prior work (VP, VE, and iDDPM). The improvements to sampling (Heun's 2nd order method) and training (log-normal noise distribution and unit-variance preconditioning) are well-justified and lead to impressive SOTA results. The paper is exceptionally clear, though the interplay between the proposed training improvements and the diminishing returns of stochastic sampling warrants further theoretical investigation as the authors themselves note.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3-flash-preview_0",
+          "title": "Potential numerical instability at the sampling endpoint",
+          "quote": "if \\sigma(t_{i+1}) = 0 then ... Apply 2nd order correction unless \\sigma goes to zero",
+          "explanation": "In Algorithm 1 (lines 6-8), the authors explicitly revert to a first-order Euler step when the next noise level is zero to avoid division by zero in the derivative calculation. While this is a logical protective measure, I was initially concerned that the loss of 2nd-order accuracy in the final, most critical step (where the image content is finalized) might introduce visible artifacts or increased FID at low NFE. However, looking at Figure 2, the 'Heun' curves maintain their advantage even at low NFE. The authors' choice is likely the only stable one given the singularity in the score function at $\\sigma=0$, and the impact appears negligible in practice.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_1",
+          "title": "Empirical nature of stochasticity parameters",
+          "quote": "we had to find the optimal values of \\{S_{churn}, S_{tmin}, S_{tmax}, S_{noise}\\} on a case-by-case basis using grid search (Appendix E.2).",
+          "explanation": "The paper argues for a principled framework, yet the stochastic sampling section introduces several heuristic parameters that require dataset-specific tuning. While the authors are transparent about this, it suggests that the 'design space' for stochasticity is less theoretically grounded than the deterministic ODE path. A reader might find it difficult to reproduce the results on a new dataset without performing an expensive grid search, which contrasts with the 'best practices' derived for preconditioning in Section 5.",
+          "comment_type": "logical",
+          "paragraph_index": 63,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_2",
+          "title": "Subtle distinction between proposed stochasticity and Euler-Maruyama",
+          "quote": "our method... correspond to the state after noise injection, whereas an Euler\u2013Maruyama-like method would use $x_i; t_i$ instead of $\\hat{x}_i; \\hat{t}_i$.",
+          "explanation": "The authors claim their stochastic sampler (Algorithm 2) is not a general-purpose SDE solver. My concern was whether this 'tailored' approach introduces a bias that deviates from the true SDE solution. However, the authors correctly note that as long as each sub-step (adding noise and the ODE step) preserves the marginal distribution $p(x; \\sigma)$, the chain remains valid. By using the 'increased-noise' state as the starting point for the ODE backward step, they are effectively performing a mid-point evaluation. This is a clever optimization for large step sizes, though its formal convergence properties compared to standard SDE integrators are only demonstrated empirically.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3-flash-preview_3",
+          "title": "Questionable generalizability of the log-normal training distribution",
+          "quote": "we target the training efforts to the relevant range using a simple log-normal distribution for $p_{train}(\\sigma)$",
+          "explanation": "The choice of $P_{mean} = -1.2$ and $P_{std} = 1.2$ is justified by the loss curves in Figure 5a. However, these curves are shown for CIFAR-10 and FFHQ-64. In high-resolution settings (e.g., 1024x1024), the 'perceptually relevant' noise levels often shift because the signal-to-noise ratio changes with image scale. While the paper claims these improvements are orthogonal to resolution-increasing techniques, a reader might find that the fixed log-normal parameters fail on significantly larger images without the re-adjustment the authors briefly mention in the conclusion.",
+          "comment_type": "logical",
+          "paragraph_index": 72,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0105,
+      "prompt_tokens": 14973,
+      "completion_tokens": 1021
+    },
+    "zero_shot__qwen3-235b-a22b-2507": {
+      "label": "Zero Shot (qwen3-235b-a22b-2507)",
+      "model": "qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a comprehensive and influential reframing of diffusion-based generative models, offering significant improvements in sampling efficiency, training stability, and final sample quality. The modular design space clearly separates components, enabling systematic ablation and transfer of improvements across models. The empirical results are strong, with state-of-the-art FIDs on major benchmarks and compelling ablations. The derivation is generally sound and well-motivated, with attention to practical concerns like signal preconditioning and noise scheduling. However, there are a few technical inconsistencies\u2014particularly in the ODE formulation and network preconditioning\u2014that affect the theoretical coherence and reproducibility. These issues are localized and fixable but warrant clarification.",
+      "comments": [
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_0",
+          "title": "Missing sign in the probability flow ODE (Eq. 1)",
+          "quote": "where the dot denotes a time derivative. _\u2207_ _**x**_ log _p_ ( _**x**_ ; _\u03c3_ ) is the _score function_ [22], a vector field that points towards higher density of data at a given noise level. Intuitively, an infinitesimal forward step of this ODE nudges the sample away from the data, at a rate that depends on the change in noise level. Equivalently, a backward step nudges the sample towards the data distribution.",
+          "explanation": "The ODE in Eq. 1 is presented as $\\dot{\\mathbf{x}} = \\left(\\frac{\\dot{\\sigma}(t)}{\\sigma(t)} + \\frac{\\dot{s}(t)}{s(t)}\\right) \\mathbf{x} - \\frac{\\dot{\\sigma}(t)}{\\sigma(t)} \\nabla_{\\mathbf{x}} \\log p(\\mathbf{x}; \\sigma(t))$, but this sign on the score term is incorrect. Standard derivations (e.g., Song et al. [48]) give the probability flow ODE as $\\dot{\\mathbf{x}} = f(t)\\mathbf{x} - g(t)^2 \\nabla_{\\mathbf{x}} \\log p(\\mathbf{x}; \\sigma(t))$, where $g(t)$ corresponds to $\\dot{\\sigma}(t)/\\sigma(t)$ in the variance-expanding setting. Crucially, the score term should have a negative sign because the backward process follows the negative score for denoising. The authors\u2019 text correctly states that a backward step nudges the sample toward the data, which requires the score to be subtracted. The missing negation in the score term contradicts both standard formulations and the authors\u2019 own intuition. While Algorithm 1 and the denoising expression (line 8) use $\\mathbf{x} - D(\\mathbf{x}; \\sigma)$, which aligns with the correct direction, the formal ODE as written is inconsistent. This could mislead a reader attempting to derive the continuous update from the score function.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_1",
+          "title": "Inconsistency between text and formula for ideal denoiser (Eq. 2)",
+          "quote": "E _**y** \u223cp_ dataE _**n** \u223cN_ ( **0** _,\u03c3_ 2 **I** ) _\u2225D_ ( _**y**_ + _**n**_ ; _\u03c3_ ) _\u2212_ _**y** \u2225_ 2[2][,][then] _[\u2207]_ _**[x]**_[log] _[ p]_[(] _**[x]**_[;] _[ \u03c3]_[) =]  _D_ ( _**x**_ ; _\u03c3_ ) _\u2212_ _**x**_  _/\u03c3_[2] , (2, 3)",
+          "explanation": "The equation pair states that minimizing the $L^2$ denoising error leads to $\\nabla_{\\mathbf{x}} \\log p(\\mathbf{x}; \\sigma) = (D(\\mathbf{x}; \\sigma) - \\mathbf{x}) / \\sigma^2$. However, the standard identity from denoising score matching (Vincent, 2011; Hyv\u00e4rinen, 2005) is $\\nabla_{\\mathbf{x}} \\log p(\\mathbf{x}; \\sigma) = \\mathbb{E}[\\mathbf{y} | \\mathbf{x}] - \\mathbf{x}) / \\sigma^2$, where $\\mathbb{E}[\\mathbf{y} | \\mathbf{x}]$ is the posterior mean, equivalent to the optimal denoiser $D(\\mathbf{x}; \\sigma)$. So the equation is correct *if* $D$ is defined as the denoiser output estimating $\\mathbf{y}$. But the text immediately after Eq. 3 says 'the score function isolates the noise component from the signal in $\\mathbf{x}$,' which suggests $D(\\mathbf{x}; \\sigma)$ might instead estimate the noise $\\mathbf{n}$. This ambiguity is resolved in Section 5, where the authors define $D_\\theta(\\mathbf{x}; \\sigma) = c_{\\text{skip}} \\mathbf{x} + c_{\\text{out}} F_\\theta(\\cdot)$, and later clarify that $F_\\theta$ predicts something between signal and noise. However, without that context, the prose in Section 2 could mislead a reader into interpreting $D$ as the noise predictor, which would make Eq. 3 incorrect. The derivation in Appendix B.3 likely confirms the signal interpretation, so the formalism is internally consistent, but the textual explanation risks a misinterpretation that would invalidate the core identity.",
+          "comment_type": "logical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_2",
+          "title": "Mismatch between Table 1 and Algorithm 1 in handling \u02d9\u03c3 and \u02d9s",
+          "quote": "In Table 1 under 'Sampling', for 'Ours (EDM)', time steps are defined as $ \\sigma_i = \\left( A i + B \\right)^\\rho $ with $\\rho=7$, and schedule $\\sigma(t) = t$. In Algorithm 1, line 4 computes $ \\dot{\\sigma}(t_i) $ and $ \\dot{s}(t_i) $.",
+          "explanation": "The authors define $\\sigma(t) = t$ and $s(t) = 1$, yet in Algorithm 1 they compute $\\dot{\\sigma}(t_i)$ and $\\dot{s}(t_i)$, which are necessary only if these functions are non-constant. For $\\sigma(t) = t$, $\\dot{\\sigma}(t) = 1$, and for $s(t) = 1$, $\\dot{s}(t) = 0$. Thus, the terms $\\dot{\\sigma}(t_i)/\\sigma(t_i)$ and $\\dot{s}(t_i)/s(t_i)$ become $1/t_i$ and $0$, respectively. This simplifies line 4 of Algorithm 1 to $ \\mathbf{d}_i \\leftarrow \\left(1/t_i\\right) \\mathbf{x}_i - (1/t_i) D_\\theta(\\mathbf{x}_i / s(t_i); \\sigma(t_i)) = (\\mathbf{x}_i - D_\\theta(\\mathbf{x}_i; t_i)) / t_i $, which matches their stated simplified ODE in Section 3. So while the general form is used, the derivatives are not precomputed or tabulated in Table 1. A reader might be concerned that the algorithm is unnecessarily general, but this is not a flaw\u2014it correctly implements a configurable framework. The real issue is that Table 1 does not specify $\\dot{\\sigma}(t)$ or $\\dot{s}(t)$ for the 'Ours' row, only $\\sigma(t)$ and $s(t)$. Given that $\\sigma(t)=t$, $\\dot{\\sigma}(t)=1$ is implied, but for rigorous reproducibility, the derivative should be included, especially since other models in the table (e.g., VP, VE) rely on non-trivial $\\sigma(t)$ with non-unit derivatives. The omission is minor because it's easily deduced, but for full specification, it should be made explicit.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_3",
+          "title": "Ambiguity in the definition of _c_noise(\u03c3) for the proposed method",
+          "quote": "Noise cond. _c_noise(_\u03c3_)|||1\n4 ln(_\u03c3_)",
+          "explanation": "In Table 1, for the proposed method ('Ours'), the noise conditioning function $c_{\\text{noise}}(\\sigma)$ is given as $\\frac{1}{4} \\ln(\\sigma)$. However, no motivation or analysis is provided for the factor of $1/4$. Prior methods use $\\ln(\\sigma)$ or $(M-1)\\sigma^{-1}(\\sigma)$, so the scaling is a design choice. The authors state that 'the formula for $c_{\\text{noise}}$ is chosen empirically' in Section 5, but offer no ablation or justification for this specific constant. While such scalings are common in normalization layers, the lack of explanation could mislead a reader into thinking the scaling is derived or has theoretical justification. Moreover, if this factor interacts with initialization or learning rates, its value could significantly affect training dynamics. Since the network $F_\\theta$ likely includes normalization layers, the scaling may be absorbed, but without further details, this remains a heuristic that is underspecified for robust reproduction. Given its placement in the unified framework, a brief discussion or ablation would strengthen the claim of principled design.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__qwen3-235b-a22b-2507_4",
+          "title": "Inconsistency in reported parameter values between Table 1 and text",
+          "quote": "We set _\u03c1_ = 7 for the remainder of this paper. ... _\u03c3_min = 0.002_, \u03c3_max = 80 ... _\u03c3_max = 100",
+          "explanation": "In Section 3, the authors state that they set $\\rho = 7$ for the noise level schedule $\\sigma_i = (A i + B)^\\rho$. In Table 1, under 'Ours (EDM)', the 'Parameters' row lists $\\sigma_{\\min} = 0.002$, $\\sigma_{\\max} = 80$, and $\\sigma_{\\max} = 100$. The duplication of $\\sigma_{\\max}$ (listed as both 80 and 100) appears to be a typographical error. Given that $\\sigma_{\\max} = 100$ is listed in the same column as EDM and $\\rho=7$, it is likely the correct value. The mention of 80 might be a carryover from an earlier draft or a different model. This contradiction could confuse a reader attempting to reproduce the exact setup. However, since the final results (e.g., in Figure 2 and Table 2) are consistent across evaluations, the actual experiments likely used a single consistent value (probably 100, as it appears later). The error is thus in presentation, not methodology, but still constitutes a parameter inconsistency that should be corrected.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0013,
+      "prompt_tokens": 14858,
+      "completion_tokens": 2531
+    },
+    "zero_shot__glm-4.6": {
+      "label": "Zero Shot (glm-4.6)",
+      "model": "z-ai/glm-4.6",
+      "overall_feedback": "This paper presents a valuable contribution to the diffusion model literature by unifying different approaches in a common framework and introducing improvements to sampling and training. The modular design space perspective is insightful and appears to enable significant gains in efficiency and quality. However, there are several technical issues that need attention, including mathematical inconsistencies, unclear definitions, and potential overclaims. The paper's core insights about modularity and the proposed improvements appear sound, but some details require clarification or correction.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.6_0",
+          "title": "Inconsistent equation for time step discretization",
+          "quote": "We set \u03c3_i = (A + i)^\u03c1 and select the constants A and B so that \u03c3_0 = \u03c3_max and \u03c3_{N-1} = \u03c3_min, which gives",
+          "explanation": "The text mentions selecting constants A and B to satisfy the boundary conditions, but the equation only includes A. This creates confusion about how B is used. The correct form should likely be \u03c3_i = (A + B\u00b7i)^\u03c1 with A and B determined from the boundary conditions \u03c3_0 = \u03c3_max and \u03c3_{N-1} = \u03c3_min. As written, there's no way to satisfy both boundary conditions with just one free parameter A.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_1",
+          "title": "Unjustified constant in stochastic sampler",
+          "quote": "\u03b3_i = min{S_churn/N, \u221a2 - 1} if t_i \u2208 [S_tmin, S_tmax]",
+          "explanation": "The choice of \u221a2 - 1 as an upper bound for \u03b3_i appears arbitrary and is not justified in the paper. This specific constant seems to come from nowhere and its selection criterion is not explained. The authors should provide the reasoning behind this particular value or derive it from first principles.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_2",
+          "title": "Negative time values in VP schedule",
+          "quote": "t_i = (i + \u03b5_s - 1)/(N - 1) where \u03b5_s = 10^-3",
+          "explanation": "For i=0, this formula gives t_0 = (\u03b5_s - 1)/(N - 1), which is negative since \u03b5_s = 10^-3 < 1. Time should be non-negative in this context. This appears to be a typo, and it should likely be t_i = (i + 1 - \u03b5_s)/(N - 1) or t_i = (i + \u03b5_s)/(N - 1) to ensure t_0 \u2265 0.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_3",
+          "title": "Potentially misleading claim about NFE count",
+          "quote": "with much faster sampling (35 network evaluations per image) than prior designs",
+          "explanation": "The abstract claims 35 NFE, but Figure 2 shows that the best FID values typically require more evaluations (e.g., 64-256 NFE for CIFAR-10). While 35 NFE is mentioned in Table 2, Figure 2 suggests this doesn't achieve the optimal FID. The claim should be qualified to indicate that 35 NFE achieves good but not necessarily optimal quality.",
+          "comment_type": "logical",
+          "paragraph_index": 1,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_4",
+          "title": "Unclear definition of u_j for iDDPM",
+          "quote": "u_M = 0, u_{j-1} = max(\u03b1\u0304_{j-1}/\u03b1\u0304_j, C_1)^{-1/2}",
+          "explanation": "The definition of u_j for iDDPM in Table 1 is unclear. The footnote mentions these recursive definitions but doesn't specify the base case or initial value needed to start the recursion. Without a clear starting point (e.g., u_0), it's impossible to reconstruct the full sequence. This makes the iDDPM formulation difficult to reproduce.",
+          "comment_type": "technical",
+          "paragraph_index": 17,
+          "severity": "moderate"
+        },
+        {
+          "id": "zero_shot__glm-4.6_5",
+          "title": "Notation error in expectation",
+          "quote": "Taking a weighted expectation of Eq. 2 over the noise levels gives the overall training loss E \u03c3,y,n [\u03bb(\u03c3) \u2225D(y + n; \u03c3) - y\u2225\u00b2]",
+          "explanation": "The expectation notation appears incorrect. It should be E_{\u03c3,y,n}[\u03bb(\u03c3) \u2225D(y + n; \u03c3) - y\u2225\u00b2] with subscripts indicating the variables being averaged over, rather than E \u03c3,y,n with the variables listed separately.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__glm-4.6_6",
+          "title": "Questionable SDE recovery claim",
+          "quote": "The SDEs of Song et al. [48] are recovered with the choice \u03b2(t) = \u02d9\u03c3(t)/\u03c3(t), whereby the score vanishes from the forward SDE.",
+          "explanation": "When substituting \u03b2(t) = \u02d9\u03c3(t)/\u03c3(t) into Eq. 6, the forward SDE becomes dx_+ = \u221a(2\u02d9\u03c3(t)\u03c3(t)) d\u03c9_t, which is pure diffusion. This doesn't match the forward SDE in Song et al. [48], which includes a drift term. The claim about recovering their SDEs appears incorrect, or at least needs clarification about what specific form is being referenced.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0145,
+      "prompt_tokens": 14477,
+      "completion_tokens": 4649
+    },
+    "zero_shot__gemini-3.1-flash-lite-preview": {
+      "label": "Zero Shot (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper provides a coherent, modular framework for analyzing diffusion models, which effectively clarifies the design space and highlights meaningful improvements across sampling and training. The derivations are generally sound, though the paper relies on some OCR-mangled formulas and implicit definitions that require careful navigation. The primary strength lies in the successful decoupling of components, which is well-supported by empirical results.",
+      "comments": [
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_0",
+          "title": "Notation in Score Function Derivative",
+          "quote": "E $y$ \u223cp dataE $n$ \u223cN ( 0 ,\u03c3 2 I ) \u2225D ( y + n ; \u03c3 ) \u2212 y \u2225 2, then $\\nabla$ $[x]$[log] $[ p]$[(] $x$[;] $[ \u03c3]$[) = $\\frac{D ( x ; \u03c3 ) \u2212 x }{\u03c3^2}$",
+          "explanation": "The OCR rendering of the score matching equation is quite messy. In the source paper, this is the standard denoising score matching objective and result (often attributed to Vincent, 2011). The equation explicitly states $\\nabla_x \\log p(x; \\sigma) = (D(x; \\sigma) - x) / \\sigma^2$. The expression is correct in standard diffusion literature, but the OCR makes it look like it might have extra brackets or symbols. I have verified that the intended mathematical relationship is the standard one, confirming that the OCR error here is superficial.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_1",
+          "title": "Unclear Definition of $S_tmin$ and $S_tmax$ in Algorithm 2",
+          "quote": "$\\gamma_i = \\min(S_churn / N, \\sqrt{2} - 1)$ if $t_i \\in [S_tmin, S_tmax]$",
+          "explanation": "Algorithm 2 uses $S_tmin$ and $S_tmax$ as thresholds for the noise levels $t_i$ to decide where to apply stochastic noise injection. While the usage is clear in context, the text earlier defines the noise range by $\\sigma_{min}$ and $\\sigma_{max}$ (without the 'S' prefix). This nomenclature change for the threshold bounds could create slight confusion for a reader trying to link the algorithm inputs to the noise schedule parameters, though it is functionally clear that these are specific hyperparameters for the 'churn' mechanism.",
+          "comment_type": "logical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "zero_shot__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in Loss Weighting Equation",
+          "quote": "$\u03bb ( \u03c3 ) = 1 /c out( \u03c3 )^2$",
+          "explanation": "The text states that setting this balance equalizes the initial training loss. In the context of Section 5, the authors propose a specific loss reweighting scheme to improve training dynamics. While the derivation is sketched, the paper takes this as a direct consequence of the preconditioning choice. Given the empirical success shown in Table 2, this is sufficient for the paper's claims, but it is an underspecified derivation\u2014it assumes $F_{\u03b8}$ converges to a specific behavior that makes the variance of the loss constant across $\u03c3$.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0049,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 14973,
+      "completion_tokens": 763
+    },
+    "zero_shot__qwen3.6-35b-a3b": {
+      "label": "Zero Shot (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a rigorous and well-structured unification of diffusion model design choices, successfully demonstrating that modular improvements to sampling, scheduling, and preconditioning yield significant gains in efficiency and quality. The methodology is sound, and the empirical results across CIFAR-10 and ImageNet-64 are compelling. However, the quality of the provided text suffers from several OCR extraction artifacts that obscure key mathematical formulas and pseudocode details. These artifacts create minor ambiguities in reproducibility, particularly regarding the explicit ODE generalization, the predictor step coefficients in Algorithm 1, and the conditional execution logic in Algorithm 2. The core theoretical arguments and experimental validations remain robust, but clarifying these mathematical expressions would greatly assist practitioners attempting to implement the proposed samplers and training pipelines.",
+      "comments": [],
+      "cost_usd": 0.0349,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 30070,
+      "completion_tokens": 22995
+    },
+    "zero_shot__glm-4.7-flash": {
+      "label": "Zero Shot (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper provides a strong, unified framework for understanding and implementing diffusion models, effectively dissecting the complex relationship between training and sampling components. The main technical derivations and algorithmic descriptions are generally sound and align well with standard conventions in the field. However, the paper contains a clear numerical inconsistency between the Abstract and the reported results in Table 2 that must be resolved, as it contradicts the specific FID values claimed for the unconditional CIFAR-10 dataset.",
+      "comments": [
+        {
+          "id": "zero_shot__glm-4.7-flash_0",
+          "title": "Numerical inconsistency between Abstract and Table 2",
+          "quote": "Abstract: ...FID of 1.79 for CIFAR-10 in a class-conditional setting and 1.97 in an unconditional setting... Table 2 Config F: | 1.79 1.79 |",
+          "explanation": "The Abstract explicitly states that the unconditional CIFAR-10 model achieves an FID of 1.97, while the unconditional class-conditional model achieves 1.79. However, the results for the final configuration (Config F) in Table 2 show the value 1.79 for *both* the conditional and unconditional CIFAR-10 columns. This discrepancy suggests a typographical error in either the Abstract or Table 2. Resolving this is necessary to accurately represent the final state-of-the-art results claimed in the work.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0107,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 28864,
+      "completion_tokens": 24325
+    },
+    "zero_shot__deepseek-v4-flash": {
+      "label": "Zero Shot (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper presents a valuable framework for understanding and improving diffusion models, with clear benefits demonstrated through extensive experiments. However, the pseudocode for the deterministic and stochastic samplers (Algorithms 1 and 2) contains a critical logical error: the condition for applying the second-order correction step is inverted, which would cause division by zero at the final step. Additionally, the stochastic sampler's pseudocode does not implement the described second-order integration for intermediate steps. These errors undermine reproducibility. Other minor issues include ambiguous notation in Table 1 and a potential missing parenthesis in Equation 5 due to OCR artifacts.",
+      "comments": [
+        {
+          "id": "zero_shot__deepseek-v4-flash_0",
+          "title": "Condition inversion in deterministic sampler (Algorithm 1)",
+          "quote": "if \u03c3(t_{i+1}) = 0 then\nApply 2nd order correction unless \u03c3 goes to zero",
+          "explanation": "The condition checks whether \u03c3(t_{i+1}) equals zero, but the subsequent computation (line 7) divides by \u03c3(t_{i+1}), which would be division by zero. The comment says 'unless \u03c3 goes to zero', indicating the correction should be skipped when \u03c3=0, not applied. The condition should be 'if \u03c3(t_{i+1}) != 0' to correctly apply the second-order correction only when the step does not lead to zero noise. This is a major error that would crash any implementation following the pseudocode.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_1",
+          "title": "Condition inversion and missing second-order steps in stochastic sampler (Algorithm 2)",
+          "quote": "if t_{i+1} = 0 then\nApply 2nd order correction",
+          "explanation": "Same issue as Algorithm 1: the condition checks if t_{i+1}=0, but line 11 divides by t_{i+1}, causing division by zero. The correction should be applied when t_{i+1}>0. Moreover, the algorithm only applies a second-order correction at the final step, while the text states it 'combines our 2nd order deterministic ODE integrator with explicit Langevin-like churn'. The pseudocode uses Euler for all steps except possibly the last, which is inconsistent with the description and limits the benefit of the higher-order method.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "major"
+        },
+        {
+          "id": "zero_shot__deepseek-v4-flash_2",
+          "title": "Ambiguous noise conditioning expression in Table 1",
+          "quote": "c_noise(\u03c3) = 1/4 ln(\u03c3)",
+          "explanation": "The notation '1/4 ln(\u03c3)' is ambiguous: it could be interpreted as (1/4) * ln(\u03c3) or 1/(4 ln(\u03c3)). Given the context of empirical tuning and typical usage in diffusion models, it almost certainly means (1/4)*ln(\u03c3). However, without parentheses, a reader could misinterpret it. This is a minor clarity issue.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0034,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 14078,
+      "completion_tokens": 5457
+    }
+  }
+}

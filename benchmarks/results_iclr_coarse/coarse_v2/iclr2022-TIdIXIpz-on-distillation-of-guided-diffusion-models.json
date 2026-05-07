@@ -1,0 +1,757 @@
+{
+  "slug": "iclr2022-TIdIXIpz-on-distillation-of-guided-diffusion-models",
+  "title": "On Distillation of Guided Diffusion Models",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## PROGRESSIVE DISTILLATION FOR FAST SAMPLING OF DIFFUSION MODELS"
+    },
+    {
+      "index": 1,
+      "text": "## **Tim Salimans & Jonathan Ho**\n\nGoogle Research, Brain team {salimans,jonathanho}@google.com\n\n## ABSTRACT"
+    },
+    {
+      "index": 2,
+      "text": "Diffusion models have recently shown great promise for generative modeling, outperforming GANs on perceptual quality and autoregressive models at density estimation. A remaining downside is their slow sampling time: generating high quality samples takes many hundreds or thousands of model evaluations. Here we make two contributions to help eliminate this downside: First, we present new parameterizations of diffusion models that provide increased stability when using few sampling steps. Second, we present a method to distill a trained deterministic diffusion sampler, using many steps, into a new diffusion model that takes half as many sampling steps. We then keep progressively applying this distillation procedure to our model, halving the number of required sampling steps each time. On standard image generation benchmarks like CIFAR-10, ImageNet, and LSUN, we start out with state-of-the-art samplers taking as many as 8192 steps, and are able to distill down to models taking as few as 4 steps without losing much perceptual quality; achieving, for example, a FID of 3.0 on CIFAR-10 in 4 steps. Finally, we show that the full progressive distillation procedure does not take more time than it takes to train the original model, thus representing an efficient solution for generative modeling using diffusion at both train and test time."
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nDiffusion models (Sohl-Dickstein et al., 2015; Song & Ermon, 2019; Ho et al., 2020) are an emerging class of generative models that has recently delivered impressive results on many standard generative modeling benchmarks. These models have achieved ImageNet generation results outperforming BigGAN-deep and VQ-VAE-2 in terms of FID score and classification accuracy score (Ho et al., 2021; Dhariwal & Nichol, 2021), and they have achieved likelihoods outperforming autoregressive image models (Kingma et al., 2021; Song et al., 2021b). They have also succeeded in image super-resolution (Saharia et al., 2021; Li et al., 2021) and image inpainting (Song et al., 2021c), and there have been promising results in shape generation (Cai et al., 2020), graph generation (Niu et al., 2020), and text generation (Hoogeboom et al., 2021; Austin et al., 2021)."
+    },
+    {
+      "index": 4,
+      "text": "A major barrier remains to practical adoption of diffusion models: sampling speed. While sampling can be accomplished in relatively few steps in strongly conditioned settings, such as text-tospeech (Chen et al., 2021) and image super-resolution (Saharia et al., 2021), or when guiding the sampler using an auxiliary classifier (Dhariwal & Nichol, 2021), the situation is substantially different in settings in which there is less conditioning information available. Examples of such settings are unconditional and standard class-conditional image generation, which currently require hundreds or thousands of steps using network evaluations that are not amenable to the caching optimizations of other types of generative models (Ramachandran et al., 2017)."
+    },
+    {
+      "index": 5,
+      "text": "In this paper, we reduce the sampling time of diffusion models by orders of magnitude in unconditional and class-conditional image generation, which represent the setting in which diffusion models have been slowest in previous work. We present a procedure to distill the behavior of a _N_ -step DDIM sampler (Song et al., 2021a) for a pretrained diffusion model into a new model with _N/_ 2 steps, with little degradation in sample quality. In what we call _progressive distillation_ , we repeat this distillation procedure to produce models that generate in as few as 4 steps, still maintaining sample quality competitive with state-of-the-art models using thousands of steps."
+    },
+    {
+      "index": 6,
+      "text": "1\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nDistillation\nDistillation\nDistillation\n**----- End of picture text -----**"
+    },
+    {
+      "index": 7,
+      "text": "Figure 1: A visualization of two iterations of our proposed _progressive distillation_ algorithm. A sampler _f_ ( **z** ; _\u03b7_ ), mapping random noise _\u03f5_ to samples **x** in 4 deterministic steps, is distilled into a new sampler _f_ ( **z** ; _\u03b8_ ) taking only a single step. The original sampler is derived by approximately integrating the _probability flow ODE_ for a learned diffusion model, and distillation can thus be understood as learning to integrate in fewer steps, or _amortizing_ this integration into the new sampler."
+    },
+    {
+      "index": 8,
+      "text": "## 2 BACKGROUND ON DIFFUSION MODELS\n\nWe consider diffusion models (Sohl-Dickstein et al., 2015; Song & Ermon, 2019; Ho et al., 2020) specified in continuous time (Tzen & Raginsky, 2019a; Song et al., 2021c; Chen et al., 2021; Kingma et al., 2021). We use **x** _\u223c p_ ( **x** ) to denote training data. A diffusion model has latent variables **z** = _{_ **z** _t | t \u2208_ [0 _,_ 1] _}_ and is specified by a noise schedule comprising differentiable functions _\u03b1t, \u03c3t_ such that _\u03bbt_ = log[ _\u03b1t_[2] _[/\u03c3] t_[2][]][, the log signal-to-noise-ratio, decreases monotonically with] _[ t]_[.]"
+    },
+    {
+      "index": 9,
+      "text": "These ingredients define the forward process _q_ ( **z** _|_ **x** ), a Gaussian process satisfying the following Markovian structure:"
+    },
+    {
+      "index": 10,
+      "text": "**x** The role of function approximation in the diffusion model is to denoisenotation clean).\u02c6 _\u03b8_ ( **z** _t_ ) _\u2248_ **x** (theWe train this denoising modelfunction approximator also receives **x** \u02c6 _\u03b8_ using a weighted mean squared error loss _\u03bbt_ as an input, **z** but _t \u223c_ we _q_ ( **z** omit _t|_ **x** ) into an estimatethis to keep our"
+    },
+    {
+      "index": 11,
+      "text": "over uniformly sampled times _t \u2208_ [0 _,_ 1]. This loss can be justified as a weighted variational lower bound on the data log likelihood under the diffusion model (Kingma et al., 2021) or as a form of denoising score matching (Vincent, 2011; Song & Ermon, 2019). We will discuss particular choices of weighting function _w_ ( _\u03bbt_ ) later on."
+    },
+    {
+      "index": 12,
+      "text": "Sampling from a trained model can be performed in several ways. The most straightforward way is discrete time ancestral sampling (Ho et al., 2020).process can be described in reverse as _q_ ( **z** _s|_ **z** _t,_ **x** ) =To define this sampler, first note that the forward _N_ ( **z** _s_ ; _**\u00b5**_ \u02dc _s|t_ ( **z** _t,_ **x** ) _,_ \u02dc _\u03c3s_[2] _|t_ **[I]**[)][ (noting] _[ s < t]_[), where]"
+    },
+    {
+      "index": 13,
+      "text": "We use this reversed description of the forward process to define the ancestral sampler. Starting at **z** 1 _\u223cN_ ( **0** _,_ **I** ), the ancestral sampler follows the rule"
+    },
+    {
+      "index": 14,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\nwhere _**\u03f5**_ is standard Gaussian noise, and _\u03b3_ is a hyperparameter that controls how much noise is added during sampling, following Nichol & Dhariwal (2021)."
+    },
+    {
+      "index": 15,
+      "text": "Alternatively, Song et al. (2021c) show that our denoising model **x** \u02c6 _\u03b8_ ( **z** _t_ ) can be used to deterministically map noise **z** 1 _\u223cN_ ( **0** _,_ **I** ) to samples **x** by numerically solving the _probability flow ODE_ :"
+    },
+    {
+      "index": 16,
+      "text": "where _\u2207z_ log \u02c6 _p\u03b8_ ( **z** _t_ ) = _[\u03b1][t]_ **[x]**[\u02c6] _[\u03b8]_[(] _\u03c3_ **[z]** _t_[2] _[t]_[)] _[\u2212]_ **[z]** _[t]_ . Following Kingma et al. (2021), we have _f_ ( **z** _t, t_ ) = _[d]_[ lo] _dt_[g] _[ \u03b1][t]_ **z** _t_ and _g_[2] ( _t_ ) = _[d\u03c3] dtt_[2] _[\u2212]_[2] _[d]_[ lo] _dt_[g] _[ \u03b1][t] \u03c3t_[2][.][Since] **[x]**[\u02c6] _[\u03b8]_[(] **[z]** _[t]_[)][is][parameterized][by][a][neural][network,][this][equation] is a special case of a _neural ODE_ (Chen et al., 2018), also called a _continuous normalizing flow_ (Grathwohl et al., 2018)."
+    },
+    {
+      "index": 17,
+      "text": "Solving the ODE in Equation 6 numerically can be done with standard methods like the Euler rule or the Runge-Kutta method. The DDIM sampler proposed by Song et al. (2021a) can also be understood as an integration rule for this ODE, as we show in Appendix B, even though it was originally proposed with a different motivation. The update rule specified by DDIM is"
+    },
+    {
+      "index": 18,
+      "text": "and in practice this rule performs better than the aforementioned standard ODE integration rules in our case, as we show in Appendix C."
+    },
+    {
+      "index": 19,
+      "text": "If **x** \u02c6 _\u03b8_ ( **z** _t_ ) satisfies mild smoothness conditions, the error introduced by numerical integration of the probability flow ODE is guaranteed to vanish as the number of integration steps grows infinitely large, i.e. _N \u2192\u221e_ . This leads to a trade-off in practice between the accuracy of the numerical integration, and hence the quality of the produced samples from our model, and the time needed to produce these samples. So far, most models in the literature have needed hundreds or thousands of integration steps to produce their highest quality samples, which is prohibitive for many practical applications of generative modeling. Here, we therefore propose a method to distill these accurate, but slow, ODE integrators into much faster models that are still very accurate. This idea is visualized in Figure 1, and described in detail in the next section."
+    },
+    {
+      "index": 20,
+      "text": "## 3 PROGRESSIVE DISTILLATION\n\nTo make diffusion models more efficient at sampling time, we propose _progressive distillation_ : an algorithm that iteratively halves the number of required sampling steps by distilling a slow teacher diffusion model into a faster student model. Our implementation of progressive distillation stays very close to the implementation for training the original diffusion model, as described by e.g. Ho et al. (2020). Algorithm 1 and Algorithm 2 present diffusion model training and progressive distillation side-by-side, with the relative changes in progressive distillation highlighted in green."
+    },
+    {
+      "index": 21,
+      "text": "We start the progressive distillation procedure with a teacher diffusion model that is obtained by training in the standard way. At every iteration of progressive distillation, we then initialize the student model with a copy of the teacher, using both the same parameters and same model definition. Like in standard training, we then sample data from the training set and add noise to it, before forming the training loss by applying the student denoising model to this noisy data **z** _t_ . The main differenceof the originalin progressivedata **x** , wedistillationhave the studentis in howmodelwe denoiseset the targettowardsforathetargetdenoising **x** \u02dc that model:makes ainsteadsingle student DDIM step match 2 teacher DDIM steps. We calculate this target value by running 2 DDIM sampling steps using the teacher, starting from **z** _t_ and ending at **z** _t\u2212_ 1 _/N_ , with _N_ being the number of student sampling steps. By inverting a single step of DDIM, we then calculate the value the student modeldetail in Appendix G. The resulting target valuewould need to predict in order to move from **x** \u02dc( **z** _t_ **z** ) is fully determined given the teacher model _t_ to **z** _t\u2212_ 1 _/N_ in a single step, as we show in and starting point **z** _t_ , which allows the student model to make a sharp prediction when evaluated at **z** _t_ . In contrast, the original data point **x** is not fully determined given **z** _t_ , since multiple different data points **x** can produce the same noisy data **z** _t_ : this means that the original denoising model is"
+    },
+    {
+      "index": 22,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\npredicting a weighted average of possible **x** values, which produces a blurry prediction. By making sharper predictions, the student model can make faster progress during sampling."
+    },
+    {
+      "index": 23,
+      "text": "After running distillation to learn a student model taking _N_ sampling steps, we can repeat the procedure with _N/_ 2 steps: The student model then becomes the new teacher, and a new student model is initialized by making a copy of this model."
+    },
+    {
+      "index": 24,
+      "text": "Unlike our procedure for training the original model, we always run progressive distillation in discrete time: we sample this discrete time such that the highest time index corresponds to a signal-tonoise ratio of zero, i.e. _\u03b1_ 1 = 0, which exactly matches the distribution of input noise **z** 1 _\u223cN_ ( **0** _,_ **I** ) that is used at test time. We found this to work slightly better than starting from a non-zero signalto-noise ratio as used by e.g. Ho et al. (2020), both for training the original model as well as when performing progressive distillation."
+    },
+    {
+      "index": 25,
+      "text": "|**Algorithm 1**Standard diffusion training|**Algorithm 1**Standard diffusion training|**Algorithm 1**Standard diffusion training|**Algorithm 2**Progressive distillation||\n|---|---|---|---|---|\n|**Require:** Model \u02c6**x**_\u03b8_(**z**_t_)to||be trained|**Require:**\nTrained teacher model \u02c6**x**_\u03b7_(**z**_t_)||\n|**Require:** Data set_D_|||**Require:** Data set_D_||\n|**Require:** Loss weight|function_w_()||**Require:** Loss weight function_w_()||\n|**while**not converged|**do**||**Require:**\nStudent sampling steps_N_\n**for**\n_K_ iterations**do**\n_\u03b8 \u2190\u03b7_\n_\u25b7_Init student from teacher\n**while**not converged**do**||\n|**x**_\u223cD_\n_t \u223cU_[0_,_1]\n_\u03f5 \u223cN_(0_, I_)||_\u25b7_Sample data\n_\u25b7_Sample time\n_\u25b7_Sample noise|**x**_\u223cD_\n_t_=_i/N, i \u223cCat_[1_,_2_, . . . , N_]\n_\u03f5 \u223cN_(0_, I_)||\n|**z**_t_ =_\u03b1t_**x**+_\u03c3t\u03f5_|_\u25b7_Add noise to data||**z**_t_ =_\u03b1t_**x**+_\u03c3t\u03f5_||\n||||# 2 steps of DDIM with teacher||\n||||_t\u2032_ =_t \u2212_0_._5_/N_,\n_t\u2032\u2032_ =_t \u2212_1_/N_||\n|\u02dc**x**=**x**\n_\u25b7_Clean data is target for \u02c6**x**\n_\u03bbt_ = log[_\u03b1_2\n_t/\u03c3_2\n_t_ ]\n_\u25b7_log-SNR\n_L\u03b8_ =_w_(_\u03bbt_)_\u2225_\u02dc**x**_\u2212_\u02c6**x**_\u03b8_(**z**_t_)_\u2225_2\n2\n_\u25b7_Loss|||**z**_t\u2032_ =_\u03b1t\u2032_\u02c6**x**_\u03b7_(**z**_t_) + _\u03c3t\u2032_\n_\u03c3t_ (**z**_t \u2212\u03b1t_\u02c6**x**_\u03b7_(**z**_t_))\n**z**_t\u2032\u2032_ =_\u03b1t\u2032\u2032_\u02c6**x**_\u03b7_(**z**_t\u2032_) + _\u03c3t\u2032\u2032_\n_\u03c3t\u2032_ (**z**_t\u2032 \u2212\u03b1t\u2032_\u02c6**x**_\u03b7_(**z**_t\u2032_))\n\u02dc**x**= **z**_t\u2032\u2032\u2212_(_\u03c3t\u2032\u2032/\u03c3t_)**z**_t_\n_\u03b1t\u2032\u2032\u2212_(_\u03c3t\u2032\u2032/\u03c3t_)_\u03b1t_\n_\u25b7_Teacher \u02c6**x**target\n_\u03bbt_ = log[_\u03b1_2\n_t/\u03c3_2\n_t_ ]\n_L\u03b8_ =_w_(_\u03bbt_)_\u2225_\u02dc**x**_\u2212_\u02c6**x**_\u03b8_(**z**_t_)_\u2225_2\n2||\n|_\u03b8 \u2190\u03b8 \u2212\u03b3\u2207\u03b8L\u03b8_||_\u25b7_Optimization|_\u03b8 \u2190\u03b8 \u2212\u03b3\u2207\u03b8L\u03b8_||\n|**end while**|||**end while**||\n||||_\u03b7 \u2190\u03b8_\n_\u25b7_Student becomes next teacher||\n||||_N \u2190N/_2 _\u25b7_Halve number of sampling steps||\n||||**end for**||"
+    },
+    {
+      "index": 26,
+      "text": "4 DIFFUSION MODEL PARAMETERIZATION AND TRAINING LOSS\n\nIn this section, we discuss how to parameterize the denoising model **x** \u02c6 _\u03b8_ , and how to specify the reconstruction loss weight _w_ ( _\u03bbt_ ). We assume a standard _variance-preserving_ diffusion process for which _\u03c3t_[2][=][1] _[\u2212][\u03b1] t_[2][.][This][is][without][loss][of][generalization,][as][shown][by][(Kingma][et][al.,][2021,] appendix G): different specifications of the diffusion process, such as the _variance-exploding_ specification, can be considered equivalent to this specification, up to rescaling of the noisy latents **z** _t_ . We use a cosine schedule _\u03b1t_ = cos(0 _._ 5 _\u03c0t_ ), similar to that introduced by Nichol & Dhariwal (2021)."
+    },
+    {
+      "index": 27,
+      "text": "Ho et al. (2020) and much of the following work choose to parameterize the denoising model through directly predicting _\u03f5_ with a neural network \u02c6 _\u03f5\u03b8_ ( **z** _t_ ), which implicitly sets \u02c6 **x** _\u03b8_ ( **z** _t_ ) = _\u03b1_ 1 _t_[(] **[z]** _[t][\u2212][\u03c3][t][\u03f5]_[\u02c6] _[\u03b8]_[(] **[z]** _[t]_[))][.] In this case, the training loss is also usually defined as mean squared error in the _\u03f5_ -space:"
+    },
+    {
+      "index": 28,
+      "text": "which can thus equivalently be seen as a weighted reconstruction loss in **x** -space, where the weighting function is given by _w_ ( _\u03bbt_ ) = exp( _\u03bbt_ ), for log signal-to-noise ratio _\u03bbt_ = log[ _\u03b1t_[2] _[/\u03c3] t_[2][]][.]"
+    },
+    {
+      "index": 29,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\nAlthough this standard specification works well for training the original model, it is not well suited for distillation: when training the original diffusion model, and at the start of progressive distillation, the model is evaluated at a wide range of signal-to-noise ratios _\u03b1t_[2] _[/\u03c3] t_[2][, but as distillation progresses] we increasingly evaluate at lower and lower signal-to-noise ratios. As the signal-to-noise ratio goes to zero, the effect of small changes in the neural network output \u02c6 _\u03f5\u03b8_ ( **z** _t_ ) on the implied prediction in 1 **x** -space is increasingly amplified, since \u02c6 **x** _\u03b8_ ( **z** _t_ ) = _\u03b1t_[(] **[z]** _[t][ \u2212][\u03c3][t][\u03f5]_[\u02c6] _[\u03b8]_[(] **[z]** _[t]_[))][ divides by] _[ \u03b1][t][\u2192]_[0][.][This is not] much of a problem when taking many steps, since the effect of early missteps is limited by clipping of the **z** _t_ iterates, and later updates can correct any mistakes, but it becomes increasingly important as we decrease the number of sampling steps. Eventually, if we distill all the way down to a single sampling step, the input to the model is only pure noise _\u03f5_ , which corresponds to a signal-to-noise ratio of zero, i.e. _\u03b1t_ = 0 _, \u03c3t_ = 1. At this extreme, the link between _\u03f5_ -prediction and **x** -prediction breaks down completely: observed data **z** _t_ = _\u03f5_ is no longer informative of **x** and predictions \u02c6 _\u03f5\u03b8_ ( **z** _t_ ) no longer implicitly predict **x** . Examining our reconstruction loss (equation 9), we see that the weighting function _w_ ( _\u03bbt_ ) gives zero weight to the reconstruction loss at this signal-to-noise ratio."
+    },
+    {
+      "index": 30,
+      "text": "For distillation to work, we thus need to parameterize the diffusion model in a way for which the implied prediction \u02c6 **x** _\u03b8_ ( **z** _t_ ) remains stable as _\u03bbt_ = log[ _\u03b1t_[2] _[/\u03c3] t_[2][]][ varies.][We tried the following options,] and found all to work well with progressive distillation:"
+    },
+    {
+      "index": 31,
+      "text": "- Predicting **x** directly.\n\n- Predicting both **x** and _\u03f5_ , via separate output channels\u02c6 _{_ **x** \u02dc _\u03b8_ ( **z** _t_ ) _,_ \u02dc _\u03f5\u03b8_ ( **z** _t_ ) _}_ of the neural network, and then merging the predictions via **x** = _\u03c3t_[2] **[x]**[\u02dc] _[\u03b8]_[(] **[z]** _[t]_[)][+] _[\u03b1][t]_[(] **[z]** _[t][\u2212][\u03c3][t][\u03f5]_[\u02dc] _[\u03b8]_[(] **[z]** _[t]_[))][,][thus] smoothly interpolating between predicting **x** directly and predicting via _\u03f5_ ."
+    },
+    {
+      "index": 32,
+      "text": "- Predicting **v** _\u2261 \u03b1t\u03f5 \u2212 \u03c3t_ **x** , which gives **x** \u02c6 = _\u03b1t_ **z** _t \u2212 \u03c3t_ **v** \u02c6 _\u03b8_ ( **z** _t_ ), as we show in Appendix D."
+    },
+    {
+      "index": 33,
+      "text": "In Section 5.1 we test all three parameterizations on training an original diffusion model (no distillation), and find them to work well there also."
+    },
+    {
+      "index": 34,
+      "text": "In addition to determining an appropriate parameterization, we also need to decide on a reconstruction loss weighting _w_ ( _\u03bbt_ ). The setup of Ho et al. (2020) weights the reconstruction loss by the signal-to-noise ratio, implicitly gives a weight of zero to data with zero SNR, and is therefore not a suitable choice for distillation. We consider two alternative training loss weightings:"
+    },
+    {
+      "index": 35,
+      "text": "We examine both choices in our ablation study in Section 5.1, and find both to be good choices for training diffusion models. In practice, the choice of loss weighting also has to take into account how _\u03b1t, \u03c3t_ are sampled during training, as this sampling distribution strongly determines the weight the expected loss gives to each signal-to-noise ratio. Our results are for a cosine schedule _\u03b1t_ = cos(0 _._ 5 _\u03c0t_ ), where time is sampled uniformly from [0 _,_ 1]. In Figure 2 we visualize the resulting loss weightings, both including and excluding the effect of the cosine schedule."
+    },
+    {
+      "index": 36,
+      "text": "## 5 EXPERIMENTS\n\nIn this section we empirically validate the progressive distillation algorithm proposed in Section 3, as well as the parameterizations and loss weightings considered in Section 4. We consider various image generation benchmarks, with resolution varying from 32 _\u00d7_ 32 to 128 _\u00d7_ 128. All experiments use the cosine schedule _\u03b1t_ = cos(0 _._ 5 _\u03c0t_ ), and all models use a U-Net architecture similar to that introduced by Ho et al. (2020), but with BigGAN-style up- and downsampling (Brock et al., 2019), as used in the diffusion modeling setting by Nichol & Dhariwal (2021); Song et al. (2021c). Our training setup closely matches the open source code by Ho et al. (2020). Exact details are given in Appendix E."
+    },
+    {
+      "index": 37,
+      "text": "## 5.1 MODEL PARAMETERIZATION AND TRAINING LOSS\n\nAs explained in Section 4, the standard method of having our model predict _\u03f5_ , and minimizing mean squared error in the _\u03f5_ -space (Ho et al., 2020), is not appropriate for use with progressive distillation."
+    },
+    {
+      "index": 38,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nSNR weight SNR\ntruncated SNR 0 . 4 truncated SNR\n5 SNR+1 weight SNR+1\n0 . 3\n0 0 . 2\n0 . 1\n\u2212 5\n0\n\u2212 6 \u2212 4 \u2212 2 0 2 4 6 \u2212 6 \u2212 4 \u2212 2 0 2 4 6\nlog SNR log SNR\nweight (including schedule)\nlog weight (excluding schedule)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 39,
+      "text": "Figure 2: **Left:** Log weight assigned to reconstruction loss _\u2225_ **x** _\u2212_ **x** \u02c6 _\u03bb\u2225_ 2[2][as a function of the log-SNR] _\u03bb_ = log[ _\u03b1_[2] _/\u03c3_[2] ], for each of our considered training loss weightings, excluding the influence of the _\u03b1t, \u03c3t_ schedule. **Right:** Weights assigned to the reconstruction loss including the effect of the cosine schedule _\u03b1t_ = cos(0 _._ 5 _\u03c0t_ ), with _t \u223c U_ [0 _,_ 1]. The weights are only defined up to a constant, and we have adjusted these constants to fit this graph."
+    },
+    {
+      "index": 40,
+      "text": "|Network Output|Loss Weighting|Stochastic sampler|DDIM sampler|\n|---|---|---|---|\n|(**x**_, \u03f5_)combined|SNR|2.54/9.88|2.78/9.56|\n||Truncated SNR|2.47/9.85|2.76/9.49|\n||SNR+1|2.52/9.79|2.87/9.45|\n|**x**|SNR|2.65/9.80|2.75/9.56|\n||Truncated SNR|2.53/**9.92**|**2.51**/**9.58**|\n||SNR+1|2.56/9.84|2.65/9.52|\n|_\u03f5_|SNR|2.59/9.84|2.91/9.52|\n||Truncated SNR|N/A|N/A|\n||SNR+1|2.56/9.77|3.27/9.41|\n|**v**|SNR|2.65/9.86|3.05/9.56|\n||Truncated SNR|**2.45**/9.80|2.75/9.52|\n||SNR+1|2.49/9.77|2.87/9.43|"
+    },
+    {
+      "index": 41,
+      "text": "Table 1: Generated sample quality as measured by FID and Inception Score (FID/IS) on unconditional CIFAR-10, training the original model (no distillation), and comparing different parameterizations and loss weightings discussed in Section 4. All reported results are averages over 3 random seeds of the best metrics obtained over 2 million training steps; nevertheless we find results are still _\u00b1_ 0 _._ 1 due to the noise inherent in training our models. Taking the neural network output to represent a prediction of _\u03f5_ in combination with the Truncated SNR loss weighting leads to divergence."
+    },
+    {
+      "index": 42,
+      "text": "We therefore proposed various alternative parameterizations of the denoising diffusion model that are stable under the progressive distillation procedure, as well as various weighting functions for the reconstruction error in **x** -space. Here, we perform a complete ablation experiment of all parameterizations and loss weightings considered in Section 4. For computational efficiency, and for comparisons to established methods in the literature, we use unconditional CIFAR-10 as the benchmark. We measure performance of undistilled models trained from scratch, to avoid introducing too many factors of variation into our analysis."
+    },
+    {
+      "index": 43,
+      "text": "Table 1 lists the results of the ablation study. Overall results are fairly close across different parameterizations and loss weights. All proposed stable model specifications achieve excellent performance, with the exception of the combination of outputting _\u03f5_ with the neural network and weighting the loss with the truncated SNR, which we find to be unstable. Both predicting **x** directly, as well as predicting **v** , or the combination ( _\u03f5,_ **x** ), could thus be recommended for specification of diffusion"
+    },
+    {
+      "index": 44,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\nmodels. Here, predicting **v** is the most stable option, as it has the unique property of making DDIM step-sizes independent of the SNR (see Appendix D), but predicting **x** gives slightly better empirical results in this ablation study."
+    },
+    {
+      "index": 45,
+      "text": "## 5.2 PROGRESSIVE DISTILLATION\n\nWe evaluate our proposed progressive distillation algorithm on 4 data sets: CIFAR-10, 64 _\u00d7_ 64 downsampled ImageNet, 128 _\u00d7_ 128 LSUN bedrooms, and 128 _\u00d7_ 128 LSUN Church-Outdoor. For each data set we start by training a baseline model, after which we start the progressive distillation procedure. For CIFAR-10 we start progressive distillation from a teacher model taking 8192 steps. For the bigger data sets we start at 1024 steps. At every iteration of distillation we train for 50 thousand parameter updates, except for the distillation to 2 and 1 sampling steps, for which we use 100 thousand updates. We report FID results obtained after each iteration of the algorithm. Using these settings, the computational cost of progressive distillation to 4 sampling steps is comparable or less than for training the original model. In Appendix I we show that this computational cost can be reduce much further still, at a small cost in performance."
+    },
+    {
+      "index": 46,
+      "text": "In Figure 4 we plot the resulting FID scores (Heusel et al., 2017) obtained for each number of sampling steps. We compare against the undistilled DDIM sampler, as well as to a highly optimized stochastic baseline sampler. For all four data sets, progressive distillation produces near optimal results up to 4 or 8 sampling steps. At 2 or 1 sampling steps, the sample quality degrades relatively more quickly. In contrast, the quality of the DDIM and stochastic samplers degrades very sharply after reducing the number of sampling steps below 128. Overall, we conclude that progressive distillation is thus an attractive solution for computational budgets that allow less than or equal to 128 sampling steps. Although our distillation procedure is designed for use with the DDIM sampler, the resulting distilled models can in principle also be used with stochastic sampling: we investigate this in Appendix F, and find that it achieves performance that falls in between the distilled DDIM sampler and the undistilled stochastic sampler."
+    },
+    {
+      "index": 47,
+      "text": "Table 2 shows some of our results on CIFAR-10, and compares against other fast sampling methods in the literature: Our method compares favorably and attains higher sampling quality in fewer steps than most of the alternative methods. Figure 3 shows some random samples from our model obtained at different phases of the distillation process. Additional samples are provided in Appendix H."
+    },
+    {
+      "index": 48,
+      "text": "**----- Start of picture text -----**\n\n(a) 256 sampling steps (b) 4 sampling steps (c) 1 sampling step\n**----- End of picture text -----**"
+    },
+    {
+      "index": 49,
+      "text": "Figure 3: Random samples from our distilled 64 _\u00d7_ 64 ImageNet models, conditioned on the \u2018malamute\u2019 class, for fixed random seed and for varying number of sampling steps. The mapping from input noise to output image is well preserved as the number of sampling steps is reduced."
+    },
+    {
+      "index": 50,
+      "text": "## 6 RELATED WORK ON FAST SAMPLING\n\nOur proposed method is closest to the work of Luhman & Luhman (2021), who perform distillation of DDIM teacher models into one-step student models. A possible downside of their method is"
+    },
+    {
+      "index": 51,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nCIFAR-10 64x64 ImageNet\n20 20\nDistilled Distilled\nDDIM DDIM\nStochastic Stochastic\n10 10\n9 9\n8 8\n7 7\n6 6\n5 5\n4 4\n3 3\n2 2\n1 2 4 8 16 32 64 128 256 512 1 2 4 8 16 32 64 128 256 512\nsampling steps sampling steps\n128x128 LSUN Bedrooms 128x128 LSUN Church-Outdoor\n20 20\nDistilled Distilled\nDDIM DDIM\nStochastic Stochastic\n10 10\n9 9\n8 8\n7 7\n6 6\n5 5\n4 4\n3 3\n1 2 4 8 16 32 64 128 256 512 1 2 4 8 16 32 64 128 256 512\nsampling steps sampling steps\nFID FID\nFID FID\n**----- End of picture text -----**"
+    },
+    {
+      "index": 52,
+      "text": "Figure 4: Sample quality results as measured by FID for our distilled model on unconditional CIFAR-10, class-conditional 64x64 ImageNet, 128x128 LSUN bedrooms, and 128x128 LSUN church-outdoor. We compare against the DDIM sampler and against an optimized stochastic sampler, each evaluated using the same models that were used to initialize the progressive distillation procedure. For CIFAR-10 we report an average over 4 random seeds. For the other data sets we only use a single run because of their computational demand. For the stochastic sampler we set the variance as a log-scale interpolation between an upper and lower bound on the variance, following Nichol & Dhariwal (2021), but we use a single interpolation coefficient rather than a learned coefficient. We then tune this interpolation coefficient separately for each number of sampling steps and report only the best result for that number of steps: this way we obtained better results than with the learned interpolation."
+    },
+    {
+      "index": 53,
+      "text": "that it requires constructing a large data set by running the original model at its full number of sampling steps: their cost of distillation thus scales linearly with this number of steps, which can be prohibitive. In contrast, our method never needs to run the original model at the full number of sampling steps: at every iteration of progressive distillation, the number of model evaluations is independent of the number of teacher sampling steps, allowing our method to scale up to large numbers of teacher steps at a logarithmic cost in total distillation time."
+    },
+    {
+      "index": 54,
+      "text": "DDIM (Song et al., 2021a) was originally shown to be effective for few-step sampling, as was the probability flow sampler (Song et al., 2021c). Jolicoeur-Martineau et al. (2021) study fast SDE integrators for reverse diffusion processes, and Tzen & Raginsky (2019b) study unbiased samplers which may be useful for fast, high quality sampling as well."
+    },
+    {
+      "index": 55,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\nOther work on fast sampling can be viewed as manual or automated methods to adjust samplers or diffusion processes for fast generation. Nichol & Dhariwal (2021); Kong & Ping (2021) describe methods to adjust a discrete time diffusion model trained on many timesteps into models that can sample in few timesteps. Watson et al. (2021) describe a dynamic programming algorithm to reduce the number of timesteps for a diffusion model in a way that is optimal for log likelihood. Chen et al. (2021); Saharia et al. (2021); Ho et al. (2021) train diffusion models over continuous noise levels and tune samplers post training by adjusting the noise levels of a few-step discrete time reverse diffusion process. Their method is effective in highly conditioned settings such as text-to-speech and image super-resolution. San-Roman et al. (2021) train a new network to estimate the noise level of noisy data and show how to use this estimate to speed up sampling."
+    },
+    {
+      "index": 56,
+      "text": "Alternative specifications of the diffusion model can also lend themselves to fast sampling, such as modified forward and reverse processes (Nachmani et al., 2021; Lam et al., 2021) and training diffusion models in latent space (Vahdat et al., 2021)."
+    },
+    {
+      "index": 57,
+      "text": "|Method|Model evaluations|FID|\n|---|---|---|\n|Progressive Distillation (ours)|1|9.12|\n||2|4.51|\n||4|3.00|\n||8|2.57|\n|Knowledge distillation (Luhman & Luhman, 2021)|1|9.36|\n|DDIM (Song et al., 2021a)|10|13.36|\n||20|6.84|\n||50|4.67|\n||100|4.16|\n|Dynamic step-size extrapolation + VP-deep|48|82.42|\n|(Jolicoeur-Martineau et al., 2021)|151|2.73|\n||180|2.44|\n||274|2.60|\n||330|2.56|\n|FastDPM (Kong & Ping, 2021)|10|9.90|\n||20|5.05|\n||50|3.20|\n||100|2.86|\n|Improved DDPM respacing|25|7.53|\n|(Nichol & Dhariwal, 2021), our reimplementation|50|4.99|\n|LSGM (Vahdat et al., 2021)|138|2.10|"
+    },
+    {
+      "index": 58,
+      "text": "Table 2: Comparison of fast sampling results on CIFAR-10 for diffusion models in the literature.\n\n## 7 DISCUSSION"
+    },
+    {
+      "index": 59,
+      "text": "We have presented _progressive distillation_ , a method to drastically reduce the number of sampling steps required for high quality generation of images, and potentially other data, using diffusion models with deterministic samplers like DDIM (Song et al., 2020). By making these models cheaper to run at test time, we hope to increase their usefulness for practical applications, for which running time and computational requirements often represent important constraints."
+    },
+    {
+      "index": 60,
+      "text": "In the current work we limited ourselves to setups where the student model has the same architecture and number of parameters as the teacher model: in future work we hope to relax this constraint and explore settings where the student model is smaller, potentially enabling further gains in test time computational requirements. In addition, we hope to move past the generation of images and also explore progressive distillation of diffusion models for different data modalities such as e.g. audio (Chen et al., 2021)."
+    },
+    {
+      "index": 61,
+      "text": "In addition to the proposed distillation procedure, some of our progress was realized through different parameterizations of the diffusion model and its training loss. We expect to see more progress in this direction as the community further explores this model class."
+    },
+    {
+      "index": 62,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n## REPRODUCIBILITY STATEMENT\n\nWe provide full details on model architectures, training procedures, and hyperparameters in Appendix E, in addition to our discussion in Section 5. In Algorithm 2 we provide fairly detailed pseudocode that closely matches our actual implementation, which is available in open source at https: //github.com/google-research/google-research/tree/master/diffusion_distillation."
+    },
+    {
+      "index": 63,
+      "text": "## ETHICS STATEMENT\n\nIn general, generative models can have unethical uses, such as fake content generation, and they can suffer from bias if applied to data sets that are not carefully curated. The focus of this paper specifically is on speeding up generative models at test time in order to reduce their computational demands; we do not have specific concerns with regards to this contribution."
+    },
+    {
+      "index": 64,
+      "text": "## REFERENCES\n\nJacob Austin, Daniel D. Johnson, Jonathan Ho, Daniel Tarlow, and Rianne van den Berg. Structured denoising diffusion models in discrete state-spaces. _CoRR_ , abs/2107.03006, 2021."
+    },
+    {
+      "index": 65,
+      "text": "- Andrew Brock, Jeff Donahue, and Karen Simonyan. Large scale GAN training for high fidelity natural image synthesis. In _International Conference on Learning Representations_ , 2019."
+    },
+    {
+      "index": 66,
+      "text": "Ruojin Cai, Guandao Yang, Hadar Averbuch-Elor, Zekun Hao, Serge Belongie, Noah Snavely, and Bharath Hariharan. Learning gradient fields for shape generation. _arXiv preprint arXiv:2008.06520_ , 2020."
+    },
+    {
+      "index": 67,
+      "text": "- Nanxin Chen, Yu Zhang, Heiga Zen, Ron J Weiss, Mohammad Norouzi, and William Chan. WaveGrad: Estimating gradients for waveform generation. _International Conference on Learning Representations_ , 2021."
+    },
+    {
+      "index": 68,
+      "text": "- Tian Qi Chen, Yulia Rubanova, Jesse Bettencourt, and David K Duvenaud. Neural ordinary differential equations. In _Advances in Neural Information Processing Systems_ , pp. 6571\u20136583, 2018."
+    },
+    {
+      "index": 69,
+      "text": "- Prafulla Dhariwal and Alex Nichol. Diffusion models beat GANs on image synthesis. _arXiv preprint arXiv:2105.05233_ , 2021."
+    },
+    {
+      "index": 70,
+      "text": "- Will Grathwohl, Ricky TQ Chen, Jesse Bettencourt, Ilya Sutskever, and David Duvenaud. Ffjord: Free-form continuous dynamics for scalable reversible generative models. _arXiv preprint arXiv:1810.01367_ , 2018."
+    },
+    {
+      "index": 71,
+      "text": "- Martin Heusel, Hubert Ramsauer, Thomas Unterthiner, Bernhard Nessler, and Sepp Hochreiter. GANs trained by a two time-scale update rule converge to a local Nash equilibrium. In _Advances in Neural Information Processing Systems_ , pp. 6626\u20136637, 2017."
+    },
+    {
+      "index": 72,
+      "text": "Jonathan Ho, Ajay Jain, and Pieter Abbeel. Denoising diffusion probabilistic models. In _Advances in Neural Information Processing Systems_ , pp. 6840\u20136851, 2020."
+    },
+    {
+      "index": 73,
+      "text": "- Jonathan Ho, Chitwan Saharia, William Chan, David J Fleet, Mohammad Norouzi, and Tim Salimans. Cascaded diffusion models for high fidelity image generation. _arXiv preprint arXiv:2106.15282_ , 2021."
+    },
+    {
+      "index": 74,
+      "text": "- Emiel Hoogeboom, Didrik Nielsen, Priyank Jaini, Patrick Forr\u00e9, and Max Welling. Argmax flows and multinomial diffusion: Towards non-autoregressive language models. _arXiv preprint arXiv:2102.05379_ , 2021."
+    },
+    {
+      "index": 75,
+      "text": "- Alexia Jolicoeur-Martineau, Ke Li, R\u00e9mi Pich\u00e9-Taillefer, Tal Kachman, and Ioannis Mitliagkas. Gotta go fast when generating data with score-based models. _arXiv preprint arXiv:2105.14080_ , 2021."
+    },
+    {
+      "index": 76,
+      "text": "- Diederik P Kingma, Tim Salimans, Ben Poole, and Jonathan Ho. Variational diffusion models. _arXiv preprint arXiv:2107.00630_ , 2021.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper introduces progressive distillation as a method to accelerate diffusion model sampling by iteratively distilling a teacher model into a student model that requires half the number of sampling steps, eventually achieving high-quality generation in as few as 1-4 steps.\n\nThe paper provides a compelling and highly effective solution to the slow inference speeds of diffusion models, which is a significant barrier to their practical adoption. The methodology is well-grounded in probability flow ODEs, and the empirical results demonstrate a clear, state-of-the-art trade-off between sampling speed and visual quality.\n\nOverview issues:\n\n- Accumulation of Distillation Errors: The methodology relies on iterative distillation, where each student model becomes the teacher for the next iteration. As shown in Figure 4, sample quality (FID) degrades significantly when moving from 4 to 1 or 2 steps. The paper does not explicitly analyze how the discretization error from the initial teacher model propagates and compounds through these successive stages. A more rigorous analysis of the error bounds or a discussion on whether the student model's drift is bounded would strengthen the theoretical claims.\n\n- Sensitivity to Noise Schedule and Discretization: The distillation process is highly sensitive to the choice of the noise schedule and the discretization of time steps. Section 3 and Algorithm 2 describe a specific approach to sampling discrete time, but the paper lacks an ablation study on how different noise schedules (e.g., linear vs. cosine) interact with the distillation loss. Since the target $\\hat{\\mathbf{x}}$ is derived from the teacher's DDIM steps, any mismatch in the discretization schedule could lead to suboptimal student convergence. Including an analysis of the robustness of the distillation loss to these schedule choices would clarify the method's generalizability.\n\n- Lack of Precision-Recall or Diversity Metrics: The paper relies heavily on FID and IS scores to evaluate sample quality. While these are standard, they are known to be insufficient for capturing mode collapse or loss of diversity, particularly in few-step regimes where adversarial-like behavior might emerge. Given that distillation effectively 'compresses' the trajectory, it is vital to demonstrate that the distilled model retains the full distribution coverage of the teacher. Adding precision-recall analysis or a qualitative diversity assessment would provide a more complete picture of the model's performance.\n\n- Implicit Assumption of Teacher-Student Architectural Equivalence: The current experiments assume the student model shares the exact architecture and parameter count as the teacher. The discussion in Section 7 mentions this as a limitation but does not explore the impact of using smaller student architectures. For practical deployment, the memory footprint of the model is as important as the number of sampling steps. A brief experiment or discussion on the impact of reducing model capacity during distillation would significantly increase the paper's relevance to resource-constrained applications.\n\n- Empirical analysis of error propagation across distillation iterations: The methodology relies on a sequence of models where each student serves as the teacher for the next. While Figure 4 shows the resulting FID at each stage, the paper lacks an empirical decomposition of the error introduced by the distillation process versus the error inherited from the previous teacher's discretization. It is unclear if the performance drop at 1-2 steps is due to the student's inability to approximate the teacher or the compounding of approximation errors from earlier stages. I suggest adding a plot that compares the student's single-step prediction error against the teacher's ground-truth trajectory at each iteration to isolate the source of quality degradation.\n\n- Assessment of distribution coverage and mode retention: The paper uses FID and IS to evaluate sample quality, but these metrics are known to be insensitive to mode collapse. Because progressive distillation effectively maps random noise to samples through a heavily compressed path, there is a risk that the student model collapses onto the most probable modes of the teacher. To substantiate the claim that the distilled model maintains the teacher's distribution coverage, the authors should include a Precision-Recall analysis or a comparison of the empirical distribution of generated samples versus the training data across the distillation stages.\n\n- Evaluation of model capacity trade-offs in distillation: The paper restricts the student model to the same architecture and parameter count as the teacher, which is a significant limitation for practical deployment where memory footprint is as critical as sampling speed. While the authors acknowledge this in the discussion, they do not provide any evidence on whether the distillation procedure remains stable when the student's capacity is reduced. A small-scale experiment distilling a large teacher into a student with, for example, half the number of parameters or fewer channels would demonstrate the method's versatility and provide a more complete picture of its utility.\n\nRecommendation: accept\n\nRevision targets:\n\n- Include a brief analysis or discussion on the propagation of discretization errors across the iterative distillation stages.\n\n- Add a precision-recall or diversity analysis to ensure the distilled models do not suffer from mode collapse compared to the teacher.\n\n- Provide a more detailed discussion or small-scale experiment on the feasibility of using smaller architectures for the student model.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency in the DDIM target calculation formula",
+          "quote": "\\mathbf{x}} = \\frac{\\mathbf{z}_{t^{\\prime \\prime}} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\mathbf{z}_t}{\\alpha_t\\mathbf{e} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\alpha_t}$",
+          "explanation": "The formula for the target in Algorithm 2 contains an undefined symbol and uses incorrect variables in the denominator. Based on the DDIM step definition, the correct expression is the target equals the difference between the two-step trajectory and the scaled noise, divided by the difference in alpha terms. Please correct this formula to ensure the student model target correctly matches the two-step teacher trajectory.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in cosine schedule definition",
+          "quote": " All experiments use the cosine schedule $\\alpha_{t}=\\cos(0.5\\pi t)",
+          "explanation": "The definition provided is mathematically incomplete and potentially problematic for t > 1, where the function oscillates or becomes negative. Standard diffusion literature typically defines the schedule in terms of the cumulative product of variance schedules. Please clarify if this expression refers to the cumulative product and provide the full functional form used in your implementation to ensure the schedule is valid for the entire range of t.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Inaccurate characterization of Luhman & Luhman (2021) scaling",
+          "quote": "that it requires constructing a large data set by running the original model at its full number of sampling steps: their cost of distillation thus scales linearly with this number of steps, which can be prohibitive.",
+          "explanation": "The claim that the cost of distillation in Luhman & Luhman (2021) scales linearly with the number of steps is misleading. Their approach involves a one-time preprocessing step that can be cached, whereas your iterative progressive distillation requires repeated full-model training passes at every stage. The total computational overhead of your iterative process is likely higher than the one-time dataset generation cost you describe. Please revise this comparison to be more balanced.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Unsubstantiated claim regarding total training time",
+          "quote": "Finally, we show that the full progressive distillation procedure does not take more time than it takes to train the original model",
+          "explanation": "This assertion lacks a formal complexity analysis or a clear breakdown of the cumulative compute cost. Since progressive distillation involves multiple stages of training models to convergence, the total cost is the sum of these stages. Please provide a table or summary of the total training budget compared to the original model training to substantiate this claim.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Clarification of N/A in Table 1",
+          "quote": "Truncated SNR | N/A | N/A",
+          "explanation": "The entry 'N/A' for the combination of 'epsilon' output and 'Truncated SNR' is ambiguous, as the text confirms this experiment was performed and resulted in divergence. Please replace 'N/A' with 'Diverged' to accurately reflect the experimental outcome described in the text.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.0804,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper introduces progressive distillation to reduce diffusion sampling steps from thousands to a handful, offering a practical speedup with competitive FID scores. The methodology is sound and the parameterization choices are well-motivated, but the evaluation lacks computational overhead reporting, guidance robustness analysis, and modern baseline comparisons. Addressing these gaps would clarify the method's practical utility and solidify its positioning in the literature.\n\nThe progressive distillation framework provides a clear and effective way to amortize multi-step ODE integration into fewer steps. The authors correctly identify the instability of standard epsilon-prediction at low signal-to-noise ratios and propose stable alternatives. The empirical results on CIFAR-10, ImageNet, and LSUN demonstrate meaningful quality retention at 4 steps. However, the evaluation stops short of quantifying the true computational trade-offs, testing guidance robustness, or benchmarking against recent fast-sampling methods.\n\nOverview issues:\n\n- Missing quantitative analysis of distillation overhead versus inference speedup: The paper claims that progressive distillation does not exceed the training time of the original model, yet Section 5.2 provides no concrete wall-clock measurements, FLOP counts, or latency breakdowns. Without these metrics, readers cannot verify whether the distillation process actually delivers a net computational benefit or merely shifts cost from training to sampling. The evaluation guidelines explicitly require transparent reporting of distillation overhead relative to inference latency reduction. I recommend adding a dedicated subsection reporting the exact training time, GPU hours, and FLOPs for each distillation stage alongside the per-sample inference latency. This would allow practitioners to assess the true trade-off and justify the method for resource-constrained deployments.\n\n- Absence of analysis under classifier-free guidance: The experimental evaluation in Section 5.2 only covers unconditional and class-conditional generation, completely omitting classifier-free guidance (CFG). Modern diffusion pipelines rely heavily on CFG, and distillation often degrades sample diversity or introduces artifacts when guidance scales increase. The paper assumes that guidance parameters transfer directly from teacher to student, but provides no ablation across varying CFG scales. Readers will wonder how the distilled models behave when scaled up for high-fidelity generation. Adding a systematic evaluation across CFG scales and reporting precision/recall or diversity metrics would clarify the method's practical applicability.\n\n- Over-reliance on FID and Inception Score without distribution fidelity analysis: Section 5.2 and Table 2 evaluate sample quality almost exclusively through FID and Inception Score. These metrics are known to correlate poorly with perceptual quality and mode coverage, especially when sampling steps are drastically reduced. The paper notes that quality degrades at 1 or 2 steps but does not quantify mode collapse or artifact frequency. A more rigorous evaluation would include Precision/Recall, FID-F, and human preference studies to capture perceptual trade-offs. Without these, the claim that distillation preserves near optimal results up to 4 steps remains partially unsubstantiated. Including these standard fast-sampling benchmarks would strengthen the empirical claims.\n\n- Incomplete baseline comparison and lack of FLOP-normalized evaluation: Table 2 compares progressive distillation against several fast-sampling methods, but omits direct competitors that operate in the same regime, such as Consistency Models and Latent Consistency Models. Furthermore, the comparison does not normalize for model evaluations or computational budget, making it difficult to determine whether the FID improvements stem from the distillation algorithm itself or from architectural and optimization differences. The paper should either re-run baselines under identical FLOP budgets or explicitly report the computational cost per sample for each method. Updating the comparison to include recent state-of-the-art fast samplers would better position the contribution within the current literature.\n\n- Unaddressed numerical instability during 1- and 2-step distillation: The distillation procedure iteratively halves the sampling steps, but the paper acknowledges that quality degrades more quickly at 1 or 2 steps without explaining the underlying cause. The target calculation in Algorithm 2 relies on inverting DDIM steps, which becomes increasingly ill-conditioned as the step size grows. The authors switch to x- or v-prediction to avoid division by zero, but do not analyze the resulting optimization landscape or propose stabilization techniques for the final distillation stages. Readers will wonder why the iterative halving breaks down and how to mitigate it. Adding a theoretical or empirical analysis of the loss curvature at extreme steps, along with proposed fixes like adaptive learning rates or step-size scheduling, would improve the method's robustness.\n\n- Worked special case for distillation loss and parameterization: The paper frames progressive distillation as amortizing the integration of the probability flow ODE, yet it never derives the distillation target for a simple parametric model. Without a worked example, readers cannot verify how the student's single-step update approximates the teacher's two-step trajectory or why v-prediction stabilizes the low-SNR regime. Computing the distillation loss for a 1D linear diffusion process would explicitly show the mapping between the teacher's DDIM steps and the student's target. This analytical grounding is necessary because it clarifies the mathematical relationship between the amortization error and the choice of parameterization. It moves the discussion beyond empirical trial-and-error and gives practitioners a clear intuition for the method's mechanics.\n\n- Missing guidance on noise schedule adaptation for larger steps: The distillation procedure doubles the effective step size at each iteration. The authors provide no recipe for adapting the noise schedule to accommodate these larger jumps. Standard ODE solvers require schedule adjustments to maintain accuracy when step sizes increase, yet the paper applies the same cosine schedule uniformly across all distillation stages. Readers will struggle to reproduce the results without knowing how to rescale the discrete time indices. Adding a subsection that derives the appropriate time discretization for the student model would bridge the gap between theory and implementation. A concrete schedule-rescaling rule based on the halved step count is essential for practical deployment.\n\n- Trajectory error analysis to demonstrate amortization limits: The paper reports that sample quality degrades at 1 or 2 steps but does not diagnose where the amortization breaks down on the data manifold. A trajectory comparison showing the student's path versus the teacher's path on the probability flow ODE for a specific sample would reveal whether the failure stems from high curvature in the data distribution or from the student's inability to predict sharp denoising directions. Plotting the pointwise integration error along the sampling trajectory for a CIFAR-10 sample would demonstrate the method's limits and justify the 4-step ceiling. This diagnostic step is standard for amortized inference methods and would strengthen the empirical claims about where the approach remains valid.\n\nRecommendation: Major revision. The paper introduces a valuable distillation framework and demonstrates clear empirical gains, but the evaluation lacks computational overhead analysis, guidance robustness testing, and modern baseline comparisons. Adding these components and clarifying the stability limits at extreme step counts would significantly strengthen the claims and practical utility.\n\nRevision targets:\n\n- Report exact GPU hours, FLOPs, and per-sample latency for each distillation stage to quantify the training-to-inference cost trade-off.\n\n- Evaluate distilled models across a range of classifier-free guidance scales and report precision/recall or diversity metrics to assess distribution fidelity.\n\n- Include FID-F, Precision/Recall, and human evaluation to supplement FID/IS, particularly for the 1- and 2-step regimes.\n\n- Add comparisons to Consistency Models and LCM under matched FLOP budgets or explicitly normalize evaluation costs.\n\n- Analyze the optimization landscape and numerical conditioning at 1-2 steps, and propose stabilization techniques for the final distillation iterations.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Typo in distillation target denominator breaks inversion formula",
+          "quote": "$\\tilde{\\mathbf{x}} = \\frac{\\mathbf{z}_{t^{\\prime \\prime}} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\mathbf{z}_t}{\\alpha_t\\mathbf{e} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\alpha_t}$",
+          "explanation": "The denominator contains a typographical error that invalidates the algebraic inversion. To derive the correct target, set the student's single-step update equal to the teacher's two-step result $\\mathbf{z}_{t''}$. The student step is $\\mathbf{z}_{t''} = \\alpha_{t''} \\hat{\\mathbf{x}}_\\theta(\\mathbf{z}_t) + \\frac{\\sigma_{t''}}{\\sigma_t} (\\mathbf{z}_t - \\alpha_t \\hat{\\mathbf{x}}_\\theta(\\mathbf{z}_t))$. Solving for $\\hat{\\mathbf{x}}_\\theta(\\mathbf{z}_t)$ yields $\\tilde{\\mathbf{x}} = \\frac{\\mathbf{z}_{t''} - (\\sigma_{t''}/\\sigma_t)\\mathbf{z}_t}{\\alpha_{t''} - (\\sigma_{t''}/\\sigma_t)\\alpha_t}$. The term $\\alpha_t\\mathbf{e}$ in the manuscript should be $\\alpha_{t''}$. Using the incorrect denominator would compute a mismatched target, causing the student to learn an invalid trajectory and degrading sampling quality.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Contradictory conclusion regarding target sampling budget",
+          "quote": "Overall, we conclude that progressive distillation is thus an attractive solution for computational budgets that allow less than or equal to 128 sampling steps.",
+          "explanation": "This sentence directly contradicts the paper's core motivation. Progressive distillation is explicitly designed to compress sampling trajectories from thousands of steps down to 4\u20138 steps. If a budget permits 128 steps, standard samplers already operate efficiently without distillation overhead. The authors likely intended to state that the method targets fewer steps. Rewriting this sentence to align with the actual evaluated counts (4 to 8 steps) would accurately reflect the value proposition.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Incorrect claim of logarithmic distillation cost",
+          "quote": "In contrast, our method never needs to run the original model at the full number of sampling steps: at every iteration of progressive distillation, the number of model evaluations is independent of the number of teacher sampling steps, allowing our method to scale up to large numbers of teacher steps at a logarithmic cost in total distillation time.",
+          "explanation": "The claim that progressive distillation scales at a 'logarithmic cost in total distillation time' misstates the method's scaling behavior. While the number of distillation iterations is indeed logarithmic in the teacher's step count $T$ (since steps are halved each time), the total number of teacher model evaluations across all stages is $\\sum_{i=0}^{\\log_2 T} T/2^i = 2T$. This summation is strictly linear in $T$, not logarithmic. The authors likely confused the number of stages with the total computational cost. This misrepresents the theoretical scaling advantage over Luhman & Luhman (2021), which also requires running the teacher model at its full step count to generate targets. Both methods incur linear overhead relative to the initial teacher's step count, though progressive distillation amortizes this cost across multiple student step counts. Clarifying this distinction would prevent readers from overestimating the method's scaling efficiency.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Empirical claim about x-prediction performance conflicts with table",
+          "quote": "but predicting  $\\mathbf{x}$  gives slightly better empirical results in this ablation study.",
+          "explanation": "Table 1 shows that the $(\\mathbf{x}, \\epsilon)$ combined parameterization achieves the lowest FID on the Stochastic sampler (2.54) and ties the DDIM sampler (2.78), while $\\mathbf{x}$-prediction achieves 2.65/9.80 on Stochastic and 2.75/9.56 on DDIM. The $(\\mathbf{x}, \\epsilon)$ combined output actually matches or slightly outperforms pure $\\mathbf{x}$-prediction on both samplers. The statement that $\\mathbf{x}$-prediction gives better results is therefore not fully supported by the table data. Rewrite the conclusion to accurately reflect Table 1, e.g., 'predicting $(\\mathbf{x}, \\epsilon)$ combined gives the best empirical results, while predicting $\\mathbf{v}$ is preferred for its schedule-independent sampling steps.'",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Statistical significance of performance differences is unclear",
+          "quote": "nevertheless we find results are still  $\\pm 0.1$  due to the noise inherent in training our models.",
+          "explanation": "The caption states a $\\pm 0.1$ uncertainty due to training noise, yet the text draws distinctions between parameterizations that fall within this margin (e.g., FID differences between $\\mathbf{x}$ and $\\mathbf{v}$ prediction are $\\le 0.1$ on the Stochastic sampler). Claiming one parameterization is 'slightly better' when differences are within the reported noise bounds is statistically unsupported. Rewrite the discussion of empirical results to acknowledge that differences fall within the $\\pm 0.1$ noise margin, and state that parameter selection is based on training stability rather than marginal FID gains.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Conflation of training stability and sampling step-size properties",
+          "quote": "Here, predicting  $\\mathbf{v}$  is the most stable option, as it has the unique property of making DDIM step-sizes independent of the SNR (see Appendix D)",
+          "explanation": "The text links 'stability' directly to 'DDIM step-sizes independent of the SNR'. However, step-size independence in sampling does not guarantee training stability during progressive distillation. The authors likely mean that v-prediction avoids the numerical instabilities that arise when predicting $\\epsilon$ at low SNR (high noise) during distillation, as noted in the divergence warning for Truncated SNR. The causal link between sampling step-size independence and training stability is missing. Add a clarifying clause after the quote to distinguish training stability from sampling properties, e.g., 'Note that this refers to sampling robustness, while training stability arises from avoiding numerical divergence at low SNR.'",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Clarify DDIM step-size independence claim for v-prediction",
+          "quote": "Here, predicting  $\\mathbf{v}$  is the most stable option, as it has the unique property of making DDIM step-sizes independent of the SNR (see Appendix D), but predicting  $\\mathbf{x}$  gives slightly better empirical results in this ablation study.",
+          "explanation": "Standard DDIM updates depend on $\\alpha_t$ and $\\sigma_t$. The schedule independence likely applies to the probability flow ODE discretization $x_{t-\\Delta t} = x_t - \\Delta t v_\\theta(x_t, t)$, not the standard DDIM recurrence. The authors should explicitly distinguish between the ODE Euler step and the DDIM sampler, and provide the derivation in Appendix D to clarify which update rule achieves SNR independence. Rewrite the sentence to: 'Here, predicting $\\mathbf{v}$ is the most stable option, as it makes the probability flow ODE Euler steps independent of the noise schedule (see Appendix D), but predicting $\\mathbf{x}$ gives slightly better empirical results in this ablation study.'",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Logical ambiguity in computational efficiency claim",
+          "quote": "Finally, we show that the full progressive distillation procedure does not take more time than it takes to train the original model, thus representing an efficient solution for generative modeling using diffusion at both train and test time.",
+          "explanation": "The abstract claims the distillation procedure 'does not take more time than it takes to train the original model,' but this comparison is logically ambiguous. It is unclear whether the stated time refers only to the distillation stages or includes the teacher model's training time. If it excludes teacher training, the claim is misleading because the teacher must be trained first, making the total pipeline time strictly greater. If it includes teacher training, the claim requires a clear breakdown of compute allocation across stages. Clarify the scope of the time comparison to avoid implying that the total training budget is reduced rather than redistributed.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Sampler vs. model terminology in distillation claim",
+          "quote": "Here we make two contributions to help eliminate this downside: First, we present new parameterizations of diffusion models that provide increased stability when using few sampling steps. Second, we present a method to distill a trained deterministic diffusion sampler, using many steps, into a new diffusion model that takes half as many sampling steps.",
+          "explanation": "The abstract refers to distilling a 'deterministic diffusion sampler,' but a sampler is an inference algorithm, not a trainable object. The method actually distills a trained diffusion model (or the trajectory it generates) into a new model. This terminology mismatch could mislead readers about what is being optimized during distillation. Clarify that the distillation targets the model parameters that generate the sampler's trajectory, rather than the sampler algorithm itself. Rewrite 'distill a trained deterministic diffusion sampler' as 'distill a trained diffusion model that generates a deterministic sampler' because this accurately reflects the optimization target and aligns with standard distillation terminology.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Vague claim regarding new parameterizations",
+          "quote": "Here we make two contributions to help eliminate this downside: First, we present new parameterizations of diffusion models that provide increased stability when using few sampling steps.",
+          "explanation": "The abstract claims to introduce 'new parameterizations' for stability but does not specify which ones (e.g., v-prediction, x-prediction, or a novel formulation). Since the choice of parameterization directly affects the distillation target and numerical stability at low SNR, omitting this detail makes the claim of 'increased stability' difficult to assess. Readers cannot verify whether the stability gain comes from the parameterization itself or from the distillation procedure. Specify the exact parameterizations introduced and briefly note how they modify the standard diffusion objective to justify the stability claim.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Mismatched citation for caching optimizations",
+          "quote": " of such settings are unconditional and standard class-conditional image generation, which currently require hundreds or thousands of steps using network evaluations that are not amenable to the caching optimizations of other types of generative models *(Ramachandran et al., 2017)*.\n\nIn t",
+          "explanation": "The reference Ramachandran et al. (2017) introduces stand-alone self-attention in vision models and does not discuss caching optimizations for generative models. This citation appears misplaced. If the authors intend to contrast diffusion sampling with autoregressive models that benefit from KV-cache or similar inference optimizations, replace this citation with a relevant source on autoregressive caching or remove it entirely. The current reference does not support the claim made in the sentence.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Variable notation mismatch in Figure 1 caption",
+          "quote": "A sampler  $f(\\mathbf{z};\\eta)$ , mapping random noise  $\\epsilon$  to samples  $\\mathbf{x}$  in 4 deterministic steps, is distilled into a new sampler  $f(\\mathbf{z};\\theta)$  taking only a single",
+          "explanation": "The function signature explicitly uses $\\mathbf{z}$ as the input argument, but the accompanying text describes the mapping as taking random noise $\\epsilon$. This inconsistency creates confusion when tracking the notation across the manuscript. Align the input variable by either changing the function signature to $f(\\epsilon; \\eta)$ or updating the description to map random noise $\\mathbf{z}$ to samples $\\mathbf{x}$. Ensure this change is applied consistently throughout the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Ambiguous definition of the cosine schedule domain",
+          "quote": "8\\times 128$. All experiments use the cosine schedule $\\alpha_{t}=\\cos(0.5\\pi t)$, and all models use a U-Net architecture similar to that introduced by *Ho et al. (2020)*, but with BigGAN-style up- and downsampling *(Brock et al., 2019)*, as used in the diffusion modeling setting by *Nichol and Dhariwal (2021); Song et al. (2021c)*. Our trai",
+          "explanation": "The equation for the cosine schedule omits the domain of $t$ and does not clarify how it maps to the standard cumulative noise schedule $\\bar{\\alpha}_t$ or variance schedule $\\beta_t$. In diffusion models, $t$ typically denotes either discrete steps $t \\in \\{1, \\dots, T\\}$ or normalized continuous time $\\tau \\in [0, 1]$. Standard cosine schedules also frequently include a squaring operation or a shift parameter $s$ to control the initial noise level. Without this clarification, readers cannot precisely reconstruct the noise levels or verify reproducibility. Specify the time domain, the mapping to $\\bar{\\alpha}_t$, and any shift or squaring parameters used in the revised text.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Overstatement of high-quality generation across step counts",
+          "quote": "We have presented progressive distillation, a method to drastically reduce the number of sampling steps required for high quality generation of images, and potentially other data, using diffusion models with deterministic samplers like DDIM (Song et al., 2020).",
+          "explanation": "The claim that the method reduces steps for 'high quality generation' lacks a necessary qualification regarding the effective step range. The empirical evaluation demonstrates that sample quality degrades noticeably when compressing the trajectory to 1 or 2 steps, with the distillation procedure remaining robust primarily up to 4 steps. Stating the reduction applies broadly to high-quality generation without this bound overstates the method's utility for extreme latency constraints. Rewrite the opening sentence to specify the effective step range, e.g., 'We have presented progressive distillation, a method to reduce the number of sampling steps (down to 4) required for high quality generation...' because this aligns the discussion with the demonstrated performance limits and prevents misleading expectations for practitioners targeting ultra-fast sampling.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Logical gap between speedup focus and ethical dismissal",
+          "quote": "The focus of this paper specifically is on speeding up generative models at test time in order to reduce their computational demands; we do not have specific concerns with regards to this contribution.",
+          "explanation": "The authors dismiss ethical concerns by noting their focus is on test-time speedup. This reasoning contains a logical gap: faster sampling directly lowers the cost and time required to generate large volumes of synthetic media, which directly exacerbates the fake content generation risk they acknowledge. Rather than treating test-time efficiency as ethically neutral, the statement should explicitly address how reduced inference latency increases the accessibility and scale of potential misuse. Adding a brief note on intended use cases or deployment safeguards would ground the ethics discussion in the paper's actual contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        }
+      ],
+      "cost_usd": 0.2216,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes progressive distillation, a method to drastically reduce the sampling steps of diffusion models while maintaining sample quality. It introduces new parameterizations and loss weightings that are stable under distillation, and demonstrates strong empirical results on CIFAR-10, ImageNet, and LSUN datasets. The work is significant because it addresses a key practical limitation of diffusion models\u2014slow sampling\u2014and does so with a computationally efficient training procedure.\n\nOverview issues:\n\n- Lack of comparison with concurrent and subsequent fast sampling methods: The paper compares against DDIM, stochastic sampling, and a few other methods from 2021, but does not include comparisons with more recent and highly competitive approaches such as Consistency Models (Song et al., 2023), Adversarial Diffusion Distillation (Sauer et al., 2024), or DPM-solver. Given that the paper was published in 2022, this is understandable, but for a current review it is a significant omission. The absence of these comparisons makes it difficult to assess the relative merits of progressive distillation in the current landscape. The paper should at least discuss how its method relates to these later developments and, if possible, provide a comparison under a fair evaluation protocol.\n\n- Limited evaluation of sample diversity and mode coverage: The paper primarily reports FID and Inception Score, which capture sample quality and some aspects of diversity, but do not fully measure mode coverage. For generative models, especially those distilled to very few steps (e.g., 1-4 steps), there is a risk of mode dropping or reduced diversity. The paper does not report metrics such as recall, coverage, or precision, which are standard in the field for assessing diversity. Without such metrics, it is unclear whether the distilled model preserves the full diversity of the teacher model. The authors should include diversity metrics or at least discuss this limitation.\n\n- Unclear impact of distillation loss on mode coverage: The distillation loss is a simple L2 loss in x-space (or v-space). This loss may encourage the student to produce blurry or averaged predictions, especially in regions of high uncertainty, potentially leading to mode dropping. The paper does not discuss this issue or compare with more sophisticated divergences (e.g., adversarial loss, KL divergence) that might better preserve multimodality. Given that the student model is trained to match the teacher's deterministic DDIM trajectory, it is plausible that the student learns a single path and ignores alternative modes. The authors should acknowledge this limitation and ideally provide an analysis or experiment on mode coverage.\n\n- Assumption that teacher model provides perfect targets: The distillation procedure treats the teacher model's outputs as ground truth targets. However, the teacher model itself has errors, especially in regions of low signal-to-noise ratio. The paper does not discuss how teacher imperfections affect the distillation quality or whether the student might amplify these errors. This is particularly relevant at very low step counts (e.g., 1-2 steps), where the student must make a single prediction from pure noise. The authors should address this assumption and consider whether using an ensemble of teachers or incorporating uncertainty could mitigate this issue.\n\n- Computational cost of distillation is not fully reported: The paper states that the total computational cost of progressive distillation to 4 steps is comparable to or less than training the original model, but it does not provide concrete numbers (e.g., GPU hours, number of teacher forward passes). This makes it difficult for practitioners to assess the trade-off between training overhead and sampling speed. Additionally, the paper does not report the cost of the initial teacher training, which is a prerequisite. The authors should provide a detailed breakdown of computational costs, including the number of teacher evaluations per distillation round and total GPU hours.\n\n- Generalizability to other diffusion model variants and modalities is not demonstrated: The paper focuses on a specific type of diffusion model (variance-preserving, cosine schedule, U-Net architecture) and image generation. It does not test the method on other popular variants such as score-based models (Song & Ermon, 2019), latent diffusion models (Rombach et al., 2022), or other data modalities like audio or text. While the paper mentions future work on other modalities, the lack of demonstration limits the claimed generality. The authors should either provide experiments on at least one additional variant/modality or clearly delimit the scope of the method.\n\n- Potential bias from using the same architecture for student and teacher: The paper initializes the student model with a copy of the teacher's parameters and uses the same architecture. This means the student has the same capacity as the teacher. It is unclear whether the distillation gains are due to the distillation procedure itself or simply because the student is a copy of the teacher that is further fine-tuned. The paper does not ablate this by, for example, using a smaller student architecture or random initialization. This would help isolate the effect of distillation from additional training. The authors should discuss this and ideally provide an ablation with a smaller student.\n\n- Missing diversity metrics beyond FID/IS: The paper evaluates sample quality using FID and Inception Score, which capture perceptual quality and some aspects of diversity, but do not fully measure mode coverage. For distilled models operating at very few steps (1\u20134), there is a known risk of mode dropping or reduced diversity. The paper does not report standard diversity metrics such as recall, coverage, or precision. Without these, it is unclear whether the distilled model preserves the full diversity of the teacher. The authors should compute recall or coverage on CIFAR-10 for the distilled models at 1, 2, 4, and 8 steps, and compare against the teacher's values.\n\n- No ablation of student architecture capacity: The student model is initialized with a copy of the teacher's parameters and uses the same architecture, meaning it has identical capacity. This design choice conflates the effect of distillation with additional fine-tuning of the same model. The paper does not test whether a smaller student architecture could achieve similar performance, nor whether random initialization would work. Such an ablation would isolate the contribution of the distillation procedure itself. The authors should include an experiment on CIFAR-10 where the student has, for example, half the number of channels or layers, and report FID at 4 steps.\n\n- No discussion of teacher model imperfection impact: The distillation procedure treats the teacher model's outputs as ground truth targets, but the teacher itself has errors, especially at low signal-to-noise ratios. The paper does not discuss how these imperfections affect distillation quality or whether the student might amplify them, particularly at very low step counts (1\u20132 steps). The authors should acknowledge this limitation and, ideally, provide an analysis showing how teacher FID correlates with distilled student FID, or compare against a variant that uses an ensemble of teachers.\n\nRecommendation: major revision. The paper presents a novel and practically useful method, but several important evaluations and discussions are missing. The lack of diversity metrics, comparison with more recent methods, and analysis of mode coverage are significant gaps that need to be addressed before the paper can be considered for a top venue.\n\nRevision targets:\n\n- Add diversity metrics (e.g., recall, coverage) to the evaluation, especially for low step counts (1-4 steps).\n\n- Provide a comparison with at least one recent fast sampling method (e.g., Consistency Models) under a fair evaluation protocol, or justify why such comparison is not feasible.\n\n- Include a detailed report of computational cost (GPU hours, number of teacher forward passes) for the full distillation pipeline.\n\n- Discuss the potential for mode dropping due to the L2 distillation loss and, if possible, provide an analysis or experiment on mode coverage.\n\n- Add an ablation study with a smaller student architecture or random initialization to isolate the effect of distillation from additional fine-tuning.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Garbled equation after page break",
+          "quote": "$\\mathbf{x}_{\\theta}(\\mathbf{z}_{t})=\\frac{1}{2}\\mathbf{z}_{t}-\\frac{1}{2}\\mathbf{z}_{t}^{2}+\\gamma\\mathbf{x}_{\\theta}(\\mathbf{z}_{t})$",
+          "explanation": "This equation is clearly an OCR artifact or a stray line from another part of the paper. It defines $\\mathbf{x}_\\theta(\\mathbf{z}_t)$ recursively in terms of itself, which is mathematically nonsensical and inconsistent with the definition of $\\hat{\\mathbf{x}}_\\theta(\\mathbf{z}_t)$ used throughout the section. The equation also reuses $\\gamma$ as a hyperparameter, but $\\gamma$ was already defined in the previous paragraph as controlling noise in ancestral sampling. This line should be removed entirely, as it does not belong in this section and introduces confusion.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Target formula in Algorithm 2 has undefined symbol",
+          "quote": "$\\tilde{\\mathbf{x}} = \\frac{\\mathbf{z}_{t^{\\prime \\prime}} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\mathbf{z}_t}{\\alpha_t\\mathbf{e} - (\\sigma_{t^{\\prime \\prime}} / \\sigma_t)\\alpha_t}$",
+          "explanation": "The denominator contains the term $\\alpha_t\\mathbf{e}$, where $\\mathbf{e}$ is undefined. The paper likely intends $\\alpha_t$ (a scalar) multiplied by something like the identity vector, but this is not standard notation. In DDIM inversion, the target $\\hat{\\mathbf{x}}$ should be derived from the two-step teacher trajectory. The correct formula should involve $\\alpha_{t''}$ and $\\sigma_{t''}$ consistently. For example, from the DDIM step $\\mathbf{z}_{t''} = \\alpha_{t''}\\hat{\\mathbf{x}} + \\sigma_{t''}\\epsilon$, and using $\\mathbf{z}_t = \\alpha_t\\hat{\\mathbf{x}} + \\sigma_t\\epsilon$, one can solve for $\\hat{\\mathbf{x}}$ as $(\\sigma_t\\mathbf{z}_{t''} - \\sigma_{t''}\\mathbf{z}_t)/(\\sigma_t\\alpha_{t''} - \\sigma_{t''}\\alpha_t)$. The given formula with $\\alpha_t\\mathbf{e}$ is mathematically inconsistent and likely a typo. Rewrite the target formula as $\\tilde{\\mathbf{x}} = (\\sigma_t\\mathbf{z}_{t''} - \\sigma_{t''}\\mathbf{z}_t)/(\\sigma_t\\alpha_{t''} - \\sigma_{t''}\\alpha_t)$ to match standard DDIM inversion.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Equation (5) noise term and parentheses error",
+          "quote": "\\begin{array}{l} \\mathbf {z} _ {s} = \\hat {\\boldsymbol {\\mu}} _ {s | t} \\left(\\mathbf {z} _ {t}, \\hat {\\mathbf {x}} _ {\\theta} \\left(\\mathbf {z} _ {t}\\right)\\right) + \\sqrt {\\left(\\hat {\\sigma} _ {s | t} ^ {2}\\right) ^ {1 - \\gamma} \\left(\\sigma_ {t | s} ^ {2}\\right) ^ {\\gamma})} \\boldsymbol {\\epsilon} \\tag {4} \\\\ = e ^ {\\lambda_ {t} - \\lambda_ {s}} \\left(\\alpha_ {s} / \\alpha_ {t}\\right) \\mathbf {z} _ {t} + \\left(1 - e ^ {\\lambda_ {t} - \\lambda_ {s}}\\right) \\alpha_ {s} \\hat {\\mathbf {x}} _ {\\theta} \\left(\\mathbf {z} _ {t}\\right) + \\sqrt {\\left(\\hat {\\sigma} _ {s | t} ^ {2}\\right) ^ {1 - \\gamma} \\left(\\sigma_ {t | s} ^ {2}\\right) ^ {\\gamma})} \\boldsymbol {\\epsilon}, \\tag {5} \\\\ \\end{array}",
+          "explanation": "There is a mismatched parenthesis in the square root: an extra closing parenthesis after `\\sigma_{t|s}^2)^\\gamma` has no matching opening parenthesis. The noise term in (5) is identical to that in (4), which is acceptable as a copy of the same expression, but the parentheses error makes the equation ambiguous. The fix is to remove the extra parenthesis: rewrite the square root as `\\sqrt{(\\hat{\\sigma}_{s|t}^2)^{1-\\gamma} (\\sigma_{t|s}^2)^{\\gamma}}`.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Overstated claim about sample quality degradation",
+          "quote": "We present a procedure to distill the behavior of a $N$-step DDIM sampler *(Song et al., 2021a)* for a pretrained diffusion model into a new model with $N/2$ steps, with little degradation in sample quality. In what we call *progressive distillation*, we repeat this distillation procedure to produce models that generate in as few as 4 steps, still maintaining sample quality competitive with state-of-the-art models using thousands of steps.",
+          "explanation": "The claim 'with little degradation in sample quality' is not supported by the paper's own results. On CIFAR-10, the teacher (1024 steps) achieves FID 2.56, while the 4-step student achieves FID 3.04 \u2014 a 19% relative increase. This is not 'little degradation' by any reasonable standard. The authors should either cite the actual FID numbers in the introduction or soften the claim to 'with moderate degradation' or 'while maintaining competitive sample quality'.",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Missing comparison with teacher model at same step count",
+          "quote": "Table 2: Comparison of fast sampling results on CIFAR-10 for diffusion models in the literature.",
+          "explanation": "Table 2 compares the distilled model against DDIM and other samplers, but does not include the teacher model's performance at the same low step counts (1, 2, 4, 8). Without this baseline, it is unclear whether the distilled model outperforms simply running the teacher with fewer steps. The paper should add rows for the teacher model evaluated with DDIM at 1, 2, 4, and 8 steps to demonstrate the benefit of distillation.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Table 2 missing standard deviations",
+          "quote": "Table 2: Comparison of fast sampling results on CIFAR-10 for diffusion models in the literature.",
+          "explanation": "Table 2 reports FID values without standard deviations or confidence intervals. For CIFAR-10, the paper states in Figure 4 that they average over 4 random seeds, but Table 2 does not report the variance. Without error bars, it is impossible to assess whether the differences between methods (e.g., 9.12 vs. 9.36 for 1-step) are statistically significant. Add standard deviations or confidence intervals to Table 2 for the distilled model results.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Missing justification for target formula derivation",
+          "quote": "By inverting a single step of DDIM, we then calculate the value the student model would need to predict in order to move from $\\mathbf{z}_{t}$ to $\\mathbf{z}_{t-1/N}$ in a single step, as we show in detail in Appendix G.",
+          "explanation": "The paper states that the target $\\hat{\\mathbf{x}}$ is derived by inverting a single DDIM step, but the formula in Algorithm 2 appears to involve two teacher steps ($\\mathbf{z}_{t'}$ and $\\mathbf{z}_{t''}$) and then solves for $\\tilde{\\mathbf{x}}$ using $\\mathbf{z}_t$ and $\\mathbf{z}_{t''}$. The derivation is not provided in the main text, and the reference to Appendix G is not verifiable from the provided excerpt. The authors should include a brief derivation or a clear reference to the appendix to ensure the formula is correct and understandable.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Time sampling notation and discrete-continuous mismatch",
+          "quote": "$t = i / N,i\\sim Cut[1,2,\\dots ,N]$",
+          "explanation": "The notation $Cut[1,2,\\dots ,N]$ is non-standard; presumably it means a uniform distribution over the integers $1,\\dots,N$. However, the paper earlier states that time $t$ is sampled from $U[0,1]$ in standard training. In Algorithm 2, $t$ is discrete (multiples of $1/N$), but the noise schedule $\\alpha_t,\\sigma_t$ is defined for continuous $t$. The algorithm then uses $t' = t - 0.5/N$ and $t'' = t - 1/N$, which are also discrete. This discrete-time sampling may not align with the continuous-time noise schedule used in the teacher model, potentially causing a mismatch. The authors should clarify whether the noise schedule is evaluated at these discrete times or if interpolation is used. If the schedule is only defined at integer indices, this should be stated explicitly. Add a note that $\\alpha_t,\\sigma_t$ are evaluated at the discrete times $t,i/N$ using the continuous schedule.",
+          "comment_type": "technical",
+          "paragraph_index": 19,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Ethics statement lacks substantive engagement",
+          "quote": "In general, generative models can have unethical uses, such as fake content generation, and they can suffer from bias if applied to data sets that are not carefully curated. The focus of this paper specifically is on speeding up generative models at test time in order to reduce their computational demands; we do not have specific concerns with regards to this contribution.",
+          "explanation": "The ethics statement is perfunctory. It acknowledges that generative models can be misused but then immediately dismisses any ethical concerns about the paper's contribution by stating 'we do not have specific concerns.' This is insufficient because the paper's method\u2014distilling a diffusion model to run in very few steps\u2014directly lowers the barrier to generating high-quality fake images, which amplifies the misuse potential the authors themselves mention. The statement should at least discuss how faster sampling could exacerbate risks like deepfakes or disinformation, and whether any mitigation (e.g., watermarking, restricted release) was considered. Rewrite the statement to engage substantively with the ethical implications of faster generation, not just the generic risks of generative models.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Missing justification for step-count halving claim",
+          "quote": "We present a procedure to distill the behavior of a $N$-step DDIM sampler *(Song et al., 2021a)* for a pretrained diffusion model into a new model with $N/2$ steps, with little degradation in sample quality.",
+          "explanation": "The introduction claims that the student model uses N/2 steps, but does not explain how the student's step size is adjusted to cover the same time interval. The DDIM sampler uses a specific discretization of the probability flow ODE; halving the number of steps requires redefining the time schedule. The paper's Section 3 does address this (the student matches two teacher steps per student step), but the introduction should at least mention that the time schedule is adjusted accordingly. Without this, a reader might think the student simply skips every other step. Add a brief clarification: '...into a new model that takes half as many steps by matching pairs of teacher steps, effectively doubling the step size.'",
+          "comment_type": "technical",
+          "paragraph_index": 5,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Missing definition of gamma in ancestral sampling",
+          "quote": "where $\\mathbf{\\epsilon}$ is standard Gaussian noise, and $\\gamma$ is a hyperparameter that controls how much noise is added during sampling, following *Nichol and Dhariwal (2021)*.",
+          "explanation": "The hyperparameter $\\gamma$ is introduced without specifying its range or typical values. In Nichol and Dhariwal (2021), $\\gamma$ is typically in $[0,1]$, where $\\gamma=0$ corresponds to the ancestral sampler and $\\gamma=1$ corresponds to the DDIM sampler. The paper should explicitly state the range of $\\gamma$ and clarify that $\\gamma=0$ recovers the ancestral sampler while $\\gamma=1$ recovers the DDIM update. Add a sentence after the quoted text: 'The hyperparameter $\\gamma$ ranges from 0 to 1, where $\\gamma=0$ recovers the ancestral sampler and $\\gamma=1$ recovers the DDIM sampler.'",
+          "comment_type": "technical",
+          "paragraph_index": 14,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Claim about SNR zero vs Ho et al. cosine schedule",
+          "quote": "we always run progressive distillation in discrete time: we sample this discrete time such that the highest time index corresponds to a signal-to-noise ratio of zero, i.e.  $\\alpha_{1} = 0$",
+          "explanation": "The paper claims that setting $\\alpha_1 = 0$ (i.e., signal-to-noise ratio zero at the highest time index) matches the distribution of input noise $\\mathbf{z}_1 \\sim \\mathcal{N}(\\mathbf{0}, \\mathbf{I})$. However, for the cosine noise schedule used in the experiments (as per Ho et al. 2020), $\\alpha_t$ is defined as $\\cos(\\pi t/2)$ for $t \\in [0,1]$, which gives $\\alpha_1 = \\cos(\\pi/2) = 0$. This is consistent. But the paper also states that this works slightly better than starting from a non-zero signal-to-noise ratio as used by e.g. Ho et al. (2020). In fact, Ho et al. (2020) use a cosine schedule with $\\alpha_1 = 0$ as well, so this claim is contradictory. The authors should clarify whether they are referring to a different baseline or if the statement is inaccurate.",
+          "comment_type": "technical",
+          "paragraph_index": 24,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Sign error in derivation of equation (9)",
+          "quote": "L _ {\\theta} = \\left\\| \\epsilon - \\hat {\\epsilon} _ {\\theta} \\left(\\mathbf {z} _ {t}\\right) \\right\\| _ {2} ^ {2} = \\left\\| \\frac {1}{\\sigma_ {t}} \\left(\\mathbf {z} _ {t} - \\alpha_ {t} \\mathbf {x}\\right) - \\frac {1}{\\sigma_ {t}} \\left(\\mathbf {z} _ {t} - \\alpha_ {t} \\hat {\\mathbf {x}} _ {\\theta} \\left(\\mathbf {z} _ {t}\\right)\\right) \\right\\| _ {2} ^ {2} = \\frac {\\alpha_ {t} ^ {2}}{\\sigma_ {t} ^ {2}} \\left\\| \\mathbf {x} - \\hat {\\mathbf {x}} _ {\\theta} \\left(\\mathbf {z} _ {t}\\right) \\right\\| _ {2} ^ {2}, \\tag {9}",
+          "explanation": "The derivation in equation (9) contains a sign error in the intermediate step. The paper writes (1/\u03c3_t)(z_t - \u03b1_t x) - (1/\u03c3_t)(z_t - \u03b1_t x\u0302_\u03b8(z_t)) and claims this simplifies to (\u03b1_t/\u03c3_t)(x - x\u0302_\u03b8(z_t)). The correct simplification is (1/\u03c3_t)(-\u03b1_t x + \u03b1_t x\u0302_\u03b8(z_t)) = (\u03b1_t/\u03c3_t)(x\u0302_\u03b8(z_t) - x). Since the squared norm is symmetric, the final result (\u03b1_t\u00b2/\u03c3_t\u00b2)||x - x\u0302_\u03b8(z_t)||\u00b2 is correct, but the intermediate expression as written is technically incorrect. Rewrite the second equality as: ||(1/\u03c3_t)(z_t - \u03b1_t x) - (1/\u03c3_t)(z_t - \u03b1_t x\u0302_\u03b8(z_t))||\u00b2 = ||(\u03b1_t/\u03c3_t)(x\u0302_\u03b8(z_t) - x)||\u00b2 = (\u03b1_t\u00b2/\u03c3_t\u00b2)||x - x\u0302_\u03b8(z_t)||\u00b2, noting that the sign disappears in the squared norm.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Missing justification for truncated SNR weighting equivalence",
+          "quote": "$L_{\\theta}=\\text{max}(\\|\\mathbf{x}-\\hat{\\mathbf{x}}_{t}\\|_{2}^{2},\\|\\epsilon-\\hat{\\epsilon}_{t}\\|_{2}^{2})=\\text{max}(\\frac{\\alpha_{t}^{2}}{\\sigma_{t}^{2}},1)\\|\\mathbf{x}-\\hat{\\mathbf{x}}_{t}\\|_{2}^{2}$; \u2018truncated SNR\u2019 weighting.",
+          "explanation": "The paper claims that max(||x - x\u0302_t||\u00b2, ||\u03b5 - \u03b5\u0302_t||\u00b2) = max(\u03b1_t\u00b2/\u03c3_t\u00b2, 1) ||x - x\u0302_t||\u00b2. This relies on the relationship ||\u03b5 - \u03b5\u0302_t||\u00b2 = (\u03b1_t\u00b2/\u03c3_t\u00b2) ||x - x\u0302_t||\u00b2 from equation (9). However, equation (9) assumes the epsilon-prediction parameterization, where \u03b5\u0302_t is derived from x\u0302_t via \u03b5\u0302_t = (1/\u03c3_t)(z_t - \u03b1_t x\u0302_t). The paper does not explicitly state that this relationship holds for the truncated SNR weighting, nor does it verify that the same x\u0302_t is used in both norms. The derivation would benefit from an explicit statement that the equivalence follows from equation (9) under the epsilon-prediction parameterization. Add a brief justification: 'Using the relationship from equation (9), we have ||\u03b5 - \u03b5\u0302_t||\u00b2 = (\u03b1_t\u00b2/\u03c3_t\u00b2)||x - x\u0302_t||\u00b2, so max(||x - x\u0302_t||\u00b2, ||\u03b5 - \u03b5\u0302_t||\u00b2) = max(1, \u03b1_t\u00b2/\u03c3_t\u00b2)||x - x\u0302_t||\u00b2.'",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        }
+      ],
+      "cost_usd": 0.0568,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

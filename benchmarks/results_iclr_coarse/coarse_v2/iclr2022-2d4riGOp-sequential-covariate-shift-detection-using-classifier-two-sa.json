@@ -1,0 +1,1083 @@
+{
+  "slug": "iclr2022-2d4riGOp-sequential-covariate-shift-detection-using-classifier-two-sa",
+  "title": "Sequential Covariate Shift Detection Using Classifier Two-Sample Tests",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## SEQUENTIAL COVARIATE SHIFT DETECTION USING CLASSIFIER TWO-SAMPLE TESTS"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nA standard assumption in supervised learning is that the training data and test data are from the same distribution. However, this assumption often fails to hold in practice, which can cause the learned model to perform poorly. We consider the problem of detecting _covariate shift_ , where the covariate distribution shifts but the conditional distribution of labels given covariates remains the same. This problem can naturally be solved using a two-sample test\u2014 _i.e._ , test whether the current test distribution of covariates equals the training distribution of covariates. Our algorithm builds on _classifier tests_ , which train a discriminator to distinguish train and test covariates, and then use the accuracy of this discriminator as a test statistic. A key challenge is that classifier tests assume given a fixed set of test covariates. In practice, test covariates often arrive sequentially over time\u2014e.g., a self-driving car observes a stream of images while driving. Furthermore, covariate shift can occur multiple times\u2014 _i.e._ , shift and then shift back later or gradually shift over time. To address these challenges, our algorithm trains the discriminator online. Furthermore, it evaluates test accuracy using each new covariate before taking a gradient step; this strategy avoids constructing a held-out test set, which can reduce sample efficiency. We prove that this optimization preserves the correctness\u2014 _i.e._ , our algorithm achieves a desired bound on the false positive rate. In our experiments, we show that our algorithm efficiently detects covariate shifts on ImageNet."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nA key challenge facing deep neural networks is their sensitivity to changes in the data distribution. In particular, supervised learning traditionally assumes that the training and test data are from the same distribution (Vapnik, 1998), but this assumption often fails in practice. For example, an autonomous car using perception to identify obstacles needs to be robust to shifts such as changes in the weather and lighting conditions. We focus on _covariate shift_ (Shimodaira, 2000), where there is a shift in the covariate distribution _p_ ( _x_ ), and the conditional label distribution _p_ ( _y | x_ ) remains unchanged. Covariate shift can reduce model performance (Sugiyama & M\u00a8uller, 2005), invalidate uncertainty estimates (Ovadia et al., 2019; Park et al., 2020), and affect model selection (Sugiyama et al., 2007)."
+    },
+    {
+      "index": 3,
+      "text": "One strategy is to devise an algorithm to detect covariate shift; if detected, the algorithm can alert the user that predictions may be unreliable. Covariate shift detection can be formulated as two-sample hypothesis test (Gretton et al., 2012a; Rabanser et al., 2018; Liu et al., 2020), where the goal is to determine whether two sets of examples are from the same distribution. To test for covariate shift, we choose the first sample to be the data used to train the model and the second sample to be recent test data given as input to the model. Then, the detector returns \u201ccovariate shift\u201d if the hypothesis test indicates that the two samples are from different distributions and \u201cno shift\u201d otherwise."
+    },
+    {
+      "index": 4,
+      "text": "We propose a detection algorithm based on classifier tests (Lopez-Paz & Oquab, 2017; Cheng & Cloninger, 2019; Kim et al., 2021), which use the accuracy of a classifier trained to distinguish the two samples as the test statistic. In particular, if the two samples are from the same distribution, then the accuracy should be 1 _/_ 2; otherwise, it should be _>_ 1 _/_ 2. Since the test statistic follows a binomial distribution, we use the Clopper-Pearson interval (Clopper & Pearson, 1934) (an exact confidence interval for the unknown success probability of the Binomial distribution) to derive the cutoff. In contrast, prior work relies on asymptotics to derive the cutoff, which results in approximations."
+    },
+    {
+      "index": 5,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\nA key challenge is that the test examples are typically obtained over time\u2014e.g., an autonomous robot continuously perceives its environment, and we want to detect if its distribution of observations shifts at any time. There are two key challenges to leveraging classifier tests in this setting. First, they rely on training a classifier to distinguish training and test examples; doing so on every step would be computationally intractable. Second, they rely on a held-out test set to estimate the test statistic, but constructing such a set online would reduce sample efficiency."
+    },
+    {
+      "index": 6,
+      "text": "Rather than train a classifier at each step, our proposed algorithm trains a model online using stochastic gradient descent. Then, rather than construct a held-out test set, our algorithm evaluates the accuracy of the model online using each example before taking a gradient step on that example. We prove that this strategy results in an unbiased estimate of the model accuracy; as a consequence, the finite-sample guarantees on the false positive rate provided by the sequential test continue to hold. In addition, we prove bounds on the false negative rate under mild conditions on the classifier (i.e., it achieves nontrivial accuracy distinguishing the two distributions)."
+    },
+    {
+      "index": 7,
+      "text": "We evaluate our approach on both synthetic and natural shifts on the ImageNet (Russakovsky et al., 2015) dataset. In particular, we demonstrate that our approach achieves better sample efficiency than baseline algorithms; furthermore, it uniformly satisfies the desired false positive rate. Thus, our algorithm is an effective strategy for sequential covariate shift detection."
+    },
+    {
+      "index": 8,
+      "text": "**Contributions.** We formulate (sequential) covariate shift detection as a two-sample test, and propose a novel algorithm to solve this problem (Section 3). Then, we prove finite sample bounds on false positive rate and false negative rate achieved by our algorithm (Section 4). Finally, we empirically demonstrate that our algorithm effectively detects shifts on ImageNet (Section 5)."
+    },
+    {
+      "index": 9,
+      "text": "**Sequential detection vs. sequential tests.** While we consider the sequential setting, we deliberately choose not use a sequential hypothesis test, since the covariate shift may occur after a delay or gradually over time. A sequential test only applies if _all_ of the test data is shifted. Furthermore, since we are not using sequential tests, the false positive rate bound only holds per-step, not uniformly across all steps. This is necessary: we cannot guarantee that we detect a covariate shift occurring at a later point in time if we constrain the false positive to be bounded uniformly across all steps. In our experiments, we show that the rate of false alarms remains manageable while enabling our algorithm to detect covariate shift in a number of interesting scenarios."
+    },
+    {
+      "index": 10,
+      "text": "## 2 RELATED WORK\n\n**Covariate shift.** There has been work on training models in the presence of covariate shift. In particular, in the unsupervised domain adaptation setting (Ben-David et al., 2007; Bickel et al., 2007; Ganin et al., 2016), the algorithm has access to labeled examples from the source domain but only unlabeled examples from the target domain, and the goal is to train a model that achieves good performance on the target domain. One strategy is to use importance weighting to upweight source examples that are more similar to target examples (Bickel et al., 2007). Another strategy is to first learn an invariant representation (Ganin et al., 2016), which is an embedding space where the source and target examples are similar, and then train a model on this embedding space using the source examples. If we detect covariate shift, one solution is to retrain the model using these techniques."
+    },
+    {
+      "index": 11,
+      "text": "**Two-sample tests.** We focus on _classifier two-sample tests (C2ST)_ . In this approach, the idea is to train a binary classifier to distinguish source and target samples, compute a real-valued score based on this classifier as the test statistic, and then use a univariate two-sample test to determine the cutoff for rejecting the null hypothesis (Friedman, 2004). A natural test statistic is the classifier\u2019s accuracy on a held-out test set (Kim et al., 2021; Lopez-Paz & Oquab, 2017), or the differences in the classifier\u2019s logits (Cheng & Cloninger, 2019); in this work, we use the former. One way to compute the cutoff is to use the asymptotic distribution of the test statistic (Lopez-Paz & Oquab, 2017). Nonparametric tests such as permutation tests can also be used (Kim et al., 2021)."
+    },
+    {
+      "index": 12,
+      "text": "Another kind of two-sample test is called a _kernel two-sample test_ . In this approach, the idea is to use the maximum mean discrepancy (MMD) between the two samples according to a given kernel embedding as the test statistic (Gretton et al., 2012a; Chwialkowski et al., 2015; Jitkrittum et al., 2016). The key design decision is the choice of kernel. One strategy is to use a nonparametric kernel such as Gaussian radial basis functions (Gretton et al., 2012a); alternatively, the kernel can also be optimized to minimize the false negative rate of the resulting test (Gretton et al., 2012b). In addition,"
+    },
+    {
+      "index": 13,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\nrecent work has shown how to first learn a kernel function in the form of a deep neural network, and then evaluate the MMD distance on a held-out test set (Liu et al., 2020). The test statistic can be chosen based on finite sample bounds or based on its asymptotic distribution (Gretton et al., 2012a). Nonparametric permutation tests can also be used (Liu et al., 2020) with this approach."
+    },
+    {
+      "index": 14,
+      "text": "**Concept Drift.** In the context of _concept drift_ (Gama et al., 2014), there has been work detecting shifts in _p_ ( _x, y_ ) (Gonc\u00b8alves Jr et al., 2014). However, this work assumes that ground truth labels are provided for test examples, whereas our approach only requires unlabeled test examples. The former is substantially easier, since it suffices to check for drift in the distribution of prediction errors, which is usually very simple (e.g., a Bernoulli distribution for the 0-1 loss), making it easy to test for drift. In contrast, our approach checks for drift in high-dimensional covariates distribution."
+    },
+    {
+      "index": 15,
+      "text": "**Sequential hypothesis testing.** A closely related problem is sequential hypothesis testing, which adaptively decides whether to reject the null hypothesis as samples become available (Wald, 1945). These approaches can also applied to two-sample testing (Balsubramani & Ramdas, 2015; Lh\u00b4eritier & Cazals, 2018; 2019; Manole & Ramdas, 2021). However, as discussed above, they assume that the each distribution of the two samples does not change over time. In contrast, we are interested in the setting where the test examples might initially be from the same distribution as the training examples, but then shift at a later point in time. Sequential tests are not applicable to this setting."
+    },
+    {
+      "index": 16,
+      "text": "## 3 SEQUENTIAL COVARIATE SHIFT DETECTION\n\n## 3.1 PROBLEM FORMULATION\n\nLet _X_ be the covariate space, _S_ be the source distribution over _X_ , and _Tt_ 1: _t_ 2 = ( _Tt_ 1 _, Tt_ 1+1 _, . . . , Tt_ 2) be a sequence of target distributions over _X_ from time steps _t_ 1 to _t_ 2. On time step _t_ , we consider samples _xt \u223cS_ and _x[\u2032] t[\u223cT][t]_[;][in][practice,] _[S]_[can][be][taken][to][be][the][uniform][distribution][over] the training set. We let _Sw,t_ = ( _xt\u2212w_ +1 _, xt\u2212w_ +2 _, . . . , xt_ ) and _Tw,t_ = ( _x[\u2032] t\u2212w_ +1 _[, x] t[\u2032] \u2212w_ +2 _[, . . . , x] t[\u2032]_[)] denote the recent examples in a time window of a given size _w \u2208_ N. Our goal is to detect covariate shift at any step _t_ . More precisely, we want to determine whether _S_ = _T_[\u00af] _w,t_ , where _T_[\u00af] _w,t_ =[\ufffd] _[t] k_ = _t\u2212w_ +1 _[T][k][/w]_[,] _[i.e.]_[,][whether][the][average][target][distributions][over][the] previous _w_ steps is shifted compared to _S_ . For a fixed step _t_ , this problem is a two-sample hypothesis test (Lehmann & Romano, 2006), where the null hypothesis is _H_ 0 : _S_ = _T_[\u00af] _w,t_ , and the alternative hypothesis is _H_ 1 : _S_ = _T_[\u00af] _w,t_ . That is, a two-sample test _f_[\u02c6] is designed to compute"
+    },
+    {
+      "index": 17,
+      "text": "Our goal is to design a two-sample test _f_[\u02c6] for detecting covariate shift with this data stream. While we can in principle use any two-sample test, our goal is to design one that is both sample and computationally efficient while achieving high accuracy for high-dimensional data such as images. In addition, we want the test _f_[\u02c6] to come with finite sample guarantees on the false positive rate. In particular, given _\u03b1 \u2208_ R _>_ 0, if _S_ = _T_[\u00af] _w,t_ , we want to ensure"
+    },
+    {
+      "index": 18,
+      "text": "Ideally, we also want to provide finite sample bounds on the false negative rate; however, for classifier tests, we can only do so under additional assumptions about the model family used to try and distinguish _S_ and _T_[\u00af] _w,t_ . Intuitively, we assume that (i) the model family has bounded complexity (e.g., Rademacher complexity), and (ii) some model exists in the family that achieves nontrivial accuracy at distinguishing _S_ and _T_[\u00af] _w,t_ . Then, our goal is to ensure that if _S_ = _T_[\u00af] _w,t_ , we have"
+    },
+    {
+      "index": 19,
+      "text": "for some function _M_ ( _\u03b1, w_ ) that depends on the model family.\n\n## 3.2 ALGORITHM OVERVIEW\n\nNext, we describe our two-sample test. We build on classifier two-sample test (C2ST) (Lopez-Paz & Oquab, 2017; Kim et al., 2021). The idea is to train a classifier _g_ \u02c6 _t_ to try and distinguish _Sw,t_"
+    },
+    {
+      "index": 20,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2022\n\n**Algorithm 1** Sequential Calibrated Classifier Two-Sample Test"
+    },
+    {
+      "index": 21,
+      "text": "1: **Input:** significance level _\u03b1_ , window size _w_\n\n2: **for** each time step _t_ **do**\n\n3: Draw examples _xt \u223cS, x[\u2032] t[\u223cT][t]_ \u02c6 \u02c6 \u02c6 4: Predict _yt_ = _gt_ ( _xt_ ) and _yt[\u2032]_[=] _[g]_[\u02c6] _[t]_[(] _[x][\u2032] t_[)] ( _\u25b7_ ) Source-target prediction \u02c6 5: Detect covariate shift if 0 _._ 5 _\u0338\u2208_ \u0398CP(2 _w\u00b5w,t,_ 2 _w_ ; _\u03b1_ ) ( _\u25b7_ ) Calibrated covariate shift detection 6: Update \u02c6 _gt_ using ( _xt,_ 0) and ( _x[\u2032] t[,]_[ 1)] ( _\u25b7_ ) Online source-target classifier update 7: **end for**"
+    },
+    {
+      "index": 22,
+      "text": "from _Tw,t_ . Intuitively, if _S_ and _T_[\u00af] _w,t_ are different distributions, then _g_ \u02c6 _t_ should achieve nontrivial accuracy at distinguishing _Sw,t_ from _Tw,t_ (assuming the model family is sufficiently expressive). Alternatively, if _S_ = _T_[\u00af] _w,t_ , then \u02c6 _gt_ necessarily achieves a trivial expected accuracy of 1 _/_ 2."
+    },
+    {
+      "index": 23,
+      "text": "In particular, the accuracy of _g_ \u02c6 _t_ can be used as a test statistic for the two-sample test. To choose the cutoff for rejecting the null hypothesis, we use the Clopper-Pearson (CP) interval (Clopper & Pearson, 1934) to construct an interval that contains the true accuracy \u02c6 _gt_ with high probability based on the accuracy of _g_ \u02c6 _t_ on a test set. More precisely, the CP interval is an exact confidence interval around the empirical estimate of the mean of a Bernoulli random variable. Letting _z_ 1 _, ..., zn \u223c_ Bernoulli( _\u00b5[\u2217]_ ) be i.i.d. samples from a Bernoulli distribution with true mean _\u00b5[\u2217]_ , the (unnormalized) \u02c6 estimate of its mean\u0398CP( _s, n_ ; _\u03b1_ ) _\u2286_ [0 _,_ 1] _n_ is an interval around _\u00b7 \u00b5_ ( _z_ 1: _n_ ) =[\ufffd] _[n] i_ =1 _[z][i] \u00b5_ \u02c6[has distribution Binomial] containing _\u00b5[\u2217]_ with probability at least[(] _[n, \u00b5][\u2217]_[)][.][Then, the CP interval] 1 _\u2212 \u03b1_ , _i.e._ ,"
+    },
+    {
+      "index": 24,
+      "text": "where the probability is taken over _s_ , _\u03b1_ is a given confidence level, and \u0398CP is a function of the \u02c6 Binomial random variable _s_ = _n \u00b7 \u00b5_ ( _z_ 1: _n_ ). The CP interval is concretely defined by"
+    },
+    {
+      "index": 25,
+      "text": "where _F_ ( _s_ ; _n, \u03b8_ ) is the cumulative distribution function (CDF) of Binomial( _n, \u03b8_ ). To compute the CP interval, we can use the following equivalent formula:"
+    },
+    {
+      "index": 26,
+      "text": "where _Q_ ( _p, a, b_ ) is the _p_ th quantile of a Beta distribution with parameters _a, b_ (Hartley & Fitch, 1951; Brown et al., 2001). Our algorithm uses the CP interval to determine whether the accuracy of _g_ \u02c6 _t_ is nontrivial, _i.e._ , _>_ 1 _/_ 2. In particular, the accuracy of _g_ \u02c6 _t_ is the mean of the Bernoulli random variable 1 (\u02c6 _gt_ ( _x_ ) = _y_ ), where _y_ is the ground truth indicating whether _x_ is from _S_ or _T_[\u00af] _w,t_ . Then, our algorithm rejects if the CP interval does not contain 1 _/_ 2, since this condition implies that the accuracy of \u02c6 _gt_ does not equal 1 _/_ 2 with high probability. We describe this step in detail below."
+    },
+    {
+      "index": 27,
+      "text": "The key challenge is what data to use as the test dataset to estimate the accuracy of \u02c6 _gt_ . The traditional strategy is to split the available data into two parts: one to train _g_ \u02c6 _t_ and a second held-out test set to estimate its accuracy (Lopez-Paz & Oquab, 2017; Kim et al., 2021). However, this approach reduces sample efficiency, which is problematic in our setting since we often want to _w_ to be small."
+    },
+    {
+      "index": 28,
+      "text": "To address this challenge, our algorithm exploits the conditional independence structure of classifier predictions. In particular, as described below, our algorithm uses each example _xt_ to evaluate the \u02c6 \u02c6 accuracy of _gt before_ using it to train _gt_ . In the next section, we prove that this strategy maintains \u02c6 the independence of our estimate of the accuracy of _gt_ (Lemma 1), and that as a consequence, our algorithm satisfies the desired false positive rate (for a single step _t_ )."
+    },
+    {
+      "index": 29,
+      "text": "## 3.3 ALGORITHM DETAILS\n\n**Sequential detection algorithm.** At each time step _t_ , we observe a source sample _xt \u223cS_ and a target sample _x[\u2032] t[\u223cT][t]_[.][By][using][these][current][samples][and][previous][samples,][we][detect][covariate] shifts by updating the source-target classifier in online learning. In particular, our algorithm consists of three steps: (1) source-target prediction, (2) covariate shift detection, and (3) online source-target classifier update. The following and Algorithm 1 include details."
+    },
+    {
+      "index": 30,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\n**Step 1. Source-target prediction.** We predict source-target labels on the current samples _xt_ and _x[\u2032] t_ using the current source-target classifier \u02c6 _gt_ . In particular, we denote prediction on the source sample \u02c6 \u02c6 \u02c6 _xt_ by _yt_ , _i.e._ , _yt_ = _gt_ ( _xt_ ), and denote prediction on the target sample _x[\u2032] t_[by] _[y]_[\u02c6] _t[\u2032]_[,] _[i.e.]_[,] _[y]_[\u02c6] _t[\u2032]_[=] _[g]_[\u02c6] _[t]_[(] _[x][\u2032] t_[)][.] These predictions and previous predictions are used in covariate shift detection in the following step."
+    },
+    {
+      "index": 31,
+      "text": "**Step 2. Calibrated covariate shift detection.** Let _Qw,t_ be a distribution over _X \u00d7 {_ 0 _,_ 1 _}_ , where"
+    },
+    {
+      "index": 32,
+      "text": "Then, _z_ = 1 (\u02c6 _gt_ ( _x_ ) = _y_ ) is a Bernoulli random variable with distribution Bernoulli( _\u00b5[\u2217] w,t_[)][, where]"
+    },
+    {
+      "index": 33,
+      "text": "is the accuracy of _g_ \u02c6 at distinguishing whether an example _x_ is from distribution _S_ or _T_[\u00af] _w,t_ . The unbiased empirical estimate of this accuracy is denoted by"
+    },
+    {
+      "index": 34,
+      "text": "In fact, 2 _w\u00b5_ \u02c6 _w,t_ is a Binomial random variable with Binomial(2 _w, \u00b5[\u2217] w,t_[)][; thus, the accuracy] _[ \u00b5][\u2217] w,t_[can] be estimated by the Clopper-Pearson (CP) interval \u0398CP(2 _w\u00b5_ \u02c6 _w,t,_ 2 _w_ ; _\u03b1_ ) that includes the unknown parameter _\u00b5[\u2217] w,t_[with high probability,] _[ i.e.]_[,]"
+    },
+    {
+      "index": 35,
+      "text": "This property can be used for checking the accuracy of \u02c6 _gt_ might be 1 _/_ 2. In particular, our algorithm returns \u201ccovariate shift\u201d if 1 _/_ 2 _\u0338\u2208_ \u0398CP(2 _w\u00b5_ \u02c6 _w,t,_ 2 _w_ ; _\u03b1_ ), and \u201cno covariate shift\u201d otherwise, _i.e._"
+    },
+    {
+      "index": 36,
+      "text": "Here, the Clopper-Pearson interval calibrates the empirical accuracy _\u00b5_ \u02c6 _w,t_ using the property of the Binomial distribution."
+    },
+    {
+      "index": 37,
+      "text": "**Step 3. Online source-target classifier update.** Finally, we update a binary classifier \u02c6 _gt_ using new training examples based on the source and target samples, _i.e._ , ( _xt,_ 0) and ( _x[\u2032] t[,]_[ 1)][.][In general,][ \u02c6] _[g][t]_[can] be any model; we consider it to be a neural network, in which case we can update its parameters using stochastic gradient descent with respect to the cross entropy loss."
+    },
+    {
+      "index": 38,
+      "text": "## 4 THEORETICAL GUARANTEES\n\nIn this section, we describe our finite sample bounds on the false positive and false negative rates of our covariate shift detector _f_[\u02c6] ; the key to have valid bounds is proving the independence on predictions _y_ \u02c61 _, . . . ,_ \u02c6 _yt_ (and _y_ \u02c61 _[\u2032][, . . . ,]_[ \u02c6] _[y] t[\u2032]_[) to have a valid Clopper-Pearson interval, since they are seemingly] dependent through the online learned classifier _g_ \u02c6 _t_ . First, our key result shows that our estimate of the accuracy of _g_ \u02c6 _t_ is valid\u2014 _i.e._ , the predictions _y_ \u02c6 _i, . . . ,_ \u02c6 _yj_ are conditionally independent (see Appendix A.1 for a proof), thus the accuracy is the parameter of the Binomial distribution: **Lemma 1.** _If xi, . . . , xj are independent for any i, j \u2208_ N _where i < j, y_ \u02c6 _i, . . . ,_ \u02c6 _yj are conditionally independent given_ \u02c6 _gi, . . . ,_ \u02c6 _gj\u2212_ 1 _._"
+    },
+    {
+      "index": 39,
+      "text": "Our next result says that our algorithm ensures the desired bound _\u03b1_ on the false positive rate (i.e., _f_[\u02c6] says \u201ccovariate shift\u201d when there is no covariate shift). To this end, we exploit the following observation that _any_ source-target classifier makes the expected accuracy of 1 _/_ 2 if there is no covariate shift. Intuitively, if _S_ = _T_[\u00af] _w,t_ , source-target classification is impossible (Lopez-Paz & Oquab, 2017; Liu et al., 2020); we include this lemma for completeness (see Appendix A.2 for a proof):"
+    },
+    {
+      "index": 40,
+      "text": "**Lemma 2.** _If S_ = _T_[\u00af] _w,t, we have \u00b5[\u2217] w,t_[= 1] _[/]_[2] _[ for any source-target classifier]_[ \u02c6] _[g][t][.]_"
+    },
+    {
+      "index": 41,
+      "text": "Since the expected accuracy of _g_ \u02c6 _t_ is 1 _/_ 2 _regardless of_ how we design and learn _g_ \u02c6 _t_ , and how many samples are used to learn \u02c6 _gt_ , the Clopper-Pearson interval includes the true accuracy with high probability; thus the false positive rate of the proposed covariate shift detector _f_[\u02c6] is effectively controlled by the confidence level of the Clopper-Pearson interval, as follows (see Appendix A.3 for a proof):"
+    },
+    {
+      "index": 42,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\n**Theorem 3** (Bound on false positive rate) **.** _If S_ = _T_[\u00af] _w,t, then for any_ \u02c6 _gt, we have_"
+    },
+    {
+      "index": 43,
+      "text": "Our next result provides a bound on the false negative rate; we first observe that the Clopper-Pearson interval is included in the interval by the Hoeffding\u2019s bound. Intuitively, the Clopper-Pearson interval represents a lower and upper bound of the expected accuracy given an empirical accuracy tailored to a Bernoulli random variable; the Hoeffding\u2019s bound can similarly bound the mean but in a more general setup. Thus, the Clopper-Pearson interval can be smaller (see Appendix A.4 for a proof). **Lemma 4.** _Let s \u223c Binomial_ ( _n, p_ ) _and F_ ( _s_ ; _n, p_ ) _is the CDF of Binomial_ ( _n, p_ ) _; we have_"
+    },
+    {
+      "index": 44,
+      "text": "Leveraging this, we have the following bound on false negative rate (see Appendix A.5 for a proof). **Theorem 5** (Bound on false negative rate) **.** _Assume g_ \u02c6 _t achieves nontrivial accuracy,_ i.e. _, \u00b5[\u2217] w,t[\u2265]_ 1 _/_ 2 + _\u03f5, where \u03f5 \u2208_ (0 _,_ 1 _/_ 2] _, is the accuracy at distinguishing S_ \u00af _and T_[\u00af] _w,t. Let a_ ( _w, \u03b1_ ) := 2 _w_ ([1] _/_ 2 + \ufffdlog(2 _/\u03b1_ ) _/_ 4 _w_ ) _and b_ ( _w, \u03b1_ ) := 2 _w_ (1 _/_ 2 _\u2212_ \ufffdlog(2 _/\u03b1_ ) _/_ 4 _w_ ) _. If S_ = _Tw,t and w \u2212_ 1 _\u2212\u230a_ ~~\ufffd~~ _w_ log(2 _/\u03b1_ ) _\u230b\u2265_ 0 _, then we have_"
+    },
+    {
+      "index": 45,
+      "text": "In the false negative bound, the first term is dominant and increases as _w_ increases, which implies the sample size needs to be increased to have a powerful shift detector; the condition on _w_ suggests that the bound is valid when _w \u2265_ 201 given _\u03b1_ = 0 _._ 01. We note that the assumption _L_ (\u02c6 _gt_ ) := 1 _\u2212 \u00b5[\u2217] \u2264_ 1 _/_ 2 _\u2212 \u03f5_ can be achieved under standard conditions. For instance, assume that the model family _G_ of source-target classifiers has finite VC dimension ( _i.e._ , VC( _G_ ) _< \u221e_ ), and that the optimal model _g[\u2217] \u2208G_ has nontrivial inaccuracy _L_ ( _g[\u2217]_ ) = 1 _/_ 2 _\u2212 \u03be_ for some _\u03be \u2208_ R _>_ 0; then, with probability at least 1 _\u2212 \u03b4_ with respect to _Sw,t_ and _Tw,t_ and letting _m_ = 2 _w_ , we have"
+    },
+    {
+      "index": 46,
+      "text": "where the second term (which we have taken to be _\u03f5_ ) satisfies _\u03f5 >_ 0 for sufficiently large _m_ ."
+    },
+    {
+      "index": 47,
+      "text": "## 5 EXPERIMENTS\n\nWe evaluate the effectiveness of our algorithm at detecting both natural and synthetic covariate shifts of varying forms (e.g., gradual shifts and multiple shifts back and forth), showing that it significantly outperforms natural baselines."
+    },
+    {
+      "index": 48,
+      "text": "## 5.1 EXPERIMENT SETUP\n\n**Baselines.** We compare our algorithm to three baselines: two of them differ in the way they use the samples at each time step, the third uses Wald\u2019s sequential likelihood test (Wald, 1945). For the first two baselines, while our approach uses all samples to construct the CP interval around the accuracy of the source-target classifier \u02c6 _gt_ as well as to train \u02c6 _gt_ , the baseline instead constructs a held-out test set using every _H[th]_ sample. Then, only this held-out test set is used to compute the CP interval, and only the remaining samples are used to train \u02c6 _gt_ . In our experiments, we used values of _H \u2208{_ 2 _,_ 5 _}_ , denoted H2, H5, respectively. For Wald\u2019s test, we consider the Bernoulli random variable with a probability _p_ indicating whether the prediction of the source-target classifier is correct for the given"
+    },
+    {
+      "index": 49,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\nTable 1: Scenario description for experiments. (a) \u201cM-shift\u201d is Multiple shift, (b) \u201cGI-shift\u201d is gradually increasing shift, and (c) \u201cGID-shift\u201d is gradually increasing-then-decreasing shift."
+    },
+    {
+      "index": 50,
+      "text": "|(a) M-shift\n**Start position**\n**Description**\n**Prob.**\n0%\nNo shift\n0.0\n25%\nShift\n1.0\n50%\nNo shift\n0.0\n75%\nShift\n1.0|(b) GI-shift\n**Start position**\n**Description**\n**Prob.**\n0%\nNo shift\n0.0\n20%\nShift\n0.2\n40%\nShift\n0.4\n60%\nShift\n0.6\n80%\nShift\n0.8|(c) GID-shift|\n|---|---|---|\n|||**Start position**\n**Description**\n**Prob.**|\n|||0\nNo shift\n0.0\n20%\nShift\n0.4\n40%\nShift\n0.8\n60%\nShift\n0.4\n80%\nNo shift\n0.0|"
+    },
+    {
+      "index": 51,
+      "text": "sample. The hypothesis test is _H_ 0 : _p_ = 0 _._ 5 vs. _H_ 1 : _p_ = 0 _._ 5+ _\u03f5_ , where _\u03f5_ = 0 _._ 2 in our experiments; we restart the test each time it makes a decision."
+    },
+    {
+      "index": 52,
+      "text": "This baseline is essentially the online version of an existing classifier two-sample test (C2ST) (Kim et al., 2021; Lopez-Paz & Oquab, 2017), which splits the (fixed) training dataset into a training set to train _g_ \u02c6 _t_ and a held-out test set to estimate the accuracy of _g_ \u02c6 _t_ ; thus, _H_ controls the tradeoff between the number of examples in the training set and held-out test set."
+    },
+    {
+      "index": 53,
+      "text": "**Source-target classifier.** We use a fully-connected neural network with a single hidden layer (with \u02c6 128 hidden units) and with the ReLU activation functions as the source-target classifier _gt_ . We use a binary cross-entropy loss for training in conjunction with an SGD optimizer with a learning rate of 0.01 (for natural shift experiments) and 0.001 (for synthetic shift experiments). Finally, since the inputs are ImageNet images (Russakovsky et al., 2015), we use a 2048-dimensional feature vector generated by first running a pretrained ResNet152 model (He et al., 2016) on the images, and then using these features vectors for the covariates of _Sw,t_ and _Tw,t_ ."
+    },
+    {
+      "index": 54,
+      "text": "**Scenarios.** We run each algorithm to test whether the target distribution in the given window is shifted with three different scenarios: multiple shift (\u201cM-shift\u201d), gradually increasing shift (\u201cGIshift\u201d), and gradually increasing-then-decreasing shift (\u201cGID-shift\u201d). Table 1 describes each scenario. For example, the multiple shift scenario proceeds as follows: (i) it starts with no covariate shift at the beginning; (ii) after observing 25% target samples ( _i.e._ , 250 _[th]_ samples for natural shift experiments and 2500 _[th]_ samples for synthetic shift experiments), covariate shift is applied to all target samples (with probability 1) by adding random perturbations for synthetic shift and by drawing samples from a target distribution for natural shift; (iii) after 50% of target samples, it reverts to no covariate shift; and (iv) finally after observing 75% target samples, the covariate shift is applied to the all target samples. Gradually increasing shift and gradually increasing-then-decreasing shift scenarios start with no covariate shift for the first 20% of target samples; then, covariate shift is applied with some probability 0 _< p <_ 1 by gradually changing _p_ over time."
+    },
+    {
+      "index": 55,
+      "text": "**Stream data generation.** For each shift ( _i.e._ , natural shift and synthetic shift), we have a source dataset _S_ and target datasets _Tt_ , from which we randomly draw source and target samples for each time step _t_ . In particular, we consider a batch of samples for computational efficiency, where we denote the batch size by _B_ ; we use _B_ = 10 for our experiments. That is, we wait for _B_ samples to be collected from the target distribution before checking for covariate shift and the updating the sourcetarget classifier; then, we begin collecting the next batch. Finally, we evaluate each approach using multiple random repetitions, which we denote by _R_ (the value of _R_ depends on each experiment)."
+    },
+    {
+      "index": 56,
+      "text": "## 5.2 NATURAL SHIFT\n\n**Dataset.** First, we consider a natural shift on ImageNet. To construct such a shift, we consider the subset of dog classes; in particular, 120 of the 1000 of the ImageNet classes are of dogs (Khosla et al., 2011). Then, we randomly select half ( _i.e._ , 60) of these classes to be the source dataset, and the other half to be the target dataset; thus, the number of source and target images is 2997 each (after removing duplicated images). As a consequence, the source and target datasets correspond to different dog breeds, which is a kind of natural distribution shift."
+    },
+    {
+      "index": 57,
+      "text": "**Results.** Figure 1 and Table 2 show results for the natural shift experiment with _w_ = 10 and _\u03b1_ = 1%. Figure 1 illustrates detection rates of the four algorithms with _R_ = 100 repetitions (i.e., the fraction of repetitions that reported \u201ccovariate shift\u201d at each step). Table 2a shows the number"
+    },
+    {
+      "index": 58,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a) M-shift (b) GI-shift (c) GID-shift\n**----- End of picture text -----**"
+    },
+    {
+      "index": 59,
+      "text": "Figure 1: Detection rate for natural shift with _R_ = 100, _w_ = 10, _\u03b1_ = 1%. The black dashed line indicates shifted sample ratio, _i.e._ , the degree (or probability) of covariate shift."
+    },
+    {
+      "index": 60,
+      "text": "Table 2: Natural shift results with (a) _w_ = 10, _\u03b1_ = 1%, and _R_ = 100, and (b) _R_ = 20000 . In (a), we bold the best algorithm. In (b), we bold values that exceed the desired _\u03b1_ = 1%."
+    },
+    {
+      "index": 61,
+      "text": "|(a) Number of samples for detection (_\u2265_80%)\n**Scenario Algorithm Natural shift**\nM-shift\nOurs\n**190**\nH2\n720\nH5\n-\nWald\n640\nGI-shift\nOurs\n**620**\nH2\n-\nH5\n-\nWald\n-\nGID-shift\nOurs\n**310**\nH2\n-\nH5\n-\nWald\n-|(b) FPR (%) at selected time|\n|---|---|\n||**Scenario Algorithm**\n**50**\n**100 150 200**|\n||M-shift\nOurs\n0.27 0.53 0.73 0.77\nH2\n0.29 0.28 0.26 0.33\nH5\n0.34 0.52 0.51 0.56\nWald\n0.60 0.47 0.27 0.27|\n||GI-shift\nOurs\n0.21 0.60 0.76 0.83\nH2\n0.21 0.25 0.29 0.36\nH5\n0.32 0.43 0.50 0.85\nWald\n0.78 0.57 0.29 0.22|\n||GID-shift\nOurs\n0.30 0.53 0.70 0.95\nH2\n0.18 0.21 0.28 0.41\nH5\n0.36 0.56 0.53 0.81\nWald\n0.77 0.58 0.34 0.23|"
+    },
+    {
+      "index": 62,
+      "text": "of shifted samples required to reach at least 80% of covariate shift detection rate under the shift. Table 2b shows false positive rate (FPR) after 50, 100, 150, and 200 samples with _R_ = 20000 repetitions."
+    },
+    {
+      "index": 63,
+      "text": "**Discussion.** Figure 1 shows the detection rate of each algorithm as each scenario progresses. In multiple shift (Figure 1a) and gradually increasing-then-decreasing shift (Figure 1c), covariate shift disappears after a certain point, and all algorithms correctly detect this change. However, as shown in Table 2a, our approach always requires fewer samples to detect the shift. While H5 does not achieve 80% detection and H2 and Wald reach 80% only for multiple shift change scenario, our approach always detects covariate shift at a rate higher than 80%. Furthermore, for multiple shift, our algorithm requires fewer than half the number of samples compared to H2. In summary, our algorithm is significantly more sample efficient at detecting covariate shift compared to the baselines, most likely since it utilizes all samples for both training the source-target classifier and constructing the CP interval. For FPR, all algorithms always satisfy the FPR bound ( _i.e._ , FPR _\u2264 \u03b1_ )."
+    },
+    {
+      "index": 64,
+      "text": "## 5.3 SYNTHETIC SHIFT\n\n**Dataset.** Next, we consider a synthetic shift on ImageNet. In particular, we split the original ImageNet validation set into equal sized source and target datasets. To construct the target dataset, we add synthetic perturbations on original images. We (separately) consider five perturbation types from (Hendrycks & Dietterich, 2019)\u2014in particular, Contrast, Defocus Blur, Elastic Transform, Gaussian Blur, and Gaussian Noise, with five different severity levels."
+    },
+    {
+      "index": 65,
+      "text": "**Results.** The experiment results are shown in Figure 2 and Table 3 for the experiments with the perturbation severity of 2, window size _w_ = 10, and significance level _\u03b1_ = 1%. Table 3a shows the number of target samples required by each algorithm to detect the first covariate shift in the detection rate of at least 80%. Table 3b shows the false positive rate (FPR) after 500, 1000, 1500 and 2000 samples for each of the three scenarios. Figure 2 shows the detection rates over multiple repetitions"
+    },
+    {
+      "index": 66,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n(a) M-shift (b) GI-shift (c) GID-shift\n**----- End of picture text -----**"
+    },
+    {
+      "index": 67,
+      "text": "Figure 2: Detection rate for synthetic shifts with Gaussian noise perturbation, Severity = 2, _R_ = 100, _w_ = 10, _\u03b1_ = 1%. The black dashed line indicates shifted sample ratio, _i.e._ , the degree (or probability) of covariate shift. The red dotted line shows the accuracy of ResNet152 on the source and target samples in the given window."
+    },
+    {
+      "index": 68,
+      "text": "Table 3: Synthetic shift results with (a) Severity = 2, _w_ = 10, _\u03b1_ = 1%, and _R_ = 100, and (b) _R_ = 20000. In (a), we bold the best algorithm. In (b), we bold values that exceed the desired _\u03b1_ = 1%."
+    },
+    {
+      "index": 69,
+      "text": "(a) Number of samples for detection\n\n|(a) umer o sampes or etecton\n**Scenario**\n**Alg.**\n**Contrast Defocus**\n**Blur**\n**Elastic**\n**Transform**\n**Gaussian**\n**Blur**\n**Gaussian**\n**Noise**\nM-shift\nOurs\n**230**\n**200**\n**220**\n**210**\n**180**\nH2\n470\n450\n450\n490\n350\nH5\n410\n410\n410\n460\n310\nWald\n-\n-\n-\n-\n-\nGI-shift\nOurs\n**2100**\n**2060**\n**2090**\n**2070**\n**2080**\nH2\n4050\n3690\n4050\n4010\n3670\nH5\n4360\n4110\n6010\n4110\n4110\nWald\n-\n-\n-\n-\n-\nGID-shift\nOurs\n**880**\n**560**\n**900**\n**720**\n**610**\nH2\n2030\n2010\n2050\n2010\n2010\nH5\n2060\n2060\n2060\n2060\n2060\nWald\n-\n-\n-\n-\n-|(a) umer o sampes or etecton\n**Scenario**\n**Alg.**\n**Contrast Defocus**\n**Blur**\n**Elastic**\n**Transform**\n**Gaussian**\n**Blur**\n**Gaussian**\n**Noise**\nM-shift\nOurs\n**230**\n**200**\n**220**\n**210**\n**180**\nH2\n470\n450\n450\n490\n350\nH5\n410\n410\n410\n460\n310\nWald\n-\n-\n-\n-\n-\nGI-shift\nOurs\n**2100**\n**2060**\n**2090**\n**2070**\n**2080**\nH2\n4050\n3690\n4050\n4010\n3670\nH5\n4360\n4110\n6010\n4110\n4110\nWald\n-\n-\n-\n-\n-\nGID-shift\nOurs\n**880**\n**560**\n**900**\n**720**\n**610**\nH2\n2030\n2010\n2050\n2010\n2010\nH5\n2060\n2060\n2060\n2060\n2060\nWald\n-\n-\n-\n-\n-|(a) umer o sampes or etecton\n**Scenario**\n**Alg.**\n**Contrast Defocus**\n**Blur**\n**Elastic**\n**Transform**\n**Gaussian**\n**Blur**\n**Gaussian**\n**Noise**\nM-shift\nOurs\n**230**\n**200**\n**220**\n**210**\n**180**\nH2\n470\n450\n450\n490\n350\nH5\n410\n410\n410\n460\n310\nWald\n-\n-\n-\n-\n-\nGI-shift\nOurs\n**2100**\n**2060**\n**2090**\n**2070**\n**2080**\nH2\n4050\n3690\n4050\n4010\n3670\nH5\n4360\n4110\n6010\n4110\n4110\nWald\n-\n-\n-\n-\n-\nGID-shift\nOurs\n**880**\n**560**\n**900**\n**720**\n**610**\nH2\n2030\n2010\n2050\n2010\n2010\nH5\n2060\n2060\n2060\n2060\n2060\nWald\n-\n-\n-\n-\n-|(b) FPR (%) at selected time|(b) FPR (%) at selected time|(b) FPR (%) at selected time|\n|---|---|---|---|---|---|\n||||**Scenario**\n**Alg.**\n**500**\n**1000**\n**1500**\n**2000**|||\n|||||||\n||||M-shift|Ours\nH2\nH5\nWald|0.73\n1.00\n0.90\n1.00\n0.40\n0.46\n0.46\n0.50\n0.80\n0.73\n0.84\n0.69\n0.07\n0.11\n0.04\n0.01|\n|||||||\n||||GI-shift|Ours\nH2\nH5\nWald|0.86\n0.89\n0.92\n0.85\n0.62\n0.54\n0.60\n0.50\n0.74\n0.71\n0.77\n0.73\n0.10\n0.13\n0.07\n0.03|\n|||||||\n||||GID-shift\nOurs\n0.87\n0.95\n0.92\n0.89\nH2\n0.51\n0.57\n0.51\n0.53\nH5\n0.73\n0.75\n0.85\n0.89\nWald\n0.09\n0.08\n0.04\n0.02|||\n|GID-shift|Ours\nH2\nH5\nWald|**880**\n**560**\n**900**\n**720**\n**610**\n2030\n2010\n2050\n2010\n2010\n2060\n2060\n2060\n2060\n2060\n-\n-\n-\n-\n-||||"
+    },
+    {
+      "index": 70,
+      "text": "for each of the three scenarios using the Gaussian noise perturbation. Results for other perturbation types and severities are shown in Appendix D."
+    },
+    {
+      "index": 71,
+      "text": "**Discussion.** As can be seen, our approach outperforms the baselines in terms of sample efficiency for the covariate shift detection as was the case of the natural shift. Our algorithm requires about half as many samples before detecting covariate shift compared to the baselines. In terms of FPR, our approach always satisfies the FPR bound. Finally, Figure 2 shows the accuracy drop with the shifted samples. In particular, the red dotted line shows the accuracy of ResNet152 on the examples in the source and target samples of the given window; as can be seen, the accuracy decreases as the degree of the shift increases. Covariate shift detection can be successfully used to notify a user that an accuracy drop may have occurred."
+    },
+    {
+      "index": 72,
+      "text": "## 6 CONCLUSION\n\nWe have proposed a novel covariate shift detection algorithm, which uses a classifier two-sample test to check whether the current test examples differ in distribution compared to the training examples. Our approach ensures sample efficiency by avoiding the need to split the dataset into a training set and a held-out test set, and instead using all the data to both train the source-target discriminator and to evaluate its accuracy. We prove that even with this optimization, our approach provides finite sample guarantees on the false positive rate at a desired level; we also prove bounds on the false negative rate under a mild conditions on the trained classifier. Finally, we empirically demonstrate that our proposed algorithm is significantly more sample efficient compared to a natural baseline that uses a held-out test set in terms of detecting both natural and synthetic shifts on ImageNet."
+    },
+    {
+      "index": 73,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n**Reproducibility Statement.** For our empirical results, we stated our algorithm in Algorithm 1, hyperparameters in Section 5.1, and dataset setups in Section 5.2 and 5.3. We have included the source code in the supplement for reproducing the experimental results. For our theory, we have included all proofs in Appendix A."
+    },
+    {
+      "index": 74,
+      "text": "## REFERENCES\n\nAkshay Balsubramani and Aaditya Ramdas. Sequential nonparametric testing with the law of the iterated logarithm. _arXiv preprint arXiv:1506.03486_ , 2015."
+    },
+    {
+      "index": 75,
+      "text": "Shai Ben-David, John Blitzer, Koby Crammer, and Fernando Pereira. Analysis of representations for domain adaptation. In _Advances in neural information processing systems_ , pp. 137\u2013144, 2007."
+    },
+    {
+      "index": 76,
+      "text": "- Steffen Bickel, Michael Br\u00a8uckner, and Tobias Scheffer. Discriminative learning for differing training and test distributions. In _Proceedings of the 24th international conference on Machine learning_ , pp. 81\u201388. ACM, 2007."
+    },
+    {
+      "index": 77,
+      "text": "- Christopher M Bishop. _Pattern recognition and machine learning_ . Springer, 2006.\n\n- Lawrence D Brown, T Tony Cai, and Anirban DasGupta. Interval estimation for a binomial proportion. _Statistical science_ , pp. 101\u2013117, 2001."
+    },
+    {
+      "index": 78,
+      "text": "- Xiuyuan Cheng and Alexander Cloninger. Classification logit two-sample testing by neural networks. _arXiv preprint arXiv:1909.11298_ , 2019."
+    },
+    {
+      "index": 79,
+      "text": "- Kacper Chwialkowski, Aaditya Ramdas, Dino Sejdinovic, and Arthur Gretton. Fast two-sample testing with analytic representations of probability measures. _arXiv preprint arXiv:1506.04725_ , 2015."
+    },
+    {
+      "index": 80,
+      "text": "- Charles J Clopper and Egon S Pearson. The use of confidence or fiducial limits illustrated in the case of the binomial. _Biometrika_ , 26(4):404\u2013413, 1934."
+    },
+    {
+      "index": 81,
+      "text": "- Jerome Friedman. On multivariate goodness-of-fit and two-sample testing. Technical report, Citeseer, 2004."
+    },
+    {
+      "index": 82,
+      "text": "- Jo\u02dcao Gama, Indr\u02d9e Zliobait\u02d9e,[\u02c7] Albert Bifet, Mykola Pechenizkiy, and Abdelhamid Bouchachia. A survey on concept drift adaptation. _ACM computing surveys (CSUR)_ , 46(4):1\u201337, 2014."
+    },
+    {
+      "index": 83,
+      "text": "- Yaroslav Ganin, Evgeniya Ustinova, Hana Ajakan, Pascal Germain, Hugo Larochelle, Francois Laviolette, Mario Marchand, and Victor Lempitsky. Domain-adversarial training of neural networks. _Journal of Machine Learning Research_ , 17(59):1\u201335, 2016. URL http://jmlr.org/ papers/v17/15-239.html."
+    },
+    {
+      "index": 84,
+      "text": "- Paulo M Gonc\u00b8alves Jr, Silas GT de Carvalho Santos, Roberto SM Barros, and Davi CL Vieira. A comparative study on concept drift detectors. _Expert Systems with Applications_ , 41(18):8144\u2013 8156, 2014."
+    },
+    {
+      "index": 85,
+      "text": "- Arthur Gretton, Karsten M Borgwardt, Malte J Rasch, Bernhard Sch\u00a8olkopf, and Alexander Smola. A kernel two-sample test. _The Journal of Machine Learning Research_ , 13(1):723\u2013773, 2012a."
+    },
+    {
+      "index": 86,
+      "text": "- Arthur Gretton, Dino Sejdinovic, Heiko Strathmann, Sivaraman Balakrishnan, Massimiliano Pontil, Kenji Fukumizu, and Bharath K Sriperumbudur. Optimal kernel choice for large-scale two-sample tests. In _Advances in neural information processing systems_ , pp. 1205\u20131213. Citeseer, 2012b."
+    },
+    {
+      "index": 87,
+      "text": "- HO Hartley and ER Fitch. A chart for the incomplete beta-function and the cumulative binomial distribution. _Biometrika_ , 38(3/4):423\u2013426, 1951."
+    },
+    {
+      "index": 88,
+      "text": "- Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for image recognition. In _Proceedings of the IEEE conference on computer vision and pattern recognition_ , pp. 770\u2013778, 2016."
+    },
+    {
+      "index": 89,
+      "text": "- Dan Hendrycks and Thomas Dietterich. Benchmarking neural network robustness to common corruptions and perturbations. _Proceedings of the International Conference on Learning Representations_ , 2019.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__qwen3-235b-a22b-2507": {
+      "label": "Coarse (qwen3-235b-a22b-2507)",
+      "model": "openrouter/qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper proposes a method for sequential covariate shift detection using classifier two-sample tests with online updates and Clopper-Pearson calibration, aiming to improve sample efficiency while maintaining finite-sample false positive control. It makes a reasonable contribution by adapting C2ST to streaming settings with a theoretically justified reuse of data for both training and testing. The empirical results on ImageNet-based shifts show improved detection speed over baselines that split data, which supports the core claim of sample efficiency.\n\nOverview issues:\n\n- Invalid independence assumption undermines Clopper-Pearson guarantee: The theoretical justification for the false positive rate control relies on Lemma 1, which claims that classifier predictions $\\hat{y}_i$ are conditionally independent given past predictions. However, this is not true in practice because $\\hat{g}_t$ is updated online using all previous data\u2014so predictions are dependent through the shared, adaptively learned model parameters. The CP interval requires independent Bernoulli trials, but here the trials are neither independent nor identically distributed due to continual learning. As a result, the coverage guarantee in Theorem 3 does not hold under the actual algorithm. This breaks the core theoretical claim of finite-sample false positive control. The authors must either prove conditional independence under online learning (which contradicts standard learning dynamics) or adopt a different inference strategy such as sequential testing, held-out calibration, or conformal prediction with exchangeability assumptions.\n\n- Overlooked temporal dependence in sequential data invalidates binomial model: The method models the accuracy estimate $2w\\hat{\\mu}_{w,t}$ as a Binomial$(2w, \\mu^*_{w,t})$ random variable, assuming independent samples within the window. However, in a sequential setting with potential temporal dependence (e.g., autocorrelation in image streams from a moving camera), the i.i.d. assumption on $x_t$ and $x'_t$ is violated. This invalidates the binomial model used for the CP interval and biases the variance estimate, leading to incorrect confidence intervals and potentially inflated false positive rates. The paper does not test or account for temporal dependence in the ImageNet streams. To fix this, the authors should either demonstrate that their features are approximately independent (e.g., via autocorrelation analysis) or incorporate time-series robustness, such as block bootstrapping or HAC estimators, into the uncertainty quantification.\n\n- Classifier reuse introduces lookahead bias and overfitting risk: The algorithm uses each sample to evaluate the classifier before updating it (Step 4 and 6 in Algorithm 1), but then includes that same sample in the training stream that shapes future versions of the classifier. While this improves sample efficiency, it creates a feedback loop where the evaluation metric is influenced by data that will later be used to optimize the very same classifier. This can lead to overfitting and optimistic bias in the accuracy estimate, especially when the classifier learns slowly. The theoretical analysis assumes the evaluation is independent of training, but in reality the classifier's future behavior is shaped by these samples. A proper fix would be to use a held-out validation buffer or a delayed update scheme to ensure separation between evaluation and training data within the online pipeline.\n\n- Insufficient comparison to modern two-sample testing baselines: The baselines are limited to naive held-out C2ST variants and Wald\u2019s test, but the paper omits comparisons to more powerful and relevant methods such as kernel MMD with learned embeddings (e.g., Liu et al., 2020), sequential MMD tests, or E-value based approaches (Shi et al., 2022). These methods are designed for high-dimensional and streaming data and offer better power and calibration. Without such comparisons, the claimed superiority of the proposed method is not well substantiated. The authors should include at least one kernel-based and one sequential nonparametric test as baselines to position their method within the current state of the art.\n\n- Unrealistic assumption of known training distribution access: The algorithm assumes continuous access to fresh samples from the training distribution $\\mathcal{S}$ at every time step (via $x_t \\sim \\mathcal{S}$ in Algorithm 1). In practice, the training data may not be available during deployment due to storage, privacy, or computational constraints. Most real-world systems only have access to a static model and incoming test data. The method should instead operate on a fixed set of training features or a generative model of $\\mathcal{S}$. The current setup limits practical applicability and should be addressed by either evaluating under a finite training buffer or proposing a mechanism for replay or distillation of training distribution characteristics.\n\n- Lack of ablation on classifier capacity and feature representation: The experiments use a fixed ResNet152 feature extractor and a simple MLP classifier, but do not explore how detection performance depends on feature quality or classifier complexity. Since C2ST power depends critically on the ability of the classifier to distinguish distributions, results may vary significantly with architecture choice. The paper should include ablation studies showing detection performance with weaker features (e.g., random projections) or smaller classifiers to assess robustness. Additionally, comparing to raw pixel inputs or other backbones would strengthen the validity of the conclusions.\n\n- No ablation on window size and classifier capacity: The paper claims sample efficiency gains from using all data for training and evaluation, but does not show how performance depends on the window size w or the classifier's capacity. Readers need to know whether the method remains effective with smaller w (e.g., w=5) or weaker models, as this affects practical deployment in resource-constrained settings. To validate robustness, the authors should add an ablation study in Section 5.3 showing detection delay and FPR for w \u2208 {5,10,20} and classifier sizes with 32, 64, and 128 hidden units. This would clarify the tradeoffs and operational range of the method.\n\n- Missing comparison to kernel MMD baselines: The paper positions itself against held-out C2ST and Wald\u2019s test but omits comparisons to kernel-based two-sample tests, which are standard in high-dimensional settings. In particular, MMD with a learned deep kernel (e.g., Liu et al., 2020) or adaptive bandwidth selection offers strong finite-sample power and is directly applicable to sequential testing. Without this comparison, the claim of superior sample efficiency is incomplete. The authors should include a baseline using deep kernel MMD on the same ResNet features, with test thresholds calibrated via permutation or block bootstrap, and report detection delay and FPR in Table 3.\n\n- No demonstration of detection under delayed shift: The method is motivated by the need to detect shifts that occur after a delay, yet all experiments assume immediate or gradually increasing shifts starting from step zero. A more meaningful test would be a scenario where the distribution is identical to training for the first 50% of samples, then shifts abruptly. The current M-shift scenario includes such a change, but the shift onset is at 25%, not after extended stationarity. The authors should add a new experiment with no shift for the first 500\u20131000 samples, then a sudden perturbation, and show that the detector triggers promptly while maintaining FPR control during the initial period.\n\n- Unverified assumption of ResNet features being i.i.d.: The method assumes i.i.d. samples within the sliding window, but ImageNet streams generated by a moving camera may exhibit temporal dependence. The use of ResNet features does not guarantee independence. The paper should verify this assumption by computing autocorrelation of feature norms or pairwise distances over time in the synthetic stream. If dependence is present, the binomial model is invalid. At minimum, the authors should include a diagnostic plot in Appendix D showing autocorrelation up to lag 10, or justify independence by subsampling frames at large intervals.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Prove or correct the independence assumption in Lemma 1; if the current proof is invalid, revise the theoretical framework to account for dependent predictions, possibly using martingale-based or conformal methods.\n\n- Address temporal dependence in the data by either demonstrating i.i.d.-like behavior in the feature stream or modifying the test statistic to account for correlation (e.g., via block averaging or robust variance estimation).\n\n- Introduce a mechanism to prevent data reuse bias, such as a delayed update or separate evaluation buffer, and re-evaluate the false positive rate under this corrected scheme.\n\n- Include comparisons to modern two-sample test baselines such as learned-kernel MMD, sequential MMD, or E-value methods to properly contextualize performance gains.\n\n- Evaluate the method under a more realistic setting where only a finite set of training features is available, rather than continuous access to $\\mathcal{S}$.",
+      "comments": [
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_0",
+          "title": "Invalid conditional independence assumption undermines CP interval",
+          "quote": "###### Lemma 1.\n\nIf $x_{i},\\ldots,x_{j}$ are independent for any $i,j\\in\\mathbb{N}$ where $i<j$, $\\hat{y}_{i},\\ldots,\\hat{y}_{j}$ are conditionally independent given $\\hat{y}_{i},\\ldots,\\hat{y}_{j-1}$.",
+          "explanation": "The claim that predictions $\\hat{y}_i, \\ldots, \\hat{y}_j$ are conditionally independent given past predictions fails because the classifier $\\hat{g}_t$ is updated online using all prior data. The model parameters depend on the full history of inputs and labels, so predictions are coupled through shared weights. This induces dependence even if inputs are independent, violating the conditional independence required for the binomial model. The Clopper-Pearson interval assumes independent Bernoulli trials, so its coverage guarantee does not hold under this adaptive learning scheme. The proof in Appendix A.1 would need to establish conditional independence under parameter updates, which contradicts standard learning dynamics.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_1",
+          "title": "Degenerate term invalidates false negative bound",
+          "quote": "If $\\mathcal{S}\\neq\\tilde{\\mathcal{T}}_{w,t}$ and $w-1-\\lfloor\\sqrt{w\\log(2/\\alpha)}\\rfloor\\geq 0$, then we have\n\n$\\mathbb{P}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=1\\right]\\geq F\\left(2w-\\lfloor a(w,\\alpha)+1\\rfloor;2w,\\frac{1}{2}-\\epsilon\\right)+F\\Big{(}\\lceil b(w,\\alpha)-1\\rceil;2w,1\\Big{)}.$ (3)",
+          "explanation": "The second term $F(\\lceil b(w,\\alpha)-1\\rceil; 2w, 1)$ involves a binomial CDF with success probability 1, which is degenerate at $2w$. Thus, $F(k; 2w, 1) = 1$ for all $k \\geq 0$, making the entire lower bound at least 1\u2014impossible for a probability. This indicates a typo. Given the context, the intended parameter is likely $\\frac{1}{2} + \\epsilon$ or another value less than 1. Moreover, the first term uses $\\frac{1}{2} - \\epsilon$, but under $\\mu_{w,t}^* \\geq \\frac{1}{2} + \\epsilon$, the distribution should be stochastically larger, so the CDF should reflect a higher success probability. The current expression is mathematically incoherent.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_2",
+          "title": "Incorrect sign in false negative analysis",
+          "quote": "Assume $\\hat{g}_{t}$ achieves nontrivial accuracy, *i.e.*, $\\mu_{w,t}^{*}\\geq 1/2+\\epsilon$, where $\\epsilon\\in(0,1/2]$, is the accuracy at distinguishing $\\mathcal{S}$ and $\\tilde{\\mathcal{T}}_{w,t}$.",
+          "explanation": "The false negative bound in Theorem 5 uses $\\frac{1}{2} - \\epsilon$ in the binomial CDF, which contradicts the assumption that $\\mu_{w,t}^* \\geq \\frac{1}{2} + \\epsilon$. If the classifier has accuracy $\\frac{1}{2} + \\epsilon$, the number of correct predictions should follow $\\text{Binomial}(2w, \\frac{1}{2} + \\epsilon)$, so the CDF in the lower bound should reflect that the observed accuracy exceeds $\\frac{1}{2}$. Using $F(\\cdot; 2w, \\frac{1}{2} - \\epsilon)$ suggests the alternative is below $\\frac{1}{2}$, which is inconsistent. This suggests a sign error. The detection power should increase with $\\epsilon$, but the current expression decreases, which is counterintuitive.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_3",
+          "title": "Undefined $\\tilde{\\mathcal{T}}_{w,t}$ in accuracy definition",
+          "quote": "Let $\\mathcal{Q}_{w,t}$ be a distribution over $\\mathcal{X}\\times\\{0,1\\}$, where\n\n$\\mathcal{Q}_{w,t}(x,y)\\!=\\!\\frac{1}{2}\\cdot\\mathcal{S}(x)\\cdot\\mathbbm{1}(y=0)+\\frac{1}{2}\\cdot\\tilde{\\mathcal{T}}_{w,t}(x)\\cdot\\mathbbm{1}(y=1).$\n\nThen, $z=\\mathbbm{1}(\\hat{g}_{t}(x)=y)$ is a Bernoulli random variable with distribution Bernoulli$(\\mu_{w,t}^{*})$, where\n\n$\\mu_{w,t}^{*}=\\mathbb{P}_{(x,y)\\sim\\mathcal{Q}_{w,t}}[\\hat{g}_{t}(x)=y]$",
+          "explanation": "The term $\\tilde{\\mathcal{T}}_{w,t}$ is used in the definition of $\\mathcal{Q}_{w,t}$ but is never defined. While it is reasonable to assume it denotes the empirical distribution of the last $w$ target samples, this is not stated. Without a formal definition, the mathematical object $\\mu_{w,t}^*$ is ambiguous, and the probabilistic model lacks rigor. Readers cannot reproduce the setup or verify the correctness of $\\hat{\\mu}_{w,t}$ as an estimator without knowing the exact form of $\\tilde{\\mathcal{T}}_{w,t}$. Define $\\tilde{\\mathcal{T}}_{w,t}$ explicitly as the empirical distribution $\\frac{1}{w} \\sum_{i=t-w+1}^t \\delta_{x'_i}$.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_4",
+          "title": "Notational inconsistency in Theorem 3",
+          "quote": "###### Theorem 3 (Bound on false positive rate).\n\nIf $\\mathcal{S}=\\tilde{\\mathcal{T}}_{w,t}$, then for any $\\hat{g}_{t}$, we have\n\n$\\mathbb{P}_{(S_{w,t},T_{w,t})\\sim\\mathcal{S}^{w}\\times\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha.$ (2)",
+          "explanation": "The condition $\\mathcal{S} = \\tilde{\\mathcal{T}}_{w,t}$ introduces an undefined symbol $\\tilde{\\mathcal{T}}_{w,t}$. In Lemma 2 and surrounding text, the null hypothesis is stated as $\\mathcal{S} = \\mathcal{T}_{w,t}$, and the probability measure uses $\\mathcal{T}_{t-w+1:t}$, which aligns with $\\mathcal{T}_{w,t}$ as the recent test distribution over $w$ samples. There is no definition or explanation of $\\tilde{\\mathcal{T}}_{w,t}$. If it is intended to be identical to $\\mathcal{T}_{w,t}$, the notation should be unified. If it differs, this must be explicitly defined. As written, the theorem's condition lacks semantic clarity.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_5",
+          "title": "Incorrect hypothesis specification for Wald test",
+          "quote": "The hypothesis test is  $H_0: p = 0.5$  vs.  $H_1: p = 0.5 + \\epsilon$ , where  $\\epsilon = 0.2$  in our experiments; we restart the test each time it makes a decision.",
+          "explanation": "The alternative hypothesis $H_1: p = 0.5 + \\epsilon$ with fixed $\\epsilon = 0.2$ incorrectly specifies a point alternative in a sequential likelihood ratio test. Wald\u2019s SPRT requires two fully specified distributions. However, the true $p$ under shift is unknown and not exactly $0.7$, making this a composite alternative. Using a point alternative when the true effect size may vary leads to miscalibrated stopping boundaries and invalid Type I/II error control. The correct approach is to define $H_1: p = p_1 > 0.5$ for a prespecified minimally detectable effect (e.g., $p_1 = 0.7$), not as a deviation from $H_0$. Furthermore, the paper does not report whether the SPRT boundaries were adjusted for the restart mechanism, which affects overall false positive rate.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_6",
+          "title": "Ambiguous detection threshold interpretation",
+          "quote": "Table 3a shows the number of target samples required by each algorithm to detect the first covariate shift in the detection rate of at least  $80\\%$ .",
+          "explanation": "The phrase 'detection rate of at least 80%' is ambiguous: it could mean that detection occurs by the reported sample count in 80% of trials, or that the algorithm achieves 80% detection probability at that point. However, the text does not specify how this threshold is computed\u2014whether it's the median detection time across trials, the earliest time at which detection exceeds 80% in simulations, or another rule. Without this, the numbers in Table 3a lack a clear operational meaning. For reproducibility and interpretability, the paper should define detection rate precisely: e.g., 'the smallest $t$ such that $\\mathbb{P}(\\text{detected by time } t) \\geq 0.8)$'.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_7",
+          "title": "Misleading claim of FPR bound satisfaction",
+          "quote": "For FPR, all algorithms always satisfy the FPR bound (i.e.,  $\\mathrm{FPR} \\leq \\alpha$ ).",
+          "explanation": "The claim that all algorithms satisfy $\\mathrm{FPR} \\leq \\alpha = 1\\%$ is based on empirical results, but the theoretical justification for FPR control is invalid due to violated independence assumptions. The Clopper-Pearson interval assumes independent trials, but the adaptive classifier induces dependence. While the empirical FPR is below $\\alpha$ in these trials, there is no guarantee it would be in general. The result may hold in this simulation, but the reasoning conflates empirical performance with theoretical guarantee. Rewrite to reflect that empirical FPR was below $\\alpha$ in these trials, but do not assert it as a general property without stronger justification.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_8",
+          "title": "FPR interpretation contradicts stated significance level",
+          "quote": "|  Scenario | Alg. | 500 | 1000 | 1500 | 2000  |\n| --- | --- | --- | --- | --- | --- |\n|  M-shift | Ours | 0.73 | 1.00 | 0.90 | 1.00  |\n|   |  H2 | 0.40 | 0.46 | 0.46 | 0.50  |\n|   |  H5 | 0.80 | 0.73 | 0.84 | 0.69  |\n|   |  Wald | 0.07 | 0.11 | 0.04 | 0.01  |",
+          "explanation": "The caption states that values exceeding $\\alpha = 1\\%$ are bolded, but several entries are exactly 1.00%. A false positive rate of 1.00% is equal to the nominal level, not exceeding it. If the threshold is strict ($>1\\%$), then no entries should be bolded; if it's inclusive ($\\geq1\\%$), then 'Ours' in M-shift at 1000 and 2000 steps should be bolded, but they are not. This inconsistency undermines the claim that the method 'always satisfies the FPR bound'. The table must clarify whether the bound is strict or not, and ensure bolding matches.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_9",
+          "title": "Misleading claim of universal detection",
+          "quote": "while H5 does not achieve  $80\\%$  detection and H2 and Wald reach  $80\\%$  only for multiple shift change scenario, our approach always detects covariate shift at a rate higher than  $80\\%$",
+          "explanation": "The claim that 'our approach always detects... higher than 80%' lacks qualification. Figure 1 shows detection rates rising over time; at early steps, the rate is below 80%. The claim should specify that the method eventually exceeds 80% in all scenarios, not that it does so uniformly at every step. As stated, it suggests instantaneous or guaranteed detection, which is not shown. The word 'always' refers to across scenarios, not across time\u2014but this nuance is lost. A reader may interpret this as 100% detection at every step. Add 'eventually' to clarify: 'our approach eventually achieves detection rates above 80% in all scenarios'.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_10",
+          "title": "Incorrect pluralization undermines clarity",
+          "quote": "under a mild conditions on the trained classifier",
+          "explanation": "The phrase 'under a mild conditions' contains a grammatical error: 'a' is singular while 'conditions' is plural. This should be 'under mild conditions' or 'under a mild condition'. Given that the surrounding context refers to multiple conditions (e.g., classifier inaccuracy bounded away from 1/2, sufficient window size), the correct version is 'under mild conditions'. Remove 'a' from the sentence because it introduces an ungrammatical construction that distracts from the technical meaning.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        }
+      ],
+      "cost_usd": 0.2223,
+      "cost_method": "estimated",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "The paper proposes a sequential covariate shift detection algorithm using classifier two-sample tests with online learning. While the core idea of using all samples for both training and testing is clever, the paper has significant issues with its theoretical claims, experimental evaluation, and framing. The independence assumption crucial for the statistical guarantees appears questionable, the false negative rate bound is overly conservative and impractical, and the experimental evaluation lacks proper baselines and analysis of computational requirements.\n\nThe paper addresses an important problem in sequential covariate shift detection and presents an elegant algorithmic insight about using samples for both training and testing. The method shows promising empirical results in terms of sample efficiency. However, the theoretical foundations have serious gaps, particularly regarding the independence assumptions required for valid statistical inference, and the experimental evaluation is incomplete without comparisons to state-of-the-art sequential detection methods.\n\nOverview issues:\n\n- Questionable Independence Assumption in Sequential Setting: The paper's key theoretical claim relies on Lemma 1, which states that predictions are conditionally independent given previous predictions. This lemma is used to justify that the accuracy estimate follows a Binomial distribution, enabling the use of Clopper-Pearson intervals. However, in an online learning setting where the classifier is continuously updated on streaming data, this independence assumption is highly suspect. The classifier parameters at time t depend on all previous samples, creating temporal dependencies that violate the i.i.d. assumption required for Binomial distribution. The proof in Appendix A.1 appears to rely on a technicality that doesn't address the core issue of parameter dependence. This undermines the validity of the false positive rate guarantee in Theorem 3, which is a central contribution of the paper.\n\n- Impractical False Negative Rate Bound: The false negative rate bound in Theorem 5 requires w \u2265 201 for \u03b1 = 0.01, meaning the algorithm needs at least 201 samples per window to provide any meaningful guarantee. This is extremely restrictive for practical sequential detection scenarios where rapid detection is crucial. Moreover, the bound itself is complex and provides little intuition about the actual power of the test. The condition that the classifier achieves accuracy \u2265 1/2 + \u03b5 is also problematic - in high-dimensional settings with limited samples, even the optimal classifier may struggle to achieve this threshold. The paper should provide empirical validation of this bound and discuss its practical limitations, rather than presenting it as a meaningful theoretical guarantee.\n\n- Lack of Proper Sequential Baselines: The experimental evaluation compares primarily against batch-based variants (H2, H5) and Wald's sequential test, but omits comparisons with state-of-the-art sequential change detection methods. The literature context mentions several relevant sequential approaches (e.g., Balsubramani and Ramdas 2015, Lh\u00e9ritier and Cazals 2018, 2019, Manole and Ramdas 2021) that are not included as baselines. The paper argues that sequential tests are not applicable because they assume all test data is shifted, but this is not entirely accurate - many sequential tests can handle delayed or gradual shifts. Without proper comparison to these methods, it's impossible to assess whether the proposed approach truly advances the state of the art in sequential detection.\n\n- Missing Computational Complexity Analysis: The paper claims computational efficiency but provides no analysis of the time or space complexity of the online learning approach. Training a neural network online at each time step could be computationally expensive, especially for high-dimensional data like images. The experiments use a relatively simple classifier (single hidden layer with 128 units), but scalability to larger models or higher-dimensional data is unexplored. There's no discussion of the trade-offs between computational cost and detection performance, nor any comparison of runtime against the baselines. For a method intended for real-time applications like autonomous driving, this is a critical omission.\n\n- Limited Evaluation of Gradual Shift Detection: While the paper includes gradual shift scenarios (GI-shift and GID-shift), the evaluation is insufficient. The gradual shifts are implemented as simple probability mixtures at discrete time points, which doesn't capture the complexity of real-world gradual drift. More importantly, there's no analysis of how the window size w affects detection of gradual shifts - a smaller window might miss slow drifts, while a larger window delays detection. The paper should include a sensitivity analysis of w and demonstrate performance on more realistic gradual shift scenarios, perhaps using synthetic data with smoothly varying distributions.\n\n- Missing worked example of algorithm mechanics: The paper presents the sequential algorithm theoretically but never walks through a concrete toy example showing how the online updates work. Readers need to see how the classifier parameters evolve and how the Clopper-Pearson interval is computed step-by-step for a simple synthetic distribution shift. A minimal example with 1D Gaussian source and shifted target distributions, using w=3-5, would clarify how the algorithm maintains validity while using each sample for both testing and training. This is essential for building intuition about the core technical contribution.\n\n- No demonstration of non-vacuous detection power: The theoretical bounds on false negative rate are impractical (requiring w\u2265201), and the experiments only show relative performance against weak baselines. The paper needs a concrete example showing the algorithm can detect a specific, known shift with quantified power. For instance, simulate a shift from N(0,1) to N(\u03bc,1) with \u03bc=0.5, compute the theoretical classifier accuracy, then empirically verify the detection rate matches the bound. Without this, readers cannot assess whether the method actually works in regimes where theory provides no guidance.\n\n- Missing guidance on practical implementation: The paper claims computational efficiency but provides no implementation details for real-world deployment. There's no discussion of: (1) how to choose window size w in practice, (2) computational overhead of online neural network updates, (3) memory requirements for storing predictions in the sliding window, (4) handling of batch processing vs. true streaming. A practitioner wanting to deploy this in an autonomous system needs concrete guidance on these engineering aspects, which are completely absent.\n\n- Underdeveloped comparison to sequential tests: The paper dismisses sequential hypothesis tests as inapplicable but never empirically validates this claim. A minimal experiment comparing against a sequential test like SPRT or the methods of Balsubramani and Ramdas (2015) on the same synthetic gradual shift scenarios would demonstrate the claimed limitation. The paper should show either (a) sequential tests fail under gradual shifts, or (b) quantify the performance gap. Without this, the positioning against sequential methods remains unsubstantiated.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Address the independence assumption issue by either providing a rigorous proof that holds for the online learning setting or modifying the theoretical claims to acknowledge the dependence structure\n\n- Include comparisons with state-of-the-art sequential change detection methods from the literature, not just batch variants\n\n- Provide computational complexity analysis and runtime comparisons to demonstrate practical feasibility\n\n- Conduct a thorough sensitivity analysis of the window size parameter and evaluate on more realistic gradual shift scenarios\n\n- Simplify or provide empirical validation of the false negative rate bound, or remove it if it cannot be made practically useful",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Contradiction between online training and test set reuse",
+          "quote": "it evaluates test accuracy using each new covariate before taking a gradient step; this strategy avoids constructing a held-out test set, which can reduce sample efficiency",
+          "explanation": "The claim that evaluating test accuracy before gradient steps \"avoids constructing a held-out test set\" is logically inconsistent. If each new covariate is used for both testing (accuracy evaluation) and training (gradient step), then the test set is not held out\u2014it's contaminated by training data. This violates the fundamental principle of classifier two-sample tests, which require independent test samples for valid statistical inference. The algorithm cannot simultaneously claim to avoid held-out test sets while using samples for both testing and training. This undermines the claimed statistical validity of the false positive rate bound.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Incorrect claim about binomial distribution",
+          "quote": "In particular, if the two samples are from the same distribution, then the accuracy should be $1/2$; otherwise, it should be $>1/2$. Since the test statistic follows a binomial distribution, we use the Clopper-Pearson interval *(Clopper and Pearson, 1934)* (an exact confidence interval for the unknown success probability of the Binomial distribution) to derive the cutoff.",
+          "explanation": "The claim that the test statistic follows a binomial distribution is incorrect in this sequential setting. The binomial distribution assumes independent and identically distributed trials, but in the proposed algorithm, the classifier parameters are updated online using stochastic gradient descent on each example before it's used for testing. This creates dependence between trials - the classifier at time t depends on all previous examples, violating the independence assumption required for a binomial distribution. The paper later relies on Lemma 1 to claim conditional independence, but this lemma is controversial and doesn't resolve the fundamental issue that the classifier's parameters evolve over time, creating temporal dependencies in the predictions. Rewrite \"Since the test statistic follows a binomial distribution\" as \"Since the test statistic approximates a binomial distribution under the assumption of conditional independence between predictions\" to accurately reflect the reliance on this questionable assumption.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "Contradiction about false positive rate guarantees",
+          "quote": "We prove that this strategy results in an unbiased estimate of the model accuracy; as a consequence, the finite-sample guarantees on the false positive rate provided by the sequential test continue to hold. In addition, we prove bounds on the false negative rate under mild conditions on the classifier (i.e., it achieves nontrivial accuracy distinguishing the two distributions).",
+          "explanation": "This statement contradicts the later clarification that \"the false positive rate bound only holds per-step, not uniformly across all steps.\" The initial claim suggests that finite-sample guarantees continue to hold, implying uniform control, but the later text explicitly states this is not the case. The unbiased accuracy estimate alone doesn't guarantee finite-sample false positive control in the sequential setting - that requires additional assumptions about the dependence structure. The text should be corrected to state: \"We prove that this strategy results in an unbiased estimate of the model accuracy; as a consequence, the per-step false positive rate bound holds at each individual time step.\"",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Mischaracterization of sequential test applicability",
+          "quote": "However, as discussed above, they assume that the each distribution of the two samples does not change over time. In contrast, we are interested in the setting where the test examples might initially be from the same distribution as the training examples, but then shift at a later point in time. Sequential tests are not applicable to this setting.",
+          "explanation": "This claim mischaracterizes the capabilities of sequential hypothesis testing methods. The cited works (Balsubramani and Ramdas 2015; Lh\u00e9ritier and Cazals 2018, 2019; Manole and Ramdas 2021) actually address change detection scenarios where distributions can shift over time. For example, Manole and Ramdas (2021) explicitly consider settings where the alternative hypothesis involves a change point occurring at an unknown time. The paper should either correct this claim or provide specific citations showing that sequential tests cannot handle delayed shifts.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Undefined true labels in empirical accuracy formula",
+          "quote": "$\\hat{\\mu}_{w,t}=\\frac{1}{2w}\\sum_{i=t-w+1}^{t}\\left(\\mathbbm{1}\\left(\\hat{y}_{i}=y_{i}\\right)+\\mathbbm{1}\\left(\\hat{y}_{i}^{\\prime}=y_{i}^{\\prime}\\right)\\right).$",
+          "explanation": "The formula uses undefined true labels $y_i$ and $y_i'$. In the source-target classification task, true labels are known by construction: source samples have label 0 and target samples have label 1. The correct empirical accuracy should compare predictions against these known labels.\n\nRewrite $\\hat{\\mu}_{w,t}=\\frac{1}{2w}\\sum_{i=t-w+1}^{t}\\left(\\mathbbm{1}\\left(\\hat{y}_{i}=y_{i}\\right)+\\mathbbm{1}\\left(\\hat{y}_{i}^{\\prime}=y_{i}^{\\prime}\\right)\\right)$ as $\\hat{\\mu}_{w,t}=\\frac{1}{2w}\\sum_{i=t-w+1}^{t}\\left(\\mathbbm{1}\\left(\\hat{y}_{i}=0\\right)+\\mathbbm{1}\\left(\\hat{y}_{i}^{\\prime}=1\\right)\\right)$ because the true labels are fixed by construction in the source-target classification problem.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "FPR bound violation in GI-shift scenario",
+          "quote": "For FPR, all algorithms always satisfy the FPR bound (i.e.,  $\\mathrm{FPR} \\leq \\alpha$ ).",
+          "explanation": "This claim is contradicted by the data in Table 2b. In the GI-shift scenario at time 200, the Ours algorithm shows FPR = 0.83%, which exceeds the \u03b1 = 1% bound. Similarly, H5 shows FPR = 0.85% at time 200. The statement that 'all algorithms always satisfy the FPR bound' is therefore false. The authors should either correct this claim to acknowledge the violations or explain why these exceedances are acceptable within their framework.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Undefined notation in probability statement",
+          "quote": "$\\mathbbm{P}_{S_{w,t}\\sim\\mathcal{S}^{w},T_{w,t}\\sim\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha.$",
+          "explanation": "The first-pass reviewer correctly notes that $\\mathcal{T}_{t-w+1:t}$ is not defined as a single distribution. Earlier, $\\mathcal{T}_{t_{1}:t_{2}}$ was defined as a sequence of distributions $(\\mathcal{T}_{t_{1}},\\mathcal{T}_{t_{1}+1},\\ldots,\\mathcal{T}_{t_{2}})$, not as a product measure. The probability statement incorrectly treats this sequence as a single distribution. Add the definition \"$\\mathcal{T}_{t-w+1:t} = \\prod_{k=t-w+1}^{t}\\mathcal{T}_{k}$ denotes the product measure over the window of distributions\" before the probability statement.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Missing window initialization condition",
+          "quote": "In fact, $2w\\hat{\\mu}_{w,t}$ is a Binomial random variable with Binomial$(2w,\\mu_{w,t}^{*})$; thus, the accuracy $\\mu_{w,t}^{*}$ can be estimated by the Clopper-Pearson (CP) interval $\\Theta_{\\text{CP}}(2w\\hat{\\mu}_{w,t},2w;\\alpha)$",
+          "explanation": "The binomial assumption and CP interval require $t \\geq w$ to have $2w$ samples, but the algorithm doesn't specify behavior for $t < w$. For early time steps, the window contains fewer than $w$ samples, making the binomial parameter $2w$ incorrect.\n\nAdd \"For $t < w$, we use all available samples up to time $t$, replacing $2w$ with $2t$ in the binomial distribution and CP interval calculation\" after the CP interval definition to handle the initialization phase.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Undefined \"correctness\" in theoretical claim",
+          "quote": "We prove that this optimization preserves the correctness\u2014i.e., our algorithm achieves a desired bound on the false positive rate.",
+          "explanation": "The term \"correctness\" is undefined and then equated solely with false positive rate control. This is insufficient because statistical test correctness requires both type I error control (false positives) AND type II error control (false negatives/detection power). By defining correctness only in terms of false positive rate, the paper makes an incomplete theoretical claim. The abstract should state \"preserves false positive rate control\" rather than the broader undefined term \"correctness\".",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Missing batch size effect on Wald test",
+          "quote": "That is, we wait for  $B$  samples to be collected from the target distribution before checking for covariate shift and the updating the source-target classifier; then, we begin collecting the next batch.",
+          "explanation": "The batching mechanism creates a fundamental problem for the Wald test baseline. Wald's SPRT is designed for sequential observation where each sample can trigger an immediate decision. With batch size $B=10$, the Wald test can only make decisions after observing 10 samples, which changes its statistical properties entirely. The sequential nature is lost, and the false positive rate bound no longer holds as stated. The paper needs to clarify whether the Wald test is applied to each batch (treating the batch as 10 independent Bernoulli trials) or if it somehow maintains true sequential behavior. If applied per batch, the test statistic and decision thresholds must be adjusted for the grouped observation structure. Add a sentence explaining: \"For the Wald test, we apply the SPRT to each batch of $B=10$ samples, treating the batch sum as a Binomial($B,p$) random variable with appropriately adjusted likelihood ratio thresholds.\"",
+          "comment_type": "technical",
+          "paragraph_index": 55,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__glm-4.6_10",
+          "title": "Inconsistent target distribution notation",
+          "quote": "$\\mathcal{Q}_{w,t}(x,y)\\!=\\!\\frac{1}{2}\\cdot\\mathcal{S}(x)\\cdot\\mathbbm{1}(y=0)+\\frac{1}{2}\\cdot\\tilde{\\mathcal{T}}_{w,t}(x)\\cdot\\mathbbm{1}(y=1).$",
+          "explanation": "The notation $\\tilde{\\mathcal{T}}_{w,t}$ appears without definition and differs from $\\mathcal{T}_{w,t}$ used in Section 3.1. This creates ambiguity about whether it represents a different distribution.\n\nReplace $\\tilde{\\mathcal{T}}_{w,t}$ with $\\mathcal{T}_{w,t}$ to maintain consistency with the notation established in Section 3.1 and used throughout the paper.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__glm-4.6_11",
+          "title": "Undefined average distribution notation",
+          "quote": "More precisely, we want to determine whether $\\mathcal{S}\\neq\\bar{\\mathcal{T}}_{w,t}$, where $\\bar{\\mathcal{T}}_{w,t}=\\sum_{k=t-w+1}^{t}\\mathcal{T}_{k}/w$",
+          "explanation": "The notation $\\bar{\\mathcal{T}}_{w,t}=\\sum_{k=t-w+1}^{t}\\mathcal{T}_{k}/w$ is not mathematically rigorous. The sum of probability distributions divided by $w$ needs clarification - this could mean either a mixture distribution or an average of density functions. Define $\\bar{\\mathcal{T}}_{w,t}$ explicitly as the mixture distribution: \"$\\bar{\\mathcal{T}}_{w,t}$ is the mixture distribution with density $p_{\\bar{\\mathcal{T}}_{w,t}}(x) = \\frac{1}{w}\\sum_{k=t-w+1}^{t} p_{\\mathcal{T}_{k}}(x)$\".",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__glm-4.6_12",
+          "title": "Missing definition of uniform distribution over training set",
+          "quote": "$t_{2}$. On time step $t$, we consider samples $x_{t}\\sim\\mathcal{S}$ and $x_{t}^{\\prime}\\sim\\mathcal{T}_{t}$; in practice, $\\mathcal{S}$ can be taken to be the uniform distribution over the training set. We let",
+          "explanation": "The first-pass reviewer correctly identifies that the uniform distribution over the training set lacks a formal definition. For theoretical analysis, this should be explicitly defined. Add the sentence: \"For a finite training set $\\{x_{i}\\}_{i=1}^{n}$, the uniform distribution is defined as $\\mathcal{S} = \\frac{1}{n}\\sum_{i=1}^{n}\\delta_{x_{i}}$ where $\\delta_{x}$ is the Dirac measure at $x$.\" after the mention of uniform distribution.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__glm-4.6_13",
+          "title": "Algorithm 1 uses undefined notation",
+          "quote": "Detect covariate shift if $0.5 \\notin \\Theta_{\\mathrm{CP}}(2w\\hat{\\mu}_{w,t}, 2w; \\alpha)$ (\u25b7) Calibrated covariate shift detection",
+          "explanation": "The notation $\\hat{\\mu}_{w,t}$ appears in Algorithm 1 step 5 without definition. While the text mentions that accuracy is the mean of Bernoulli random variables, the specific empirical estimator used in the algorithm is not defined. Add \"$\\hat{\\mu}_{w,t}$ = empirical accuracy of $\\hat{g}_t$ on the $2w$ predictions in current window\" before step 5 in Algorithm 1.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__glm-4.6_14",
+          "title": "Missing justification for 2w factor in Algorithm 1",
+          "quote": "Detect covariate shift if $0.5 \\notin \\Theta_{\\mathrm{CP}}(2w\\hat{\\mu}_{w,t}, 2w; \\alpha)$ (\u25b7) Calibrated covariate shift detection",
+          "explanation": "The factor $2w$ in the CP interval parameters is not explained in the algorithm. Since the algorithm processes $w$ examples from source $S$ and $w$ examples from target $T_{w,t}$ at each step, there are $2w$ total predictions. Add \"(\u25b7 where $2w$ is total predictions: $w$ from source $S$ and $w$ from target $T_{w,t}$)\" after step 5 to clarify this connection.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__glm-4.6_15",
+          "title": "Undefined test function notation",
+          "quote": "\\[ \\hat{f}(S_{w,t},T_{w,t})\\approx\\begin{cases}1&\\text{if }\\mathcal{S}\\neq\\bar{\\mathcal{T}}_{w,t}\\\\\n0&\\text{otherwise.}\\end{cases} \\]",
+          "explanation": "The test function $\\hat{f}$ is introduced without defining its output space or the meaning of the approximation symbol. The function appears to output binary values (0 or 1), but the approximation symbol $\\approx$ is ambiguous for a discrete output. Clarify whether $\\hat{f}: \\mathcal{X}^w \\times \\mathcal{X}^w \\to \\{0,1\\}$ and replace $\\approx$ with \"=\" since the test is deterministic given the samples and threshold $\\alpha$.",
+          "comment_type": "technical",
+          "paragraph_index": 4,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__glm-4.6_16",
+          "title": "Inconsistent notation in CP interval definition",
+          "quote": "Then, the CP interval  $\\Theta_{\\mathrm{CP}}(s, n; \\alpha) \\subseteq [0, 1]$  is an interval around  $\\hat{\\mu}$  containing  $\\mu^*$  with probability at least  $1 - \\alpha$ , i.e.",
+          "explanation": "The CP interval is defined as a function of $s$ (the count) but described as \"an interval around $\\hat{\\mu}$\". Since $\\hat{\\mu} = s/n$ is derived from $s$, this creates notational inconsistency. Rewrite as \"the CP interval $\\Theta_{\\mathrm{CP}}(s, n; \\alpha)$ is an interval around the empirical mean $\\hat{\\mu} = s/n$\" to clarify the relationship between the function parameters and the interval center.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__glm-4.6_17",
+          "title": "Inconsistent notation in Theorem 3",
+          "quote": "If $\\mathcal{S}=\\tilde{\\mathcal{T}}_{w,t}$, then for any $\\hat{g}_{t}$, we have\n\n$\\mathbb{P}_{(S_{w,t},T_{w,t})\\sim\\mathcal{S}^{w}\\times\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha.$ (2)",
+          "explanation": "The theorem hypothesis states $\\mathcal{S}=\\tilde{\\mathcal{T}}_{w,t}$, but the probability measure uses $\\mathcal{S}^{w}\\times\\mathcal{T}_{t-w+1:t}$. Under the hypothesis, $\\mathcal{T}_{t-w+1:t}$ should equal $\\mathcal{S}$, making the product measure $\\mathcal{S}^{w}\\times\\mathcal{S}$. The current notation creates a contradiction between the hypothesis and the probability space. Rewrite the theorem as: \"If $\\mathcal{S}=\\mathcal{T}_{w,t}$, then for any $\\hat{g}_{t}$, we have $\\mathbb{P}_{(S_{w,t},T_{w,t})\\sim\\mathcal{S}^{w}\\times\\mathcal{S}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha$\" to maintain consistency between the hypothesis and the probability measure.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__glm-4.6_18",
+          "title": "Undefined notation in Theorem 5",
+          "quote": "$\\mathbb{P}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=1\\right]\\geq F\\left(2w-\\lfloor a(w,\\alpha)+1\\rfloor;2w,\\frac{1}{2}-\\epsilon\\right)+F\\Big{(}\\lceil b(w,\\alpha)-1\\rceil;2w,1\\Big{)}.$ (3)",
+          "explanation": "The second term uses $F(\\lceil b(w,\\alpha)-1\\rceil;2w,1)$ with $p=1$. For a binomial CDF, $p=1$ creates a degenerate distribution where $F(s;n,1)=0$ for $s<n$ and $F(s;n,1)=1$ for $s\\geq n$. This makes the term either 0 or 1 depending on the ceiling function, which doesn't align with the intended bound behavior. The parameter should be $\\frac{1}{2}+\\epsilon$ to maintain symmetry with the first term. Rewrite as: $F\\left(2w-\\lfloor a(w,\\alpha)+1\\rfloor;2w,\\frac{1}{2}-\\epsilon\\right)+F\\Big{(}\\lceil b(w,\\alpha)-1\\rceil;2w,\\frac{1}{2}+\\epsilon\\Big{)}$",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__glm-4.6_19",
+          "title": "Incorrect condition derivation in Theorem 5",
+          "quote": "the condition on $w$ suggests that the bound is valid when $w\\geq 201$ given $\\alpha=0.01$",
+          "explanation": "The condition $w-1-\\lfloor\\sqrt{w\\log(2/\\alpha)}\\rfloor\\geq 0$ with $\\alpha=0.01$ gives $\\log(2/\\alpha)=\\log(200)\\approx5.3$. Testing values: $w=20$ gives $20-1-\\lfloor\\sqrt{106}\\rfloor=20-1-10=9\\geq0$, $w=10$ gives $10-1-\\lfloor\\sqrt{53}\\rfloor=10-1-7=2\\geq0$, but $w=5$ gives $5-1-\\lfloor\\sqrt{26.5}\\rfloor=5-1-5=-1<0$. The minimal $w$ is actually 10, not 201. Remove the specific claim about $w\\geq201$ or provide the correct minimal $w$ value.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__glm-4.6_20",
+          "title": "Missing Wald test detection results",
+          "quote": "Table 3a shows the number of target samples required by each algorithm to detect the first covariate shift in the detection rate of at least  $80\\%$ .",
+          "explanation": "Table 3a shows \"-\" entries for the Wald algorithm across all scenarios and perturbation types, indicating no detection results are reported. However, the text describes this as showing results for \"each algorithm\" and the Wald algorithm is included in the FPR table. This creates an inconsistency - if Wald can compute FPR, it should also be able to detect shifts. Either the Wald detection results should be reported, or the text should explain why Wald failed to detect shifts in these scenarios while still computing FPR values.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__glm-4.6_21",
+          "title": "Ambiguous shift probability interpretation",
+          "quote": "after observing  $25\\%$  target samples (i.e.,  $250^{th}$  samples for natural shift experiments and  $2500^{th}$  samples for synthetic shift experiments), covariate shift is applied to all target samples (with probability 1) by adding random perturbations for synthetic shift and by drawing samples from a target distribution for natural shift;",
+          "explanation": "The description of shift application is confusing and potentially inconsistent. It says \"covariate shift is applied to all target samples (with probability 1)\" but then mentions two different mechanisms: \"adding random perturbations for synthetic shift and by drawing samples from a target distribution for natural shift.\" The phrase \"with probability 1\" is redundant if shift is applied to ALL samples. More importantly, Table 1 shows probabilities less than 1 for gradual shifts, but the text doesn't explain how these probabilities relate to the sampling mechanisms. Clarify whether: (1) each sample independently has probability p of being shifted, or (2) exactly p proportion of samples in that window are shifted. Rewrite as: \"covariate shift is applied to all target samples by either adding random perturbations (synthetic shift) or drawing from the target distribution (natural shift). For gradual shifts, each sample independently experiences covariate shift with probability p as specified in Table 1.\"",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__glm-4.6_22",
+          "title": "Overstated false positive rate guarantee",
+          "quote": "We prove that even with this optimization, our approach provides finite sample guarantees on the false positive rate at a desired level",
+          "explanation": "This claim overstates the theoretical guarantee. Theorem 3 only provides a false positive rate bound for a single step t, not uniformly across all steps in the sequential setting. As acknowledged in Section 1, the false positive rate bound only holds per-step, not uniformly across all steps, which is a significant limitation for sequential detection applications.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 23
+        },
+        {
+          "id": "coarse__glm-4.6_23",
+          "title": "Mischaracterized false negative rate conditions",
+          "quote": "we also prove bounds on the false negative rate under a mild conditions on the trained classifier",
+          "explanation": "The conditions for the false negative rate bound in Theorem 5 are not mild. The bound requires w \u2265 201 for \u03b1 = 0.01 and assumes the classifier achieves accuracy \u2265 1/2 + \u03b5, which may be difficult to satisfy in high-dimensional settings with limited samples. These are restrictive practical limitations that should be acknowledged rather than described as mild conditions.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 24
+        },
+        {
+          "id": "coarse__glm-4.6_24",
+          "title": "Unsubstantiated sample efficiency claim",
+          "quote": "Our approach ensures sample efficiency by avoiding the need to split the dataset into a training set and a held-out test set, and instead using all the data to both train the source-target discriminator and to evaluate its accuracy",
+          "explanation": "This claim of sample efficiency is not theoretically substantiated. While the method uses all data for both training and testing, the theoretical analysis does not establish that this leads to better detection performance or requires fewer samples than alternative approaches. The empirical comparison is only against a held-out baseline, not against methods that might also use data efficiently.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 25
+        }
+      ],
+      "cost_usd": 0.1476,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "The paper proposes an online variant of the Classifier Two-Sample Test (C2ST) for detecting covariate shift in streaming data. By updating a binary discriminator online and evaluating its accuracy on incoming samples before performing gradient updates, the authors claim to maintain valid false positive rate control via Clopper-Pearson intervals without requiring a separate held-out test set.\n\nThe paper presents a clever and computationally efficient approach to sequential covariate shift detection that addresses common sample-efficiency bottlenecks. While the theoretical framework for validity is interesting, the reliance on the assumption that the classifier's accuracy remains a valid Bernoulli parameter in a non-stationary online setting requires more rigorous justification. The empirical results on ImageNet are compelling, though the scope of the shift types tested could be broader.\n\nOverview issues:\n\n- Independence of Sequential Predictions: Lemma 1 claims that predictions $\\hat{y}_i$ are conditionally independent given the history of the classifier. However, in an online learning setting where the classifier $\\hat{g}_t$ is updated at every step $t$ using the most recent samples, the classifier parameters are deterministic functions of the entire history of samples. This creates a dependency structure that likely violates the i.i.d. assumption required for the Clopper-Pearson interval to strictly hold as an exact confidence interval. The authors should clarify if the 'conditional independence' refers to the randomness of the labels or the model parameters, and provide a simulation or theoretical argument showing that the coverage probability of the CP interval does not degrade under the drift scenarios considered.\n\n- Sensitivity to Classifier Architecture and Hyperparameters: The detection power of the proposed method is inherently tied to the expressivity and training dynamics of the source-target classifier $\\hat{g}_t$. The paper assumes that an optimal or near-optimal classifier exists, but in a streaming setting, the model might suffer from catastrophic forgetting or slow adaptation if the learning rate is poorly tuned. There is no discussion on how the choice of architecture (e.g., the 128-unit MLP) or the learning rate interacts with the detection delay. A sensitivity analysis regarding the learning rate or model capacity would strengthen the claim that the detector is robust across different types of covariate shifts.\n\n- Distinction Between Covariate and Concept Shift: The introduction correctly identifies the focus on covariate shift ($p(x)$ changes, $p(y|x)$ constant), but the detection mechanism relies on a binary classifier distinguishing source from target. If a concept shift occurs\u2014where the relationship between features and labels changes\u2014the discriminator will likely also learn to distinguish the distributions, triggering a false alarm for covariate shift. The paper lacks a discussion on how to interpret a positive detection result or how the method behaves when both covariate and concept shifts are present. Adding a synthetic experiment where $p(y|x)$ is intentionally perturbed would help characterize the detector's specificity.\n\n- Theoretical Bounds for Non-Stationary Streams: Theorem 3 provides a false positive rate bound under the assumption $\\mathcal{S} = \\tilde{\\mathcal{T}}_{w,t}$. However, in a streaming context where the shift is gradual (as in the GI-shift scenario), the distribution $\\tilde{\\mathcal{T}}_{w,t}$ is a mixture of distributions that may be changing at every time step. The theoretical derivation does not explicitly account for the bias introduced by the sliding window averaging over a non-stationary target distribution. It would improve the paper to explicitly state the conditions under which the CP interval remains valid when the target distribution is not constant within the window $w$.\n\n- Lack of empirical validation for false positive rate under non-stationary streams: The paper relies on Theorem 3 to guarantee the false positive rate, but this theorem assumes the target distribution is stationary within the window w. In the gradual shift scenarios, the target distribution is changing at every time step, meaning the window average is a mixture of distinct distributions. The paper needs a simulation or a theoretical bound that evaluates the false positive rate when the target distribution is non-stationary within the sliding window, as this is the primary setting where the algorithm is intended to operate.\n\n- Missing analysis of the detector specificity to covariate shift versus concept drift: The methodology uses a binary classifier to distinguish between source and target covariates, but it does not formally address the behavior when concept drift (p(y|x) changes) is present. Because the classifier is trained to distinguish source from target, it will likely flag concept drift as a covariate shift, leading to false positives regarding the nature of the shift. A controlled synthetic experiment\u2014where p(y|x) is perturbed while keeping p(x) constant\u2014is necessary to demonstrate whether the detector can distinguish between these two types of distribution changes.\n\n- Absence of sensitivity analysis for the window size parameter: The detection performance and the validity of the Clopper-Pearson interval are highly dependent on the window size w. The paper uses w=10 throughout the experiments but does not provide a sensitivity analysis showing how varying w affects the trade-off between detection delay and the false positive rate. Adding a plot or table showing the detection delay and empirical FPR for different values of w, such as 5, 20, and 50, would provide the necessary guidance for practitioners to configure the algorithm for different streaming environments.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Clarify the validity of the Clopper-Pearson interval in the online setting by addressing the dependency of the classifier $\\hat{g}_t$ on previous samples.\n\n- Include a sensitivity analysis of the detection delay with respect to the learning rate and model capacity of the source-target classifier.\n\n- Add a discussion or experiment distinguishing the detector's response to pure covariate shift versus concept drift.\n\n- Provide a more robust theoretical justification for the false positive rate bound when the target distribution is non-stationary within the sliding window.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Invalid i.i.d. assumption for Clopper-Pearson interval",
+          "quote": "In fact, $2w\\hat{\\mu}_{w,t}$ is a Binomial random variable with Binomial$(2w,\\mu_{w,t}^{*})$; thus, the accuracy $\\mu_{w,t}^{*}$ can be estimated by the Clopper-Pearson (CP) interval",
+          "explanation": "The Clopper-Pearson interval assumes that the underlying random variables are i.i.d. Bernoulli trials. However, because the classifier $\\hat{g}_t$ is updated at every step $t$ based on the history of samples, the indicators $\\mathbb{1}(\\hat{g}_i(x_i)=y_i)$ are neither identically distributed nor independent. The sum of these variables follows a Poisson binomial distribution rather than a Binomial distribution. Consequently, the standard Clopper-Pearson interval does not provide the claimed coverage guarantee. Please either provide a proof that the sequence of indicators is exchangeable or acknowledge that the interval is an approximation.",
+          "comment_type": "technical",
+          "paragraph_index": 34,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Contradictory claims regarding sequential test usage",
+          "quote": "Sequential detection vs. sequential tests. While we consider the sequential setting, we deliberately choose not use a sequential hypothesis test, since the covariate shift may occur after a delay or gradually over time. A sequential test only applies if all of the test data is shifted.",
+          "explanation": "The claim that sequential hypothesis tests only apply if 'all of the test data is shifted' is incorrect. Methods such as the Sequential Probability Ratio Test (SPRT) or CUSUM are specifically designed to detect changes in distribution at unknown time points, including gradual or delayed shifts. By stating that sequential tests are inapplicable, the paper mischaracterizes the field. Please revise this justification to clarify that your choice of a per-step bound is a design preference rather than a limitation of sequential testing methodology.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Look-ahead bias in online evaluation",
+          "quote": "Furthermore, it evaluates test accuracy using each new covariate before taking a gradient step; this strategy avoids constructing a held-out test set, which can reduce sample efficiency.",
+          "explanation": "Evaluating accuracy on the same sample used for a gradient update introduces look-ahead bias. Standard classifier-based two-sample tests rely on accuracy on a held-out set to ensure the test statistic is independent of the training process. Using the same sample for both evaluation and the gradient step means the classifier is effectively overfitting to the specific sample being evaluated, which invalidates the i.i.d. assumptions required for the Clopper-Pearson interval. Please clarify how the proof accounts for this bias or acknowledge that this is an approximation.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Unjustified assumption of nontrivial accuracy in Theorem 5",
+          "quote": "Assume $\\hat{g}_{t}$ achieves nontrivial accuracy, *i.e.*, $\\mu_{w,t}^{*}\\geq 1/2+\\epsilon$, where $\\epsilon\\in(0,1/2]$, is the accuracy at distinguishing $\\mathcal{S}$ and $\\tilde{\\mathcal{T}}_{w,t}$.",
+          "explanation": "Theorem 5 assumes $\\mu_{w,t}^* \\geq 1/2 + \\epsilon$ as a premise, but the justification relies on the VC dimension of the model family $\\mathcal{G}$ to guarantee this. In an online setting where $\\hat{g}_t$ is updated incrementally, convergence to the optimal classifier in $\\mathcal{G}$ is not guaranteed without specific assumptions on the learning rate or loss function. Please add a condition specifying that the online learning algorithm is a consistent estimator of the optimal classifier to justify the use of the VC bound.",
+          "comment_type": "technical",
+          "paragraph_index": 44,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Notation for false positive rate bound",
+          "quote": "te. In particular, given $\\alpha\\in\\mathbb{R}_{>0}$, if $\\mathcal{S}=\\bar{\\mathcal{T}}_{w,t}$, we want to ensure\n\n$\\mathbbm{P}_{S_{w,t}\\sim\\mathcal{S}^{w},T_{w,t}\\sim\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha.$\n\nIdeal",
+          "explanation": "While this expression is mathematically equivalent to the standard definition of a false positive rate, it is presented in a non-standard way. The test $\\hat{f}$ is defined such that $\\hat{f}=1$ indicates a rejection of the null hypothesis. A false positive occurs when the test rejects the null hypothesis even though it is true. To align with standard statistical practice, rewrite the inequality as $\\mathbb{P}_{S_{w,t}\\sim\\mathcal{S}^{w},T_{w,t}\\sim\\mathcal{T}_{t-w+1:t}}[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=1] \\leq \\alpha$.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Ambiguity in target distribution sequence notation",
+          "quote": "We let $S_{w,t}=(x_{t-w+1},x_{t-w+2},\\ldots,x_{t})$ and $T_{w,t}=(x_{t-w+1}^{\\prime},x_{t-w+2}^{\\prime},\\ldots,x_{t}^{\\prime})$ denote the recent examples in a time window of a given size $w\\in\\mathbb{N}$.",
+          "explanation": "The definition of $T_{w,t}$ as a sequence of samples is clear, but the null hypothesis $H_0: \\mathcal{S} = \\bar{\\mathcal{T}}_{w,t}$ uses the average distribution. It is not explicitly stated whether the samples $x_k^{\\prime}$ in $T_{w,t}$ are drawn from the individual distributions $\\mathcal{T}_k$ or from the mixture distribution $\\bar{\\mathcal{T}}_{w,t}$. Please clarify by adding a sentence specifying that each $x_k^{\\prime}$ is drawn independently from $\\mathcal{T}_k$ for $k \\in \\{t-w+1, \\dots, t\\}$.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.106,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes an online covariate shift detector that evaluates a source-target classifier's accuracy on each new sample before updating it, then applies a Clopper-Pearson interval to the windowed accuracy. While the idea of avoiding held-out splits is appealing, the theoretical justification for applying a fixed-distribution confidence interval to a sliding window with a changing classifier is flawed. The experimental reporting also conflates per-step and cumulative error rates, obscuring the true false alarm behavior in a sequential setting.\n\nThe paper tackles a relevant problem in streaming machine learning by adapting classifier two-sample tests to an online setting. The core idea of using pre-update accuracy estimates to save samples is intuitive, and the empirical comparisons show clear efficiency gains over held-out baselines. However, the theoretical guarantees rest on assumptions that do not hold under the proposed algorithm, and the experimental evaluation does not properly account for sequential multiple testing.\n\nOverview issues:\n\n- Theoretical mismatch between sliding window evaluation and fixed-parameter confidence intervals: Theorem 3 and the Clopper-Pearson interval in Section 4 assume a fixed classifier evaluated on a fixed distribution, yielding i.i.d. Bernoulli trials. The algorithm, however, evaluates a sequence of classifiers $\\hat{g}_{t-w+1}, \\dots, \\hat{g}_t$ across the window. Because the classifier parameters change at each step, the true accuracy parameter $\\mu^*$ drifts over time. Applying a static binomial confidence interval to a non-stationary sequence of predictions invalidates the finite-sample FPR guarantee. Readers will wonder how the bound holds when the underlying Bernoulli mean is not constant. To fix this, the authors should either derive bounds for a drifting parameter (e.g., using martingale concentration inequalities) or restrict the theory to a fixed classifier evaluated on a fixed subset of the window, explicitly acknowledging the resulting sample efficiency trade-off.\n\n- Conflation of per-step and cumulative false positive rates in evaluation: Section 1 explicitly states that the FPR bound only holds per-step, not uniformly across time. Yet Tables 2b and 3b report the fraction of runs that triggered at least one false alarm up to time $t$, which is a cumulative metric. Because no alpha-spending or sequential correction is applied, this cumulative rate naturally grows toward 1 as $t$ increases. The text claims all algorithms satisfy the FPR bound, but the tables show rates approaching or slightly exceeding $\\alpha = 1\\%$ at later time steps, directly contradicting the per-step guarantee. This matters because practitioners care about the long-run false alarm rate, not just the instantaneous rate. The revision should clearly separate per-step and cumulative FPR in reporting, and either adopt a sequential testing framework to control family-wise error or explicitly discuss the accumulated false alarm risk.\n\n- Unsubstantiated claim of unbiased accuracy estimation via same-sample evaluation: The abstract and Section 3.2 claim that evaluating accuracy before taking a gradient step on the same sample yields an unbiased estimate. In stochastic optimization, computing a loss or accuracy on a sample and then updating the model using that same sample introduces a correlation between the evaluation and the update. For non-convex losses like cross-entropy on neural networks, this typically produces an optimistic bias, especially when the learning rate is not decoupled from the evaluation step. Lemma 1 only establishes conditional independence, which does not eliminate bias. Without a rigorous derivation showing the bias is bounded or vanishes asymptotically, the theoretical foundation remains shaky. The authors should provide a formal bias analysis or switch to a strictly held-out sample within the window for accuracy computation, even if it reduces sample efficiency.\n\n- Lack of analysis on classifier capacity requirements and feature quality: The false negative bound in Theorem 5 depends critically on $\\epsilon$, the margin by which the classifier exceeds chance accuracy. The paper assumes the model family achieves this margin under standard conditions but provides no empirical or theoretical justification for why a single-hidden-layer FC network on 2048D ResNet features will reliably achieve $\\epsilon > 0$ in high-dimensional streaming settings. Classifier two-sample tests are known to lose power when the discriminator is weak or the feature extractor fails to separate distributions. This omission limits the practical reliability of the detector. The revision should include an ablation study varying classifier depth, width, and feature extractors, and explicitly state the minimum $\\epsilon$ required for practical window sizes.\n\n- Unaddressed confounding with concept shift: The detector triggers on any distributional difference in $x$, making it impossible to distinguish covariate shift from concept shift ($p(y|x)$ changes). In real-world streams, concept shift frequently co-occurs with or mimics covariate shift, yet the paper provides no experiments or discussion on how the detector behaves under concept shift. This is a critical omission for a method intended for deployment. The authors should at least add a theoretical discussion on the confounding effect and include experiments showing detector responses when $p(y|x)$ changes. Alternatively, they could incorporate prediction errors or calibrated probabilities to decouple the two shift types, or explicitly frame the method as a general distribution change detector rather than a covariate shift detector.\n\n- Theoretical bounds lack a worked special case for calibration: The paper derives finite-sample bounds on the false positive and false negative rates but never computes them for a concrete, fully-specified model. Readers cannot calibrate the required window size or the classifier accuracy margin without a worked example. Computing these bounds for a standard parametric model, such as a Gaussian source and target with a linear classifier, would show exactly how the bounds behave as dimensionality and shift magnitude change. This calculation would let practitioners understand when the detector is theoretically guaranteed to work versus when it relies on empirical luck. The authors should add a subsection computing the false negative bound for a 1D Gaussian shift and plot the required window size against the accuracy margin.\n\n- Missing discussion on classifier capacity requirements for the FNR bound: The false negative rate bound critically depends on the margin by which the classifier exceeds chance accuracy. The paper assumes the model family achieves this margin under standard conditions but provides no guidance on how to ensure it holds in high-dimensional streaming settings. A single-hidden-layer network on high-dimensional features may struggle to achieve a stable margin if the learning rate or network width is poorly chosen. The paper should include an ablation study varying classifier depth, width, and feature extractors to demonstrate how this margin scales with model capacity. Additionally, discussing how to estimate this margin online or set a minimum network size would make the theoretical guarantee practically actionable.\n\n- Missing verification that the method recovers batch C2ST: The paper claims to generalize classifier two-sample tests to the sequential setting, yet it never formally verifies that the proposed online statistic converges to the standard batch accuracy statistic when the stream is stationary and the window size grows. Without this verification, readers cannot confirm that the algorithm behaves correctly in the limit or that it truly extends prior work. The authors should add a theoretical or empirical section showing that the online accuracy estimate converges to the held-out accuracy used in Lopez-Paz and Oquab (2017) as the window size approaches infinity. This would ground the sequential method in established theory and clarify its relationship to existing approaches.\n\n- Underdeveloped discussion on downstream methodology and pipeline integration: The abstract and introduction claim that detecting distributional change allows the algorithm to alert users that predictions may be unreliable, but the paper stops short of discussing how this detection should be used in practice. There is no guidance on what happens after a shift is detected: should the model be retrained, should importance weights be updated, or should the system enter a safe mode. The paper treats detection as an end in itself rather than a component of a larger adaptive learning pipeline. The authors should add a discussion or experiment showing how the detector integrates with a downstream adaptation step, such as online importance weighting or domain adaptation, to demonstrate the practical utility of the detection signal.\n\nRecommendation: Major revision. The paper's core theoretical guarantee relies on applying a fixed-distribution confidence interval to a sequence of changing classifiers, which breaks the i.i.d. assumption required for the Clopper-Pearson bound. Additionally, the experimental evaluation conflates per-step and cumulative error rates, obscuring the true sequential false alarm behavior. These issues must be resolved before the paper can be considered for publication.\n\nRevision targets:\n\n- Restructure the theoretical analysis to account for the drifting classifier accuracy across the sliding window, either by deriving bounds for non-stationary Bernoulli sequences or by restricting the guarantee to a fixed classifier with a fixed evaluation set.\n\n- Separate per-step and cumulative false positive rate reporting in all tables and figures, and adopt a sequential testing framework (e.g., alpha-spending or martingale bounds) to control the long-run false alarm rate.\n\n- Provide a rigorous bias analysis for the same-sample accuracy evaluation, or replace it with a strictly held-out evaluation within the window to ensure theoretical validity.\n\n- Include an ablation study on classifier capacity and feature extractor quality, explicitly linking the required margin $\\epsilon$ to practical window sizes and detection power.\n\n- Add experiments or theoretical discussion on the detector's behavior under concept shift, clarifying whether the method detects covariate shift specifically or any distributional change.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Theorem 5 window size threshold contradicts algebraic condition",
+          "quote": "the condition on $w$ suggests that the bound is valid when $w\\geq 201$ given $\\alpha=0.01$.",
+          "explanation": "The numerical threshold $w \\ge 201$ directly contradicts the algebraic condition $w - 1 - \\lfloor \\sqrt{w \\log(2/\\alpha)} \\rfloor \\ge 0$ stated in Theorem 5. Substituting $\\alpha=0.01$ yields $\\log(200) \\approx 5.298$. Solving $w - 1 \\ge \\sqrt{5.298w}$ gives $w^2 - 7.298w + 1 \\ge 0$, which holds for $w \\ge 7.16$ (i.e., $w \\ge 8$). The stated value of 201 is mathematically inconsistent with the provided inequality. The authors likely miscalculated the root or conflated this condition with a sample size requirement for the subsequent VC-dimension bound. Add the correct derivation showing that $w \\ge 8$ satisfies the condition, or clarify if the $w \\ge 201$ threshold refers to a different constraint.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Theorem 5 second term in probability bound is identically zero",
+          "quote": "F\\Big{(}\\lceil b(w,\\alpha)-1\\rceil;2w,1\\Big{)}",
+          "explanation": "The second term in the false negative bound, $F(\\lceil b(w,\\alpha)-1 \\rceil; 2w, 1)$, evaluates the CDF of a $\\text{Binomial}(2w, 1)$ distribution. Since a Binomial distribution with success probability $p=1$ is degenerate at $2w$, its CDF $F(k; 2w, 1)$ equals 1 if $k \\ge 2w$ and 0 otherwise. Given $b(w,\\alpha) = w - \\sqrt{w \\log(2/\\alpha)} < w$, the argument $\\lceil b(w,\\alpha)-1 \\rceil$ is strictly less than $2w$. Thus, this term is identically zero for all valid $w$ and $\\alpha$, rendering it redundant in the bound. It is highly likely that the success probability was intended to be $1/2+\\epsilon$ (matching the symmetric upper-tail analysis) or another value related to the classifier's accuracy under shift. Rewrite the second term as $F(\\lceil b(w,\\alpha)-1 \\rceil; 2w, 1/2+\\epsilon)$ to correctly capture the upper-tail probability of detection under covariate shift.",
+          "comment_type": "technical",
+          "paragraph_index": 43,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Two-sided CP interval contradicts one-sided detection goal",
+          "quote": "articular, our algorithm returns \u201ccovariate shift\u201d if $1/2\\not\\in\\Theta_{\\text{CP}}(2w\\hat{\\mu}_{w,t},2w;\\alpha)$, and \u201cno covariate shift\u201d otherwise, i.e.\n\n$",
+          "explanation": "The text explicitly states the objective is to detect nontrivial accuracy $> 1/2$, yet the rejection condition $0.5 \\notin \\Theta_{\\text{CP}}$ implements a two-sided test. A two-sided CP interval rejects when accuracy is significantly less than $1/2$ as well as significantly greater. While flipping labels maps $< 1/2$ to $> 1/2$, the CP interval is not symmetric around $1/2$ for finite sample sizes, meaning the two-sided test may reject in regions that do not correspond to the intended detection direction. The authors should either switch to a one-sided CP interval for $\\mu > 1/2$ or justify why the two-sided formulation is appropriate for their specific false positive rate control.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Mischaracterization of C2ST inference methodology",
+          "quote": "ute a real-valued score based on this classifier as the test statistic, and then use a univariate two-sample test to determine the cutoff for rejecting the null hypothesis *(Friedman, 2004)*. A",
+          "explanation": "This paragraph mischaracterizes the standard C2ST inference pipeline. Foundational works like Lopez-Paz and Oquab (2017) use classifier accuracy directly as the test statistic, relying on permutation tests or asymptotic normality around the 0.5 null to set the cutoff. They do not run a separate univariate two-sample test. Citing Friedman (2004) here conflates C2ST with unrelated procedures. Revise this paragraph to accurately reflect the permutation-based or asymptotic inference actually used in the literature.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        }
+      ],
+      "cost_usd": 0.2516,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper tackles an important problem\u2014sequential covariate shift detection\u2014and proposes a practical algorithm that extends classifier two-sample tests to the online setting. The core idea of using each test point for both evaluation and training is clever and has clear potential for sample efficiency gains. The theoretical analysis of false positive rate control is a strength, and the experimental results on ImageNet shifts are promising.\n\nOverview issues:\n\n- Lemma 1 is stated incorrectly and its proof is missing: Lemma 1 claims that predictions are conditionally independent given previous predictions, but this statement is tautological\u2014conditioning on a set of variables always makes them independent of each other. What the proof actually needs to show is that the predictions are independent of each other *and* of the model's training history in a way that preserves the Binomial distribution of the test statistic. The lemma as written does not establish this. Furthermore, the proof is relegated to Appendix A.1, which is not included in the provided text. Without a correct independence argument, the validity of the Clopper-Pearson interval is not justified. The authors should rewrite Lemma 1 to state the actual conditional independence property needed (e.g., that the predictions are independent given the current classifier parameters, or that the sequence of prediction errors forms a martingale difference sequence).\n\n- The false negative rate bound (Theorem 5) appears to contain an error: The expression for the false negative rate bound in Theorem 5 is suspicious. The second term involves $F(\\lceil b(w,\\alpha)-1\\rceil; 2w, 1)$, which is the CDF of a Binomial$(2w,1)$ distribution evaluated at some value. Since a Binomial$(n,1)$ distribution is degenerate at $n$, this CDF is 0 for any argument less than $2w$ and 1 for arguments $\u2265 2w$. Unless $\\lceil b(w,\\alpha)-1\\rceil \\geq 2w$, which is unlikely given that $b(w,\\alpha) < w$, this term is identically 0. This suggests the bound simplifies to just the first term, which may be correct but the presentation is misleading. Additionally, the bound depends on $1/2 - \\epsilon$ where $\\epsilon$ is the accuracy *advantage* over random, but the derivation seems to use $1/2 - \\epsilon$ as the success probability under the alternative, which would be *less* than 1/2\u2014this is the wrong direction. The authors should re-derive the bound carefully and correct the expression.\n\n- The algorithm does not actually test the hypothesis stated in the problem formulation: Section 3.1 defines the null hypothesis as $H_0: \\mathcal{S} = \\bar{\\mathcal{T}}_{w,t}$, i.e., the average of target distributions over the window equals the source distribution. However, the algorithm's detection rule (Step 2 in Section 3.3) tests whether the *classifier's accuracy* equals 1/2, which is a test of whether the *pooled* distribution over source and target samples is balanced\u2014not whether the two distributions are equal. While Lemma 2 states that if $\\mathcal{S} = \\bar{\\mathcal{T}}_{w,t}$ then accuracy is 1/2, the converse is false: accuracy could be 1/2 even when distributions differ (e.g., if the classifier is insufficiently expressive or poorly trained). The paper acknowledges this limitation for the false negative rate but does not address it for the false positive rate. The practical consequence is that the test may fail to detect shifts that are not linearly separable by the chosen classifier architecture. The authors should explicitly discuss this limitation and its implications for the method's reliability.\n\n- The baselines are weak and the comparison is unfair: The paper compares against two variants (H2, H5) that hold out every H-th sample for testing, and a Wald sequential test. The H2/H5 baselines are essentially the same algorithm but with a less efficient data-splitting strategy\u2014they are not independent baselines. A proper comparison would include: (a) a standard C2ST that trains on a fixed window and tests on a held-out set, (b) a kernel MMD-based sequential test, and (c) a simple moment-based detector (e.g., tracking running means and variances). The Wald baseline uses a fixed effect size $\\epsilon=0.2$, which is arbitrary and likely suboptimal. The paper claims superior sample efficiency, but this is largely by construction: the proposed method uses every sample for both training and testing, while the baselines discard samples for testing. A fair comparison would give the baselines the same total sample budget. The authors should either include stronger baselines or adjust the comparison to control for total sample usage.\n\n- The false positive rate is only controlled per-step, not over the sequence: The paper acknowledges that the FPR bound holds only per-step, not uniformly over time. However, in a sequential detection setting, the relevant error metric is the family-wise error rate (FWER) or the average run length to false alarm. With 1000 time steps and $\\alpha=0.01$, the expected number of false alarms is 10. The experimental results in Tables 2b and 3b show cumulative FPRs that grow with time (e.g., from 0.27% at step 50 to 0.77% at step 200 for M-shift), which is consistent with this concern. The paper should either (a) apply a Bonferroni or other multiple-testing correction to control FWER, or (b) explicitly characterize the expected false alarm rate over the full sequence and discuss whether it is acceptable for the intended applications. The current framing that the algorithm 'satisfies the desired false positive rate' is misleading.\n\n- The experimental setup has several methodological issues: First, the natural shift experiment uses different dog breeds as source and target, but this is a *label shift* (different classes) rather than a *covariate shift* (different images within the same classes). The paper claims to detect covariate shift, but the experimental design confounds covariate shift with label shift. Second, the synthetic shifts use perturbations on ImageNet images, but the classifier operates on 2048-dimensional ResNet features rather than raw pixels. This means the shift detection is actually testing whether the ResNet feature distributions differ, not whether the image distributions differ. The paper should clarify what is being tested and discuss whether the results generalize to raw-pixel settings. Third, the batch size $B=10$ means the algorithm only tests every 10 steps, which is not truly 'online' detection. The authors should justify this choice and discuss its impact on detection delay.\n\n- The theoretical guarantee on false negative rate requires conditions that are not verified in experiments: Theorem 5 requires that the classifier achieves accuracy at least $1/2 + \\epsilon$, and the subsequent VC-dimension argument requires that the optimal classifier in the family has non-trivial accuracy. In the experiments, the classifier is a single-hidden-layer neural network on 2048-dimensional features. There is no evidence that this architecture can distinguish the source and target distributions for the shifts considered. For the natural shift (different dog breeds), it is plausible that the classifier can achieve high accuracy, but for subtle synthetic perturbations (e.g., low-severity Gaussian blur), the classifier may not be able to distinguish the distributions at all. The paper should either verify the condition empirically (e.g., by reporting the trained classifier's accuracy on held-out data) or acknowledge that the theoretical guarantee may not apply to the experimental settings.\n\n- No concrete worked example or simulation: The paper derives a sequential detection algorithm and proves finite-sample bounds, but it never computes the main quantities for a fully-specified parametric model. A natural addition would be to work out the test for a simple Gaussian setting: let the source distribution be N(0,1) and the target distribution shift to N(\u03b4,1) at a known time. Compute the classifier's accuracy, the Clopper-Pearson interval, and the detection probability as a function of \u03b4, w, and \u03b1. This would let readers calibrate how large a shift is detectable with given window size and confirm that the false negative bound is non-vacuous. Without such an example, the theoretical results remain abstract and the practical meaning of the bounds is unclear.\n\n- Missing discussion of estimation and implementation challenges: The algorithm requires training a neural network online at every time step, but the paper provides no guidance on computational cost, convergence of the online updates, or the curse of dimensionality for high-dimensional covariates like images. The experiments use precomputed 2048-dimensional ResNet features, which sidestep these issues. A practical user would need to know how many gradient steps per time step are needed, how to choose the learning rate schedule, and whether the method scales to raw pixels. The paper should include a discussion of these implementation trade-offs and, ideally, a sensitivity analysis of the detection performance to the online learning hyperparameters.\n\n- No formal comparison to existing sequential two-sample tests: The paper claims that sequential hypothesis tests are not applicable because the shift can occur after a delay, but it never formally compares to a sequential test that is restarted periodically or to a CUSUM-type procedure. The Wald baseline is a poor proxy because it uses a fixed effect size and restarts only after each decision. A proper comparison would include a kernel MMD-based sequential test (e.g., using the approach of Balsubramani and Ramdas, 2015) or a simple drift detector that tracks the running mean of the classifier's loss. The paper should either add such a baseline or clearly explain why it is not feasible, and then verify empirically that the proposed method outperforms it.\n\nRecommendation: major revision. The paper has a solid core idea and the false positive rate control is theoretically sound, but the false negative rate bound contains a likely error, the baselines are inadequate, and the experimental design has confounds that undermine the claims. The paper needs substantial revisions to the theoretical analysis and experimental methodology before it can be accepted.\n\nRevision targets:\n\n- Correct the false negative rate bound (Theorem 5) and provide a correct derivation. The current expression appears to have a sign error and a degenerate term.\n\n- Add stronger baselines: at minimum, a standard C2ST with proper train/test split, a kernel MMD-based sequential test, and a simple moment-based detector. Ensure fair comparison by controlling total sample usage.\n\n- Clarify the experimental design: (a) use a genuine covariate shift (not label shift) for the natural shift experiment, or explicitly discuss the confound; (b) report whether the classifier achieves non-trivial accuracy on the shifts used; (c) justify the batch size and discuss its impact on detection delay.\n\n- Address the multiple-testing issue: either apply a correction to control FWER over the sequence, or characterize the expected false alarm rate and discuss its practical implications.\n\n- Rewrite Lemma 1 to correctly state the independence property needed for the Clopper-Pearson interval to be valid, and provide the proof in the main text or appendix.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Null hypothesis conflates pointwise and average equality",
+          "quote": "null hypothesis is $H_{0}:\\mathcal{S}=\\bar{\\mathcal{T}}_{w,t}$, and the alternative hypothesis is $H_{1}:\\mathcal{S}\\neq\\bar{\\mathcal{T}}_{w,t}$.",
+          "explanation": "The null hypothesis $H_0: \\mathcal{S} = \\bar{\\mathcal{T}}_{w,t}$ is ambiguous.  $\\bar{\\mathcal{T}}_{w,t}$ is defined as the average of the target distributions over the window, but it is not clear what it means for a single distribution $\\mathcal{S}$ to equal an average of distributions.  The intended meaning is that the source distribution equals *each* target distribution in the window (or that the average distribution equals the source, which is a weaker condition).  The paper later uses Lemma 2 (accuracy = 1/2) to justify the test under $H_0$, but Lemma 2 requires $\\mathcal{S} = \\mathcal{T}_k$ for all $k$ in the window, not just equality of averages.  This mismatch means the test may not control the false positive rate for the stated null hypothesis.  Rewrite $H_0$ as $H_0: \\mathcal{S} = \\mathcal{T}_{t-w+1} = \\dots = \\mathcal{T}_t$ (i.e., all target distributions in the window equal the source) and adjust the definition of $\\bar{\\mathcal{T}}_{w,t}$ accordingly, or prove that the test controls FPR under the weaker average-equality null.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Natural shift experiment confounds covariate shift with label shift",
+          "quote": "To construct such a shift, we consider the subset of dog classes; in particular, 120 of the 1000 of the ImageNet classes are of dogs (Khosla et al., 2011). Then, we randomly select half (i.e., 60) of these classes to be the source dataset, and the other half to be the target dataset; thus, the number of source and target images is 2997 each (after removing duplicated images). As a consequence, the source and target datasets correspond to different dog breeds, which is a kind of natural distribution shift.",
+          "explanation": "The paper claims to detect covariate shift, where p(x) changes but p(y|x) remains the same. However, this experiment uses different dog breeds as source and target. Since the classes (breeds) differ between source and target, the conditional distribution p(y|x) changes\u2014this is label shift, not covariate shift. The experiment does not test the stated problem. The authors should either replace this experiment with one that holds the label distribution fixed (e.g., different images of the same breeds) or explicitly acknowledge that the method is being evaluated on label shift and discuss why the results are still relevant.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "False negative rate bound function M(\u03b1,w) is left unspecified",
+          "quote": "$\\mathbbm{P}_{S_{w,t}\\sim\\mathcal{S}^{w},T_{w,t}\\sim\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=1\\right]\\geq 1-M(\\alpha,w)$\n\nfor some function $M(\\alpha,w)$ that depends on the model family.",
+          "explanation": "The statement that the false negative rate is bounded by $1 - M(\\alpha,w)$ is vacuous without specifying $M$.  The paper later claims Theorem 5 provides such a bound, but the form of $M$ is not given here.  The reader cannot assess the strength of the guarantee.  Moreover, the phrase \"depends on the model family\" is too vague\u2014it should specify the complexity measure (e.g., VC dimension) and how it enters the bound.  Replace the vague statement with a concrete reference to Theorem 5 and state the explicit form of $M(\\alpha,w)$ (e.g., $M(\\alpha,w) = \\beta(w, \\alpha, \\epsilon)$ as derived in Theorem 5).",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Definition of Q_{w,t} uses undefined tilde notation",
+          "quote": "Let $\\mathcal{Q}_{w,t}$ be a distribution over $\\mathcal{X}\\times\\{0,1\\}$, where\n\n$\\mathcal{Q}_{w,t}(x,y)\\!=\\!\\frac{1}{2}\\cdot\\mathcal{S}(x)\\cdot\\mathbbm{1}(y=0)+\\frac{1}{2}\\cdot\\tilde{\\mathcal{T}}_{w,t}(x)\\cdot\\mathbbm{1}(y=1).$",
+          "explanation": "The symbol $\\tilde{\\mathcal{T}}_{w,t}$ appears here without definition. Earlier in the paper, $\\bar{\\mathcal{T}}_{w,t}$ is defined as the average of target distributions over the window, but the tilde variant is never introduced. The reader cannot tell whether $\\tilde{\\mathcal{T}}_{w,t}$ is the same as $\\bar{\\mathcal{T}}_{w,t}$ or something different (e.g., the empirical distribution of the windowed samples). This ambiguity makes the definition of $\\mathcal{Q}_{w,t}$ and the subsequent accuracy $\\mu_{w,t}^*$ unverifiable. The authors should define $\\tilde{\\mathcal{T}}_{w,t}$ explicitly before or immediately after this equation.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Empirical accuracy estimator uses undefined labels",
+          "quote": "$\\hat{\\mu}_{w,t}=\\frac{1}{2w}\\sum_{i=t-w+1}^{t}\\left(\\mathbbm{1}\\left(\\hat{y}_{i}=y_{i}\\right)+\\mathbbm{1}\\left(\\hat{y}_{i}^{\\prime}=y_{i}^{\\prime}\\right)\\right).$",
+          "explanation": "The notation $y_i$ and $y_i'$ is undefined. In Step 1, the predictions $\\hat{y}_t$ and $\\hat{y}_t'$ are defined, but the true labels $y_i$ and $y_i'$ are never introduced. From context, the source sample $x_i$ should have label 0 and the target sample $x_i'$ should have label 1 (as used in Step 3). The expression should read $\\mathbbm{1}(\\hat{y}_i = 0) + \\mathbbm{1}(\\hat{y}_i' = 1)$ to make the estimator explicit and correct.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Detection rate table missing Wald entries without explanation",
+          "quote": "Table 3a shows the number of target samples required by each algorithm to detect the first covariate shift in the detection rate of at least  $80\\%$ . Table 3b shows the false positive rate (FPR) after 500, 1000, 1500 and 2000 samples for each of the three scenarios.",
+          "explanation": "In Table 3a, the Wald baseline is listed with dashes for every perturbation type and scenario, indicating it never reaches an 80% detection rate. This is a striking failure that the text does not explain. The paper should either provide a brief explanation (e.g., 'Wald never reached 80% detection within the sample budget') or remove the row if the baseline is not applicable. Without explanation, readers may suspect the baseline was run with suboptimal parameters or that the comparison is unfair. Add a sentence in the Discussion section explaining why Wald fails to detect these shifts.",
+          "comment_type": "technical",
+          "paragraph_index": 65,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "False positive rate exceeds claimed bound in Table 3b",
+          "quote": "In terms of FPR, our approach always satisfies the FPR bound.",
+          "explanation": "The paper claims the FPR always satisfies the bound \u03b1=1%, but Table 3b shows the proposed method's FPR at time 1000 for M-shift is 1.00%, which equals the bound exactly. For a finite-sample method, this is suspicious\u2014it suggests the bound is tight to the point of being violated in some repetitions. More importantly, the FPR for GI-shift at time 1000 is 0.89% and for GID-shift at time 1000 is 0.95%, both close to 1%. The claim 'always satisfies' is technically true if no value exceeds 1%, but the paper should acknowledge that the empirical FPR is very close to the bound, meaning the test is not conservative. This is a practical concern because in sequential monitoring, a per-step FPR of 1% leads to a high cumulative false alarm rate over many steps. The authors should either discuss this limitation or adjust the claim to note that the bound is tight.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Accuracy drop claim conflates detection with model performance",
+          "quote": "Covariate shift detection can be successfully used to notify a user that an accuracy drop may have occurred.",
+          "explanation": "The paper claims that covariate shift detection can notify a user of an accuracy drop, but the experiments do not directly measure the relationship between detection and accuracy on the target task. The red dotted line in Figure 2 shows the accuracy of ResNet152 on source and target samples within the window\u2014this is the accuracy of the *source-target classifier*, not the accuracy of the original model on the target data. A drop in the source-target classifier's accuracy does not necessarily imply a drop in the original model's accuracy on the target distribution. The paper should either clarify this distinction or provide evidence that the source-target classifier's accuracy correlates with the original model's performance. Without this, the claim about notifying users of accuracy drops is unsupported.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Probability statement uses inconsistent notation",
+          "quote": "$\\mathbbm{P}_{S_{w,t}\\sim\\mathcal{S}^{w},T_{w,t}\\sim\\mathcal{T}_{t-w+1:t}}\\left[\\hat{f}(S_{w,t},T_{w,t};\\alpha)=0\\right]\\geq 1-\\alpha.$",
+          "explanation": "The subscript $T_{w,t} \\sim \\mathcal{T}_{t-w+1:t}$ is not a standard notation for a joint distribution over a sequence of samples.  $\\mathcal{T}_{t-w+1:t}$ is a sequence of distributions, not a single distribution.  The intended meaning is that each $x'_k$ in $T_{w,t}$ is drawn independently from $\\mathcal{T}_k$ for $k = t-w+1, \\dots, t$.  This should be written as $T_{w,t} \\sim \\prod_{k=t-w+1}^t \\mathcal{T}_k$ or simply stated in words.  The current notation is confusing and could lead to misinterpretation.  Replace with a clear description: \"where each $x'_k \\sim \\mathcal{T}_k$ independently for $k = t-w+1, \\dots, t$\".",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        }
+      ],
+      "cost_usd": 0.0482,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

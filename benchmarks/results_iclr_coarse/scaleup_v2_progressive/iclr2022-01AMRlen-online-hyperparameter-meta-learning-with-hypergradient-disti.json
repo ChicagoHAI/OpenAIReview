@@ -1,0 +1,1371 @@
+{
+  "slug": "iclr2022-01AMRlen-online-hyperparameter-meta-learning-with-hypergradient-disti",
+  "title": "ONLINE HYPERPARAMETER META-LEARNING WITH HYPERGRADIENT DISTILLATION [PDF]",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Published as a conference paper at ICLR 2022\n\n## ONLINE HYPERPARAMETER META-LEARNING WITH HYPERGRADIENT DISTILLATION"
+    },
+    {
+      "index": 1,
+      "text": "**Hae Beom Lee**[1] **, Hayeon Lee**[1] **, Jaewoong Shin**[3] **, Eunho Yang**[1] _[,]_[2] **, Timothy M. Hospedales**[4] _[,]_[5] **, Sung Ju Hwang**[1] _[,]_[2] KAIST[1] , AITRICS[2] , Lunit[3] , South Korea, University of Edinburgh[4] , Samsung AI Centre, Cambridge[5] , United Kingdom _{_ haebeom.lee, hayeon926, shinjw148, eunhoy, sjhwang82 _}_ @kaist.ac.kr _{_ t.hospedales _}_ @ed.ac.uk"
+    },
+    {
+      "index": 2,
+      "text": "## ABSTRACT\n\nMany gradient-based meta-learning methods assume a set of parameters that do not participate in inner-optimization, which can be considered as _hyperparameters_ . Although such hyperparameters can be optimized using the existing gradientbased hyperparameter optimization (HO) methods, they suffer from the following issues. Unrolled differentiation methods do not scale well to high-dimensional hyperparameters or horizon length , Implicit Function Theorem (IFT) based methods are restrictive for online optimization, and short horizon approximations suffer from short horizon bias. In this work, we propose a novel HO method that can overcome these limitations, by approximating the second-order term with knowledge distillation. Specifically, we parameterize a single Jacobian-vector product (JVP) for each HO step and minimize the distance from the true second-order term. Our method allows online optimization and also is scalable to the hyperparameter dimension and the horizon length. We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets."
+    },
+    {
+      "index": 3,
+      "text": "## 1 INTRODUCTION\n\nMeta-learning (Schmidhuber, 1987; Thrun & Pratt, 1998) aims to learn a learning process itself over a task distribution. Many gradient-based meta-learning approaches assume a set of parameters that do not participate in inner-optimization (Lee & Choi, 2018; Flennerhag et al., 2019; Raghu et al., 2019) which can be seen as _hyperparameters_ . Those hyperparameters are important in helping the inner-learner converge faster and generalize better. As they are usually very high-dimensional such as element-wise learning rates (Li et al., 2017), we cannot meta-learn them with simple hyperparameter optimization (HO) techniques such as random search (Bergstra & Bengio, 2012) or Bayesian optimization (Snoek et al., 2012) due to the too extensive search space."
+    },
+    {
+      "index": 4,
+      "text": "In this case, we can use gradient-based HO methods that can directly optimize the highdimensional hyperparameters by minimizing the validation loss w.r.t. the hyperparameters (Bengio, 2000). Due to the expensive computational cost of evaluating the hypergradients (i.e. the gradient w.r.t. the hyperparameters), there has been a lot of efforts to improve the effectiveness and the efficiency of the algorithms."
+    },
+    {
+      "index": 5,
+      "text": "Table 1: Comparison between the various gradientbased HO algorithms. 1-step denotes one-step lookahead approximation (Luketina et al., 2016)."
+    },
+    {
+      "index": 6,
+      "text": "|||FMD|RMD|DrMAD|IFT|1-step|**Ours**|\n|---|---|---|---|---|---|---|---|\n||High-dim.|X|O|O|O|O|**O**|\n||Online opt.|O|X|X|**_\u25b3_**|O|**O**|\n||Constant memory|O|X|O|O|O|**O**|\n||Horizon_>_1|O|O|O|O|X|**O**|"
+    },
+    {
+      "index": 7,
+      "text": "However, unfortunately, none of the existing algorithms satisfy the following criteria at the same time that should be met for their practical use: _1) scalable to hyperparameter dimension, 2) online optimization, 3) memory-efficient, 4) avoid short-horizon bias_ . Please See Table 1 for the comparison of existing gradient-based HO algorithms in the above four criteria."
+    },
+    {
+      "index": 8,
+      "text": "Forward-Mode Differentiation (FMD) (Franceschi et al., 2017) in Table 1 is an algorithm that forward-propagates Jacobians (i.e. derivatives of the update function) from the first to the last step, which is analogous to real-time recurrent learning (RTRL) (Williams & Zipser, 1989) in recurrent neural networks. FMD allows online optimization (i.e. update hyperparameters every inner-step)"
+    },
+    {
+      "index": 9,
+      "text": "1\n\nPublished as a conference paper at ICLR 2022\n\nwith the intermediate Jacobians and also computes the hypergradients over the entire horizon. However, a critical limitation is that the time and space complexity linearly increases w.r.t. the hyperparameter dimension. Thus, we cannot use FMD for solving many practical meta-learning problems that come with millions of hyperparameters, which is the main problem we tackle in this paper."
+    },
+    {
+      "index": 10,
+      "text": "Secondly, Reverse-Mode Differentiation (RMD) (Maclaurin et al., 2015) back-propagates the Jacobian-vector products (JVPs) from the last to the initial step, which is structurally identical to backprop through time (BPTT) (Werbos, 1990). RMD is scalable to the hyperparameter dimension, but the space complexity linearly increases w.r.t. the horizon length (i.e., the number of innergradient steps used to compute the hypergradient). It is possible to reduce the memory burden by checkpointing some of the previous weights and further interpolating between the weights to approximate the trajectory (Fu et al., 2016). However, RMD and its variants are not scalable for online optimization. This is because they do not retain the intermediate Jacobians unlike FMD and thus need to recompute the whole second-order term for every online HO step."
+    },
+    {
+      "index": 11,
+      "text": "Thirdly, algorithms based on Implicit Function Theorem (IFT) are applicable to high-dimensional HO (Bengio, 2000; Pedregosa, 2016). Under the assumption that the main model parameters have arrived at convergence, the best-response Jacobian, i.e. how the converged model parameters change w.r.t. the hyperparameters, can be expressed by only the information available at the last step, such as the inverse of Hessian at convergence. Thus, we do not have to explicitly unroll the previous update steps. Due to the heavy cost of computing inverse-Hessian-vector product, Lorraine et al. (2020) propose to approximate it by an iterative method, which works well for high-dimensional HO problems. However, still it is not straightforward to use the method for online optimization because of the convergence assumption. That is, computing hypergradients before convergence does not guarantee the quality of the hypergradients."
+    },
+    {
+      "index": 12,
+      "text": "To our knowledge, the short horizon approximation such as one-step lookahead (1-step in Table 1) (Luketina et al., 2016) is the only existing method that _fully_ supports online optimization, while being scalable to the hyperparameter dimension at the same time. It computes hypergradients only over a single update step and ignores the past learning trajectory, which is computationally efficient as only a single JVP is computed per each online HO step. However, this approximation suffers from the short horizon bias (Wu et al., 2018) by definition."
+    },
+    {
+      "index": 13,
+      "text": "In this paper, we propose a novel HO algorithm that can simultaneously satisfy all the aforementioned criteria for practical HO. The key idea is to distill the entire second-order term into a single JVP. As a result, we only need to compute the single JVP for each online HO step, and at the same time the distilled JVP can consider longer horizons than short horizon approximations such as one-step lookahead or first-order method. We summarize the contribution of this paper as follows:"
+    },
+    {
+      "index": 14,
+      "text": "- We propose _HyperDistill_ , a novel HO algorithm that satisfies the aforementioned four criteria for practical HO, each of which is crucial for a HO algorithm to be applied to the current meta-learning frameworks."
+    },
+    {
+      "index": 15,
+      "text": "- We show how to efficiently distill the hypergradient second-order term into a single JVP.\n\n- We empirically demonstrate that our algorithm converges faster and provides better generalization performance at convergence, with three recent meta-learning models and on two benchmark image datasets."
+    },
+    {
+      "index": 16,
+      "text": "## 2 RELATED WORK\n\n**Hyperparameter optimization** When the hyperparameter dimension is small (e.g. less than 100), random search (Bergstra & Bengio, 2012) or Bayesian optimization (Snoek et al., 2012) works well. However, when the hyperparameter is high-dimensional, gradient-based HO is often preferred since random or Bayesian search could become infeasible. One of the most well known methods for gradient-based HO are based on Implicit Function Theorem which compute or approximate the inverse Hessian only at convergence. Bengio (2000) computes the exact inverse Hessian, and Luketina et al. (2016) approximate the inverse Hessian with the identity matrix, which is identical to the onestep lookahead approximation. Pedregosa (2016) approximates the inverse Hessian with conjugate gradients (CG) method. Lorraine et al. (2020) propose Neumann approximation, which is numerically more stable than CG approximation. On the other hand, Domke (2012) proposes unrolled differentiation for solving bi-level optimization, and Shaban et al. (2019) analyzes the truncated unrolled differentiation, which is computationally more efficient. Unrolled diffrentiation can be fur-"
+    },
+    {
+      "index": 17,
+      "text": "2\n\nPublished as a conference paper at ICLR 2022\n\nther categorized into forward (FMD) and reverse mode (RMD) (Franceschi et al., 2017). FMD is more suitable for optimizing low-dimensional hyperparamters (Im et al., 2021; Micaelli & Storkey, 2020), but RMD is more scalable to the hyperparameter dimension. Maclaurin et al. (2015) proposes a more memory-efficient RMD, which reverses the SGD trajectory with momentum. Fu et al. (2016) further reduce memory burden of RMD by approximating the learning trajectory with linear interpolation. Luketina et al. (2016) can also be understood as a short horizon approximation of RMD for online optimization. Our method also supports online optimization, but the critical difference is that our algorithm can alleviate the short horizon bias (Wu et al., 2018). RMD is basically a type of backpropagation and it is available in deep learning libraries (Grefenstette et al., 2019)."
+    },
+    {
+      "index": 18,
+      "text": "**Meta-learning** Meta-learning (Schmidhuber, 1987; Thrun & Pratt, 1998) aims to learn a model that generalizes over a distribution of tasks (Vinyals et al., 2016; Ravi & Larochelle, 2016). While there exists a variety of approaches, in this paper we focus on gradient-based meta-learning (Finn et al., 2017), especially the methods with high-dimensional hyperparameters that do not participate in inner-optimization. For instance, there have been many attempts to precondition the innergradients for faster inner-optimization, either by _warping_ the parameter space with every pair of consecutive layers interleaved with a warp layer (Lee & Choi, 2018; Flennerhag et al., 2019) or directly modulating the inner-gradients with diagonal (Li et al., 2017) or block-diagonal matrix (Park & Oliva, 2019). Perturbation function is another form of hyperparameters that help the inner-learner generalize better (Lee et al., 2019; Ryu et al., 2020; Tseng et al., 2020). It is also possible to let the whole feature extractor be hyperparameters and only adapt the last fully-connected layer (Raghu et al., 2019). On the other hand, some of the meta-learning literatures do not assume a task distribution, but tune their hyperparameters with a holdouot validation set, similarly to the conventional HO setting. In this case, the one-step lookahead method (Luketina et al., 2016) is mostly used for scalable online HO, in context of domain generalization (Li et al., 2018), handling class imbalance (Ren et al., 2018; Shu et al., 2019), gradient-based neural architecture search (Liu et al., 2018), and coefficient of norm-based regularizer (Balaji et al., 2018). Although we mainly focus on metalearning setting in this work, whose goal is to transfer knowledge through a task distribution, it is straightforward to apply our method to conventional HO problems."
+    },
+    {
+      "index": 19,
+      "text": "## 3 BACKGROUND\n\nIn this section, we first introduce RMD and its approximations for efficient computation. We then introduce our novel algorithm that supports high-dimensional online HO over the entire horizon."
+    },
+    {
+      "index": 20,
+      "text": "## 3.1 HYPERPARAMETER UNROLLED DIFFERENTIATION\n\nWe first introduce notations. Throughout this paper, we will specifiy _w_ as _weight_ and _\u03bb_ as _hyperparameter_ . The series of weights _w_ 0 _, w_ 1 _, w_ 2 _. . . , wT_ evolve with the update function _wt_ = \u03a6( _wt\u2212_ 1 _, \u03bb_ ; _Dt_ ) over steps _t_ = 1 _, . . . , T_ . The function \u03a6 takes the previous weight _wt\u2212_ 1 and the hyperparameter _\u03bb_ as inputs and its form depends on the current mini-batch _Dt_ . Note that _w_ 1 _, w_ 2 _, . . . , wT_ are functions w.r.t. the hyperparameter _\u03bb_ . The question is how to find a good hyperparameter _\u03bb_ that yields a good _response wT_ at the last step. In gradient-based HO, we find the optimal _\u03bb_ by minimizing the validation loss _L_[val] as a function of _\u03bb_ ."
+    },
+    {
+      "index": 21,
+      "text": "Note that we let the loss function _L_[val] ( _\u00b7, \u00b7_ ) itself be modulated by _\u03bb_ for generality. According to the chain rule, the hypergradient is decomposed into"
+    },
+    {
+      "index": 22,
+      "text": "On the right hand side, the first-order (FO) term _gT_[FO][directly computes the gradient w.r.t] _[ \u03bb]_[ by fixing] _wT_ . The second-order (SO) term _gT_[SO] computes the indirect effect of _\u03bb_ through the _response wT_ . _\u03b1T_ = _[\u2202][L]_[val] _\u2202w_[(] _[w] T[T][ ,][\u03bb]_[)] can be easily computed similarly to _gT_[FO][, but the] _[ response Jacobian][dw] d\u03bb[T]_[is more] computationally challenging as it is unrolled into the following form."
+    },
+    {
+      "index": 23,
+      "text": "3\n\nPublished as a conference paper at ICLR 2022\n\n|**Algorithm 1**Reverse-HG(RMD)|**Algorithm 2**DrMAD(Fu et al.,2016)|\n|---|---|\n|1: **Input:** The last weight_wT_ and all the previous\nweights_w_0_, . . . , wT \u2212_1.\n2: **Output:** Hypergradient_g_FO +_g_SO.\n3: _\u03b1 \u2190\u2202L_(_wT ,\u03bb_)\n_\u2202wT_\n_, g_FO _\u2190\u2202L_(_wT ,\u03bb_)\n_\u2202\u03bb_\n_, g_SO _\u2190_0\n4: **for**_t_=_T_ **downto**1**do**\n5:\n_g_SO _\u2190g_SO +_\u03b1Bt_\n6:\n_\u03b1 \u2190\u03b1At_\n7: **end for**\n8: **return**_g_FO +_g_SO\n1: **Input:** The last weight_wT_ and the initial weight_w_0.\n2: **Output:** Approximated hypergradient_g_FO +_g_SO.\n3: _\u03b1 \u2190\u2202L_(_wT ,\u03bb_)\n_\u2202wT_\n_, g_FO _\u2190\u2202L_(_wT ,\u03bb_)\n_\u2202\u03bb_\n_, g_SO _\u2190_0\n4: **for**_t_=_T_ **downto**1**do**\n5:\n\u02c6_wt\u2212_1 _\u2190_\n\ufffd\n1_\u2212t\u2212_1\n_T_\n\ufffd\n_w_0+ _t\u2212_1\n_T wT_\n6:\n_g_SO _\u2190g_SO +_\u03b1_ \u02c6_Bt_\n7:\n_\u03b1 \u2190\u03b1_ \u02c6_At_\n8: **end for**\n9: **return**_g_FO +_g_SO||"
+    },
+    {
+      "index": 24,
+      "text": "Eq. (3) involves the Jacobians _{A}_ and _{B}_ at the intermediate steps. Evaluating them or their vector products are computationally expensive in terms of either time (FMD) or space (FMD, RMD) (Franceschi et al., 2017). Therefore, how to approximate Eq. (3) is the key to developing an efficient and effective HO algorithm."
+    },
+    {
+      "index": 25,
+      "text": "## 3.2 REVERSE-MODE DIFFERENTIATION AND ITS APPROXIMATIONS\n\nBasically, RMD is structurally analogous to backpropagation through time (BPTT) (Werbos, 1990). In RMD, we first obtain _\u03b1T_ = _[\u2202][L]_[val] _\u2202w_[(] _[w] T[T][ ,][\u03bb]_[)] and back-propagate _A_ and _B_ from the last to the first step in the form of JVPs (See Algorithm 1). Whereas RMD is much faster than FMD as we only need to compute one or two JVPs per each step, it usually requires to store all the previous weights _w_ 0 _, . . . , wT \u2212_ 1 to compute the previous-step JVPs, unless we consider reversible training with momentum optimizer (Maclaurin et al., 2015). Therefore, when _w_ is high-dimensional, RMD is only applicable to short-horizon problems such as few-shot learning (e.g. _T_ = 5 in Finn et al. (2017)). **Trajectory approximation.** Instead of storing all the previous weights for computing _A_ and _B_ , we can approximate the learning trajectory by linearly interpolating between the last weight _wT_ and the initial weight _w_ 0. Algorithm 2 illustrates the procedure called DrMAD (Fu et al., 2016), where each \u02c6 intermediate weight _wt_ is approximated by _wt_ = \ufffd1 _\u2212 T[t]_ \ufffd _w_ 0 + _T[t][w][T]_[for] _[ t]_[ = 1] _[, . . . , T][\u2212]_[1][.] _[A]_[ and] _B_ are also approximated by _A_[\u02c6] _s_ = _[\u2202]_[\u03a6][(][ \u02c6] _w\u2202sw_ \u02c6 _\u2212s_ 1 _\u2212,\u03bb_ 1; _Ds_ ) and _B_[\u02c6] _t_ = _[\u2202]_[\u03a6][(] _w_[ \u02c6] _t\u2212\u2202\u03bb_ 1 _,\u03bb_ ; _Dt_ ) , respectively. However, although DrMAD dramatically lower the space complexity, it does not reduce the number of JVPs per each hypergradient step. For each online HO step _t_ = 1 _, . . . , T_ we need to compute 2 _t \u2212_ 1 JVPs, thus the number of total JVPs to complete a single trajectory accumulates up to[\ufffd] _[T] t_ =1[(2] _[t][\u2212]_[1) =] _[ T]_[ 2][,] which is definitely not scalable as an online optimization algorithm."
+    },
+    {
+      "index": 26,
+      "text": "**Short-horizon approximations.** One-step lookahead approximation (Luketina et al., 2016) is currently one of the most popular high-dimensional online HO method that can avoid computing the excessive number of JVPs (Li et al., 2018; Ren et al., 2018; Shu et al., 2019; Liu et al., 2018; Balaji et al., 2018). The idea is very simple; for each online HO step we only care about the last previous step and ignore the rest of the learning trajectory for computational efficiency. Specifically, for each step _t_ = 1 _, . . . , T_ we compute the hypergradient by viewing _wt\u2212_ 1 as constant, which yields _dwd\u03bbt[\u2248][\u2202w] \u2202\u03bb[t]_ \ufffd\ufffd _wt\u2212_ 1[=] _[B][t]_[(See][Eq.][(][3][)).][Or,][we][may][completely][ignore][all][the][second-order][deriva-] tives for computational efficiency, such that _[dw] d\u03bb[t][\u2248]_[0][(][Flennerhag][et][al.][,][2019][;][Ryu][et][al.][,][2020][).] While those approximations enable online HO with low cost, they are intrinsically vulnerable to short-horizon bias (Wu et al., 2018) by definition."
+    },
+    {
+      "index": 27,
+      "text": "## 4 APPROACH\n\nWe next introduce our novel online HO method based on knowledge distillation. Our method can overcome all the aforementioned limitations at the same time."
+    },
+    {
+      "index": 28,
+      "text": "## 4.1 HYPERGRADIENT DISTILLATION\n\n_t t_ The key idea is to distill the whole second-order term _gt_[SO] = _\u03b1t_ \ufffd _i_ =1 \ufffd\ufffd _j_ = _i_ +1 _[A][j]_ \ufffd _Bi_ in Eq. (2) into a single JVP evaluated at a distilled weight point _w_ and with a distilled dataset _D_ . We denote the normalized JVP as _ft_ ( _w, D_ ) := _\u03c3_ ( _\u03b1t \u2202_ \u03a6( _w\u2202\u03bb,\u03bb_ ; _D_ ) ) with _\u03c3_ ( _x_ ) = _\u2225xx\u2225_ 2[.][Specifically,][we][want][to] solve the following knowledge distillation problem for each online HO step _t_ = 1 _, . . . , T_ :"
+    },
+    {
+      "index": 29,
+      "text": "4\n\nPublished as a conference paper at ICLR 2022\n\nso that we use _\u03c0t[\u2217][f][t]_[(] _[w] t[\u2217][, D] t[\u2217]_[)][ instead of] _[ g] t_[SO][.][Online optimization is now feasible because for each] online HO step _t_ = 1 _, . . . , T_ we only need to compute the single JVP _ft_ ( _wt[\u2217][, D] t[\u2217]_[)][rather][than] computing 2 _t \u2212_ 1 JVPs for RMD or DrMAD. Also, unlike short horizon approximations, the whole trajectory information is distilled into the JVP, alleviating the short horizon bias (Wu et al., 2018)."
+    },
+    {
+      "index": 30,
+      "text": "Notice that solving Eq. (4) only w.r.t. _\u03c0_ is simply a vector projection.\n\nThen, plugging Eq. (5) into _\u03c0_ in Eq. (4) and making use of _\u2225ft_ ( _w, D_ ) _\u2225_ 2 = 1, we can easily convert the optimization problem Eq. (4) into the following equivalent problem (See Appendix A)."
+    },
+    {
+      "index": 31,
+      "text": "_wt[\u2217]_[and] _[ D] t[\u2217]_[match the hypergradient] _[ direction]_[ and] _[ \u03c0] t[\u2217]_[matches the] _[ size]_[.] **Technical challenge.** However, solving Eq. (6) requires to evaluate _gt_[SO] for _t_ = 1 _, . . . , T_ , which is tricky as _gt_[SO] is the target we aim to approximate. We next show how to roughly solve Eq. (6) even without evaluting _gt_[SO] (for _wt[\u2217][, D] t[\u2217]_[) or by sparsely evaluating an approximation of] _[ g] t_[SO] (for _\u03c0t[\u2217]_[).]"
+    },
+    {
+      "index": 32,
+      "text": "4.2 DISTILLING THE HYPERGRADIENT DIRECTION\n\n**Hessian approximation.** In order to circumvent the technical difficulty, we start from making the optimization objective _\u03c0_ \u02dc _t_ ( _w, D_ ) = _ft_ ( _w, D_ )[T] _gt_[SO] in Eq. (5) simpler. We approximate _gt_[SO] as"
+    },
+    {
+      "index": 33,
+      "text": "with _\u03b3 \u2265_ 0, which we tune on a meta-validation set. Note that Eq. (7) is yet too expensive to use for online optimization as it consists of _t_ JVPs. We thus need further distillation, which we will explain later. Eq. (7) is simply a Hessian identity approximation. For instance, vanilla SGD with learning rate _\u03b7_[Inner] corresponds to _Aj_ = _\u2207wj\u2212_ 1( _wj\u2212_ 1 _\u2212 \u03b7_[Inner] _\u2207L_[train] ( _wj\u2212_ 1 _, \u03bb_ )). Approximating the Hessian as _\u2207_[2] _wj\u2212_ 1 _[L]_[train][(] _[w][j][\u2212]_[1] _[, \u03bb]_[)] _[\u2248][kI]_[,][we][have] _[A][j]_[=] _[I][\u2212][\u03b7]_[Inner] _[\u00b7][ kI][\u2248]_[(1] _[ \u2212][\u03b7]_[Inner] _[k]_[)] _[I]_[=] _[\u03b3I]_[.][Plugging] _\u2202_ \u03a6( _wi\u2212_ 1 _,\u03bb_ ; _Di_ ) Eq. (7) to Eq. (5) and letting _ft_ ( _wi\u2212_ 1 _, Di_ ) := _\u03c3_ ( _\u03b1t \u2202\u03bb_ ) = _\u03c3_ ( _\u03b1tBi_ ), we have"
+    },
+    {
+      "index": 34,
+      "text": "\u02dc \u02c6 where _\u03b4t,i_ = _\u03b3[t][\u2212][i] \u2225\u03b1tBi\u2225_ 2 _\u2265_ 0. Instead of maximizing _\u03c0t_ directly, we now maximize _\u03c0t_ w.r.t. _w_ and _D_ as a proxy objective."
+    },
+    {
+      "index": 35,
+      "text": "**Lipschitz continuity assumption.** Now we are ready to see how to distill the hypergradient direction _wt[\u2217]_[and] _[ D] t[\u2217][without]_[ evaluating] _[ g] t_[SO][.][The important observation is that the maximum of] _[\u03c0]_[\u02c6] _[t]_[in] Eq. (8) is achieved when _ft_ ( _w, D_ ) is well-aligned to the other _ft_ ( _w_ 0 _, D_ 1) _, . . . , ft_ ( _wt\u2212_ 1 _, Dt_ ). This intuition is directly related to the following Lipschitz continuity assumption on _ft_ ."
+    },
+    {
+      "index": 36,
+      "text": "_\u2225ft_ ( _w, D_ ) _\u2212 ft_ ( _wi\u2212_ 1 _, Di_ ) _\u2225_ 2 _\u2264 K\u2225_ ( _w, D_ ) _\u2212_ ( _wi\u2212_ 1 _, Di_ ) _\u2225X ,_ for _i_ = 1 _, . . . , t._ (9) where _K \u2265_ 0 is the Lipschitz constant. Eq. (9) captures which ( _w, D_ ) can minimize _\u2225ft_ ( _w, D_ ) _\u2212 ft_ ( _wi\u2212_ 1 _, Di_ ) _\u2225_ 2 over _i_ = 1 _, . . . , t_ , which is equivalent to maximizing _ft_ ( _w, D_ )[T] _ft_ ( _wi\u2212_ 1 _, Di_ ) since _\u2225f_ ( _\u00b7, \u00b7_ ) _\u2225_ 2 = 1. For the metric _\u2225\u00b7 \u2225X_ , we let _K_[2] _\u2225_ ( _w, D_ ) _\u2225_[2] _X_[=] _[K]_ 1[2] _[\u2225][w][\u2225]_[2] 2[+] _[K]_ 2[2] _[\u2225][D][\u2225]_[2] 2[where] _K_ 1 _, K_ 2 _\u2265_ 0 are additional constants that we introduce for notational convenience. Taking square of the both sides of Eq. (9) and summing over all _i_ = 1 _, . . . , t_ , we can easily derive the following lower bound of _\u03c0_ \u02c6 _t_ (See Appendix B)."
+    },
+    {
+      "index": 37,
+      "text": "We now maximize this lower bound instead of directly maximizing _\u03c0_ \u02c6 _t_ . Interestingly, it corresponds to the following simple minimization problems for _w_ and _D_ ."
+    },
+    {
+      "index": 38,
+      "text": "5\n\nPublished as a conference paper at ICLR 2022\n\n**Algorithm 3** HyperDistill **Algorithm 4** LinearEstimation( _\u03b3, \u03bb, \u03c6_ ) 1: **Input:** _\u03b3 \u2208_ [0 _,_ 1], initial _\u03bb_ , and initial _\u03c6_ . 1: **Input:** _w_ 0 _\u2190 \u03c6_ 2: **Output:** Learned hyperparameter _\u03bb_ . 2: **for** _t_ = 1 **to** _T_ **do** 3: **for** _m_ = 1 **to** _M_ **do** 3: _wt \u2190_ \u03a6( _wt\u2212_ 1 _, \u03bb_ ; _Dt_ ) 4: **if** _m \u2208_ EstimationPeriod **then** 4: **end for** 5:6: **end if** _\u03b8 \u2190_ LinearEstimation( _\u03b3, \u03bb, \u03c6_ ) 5: _\u03b1, \u03b1T \u2190[\u2202][L]_[val] _\u2202w_[(] _[w] T[T][ ,][\u03bb]_[)] _, g_[SO] _\u2190_ 0 6: **for** _t_ = _T_ **downto** 1 **do** 7: _w_ 0 _\u2190 \u03c6_ 7: _w_ \u02c6 _t\u2212_ 1 _\u2190_ \ufffd1 _\u2212[t][\u2212] T_[1] \ufffd _w_ 0 + _[t][\u2212] T_[1] _[w][T]_ 8: **for** _t_ = 1 **to** _T_ **do** 10:9: _w\u03c0t[\u2217] t[\u2217][, D][\u2190] t[\u2217][c] \u03b3[\u2190]_[(] _[t]_[;][Eq. (] _[ \u03b8]_[)][ in Eq. (][13][), Eq. (][15][)][14][).] 9:8: _\u03b1g_[SO] _\u2190\u2190\u03b1Ag_[\u02c6][SO] _t_ + _\u03b1B_[\u02c6] _t_ (Eq. (16)) 11: _wt \u2190_ \u03a6( _wt\u2212_ 1 _, \u03bb_ ; _Dt_ ) 10: _s \u2190 T \u2212 t_ + 1 12:13: _g\u03bb \u2190\u2190 g\u03bbt_[FO] _\u2212_ + _\u03b7 \u03c0_[Hyper] _t[\u2217][f] gt_[(] _[w] t[\u2217][, D] t[\u2217]_[)] 11:12: _wvss[\u2217] \u2190[, D] \u03b1s[\u2217] T[\u2190] \u2202_ \u03a6[Eq. (] ( _w\u2202\u03bbs[\u2217][,]_[17] _[\u03bb]_[;] _[D]_[), Eq. (] _s[\u2217]_[)][18][)] 14: **end for** 13: _xs \u2190\u2225vs\u2225_ 2 _\u00b7_[1] 1 _[\u2212] \u2212[\u03b3] \u03b3[s][,] ys \u2190 \u03c3_ ( _vs_ )[T] _g_[SO] 15: _\u03c6 \u2190 \u03c6 \u2212 \u03b7_[Reptile] ( _\u03c6 \u2212 wT_ ) 14: **end for** 16: **end for** 15: **return** ( _x_[T] _y_ ) _/_ ( _x_[T] _x_ )"
+    },
+    {
+      "index": 39,
+      "text": "The following sequential update allows to efficiently evaluate Eq. (12) for each HO step. Denoting _pt_ = ( _\u03b3 \u2212 \u03b3[t]_ ) _/_ (1 _\u2212 \u03b3[t]_ ) _\u2208_ [0 _,_ 1), we have"
+    },
+    {
+      "index": 40,
+      "text": "Note that the online update in Eq. (13) does not require to evaluate _gt_[SO][.][It][only][requires][to][incor-] porate the past learning trajectory _w_ 0 _, w_ 1 _, . . . , wt\u2212_ 1 through the sequential updates. Therefore, the only additional cost is the memory for storing and updating the weighted running average _wt[\u2217]_[.]"
+    },
+    {
+      "index": 41,
+      "text": "For _D_ , we have assumed Euclidean distance metric as with _w_ , but it is not straightforward to think of Euclidean distance between datasets. Instead, we simply interpret _pt_ and 1 _\u2212 pt_ as probabilities with which we proportionally subsample each dataset."
+    },
+    {
+      "index": 42,
+      "text": "_t_ = 1 : _D_ 1 _[\u2217][\u2190][D]_[1] _[,] t \u2265_ 2 : _Dt[\u2217][\u2190]_[SS] \ufffd _Dt[\u2217] \u2212_ 1 _[, p][t]_ \ufffd _\u222a_ SS ( _Dt,_ 1 _\u2212 pt_ ) (14)"
+    },
+    {
+      "index": 43,
+      "text": "where SS( _D, p_ ) denotes random SubSampling of round ~~o~~ ff( _|D|p_ ) instances from _D_ . There may be a better distance metric for datasets and a corresponding solution, but we leave it as a future work. See Algorithm 3 for the overall description of our algorithm, which we name as _HyperDistill_ ."
+    },
+    {
+      "index": 44,
+      "text": "**Role of** _\u03b3_ Note that Eq. (12) tells us the role of _\u03b3_ as a _decaying factor_ . The larger the _\u03b3_ , the longer the past learning trajectory we consider. In this sense, our method is a generalization of the one-step lookahead approximation, i.e. _\u03b3_ = 0, which yields _wt[\u2217]_[=] _[w][t][\u2212]_[1][and] _[ D] t[\u2217]_[=] _[D][t]_[, ignoring the whole] information about the past learning trajectory except the last step. _\u03b3_ = 0 may be too pessimistic for most of the cases, so we need to find better performing _\u03b3_ for each task carefully."
+    },
+    {
+      "index": 45,
+      "text": "## 4.3 DISTILLING THE HYPERGRADIENT SIZE\n\nNow we need to plug the distilled _wt[\u2217]_[and] _[ D] t[\u2217]_[into] _[\u03c0]_[\u02dc] _[t]_[(] _[w, D]_[)][ in Eq. (][5][) to obtain the scaling factor] _\u03c0t[\u2217]_[=] _[f][t]_[(] _[w] t[\u2217][, D] t[\u2217]_[)][T] _[g] t_[SO][,][for][online][HO][steps] _[t]_[=][1] _[, . . . , T]_[.][However,][whereas][evaluating][the][sin-] gle JVP _ft_ ( _wt[\u2217][, D] t[\u2217]_[)][is][tolerable,][again,][evaluating] _[g] t_[SO] is misleading as it is the target we aim to approximate. Also, it is not straightforward for _\u03c0t[\u2217]_[to apply a similar trick we used in Sec.][ 4.2][.]"
+    },
+    {
+      "index": 46,
+      "text": "**Linear estimator.** We thus introduce a linear function _c\u03b3_ ( _t_ ; _\u03b8_ ) that estimates _\u03c0t[\u2217]_[by][periodically] fitting _\u03b8 \u2208_ R, the parameter of the estimator. Then for each HO step _t_ we could use _c\u03b3_ ( _t_ ; _\u03b8_ ) instead of fully evaluating _\u03c0t[\u2217]_[.][Based on the observation that the form of lower bound in Eq. (][10][) is] _[ roughly]_ proportional to[\ufffd] _[t] i_ =1 _[\u03b4][t,i]_[=][ \ufffd] _[t] i_ =1 _[\u03b3][t][\u2212][i][ \u2225][\u03b1][t][B][i][\u2225]_ 2[, we conveniently set] _[ c][\u03b3]_[(] _[t]_[;] _[ \u03b8]_[)][ to as follows:]"
+    },
+    {
+      "index": 47,
+      "text": "6\n\nPublished as a conference paper at ICLR 2022\n\n**Collecting samples.** We next see how to collect samples _{_ ( _xs, ys_ ) _}[T] s_ =1 for fitting the parameter _\u03b8_ , where _xs_ = _\u2225vs\u2225_ 2 _\u00b7_[1] 1 _[\u2212] \u2212[\u03b3] \u03b3[s]_[and] _[y][s]_[=] _[\u03c0] s[\u2217]_[=] _fs_ ( _ws[\u2217][, D] s[\u2217]_[)][T] _[g] s_[SO] = _\u03c3_ ( _vs_ )[T] _gs_[SO][.][For this, we need to] _[ efficiently]_[ collect:]"
+    },
+    {
+      "index": 48,
+      "text": "1. _gs_[SO][, the second-order term computed over the horizon of size] _[ s]_[.]\n\n2. _vs_ , the distilled JVP computed over the horizon of size _s_ ."
+    },
+    {
+      "index": 49,
+      "text": "Forward pass \ud835\udc64! \"\ud835\udc64\" \"\ud835\udc64$ \ud835\udc64# \ud835\udefc'\n\n%& %& %& \ud835\udc54# \ud835\udc54$ \ud835\udc54\" Back-prop. (DrMAD) Figure 1: Collecting _gs_[SO]\n\n**1)** _gs_[SO][:][Note][that][DrMAD][in][Algorithm][2][(line][6)][sequentially][back-propagates] _[g]_[SO][for] _[t]_[=] _T, . . . ,_ 1. The important observation is that, at step _t_ , this incomplete second-order term _g_[SO] = \ufffd _Ti_ = _t[\u03b1][T][A]_[\u02c6] _[T][A]_[\u02c6] _[T][ \u2212]_[1] _[ \u00b7 \u00b7 \u00b7][A]_[\u02c6] _[i]_[+1][ \u02c6] _[B][i]_[can be seen as the valid second-order term computed over the hori-] zon of size _s_ = _T \u2212 t_ + 1. This is because the reparameterization _s_ = _T \u2212 t_ + 1 gives"
+    },
+    {
+      "index": 50,
+      "text": "for _s_ = 1 _, . . . , T_ , nothing but shifting the trajectory index by _T \u2212s_ steps so that the last step is always _T_ . Therefore, we can efficiently obtain the valid second-order term _gs_[SO] for all _s_ = 1 _, . . . , T_ through the single backward travel along the interpolated trajectory (See Figure 1). Each _gs_[SO] requires to compute only one or two additional JVPs. Also, as we use DrMAD instead of RMD, we only store _w_ 0 such that the memory cost is constant w.r.t. the total horizon size _T_ ."
+    },
+    {
+      "index": 51,
+      "text": "**2)** _vs_ : For computing the distilled JVP _vs_ , we first compute the distilled _ws[\u2217]_[and] _[D] s[\u2217]_[as][below,] similarly to Eq. (13) and (14). Denoting _ps_ = (1 _\u2212 \u03b3[s][\u2212]_[1] ) _/_ (1 _\u2212 \u03b3[s]_ ), we have"
+    },
+    {
+      "index": 52,
+      "text": "**Estimating** _\u03b8_ **.** Now we are ready to estimate _\u03b8_ . For _x_ , we have _xs_ = _\u2225vs\u2225_ 2 _\u00b7_[1] 1 _[\u2212] \u2212[\u03b3] \u03b3[s]_[and][collect] _x_ = ( _x_ 1 _, . . . , xT_ ). For _y_ , we have _ys_ = _\u03c3_ ( _vs_ )[T] _gs_[SO] and collect _y_ = ( _y_ 1 _, . . . , yT_ ). Finally, we estimate _\u03b8_ = ( _x_[T] _y_ ) _/_ ( _x_[T] _x_ ). See Algorithm 3 and Algorithm 4 for the details. Practically, we set EstimationPeriod in Algorithm 3 to every 50 completions of the inner-optimizations, i.e. _{_ 1 _,_ 51 _,_ 101 _, . . . }_ . Thus, the computational cost of LinearEstimation is marginal in terms of the wall-clock time (see Table 3)."
+    },
+    {
+      "index": 53,
+      "text": "## 5 EXPERIMENTS\n\n**Baselines.** We demonstrate the efficacy of our algorithm by comparing to the following baselines. **1) First-Order Approximation (FO).** Computationally the most efficient HO algorithm that completely ignores the second-order term, i.e. _g_[SO] = 0. **2) One-step Look-ahead Approximation (1-step). (Luketina et al., 2016)** The short-horizon approximation where only a single step is unrolled to compute each hypergradient. **3) DrMAD. (Fu et al., 2016)** An approximation of RMD that linearly interpolates between the initial and the last weight to save memory (see Algorithm 2). **4) Neumann IFT (N.IFT). (Lorraine et al., 2020)** An IFT based method that approximates the inverse-Hessian-vector product by Neumann series. Note that this method supports online optimization around convergence. Specifically, among total _T_ = 100 inner-steps, N.IFT( _N, K_ ) means for the last _K_ steps we perform online HO each with _N_ inversion steps. It requires total ( _N_ + 1) _\u00d7 K_ JVPs. We tune ( _N, K_ ) among _{_ (2 _,_ 25) _,_ (5 _,_ 10) _,_ (10 _,_ 5) _}_ , roughly computing 50 JVPs per inner-opt. **5) HyperDistill.** Our high-dimensional online HO algorithm based on the idea of knowledge distillation. We tune the decaying factor within _\u03b3 \u2208{_ 0 _._ 9 _,_ 0 _._ 99 _,_ 0 _._ 999 _,_ 0 _._ 9999 _}_ . The linear regression is done every 50 inner-optimization problems."
+    },
+    {
+      "index": 54,
+      "text": "**Target meta-learning models.** We test on the following three meta-learning models. **1) Almost No Inner Loop (ANIL). (Raghu et al., 2019)** The intuition of ANIL is that the need for task-specific adaptation diminishes when the task distribution is homogeneous. Following this intuition, based on a typical 4-layer convolutional network with 32 channels (Finn et al., 2017), we designate the three bottom layers as the high-dimensional hyperparameter and the 4th convolutional layer and the last fully connected layer as the weight, similarly to Javed & White (2019)."
+    },
+    {
+      "index": 55,
+      "text": "7\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n1.8 ANIL / TinyImaFO geNet 1.2 WarpGrad / CIFAR100N.IFT (10, 5) 1.6 WarpGrad / TinN.IFT (10, 5)yImageNet 1.4MetaWeightNet N.IFT (2, 25)/ CIFAR100\n1.7 1-step 1.1 1.3\n1.6 DrMAD 1.5 1.2\nN.IFT (2, 25)\n1.5 HyperDistill 1.0 1.4 1.1\n1.4 0.9 1.0\n1.3 1.3\n0.9\n0.8\n1.2 1.2 0.8\n1.1 0.7\n0 200 400 600 800 1K 0 200 400 600 800 1K 0 200 400 600 800 1K 0 200 400 600 800 1K\n# Inner-opt. Solved # Inner-opt. Solved # Inner-opt. Solved # Inner-opt. Solved\n**----- End of picture text -----**"
+    },
+    {
+      "index": 56,
+      "text": "Figure 2: **Meta-training convergence** measured in _L_[val] ( _wT , \u03bb_ ) with _T_ = 100 inner-steps. We report mean and and 95% confidence intervals over 5 meta-training runs."
+    },
+    {
+      "index": 57,
+      "text": "|Online\n# JVPs\noptim.\n/ inner-opt.|ANIL\nWarpGrad\nMetaWeightNet\ntinyImageNet\nCIFAR100\ntinyImageNet\nCIFAR100|\n|---|---|\n|FO\nO\n0\n1-step\nO\n50\nDrMAD\nX\n199\nNeumann IFT\n**_\u25b3_**\n_{_55,60,75_}_|53.62_\u00b1_0.06\n58.16_\u00b1_0.52\n53.54_\u00b1_0.74\nN/A\n53.90_\u00b1_0.43\n58.18_\u00b1_0.52\n49.97_\u00b1_2.46\n58.45_\u00b1_0.40\n49.84_\u00b1_1.35\n55.13_\u00b1_0.64\n50.71_\u00b1_1.16\n57.03_\u00b1_0.42\n53.76_\u00b1_0.31\n58.88_\u00b1_0.65\n50.15_\u00b1_0.98\n59.34_\u00b1_0.27|\n|**HyperDistill**\nO\n_\u2248_58|**56.37**_\u00b1_**0.27**\n**60.91**_\u00b1_**0.27**\n**55.04**_\u00b1_**0.52**\n**60.82**_\u00b1_**0.33**|"
+    },
+    {
+      "index": 58,
+      "text": "Table 2: **Meta-test performance** measured in test classification accuracy (%). We report mean and and 95% confidence intervals over 5 meta-training runs."
+    },
+    {
+      "index": 59,
+      "text": "**2) WarpGrad. (Flennerhag et al., 2019)** Secondly, we consider WarpGrad, whose goal is to metalearn non-linear warp layers that facilitate fast inner-optimization and better generalization. We use 3-layer convolutional network with 32 channels. Every layer is interleaved with two warp layers that do not participate in the inner-optimization, which is the high-dimensional hyperparameter. **3) MetaWeightNet. (Shu et al., 2019)** Lastly, we consider solving the label corruption problem with MetaWeightNet, which meta-learns a small MLP taking a 1D loss as an input and output a reweighted loss. The parameter of the MLP is considered as a high-dimensional hyperparameter. Labels are independently corrupted to random classes with probability 0 _._ 4. Note that we aim to meta-learn the MLP over a task distribution and apply to diverse unseen tasks, instead of solving a single task. Also, in this meta model the direct gradient is zero, _g_[FO] = 0. In this case, _\u03c0[\u2217]_ in HyperDistill has a meaning of nothing but rescaling the learning rate, so we simply set _\u03c0[\u2217]_ = 1."
+    },
+    {
+      "index": 60,
+      "text": "**Use of Reptile.** Note that for all the above meta-learning models, we meta-learn the weight initialization with Reptile (Nichol et al., 2018) as well, representing a more practical meta-learning scenario than learning from random initialization. We use the Reptile learning rate _\u03b7_[Reptile] = 1. Note that _\u03c6_ in Algorithm 3 and Algorithm 4 denotes the Reptile initialization parameter."
+    },
+    {
+      "index": 61,
+      "text": "**Task distribution.** We consider the following two datasets. To generate each task, we randomly sample 10 classes from each dataset (5000 examples) and randomly split them into 2500 training and 2500 test examples. **1) TinyImageNet.** (Le & Yang, 2015) This dataset contains 200 classes of general categories. We split them into 100, 40, and 60 classes for meta-training, meta-validation, and meta-test. Each class has 500 examples of size 64 _\u00d7_ 64. **2) CIFAR100.** (Krizhevsky et al., 2009) This dataset contains 100 classes of general categories. We split them into 50, 20, and 30 classes for meta-training, meta-validation, and meta-test. Each class has 500 examples of size 32 _\u00d7_ 32."
+    },
+    {
+      "index": 62,
+      "text": "**Experimental setup. Meta-training:** For **inner-optimization** of the weights, we use SGD with momentum 0 _._ 9 and set the learning rate _\u00b5_[Inner] = 0 _._ 1 for MetaWeightNet and _\u00b5_[Inner] = 0 _._ 01 for the others. The number of inner-steps is _T_ = 100 and batchsize is 100. We use random cropping and horizontal flipping as data augmentations. For the **hyperparameter optimization** , we also use SGD with momentum 0 _._ 9 with learning rate _\u00b5_[Hyper] = 0 _._ 01 for MetaWeightNet and _\u00b5_[Hyper] = 0 _._ 001 for the others, which we linearly decay toward 0 over total _M_ = 1000 inner-optimizations. We perform parallel meta-learning with meta-batchsize set to 4. **Meta-testing:** We solve 500 tasks to measure average performance, with exactly the same inner-optimization setup as meta-training. We repeat this over 5 different meta-training runs and report mean and 95% confidence intervals (see Table 2). **Code is publicly available at:** https://github.com/haebeom-lee/hyperdistill"
+    },
+    {
+      "index": 63,
+      "text": "## 5.1 ANALYSIS\n\nWe perform the following analysis together with the WarpGrad model and CIFAR100 dataset. **HyperDistill provides faster convergence and better generalization.** Figure 2 shows that HyperDistill shows much faster meta-training convergence than the baselines for all the meta-learning"
+    },
+    {
+      "index": 64,
+      "text": "8\n\nPublished as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n0.99\n0.98 DrMADN.IFT (10, 1) HyperDistill 0.8 .999.99 .9.5 0 0.9 Eq.(7), =0.99 DrMAD N.IFT (10, 1) 1step HyperDistill  =0.99\nN.IFT (2, 1) 0.8\n1-step 0.7\n0.97 FO 0.7\n0.6\n0.96 0.6\n0.5 0.5\n0.95\n0 200 400 600 800 1000 0 200 400 600 800 1000 0 200 400 600 800 1000\n# Inner-opt. Solved # Inner-opt. Solved # Inner-opt. Solved\n(a) (b) (c)\nFigure 3: Cosine similarity to exact RMD  in terms of  (a)  hypergradients  g [[FO]] + g [[SO]] . (b, c)  second-order term\ng [[SO]] . The curves in  (b)  correspond to Eq. (7) with various7) with various) with various  \u03b3 .\n2.00 1.0\n5 2.5 1.75 theta 62 HyperDistillN.IFT\n1.50 0.8 DrMAD\n4 2.0 60 1-step\n1.25 0.6 FO\n3 1.5 1.00 58\n2 1.0 0.75 0.4\n0.50 0.2 56\n1 0.5 Fitted\n0.25 GT\n0 0 2 4 6 8 0.0 0 1 2 3 4 0.00 0 1 2 3 4 0 0 500 1K 54 0 50 100 150 200\nx x x # Inner-opt. Solved #JVP per inner-opt.\n(a) (b) (c) (d) (e)\ny y y\nMeta-test / Test Acc.\n**----- End of picture text -----**"
+    },
+    {
+      "index": 65,
+      "text": "Figure 3: **Cosine similarity to exact RMD** in terms of **(a)** hypergradients _g_[[FO]] + _g_[[SO]] . **(b, c)** second-order term _g_[[SO]] . The curves in **(b)** correspond to Eq. (7) with various7) with various) with various _\u03b3_ ."
+    },
+    {
+      "index": 66,
+      "text": "Figure 4: **(a,b)** Samples collected from Algorithm 4 and correspondingly fitted linear estimators ( _\u03b8_ ). **(c)** A fitted estimator and the range of actual ground-truth estimator (the shaded area is one sigma). **(d)** The stability of _\u03b8_ estimation. **(e)** Meta-test performance vs. computational cost in terms of the number of JVPs per inner-opt."
+    },
+    {
+      "index": 67,
+      "text": "models and datasets we considered. We see that the convergence of offline method such as DrMAD is significantly worse than a simple first-order method, demonstrating the importance of frequent update via online optimization. HyperDistill shows significantly better convergence than FO and 1-step because it is online and at the same time alleviates the short horizon bias. As a result, Table 2 shows that the meta-test performance of HyperDistill is significantly better than the baselines, although it requires comparable number of JVPs per each inner-optimiztion."
+    },
+    {
+      "index": 68,
+      "text": "**HyperDistill is a reasonable approximation of the true hypergradient.** We see from Figure 3(a) that the hypergradient obtained from HyperDistill is more similar to the exact RMD than those obtained from FO and 1-step, demonstrating that HyperDistill can actually alleviate the short horizon bias. HyperDistill is even comparable to N.IFT(10 _,_ 1) that computes 11 JVPs, whereas HyperDistill computes only a single JVP. Such results indicate that the approximation we used in Eq. (7) and DrMAD in Eq. (16) are accurate enough. Figure 3(b) shows that with careful tuning of _\u03b3_ (e.g. 0 _._ 99), the direction of the approximated second-order term in Eq. (7) can be much more accurate than the second-order term of 1-step ( _\u03b3_ = 0). In Figure 3(c), as HyperDistill distills such a good approximation, it can provide a better direction of the second-order term than 1-step. Although the gap may seem marginal, even N.IFT(10 _,_ 1) performs similarly, showing that matching the direction of the second-order term without unrolling the full gradient steps is inherently a challenging problem. Figure 4(a) and 4(b) show that the samples collected according to Algorithm 4 is largely linear, supporting our choice of Eq. (15). Figure 4(c) and 4(d) show that the range of fitted _\u03b8_ is accurate and stable, explaining why we do not have to perform the estimation frequently. Note that DrMAD approximation (Eq. (16)) is accurate (Figure 3(a) and 3(c)), helping to predict the hypergradient size. **HyperDistill is compuatationally efficient.** Figure 4(e) shows the superior computational efficiency of HyperDistill in terms of the trade-off between meta-test performance and the amount of JVP computations. Note that wall-clock time is roughly proportional to the number of JVPs per inner-optimization. In Appendix F, we can see that the actual increase in memory cost and wallcock time is very marginal compared to 1-step approximation."
+    },
+    {
+      "index": 69,
+      "text": "## 6 CONCLUSION\n\nIn this work, we proposed a novel HO method, _HyperDistill_ , that can optimize high-dimensional hyperparameters in an online manner. It was done by approximating the exact second-order term with knowledge distillation. We demonstrated that HyperDistill provides faster meta-convergence and better generalization performance based on realistic meta-learning methods and datasets. We also verified that it is thanks to the accurate approximations we proposed."
+    },
+    {
+      "index": 70,
+      "text": "9\n\nPublished as a conference paper at ICLR 2022\n\n**Acknowledgements** This work was supported by Google AI Focused Research Award, Center for Applied Research in Artificial Intelligence (CARAI) grant funded by DAPA and ADD (UD190031RD), the Engineering Research Center Program through the National Research Foundation of Korea (NRF) funded by the Korean Government MSIT (NRF-2018R1A5A1059921), and Institute of Information & communications Technology Planning & Evaluation (IITP) grant funded by the Korea government(MSIT) (No.2019-0-00075, Artificial Intelligence Graduate School Program(KAIST))."
+    },
+    {
+      "index": 71,
+      "text": "## REFERENCES\n\n- Yogesh Balaji, Swami Sankaranarayanan, and Rama Chellappa. Metareg: Towards domain generalization using meta-regularization. _Advances in neural information processing systems_ , 31, 2018."
+    },
+    {
+      "index": 72,
+      "text": "- Yoshua Bengio. Gradient-based optimization of hyperparameters. _Neural computation_ , 12(8):1889\u2013 1900, 2000."
+    },
+    {
+      "index": 73,
+      "text": "- James Bergstra and Yoshua Bengio. Random search for hyper-parameter optimization. _Journal of machine learning research_ , 13(2), 2012."
+    },
+    {
+      "index": 74,
+      "text": "- Justin Domke. Generic methods for optimization-based modeling. In _Artificial Intelligence and Statistics_ , pp. 318\u2013326. PMLR, 2012."
+    },
+    {
+      "index": 75,
+      "text": "- Chelsea Finn, Pieter Abbeel, and Sergey Levine. Model-agnostic meta-learning for fast adaptation of deep networks. In _International conference on machine learning_ , pp. 1126\u20131135. PMLR, 2017."
+    },
+    {
+      "index": 76,
+      "text": "- Sebastian Flennerhag, Pablo G Moreno, Neil D Lawrence, and Andreas Damianou. Transferring knowledge across learning processes. In _International Conference on Learning Representations_ , 2018."
+    },
+    {
+      "index": 77,
+      "text": "- Sebastian Flennerhag, Andrei A Rusu, Razvan Pascanu, Francesco Visin, Hujun Yin, and Raia Hadsell. Meta-learning with warped gradient descent. In _International Conference on Learning Representations_ , 2019."
+    },
+    {
+      "index": 78,
+      "text": "- Luca Franceschi, Michele Donini, Paolo Frasconi, and Massimiliano Pontil. Forward and reverse gradient-based hyperparameter optimization. In _International Conference on Machine Learning_ , pp. 1165\u20131173. PMLR, 2017."
+    },
+    {
+      "index": 79,
+      "text": "- Jie Fu, Hongyin Luo, Jiashi Feng, Kian Hsiang Low, and Tat-Seng Chua. Drmad: distilling reversemode automatic differentiation for optimizing hyperparameters of deep neural networks. In _Proceedings of the Twenty-Fifth International Joint Conference on Artificial Intelligence_ , pp. 1469\u2013 1475, 2016."
+    },
+    {
+      "index": 80,
+      "text": "- Edward Grefenstette, Brandon Amos, Denis Yarats, Phu Mon Htut, Artem Molchanov, Franziska Meier, Douwe Kiela, Kyunghyun Cho, and Soumith Chintala. Generalized inner loop metalearning. _arXiv preprint arXiv:1910.01727_ , 2019."
+    },
+    {
+      "index": 81,
+      "text": "- Daniel Jiwoong Im, Cristina Savin, and Kyunghyun Cho. Online hyperparameter optimization by real-time recurrent learning. _arXiv preprint arXiv:2102.07813_ , 2021."
+    },
+    {
+      "index": 82,
+      "text": "- Khurram Javed and Martha White. Meta-learning representations for continual learning. _Advances in Neural Information Processing Systems_ , 32, 2019."
+    },
+    {
+      "index": 83,
+      "text": "- Diederik P Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In _ICLR (Poster)_ , 2015."
+    },
+    {
+      "index": 84,
+      "text": "- Alex Krizhevsky, Geoffrey Hinton, et al. Learning multiple layers of features from tiny images. 2009."
+    },
+    {
+      "index": 85,
+      "text": "- Ya Le and Xuan Yang. Tiny imagenet visual recognition challenge. _CS 231N_ , 7(7):3, 2015.\n\n- Hae Beom Lee, Taewook Nam, Eunho Yang, and Sung Ju Hwang. Meta dropout: Learning to perturb latent features for generalization. In _International Conference on Learning Representations_ , 2019.\n\n10"
+    },
+    {
+      "index": 86,
+      "text": "This document was extracted by OCR engine and could contain mistakes."
+    }
+  ],
+  "methods": {
+    "progressive__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a strong, well-motivated contribution to the field of gradient-based hyperparameter optimization by addressing the elusive \"quadruple constraint\": scalability to high dimensions, online optimization capability, memory efficiency, and the avoidance of short-horizon bias. The introduction is particularly clear, effectively using Table 1 to map the gap in the existing literature and positioning the proposed *HyperDistill* method as a necessary synthesis of Forward-Mode and Reverse-Mode differentiation techniques. The paper's strength lies in its modular framing\u2014by identifying exactly how current methods (FMD, RMD, IFT, and 1-step) fail to meet the requirements for practical, large-scale meta-learning, the authors provide a compelling technical justification for their distillation approach. The primary challenge for the remainder of the paper will be to substantiate the theoretical validity of distilling the second-order term into a single JVP, as the approximation error introduced by this distillation\u2014and its impact on the stability of the meta-optimization trajectory\u2014represents a non-trivial leap that warrants rigorous mathematical and empirical scrutiny.",
+      "comments": [
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_0",
+          "title": "Logical gap in the definition of the Hessian approximation",
+          "quote": "Specifically, \\hat \\delta_{t,i} = \\gamma^{t-i} \\|\\alpha_t B_i\\|_2 \\ge 0. ... Eq. (7) is simply a Hessian identity approximation.",
+          "explanation": "The approximation of the second-order term using scalar \\gamma assumes the Jacobian of the update function \\Phi effectively acts as a scalar. This contradicts the paper's motivation of handling high-dimensional hyperparameters, where the Jacobian would be a diagonal matrix if the learning rate is a vector, not a scalar. The derivation needs to clarify if this holds for vector-valued hyperparameters.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_1",
+          "title": "Mischaracterization of DrMAD computational complexity",
+          "quote": "For each online HO step t = 1, . . . , T we need to compute 2t - 1 JVPs, thus the number of total JVPs to complete a single trajectory accumulates up to [\\sum] t=1 (2t-1) = [T^2]",
+          "explanation": "The authors claim that DrMAD requires O(T^2) total work, implying it is not scalable. This mischaracterizes standard DrMAD, which typically operates in O(T) for a trajectory of length T via a singular reverse pass. This misrepresentation potentially overstates the relative benefits of the proposed method.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity regarding the optimization variable in Eq. (6)",
+          "quote": "Then, plugging Eq. (5) into \\pi in Eq. (4)...",
+          "explanation": "The transition from the distillation problem (Eq 4) to the 'equivalent' problem (Eq 6) assumes that the direction and magnitude of the update can be decoupled and optimized independently for w* and D*. This simplification is non-trivial and lacks the necessary technical justification in the main text.",
+          "comment_type": "logical",
+          "paragraph_index": 30,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_3",
+          "title": "Lower bound derivation missing justification",
+          "quote": "we can easily derive the following lower bound of $ \\hat{\\pi}_t $ (See Appendix B).",
+          "explanation": "The derivation of the lower bound for the proxy objective (used to establish Lipschitz continuity) is deferred to the appendix with minimal detail. Given this is central to the algorithm's validity, the main text should provide more insight into the conditions under which this bound holds.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistent mathematical notation and indexing",
+          "quote": "Note that DrMAD approximation (Eq. (16)) is accurate...",
+          "explanation": "There are significant inconsistencies in labeling and indexing throughout the paper. For instance, sections refer to the 'DrMAD approximation' using an equation number that appears unrelated to its derivation in previous sections. Similarly, indices (like 's' vs 't') are used interchangeably in Section 3.2, and Algorithm 4 references equations that do not align with the narrative flow. This hinders the reader's ability to verify the derivations.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0391,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 90586,
+      "completion_tokens": 10996
+    },
+    "progressive_original__gemini-3.1-flash-lite-preview": {
+      "label": "Progressive Original (gemini-3.1-flash-lite-preview)",
+      "model": "google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper presents a strong, well-motivated contribution to the field of gradient-based hyperparameter optimization by addressing the elusive \"quadruple constraint\": scalability to high dimensions, online optimization capability, memory efficiency, and the avoidance of short-horizon bias. The introduction is particularly clear, effectively using Table 1 to map the gap in the existing literature and positioning the proposed *HyperDistill* method as a necessary synthesis of Forward-Mode and Reverse-Mode differentiation techniques. The paper's strength lies in its modular framing\u2014by identifying exactly how current methods (FMD, RMD, IFT, and 1-step) fail to meet the requirements for practical, large-scale meta-learning, the authors provide a compelling technical justification for their distillation approach. The primary challenge for the remainder of the paper will be to substantiate the theoretical validity of distilling the second-order term into a single JVP, as the approximation error introduced by this distillation\u2014and its impact on the stability of the meta-optimization trajectory\u2014represents a non-trivial leap that warrants rigorous mathematical and empirical scrutiny.",
+      "comments": [
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_0",
+          "title": "Logical gap in the definition of the Hessian approximation",
+          "quote": "Specifically, \u02c6 \\delta_{t,i} = \\gamma^{t-i} \\|\\alpha_t B_i\\|_2 \\ge 0. ... Eq. (7) is simply a Hessian identity approximation. For instance, vanilla SGD ... \\approx (1 - \\eta_{Inner} k) I = \\gamma I.",
+          "explanation": "In Section 4.2, the authors derive an approximation for the second-order term g^TO_SO using a scalar \u03b3. The logic states that if the Hessian of the loss w.r.t weights is approximately kI, then the product of Jacobians in the unrolled gradient chain results in a scalar \u03b3 = 1 - \u03b7_Inner k. This ignores the fact that (A_j) is a Jacobian of the update function \u03a6. For standard SGD, \u03a6(w; \u03bb) = w - \u03bb * \u2207L(w), so the Jacobian A_j = \u2202\u03a6/\u2202w = I - \u03bb * \u2207^2L(w). The authors substitute this with (I - \u03b7_Inner * kI). However, \u03bb itself is often a high-dimensional hyperparameter (e.g., element-wise learning rates). If \u03bb is a vector, (I - \u03bb * kI) is a diagonal matrix, not a scalar \u03b3I. The approximation implicitly assumes \u03bb is a scalar or uniformly acts as a scalar, which contradicts the paper's primary motivation of handling high-dimensional hyperparameters.",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency between algorithm complexity description and summation bound",
+          "quote": "For each online HO step t = 1, . . . , T we need to compute 2t \u2212 1 JVPs, thus the number of total JVPs to complete a single trajectory accumulates up to [\\sum] t=1 (2t\u22121) = [T^2]",
+          "explanation": "The text states the total number of JVPs for DrMAD is the summation (2t-1) from t=1 to T. The sum of the first T odd numbers (2t-1) is T^2. However, the context mentions 2t-1 JVPs per step t. If we track the state, Algorithm 2 requires back-propagating through time, which generally scales linearly with T (the horizon). The claim of T^2 total complexity suggests that for every step t in the online loop, one performs a full backpropagation of length t. While this is mathematically consistent with the *total* cost of an online algorithm that keeps re-running from T=1, it is ambiguous whether they are claiming the algorithm *requires* re-running the full trajectory at every step or if this is the inherent limitation of naive implementations of such methods.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity regarding the optimization variable in Eq. (6)",
+          "quote": "Then, plugging Eq. (5) into \\pi in Eq. (4) and making use of \\|f_t (w, D)\\|_2 = 1, we can easily convert the optimization problem Eq. (4) into the following equivalent problem (See Appendix A).",
+          "explanation": "The paper transitions from Eq (4) (a distillation problem) to an 'equivalent problem' Eq (6). However, the variable \\pi is introduced as a target scalar size, and the optimization objective shifts to matching the direction w* and D*. The relationship between the distillation of the second-order term into a JVP and the vector projection is presented as a direct transformation, but the assumption that the 'direction' and 'size' can be decoupled and solved independently for w* and D* is non-trivial and technically under-explained in the main text.",
+          "comment_type": "logical",
+          "paragraph_index": 30,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_3",
+          "title": "Typographical error in RMD pseudocode logic",
+          "quote": "5: g_SO \u2190g_SO + \u03b1Bt\n6: \u03b1 \u2190 \u03b1At",
+          "explanation": "In Algorithm 1 (Reverse-HG), the accumulation of the second-order term should involve the gradient of the loss with respect to the hyperparameter at each step. In standard RMD (like those in Domke 2012 or Franceschi 2017), the update to the adjoint variable alpha is correctly alpha = alpha * At, but the contribution to the total hypergradient g_SO at each step t should be the product of the adjoint vector alpha and the Jacobian Bt (i.e., alpha * Bt). While the pseudocode appears to capture this correctly, the indexing/notation for the matrices A and B in RMD is often source-linked to specific time indices. Given that this is a transcription of an OCR'd paper, I checked the definition of Bt vs At. Algorithm 1 uses Bt and At without explicit time subscripts, whereas Eq (3) (implied) usually defines these as A_t and B_t. While the pseudocode is understandable in context, the lack of subscripts t on A and B in the Alg 1 table is a minor notation inconsistency compared to the inline prose.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_4",
+          "title": "Unsubstantiated computational complexity claim for DrMAD",
+          "quote": "For each online HO step t = 1, . . . , T we need to compute 2 t \u2212 1 JVPs, thus the number of total JVPs to complete a single trajectory accumulates up to \u2211 t =1 (2t\u22121) = T 2, which is definitely not scalable",
+          "explanation": "The authors claim the total number of JVPs for DrMAD is T^2, implying DrMAD is not scalable for online optimization because it computes 2t-1 JVPs at each step t. However, in the standard DrMAD formulation (Fu et al., 2016), one does not recompute the entire trajectory of 2t-1 JVPs for every single step; rather, one performs a singular reverse pass which is O(T). The claim that DrMAD requires O(T^2) total work for a trajectory of length T is a mischaracterization of the algorithm's complexity, which potentially overstates the advantage of the proposed HyperDistill method.",
+          "comment_type": "logical",
+          "paragraph_index": 25,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_5",
+          "title": "Inconsistent spelling of 'differentiation'",
+          "quote": "Unrolled diffrentiation can be fur-",
+          "explanation": "In Section 2 (Related Work), the word 'differentiation' is misspelled as 'diffrentiation'. While this is a minor typo, it appears twice in the text block. I am flagging this as a minor concern as it suggests a lapse in proofreading that could affect the quality of the technical presentation.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_6",
+          "title": "Inconsistency in JVP count derivation",
+          "quote": "For each online HO step $t = 1, \\dots, T$ we need to compute $2t - 1$ JVPs, thus the number of total JVPs to complete a single trajectory accumulates up to $\\sum_{t=1}^T (2t - 1) = T^2$",
+          "explanation": "The authors state that for an online HO step $t$ one needs to compute $2t-1$ JVPs leading to a total of $T^2$ JVPs. However, the standard summation $\\sum_{t=1}^T (2t - 1)$ is equal to $T^2$. While the final result $T^2$ is correct, the intermediate notation implies a sum where each term depends on $t$, but in typical online optimization algorithms (like RMD or DrMAD), the number of JVPs required per step is either constant (for $O(1)$ methods) or grows linearly. Specifically, for RMD, one backpropagates the entire trajectory at each step $t$, requiring $O(t)$ operations per step, leading to $O(T^2)$ total. The text is slightly ambiguous whether this refers to the *cumulative* cost or the *per-step* marginal cost, but the specific phrasing 'For each... step... we need to compute $2t-1$ JVPs' describes a linear growth per step. The summation symbol itself contains a stray bracket/formatting error ($\\sum_{t=1}^T (2t - 1) = T^2$), which, while trivial to compute, reflects a lack of precision in the description of the algorithm's complexity.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_7",
+          "title": "Ambiguity in Jacobian approximation notation",
+          "quote": "$A_s = \\frac{\\partial \\Phi(\\hat{w}_{s-1}, \\lambda; D_s)}{\\partial \\hat{w}_{s-1}}$ and $B_t = \\frac{\\partial \\Phi(\\hat{w}_{t-1}, \\lambda; D_t)}{\\partial \\lambda}$",
+          "explanation": "In Section 3.2, defining $A_s$ and $B_t$ within the DrMAD context, the text uses $\\hat{w}$ notation but introduces a naming inconsistency. The second equation uses $B_t$ with index $t$ while the previous logic established $s$ as the time index for the loop. Additionally, the OCR-degraded snippet $\\frac{\\partial \\Phi(\\hat{w}_{s-1}, \\lambda; D_s)}{\\partial \\hat{w}_{s-1}}$ seems to rely on the reader to correctly infer the variables from previous sections. While common in short papers, using both $s$ and $t$ for identical temporal roles within the same paragraph when explaining the trajectory approximation is prone to causing confusion regarding whether $A$ and $B$ are being evaluated at the same or different steps.",
+          "comment_type": "logical",
+          "paragraph_index": 20,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_8",
+          "title": "Lower bound derivation missing justification",
+          "quote": "we can easily derive the following lower bound of $ \\hat{\\pi}_t $ (See Appendix B).",
+          "explanation": "The paper claims to derive a lower bound for the proxy objective $\\hat{\\pi}_t$ (Eq. 8) as part of the Lipschitz continuity argument. Given the centrality of the 'HyperDistill' objective to the paper's claims, simply stating 'we can easily derive' and deferring to the appendix for a non-trivial inequality derivation (linking the maximization of the Hessian-approximated JVP objective to a simple minimization of distances) is a barrier to understanding the algorithm's validity. Without the derivation, it is unclear if the lower bound holds strictly or under specific conditions on $K_1$ and $K_2$.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_9",
+          "title": "Inconsistent formulation of DrMAD approximation in text vs summary",
+          "quote": "In Figure 3(c), as HyperDistill distills such a good approximation, it can provide a better direction of the second-order term than 1-step. Although the gap may seem marginal, even N.IFT(10, 1) performs similarly, showing that matching the direction of the second-order term without unrolling the full gradient steps is inherently a challenging problem. Figure 4(a) and 4(b) show that the samples collected according to Algorithm 4 is largely linear, supporting our choice of Eq. (15). Figure 4(c) and 4(d) show that the range of fitted $\\theta$ is accurate and stable, explaining why we do not have to perform the estimation frequently. Note that DrMAD approximation (Eq. (16)) is accurate...",
+          "explanation": "The text refers to a 'DrMAD approximation' as '(Eq. (16))', but the earlier section describing DrMAD and the relevant gradient terms lists Eq. (16) as a component of the Linear Estimation algorithm rather than the DrMAD trajectory approximation found in Section 3.2. Furthermore, in the Algorithm 4 box, line 9 uses equations (13), (15), and (14), and line 12 references formula (17), (18). The numbering appears to be highly inconsistent with the prose, which might confuse a reader attempting to verify the mathematical derivation of the DrMAD-based weights used within the HyperDistill procedure.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__gemini-3.1-flash-lite-preview_10",
+          "title": "Unexplained notation jump in Figure 3 legend",
+          "quote": "The curves in (b) correspond to Eq. (7) with various7) with various) with various $\\gamma$.",
+          "explanation": "The caption for Figure 3 in the provided text contains a clear OCR-related repetitive stutter ('with various7) with various) with various'). While the context makes it clear that it should refer back to Equation (7) and the parameter $\\gamma$, this creates ambiguity regarding whether the authors intended to present multiple variants of the equation or just variations of the hyperparameter value $\\gamma$.",
+          "comment_type": "logical",
+          "paragraph_index": 64,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0391,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 90586,
+      "completion_tokens": 10996
+    },
+    "progressive__qwen3.6-35b-a3b": {
+      "label": "Progressive (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The manuscript addresses a timely and practically significant challenge in gradient-based meta-learning by proposing an online hyperparameter optimization method that aims to circumvent the computational and memory bottlenecks of existing second-order approaches. The motivation is compelling and clearly articulated, and the comparative analysis of prior algorithms effectively highlights the absence of a method that simultaneously satisfies scalability, online updates, constant memory, and horizon-awareness. However, the paper\u2019s current clarity and technical rigor are compromised by an underspecified description of the core distillation mechanism: while the authors claim to \u201cparameterize a single Jacobian-vector product (JVP) for each HO step and minimize the distance from the true second-order term,\u201d the surrogate architecture, optimization objective, exact mathematical formulation, and training procedure for this distillation remain vague. Furthermore, the strong claims of achieving constant memory, eliminating short-horizon bias, and supporting online updates lack immediate algorithmic or theoretical justification, raising concerns about numerical stability, approximation error propagation, and practical implementability. To strengthen the submission, the authors should provide a precise, step-by-step algorithmic pipeline, clarify how the distilled JVP approximates full-horizon hypergradients without introducing uncontrolled bias or instability, and include preliminary theoretical analysis or targeted ablations to substantiate the claimed efficiency-accuracy trade-off. Overall, while the problem formulation and high-level intuition are promising, the technical exposition requires significantly more precision and empirical grounding before the contributions can be rigorously evaluated.",
+      "comments": [
+        {
+          "id": "progressive__qwen3.6-35b-a3b_0",
+          "title": "Inconsistent counts of methods and datasets between Abstract and Contributions",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract states that the experimental evaluation uses 'two different meta-learning methods and three benchmark datasets.' However, the contribution list at the end of the introduction claims the algorithm is demonstrated 'with three recent meta-learning models and on two benchmark image datasets.' The numbers for methods/models and datasets are swapped. I carefully checked the surrounding context and the provided paper sections to see if 'methods' and 'models' referred to distinct categories (e.g., meta-learning frameworks vs. specific architectures) or if datasets were grouped differently to justify the count difference. The phrasing, however, strongly indicates a drafting or copy-paste error rather than a deliberate distinction. While this does not undermine the technical claims or methodology, it creates mild ambiguity regarding the actual experimental scope. Standard academic writing conventions expect precise consistency between abstract summaries and detailed contributions, so aligning these counts is necessary for clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_1",
+          "title": "Underspecified dataset update heuristic",
+          "quote": "For $D$, we have assumed Euclidean distance metric as with $w$, but it is not straightforward to think of Euclidean distance between datasets. Instead, we simply interpret $p_t$ and $1-p_t$ as probabilities with which we proportionally subsample each dataset.",
+          "explanation": "The authors derive a Lipschitz-based lower bound for the distillation objective that naturally leads to a joint minimization problem over $(w, D)$. However, when addressing the dataset component, they abruptly discard the optimization formulation and introduce a probabilistic subsampling rule (Eq. 14) without mathematical derivation or justification. While the intent to approximate a continuous dataset space with a discrete subset is understandable, the leap from the Lipschitz bound to random subsampling is unjustified. A careful reader cannot verify whether this heuristic actually minimizes the derived objective, how to theoretically set the subsampling schedule, or what happens if the datasets $D_t$ have different structures or sizes. The method is left underspecified at this critical step.",
+          "comment_type": "logical",
+          "paragraph_index": 41,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_2",
+          "title": "Notation inconsistency: $\\alpha_t$ vs $\\alpha_T$ in normalized JVP definitions",
+          "quote": "We denote the normalized JVP as _ft_ ( _w, D_ ) := _\u03c3_ ( _\u03b1t \u2202_ \u03a6( _w\u2202\u03bb,\u03bb_ ; _D_ ) ) with _\u03c3_ ( _x_ ) = _\u2225xx\u2225_ 2[. ... where _\u03b4t,i_ = _\u03b3[t][\u2212][i] \u2225\u03b1tBi\u2225_ 2 _\u2265_ 0.",
+          "explanation": "The paper formally defines $\\alpha_T = \\frac{\\partial L_{\\text{val}}}{\\partial w_{(w_T, \\lambda)}}$ as the gradient of the validation loss with respect to the final inner weight. However, in the definition of the normalized JVP $f_t$ and the coefficient $\\delta_{t,i}$, the symbol $\\alpha_t$ is used. Given that $L_{\\text{val}}$ is evaluated at the end of the trajectory, the correct scaling factor should be $\\alpha_T$. Using $\\alpha_t$ would incorrectly scale the distillation target by a step-dependent gradient magnitude, which contradicts the global validation gradient definition and could mislead implementation. While this is highly likely an OCR artifact for $T$, if it reflects the authors' original notation, it introduces a conceptual inconsistency in how the projection/scaling of the second-order term is constructed.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_3",
+          "title": "Ambiguous formula rendering: double sum vs. matrix product",
+          "quote": "distill the whole second-order term _gt_[SO] = _\u03b1t_  _i_ =1  _j_ = _i_ +1 _[A][j]_  _Bi_ in Eq. (2)",
+          "explanation": "The OCR renders the second-order term with a double summation over $i$ and $j$. In standard unrolled differentiation and bi-level optimization literature, the second-order term involves a *product* of Jacobians $A_j$ for $j > i$, not a sum. The correct form should be $\\alpha \\sum_{i=1}^t \\left( \\prod_{j=i+1}^t A_j \\right) B_i$. If this is indeed a summation in the source text, it would be mathematically incorrect. Given the rampant OCR errors, I assume it is a misread \\prod symbol. However, the ambiguity is significant enough that a reader unfamiliar with the standard form could reconstruct the formula incorrectly. The authors should ensure the product notation is clearly preserved in the final version.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_4",
+          "title": "Inconsistent definition of mixing coefficient when switching from step index t to horizon size s",
+          "quote": "Denoting ps = (1 \u2212 \u03b3[s\u22121]) / (1 \u2212 \u03b3[s]), we have",
+          "explanation": "In Section 4.2, the sequential update coefficient is defined as pt = (\u03b3 \u2212 \u03b3^t)/(1 \u2212 \u03b3^t). When the authors re-index the problem using horizon size s = T \u2212 t + 1 in Section 4.3, they introduce a different functional form ps = (1 \u2212 \u03b3^{s\u22121})/(1 \u2212 \u03b3^s) without derivation or justification. While both functions monotonically map [1, \u221e) to [0, 1), they assign different weights to intermediate steps (e.g., at index 2, pt = \u03b3/(1+\u03b3) while ps = 1/(1+\u03b3)). Since the update rule is stated to be 'similarly to Eq. (13) and (14)', the functional form should either remain invariant under re-indexing or a clear derivation explaining the structural change should be provided. This ambiguity makes it difficult to precisely implement the w*_s and D*_s updates.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_5",
+          "title": "Missing mathematical expression for the linear estimator c\u03b3(t; \u03b8)",
+          "quote": "Based on the observation that the form of lower bound in Eq. (10) is roughly proportional to\u2211t i=1 \u03b4t,i = \u2211t i=1 \u03b3t\u2212i \u2225\u03b1tBi\u22252[, we conveniently set c\u03b3(t; \u03b8) to as follows:]",
+          "explanation": "The exact formula for c\u03b3(t; \u03b8) is omitted/garbled in the text. The paper states that \u03b8 \u2208 \u211d is a scalar parameter estimated via linear regression, and that c\u03b3 is set based on the geometric sum of \u03b4t,i. However, without the explicit form of c\u03b3(t; \u03b8) (e.g., whether it is linear in t, incorporates polynomial terms of \u03b3, or directly uses the closed-form geometric sum), the distillation procedure for the hypergradient magnitude is underspecified. Readers cannot reproduce the scaling factor estimation without guessing the intended functional form.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_6",
+          "title": "Boundary condition undefined at \u03b3 = 1",
+          "quote": "1: Input: \u03b3 \u2208 [0, 1], initial \u03bb, and initial \u03c6.",
+          "explanation": "Algorithm 4 declares \u03b3 \u2208 [0, 1], but multiple downstream equations contain terms that become undefined or require limiting cases at \u03b3 = 1. Specifically, ps = (1 \u2212 \u03b3^{s\u22121})/(1 \u2212 \u03b3^s), pt = (\u03b3 \u2212 \u03b3^t)/(1 \u2212 \u03b3^t), and xs = \u2225vs\u22252 \u00b7 1/(1 \u2212 \u03b3^s) all have denominators that vanish at \u03b3 = 1. Since \u03b3 acts as a decaying factor in the trajectory weighting, the valid domain should explicitly be \u03b3 \u2208 [0, 1) or include a defined limit for the \u03b3 = 1 case. This is a minor but necessary clarification for correct implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_7",
+          "title": "Redundant/ambiguous application of normalization function \u03c3(\u00b7)",
+          "quote": "ys = \u03c3(vs)T gsSO",
+          "explanation": "In Section 4.1, the distilled direction ft(w, D) is explicitly defined as \u03c3(\u03b1t \u2202\u03a6/\u2202\u03bb) where \u03c3(x) = x/\u2225x\u22252, making it a unit vector by definition. In Section 4.3, vs is introduced as 'the distilled JVP', which semantically corresponds to ft(ws\u2217, Ds\u2217). If vs is already normalized, applying \u03c3(\u00b7) again in ys = \u03c3(vs)^T gsSO is redundant. If vs is intended to be unnormalized, this contradicts the earlier normalization convention. Clarifying whether vs is normalized or unnormalized would prevent confusion in reproducing the regression targets.",
+          "comment_type": "logical",
+          "paragraph_index": 52,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_8",
+          "title": "Incomplete reporting of HyperDistill results in Table 2",
+          "quote": "|**HyperDistill** O _\u2248_58|**56.37**_\u00b1_**0.27** **60.91**_\u00b1_**0.27** **55.04**_\u00b1_**0.52** **60.82**_\u00b1_**0.33**|",
+          "explanation": "Table 2's header delineates six experimental settings (three models across TinyImageNet and CIFAR100), yet the HyperDistill row only reports four accuracy values. While this likely aligns with the four subplots in Figure 2, omitting two settings without explicit note creates an asymmetric comparison. A careful reader cannot tell if HyperDistill was intentionally excluded from those setups due to cost, methodological incompatibility, or simply omitted for space. Clarifying the scope of reported results would improve completeness.",
+          "comment_type": "logical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_9",
+          "title": "Underjustified setting of \u03c0* = 1 for MetaWeightNet",
+          "quote": "Note that in this meta model the direct gradient is zero, g_[FO] = 0. In this case, \u03c0[\u2217] in HyperDistill has a meaning of nothing but rescaling the learning rate, so we simply set \u03c0[\u2217] = 1.",
+          "explanation": "When g_[FO] = 0, the hypergradient is entirely g_[SO]. The distilled vector f_t is normalized (||f_t||=1), meaning \u03c0* theoretically estimates ||g_[SO]||_2 to preserve the correct step magnitude. Fixing \u03c0* = 1 discards the true gradient norm, relying solely on \u03b7_Hyper to scale updates. While the authors frame this as merely 'rescaling the learning rate', this is a substantial methodological simplification. The text does not explain why the magnitude variation in g_[SO] is negligible or stable enough in the label-corruption setting to justify a fixed scaling factor, leaving a key algorithmic choice under-justified.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_10",
+          "title": "Ambiguity regarding JVP complexity count for HyperDistill",
+          "quote": "|**HyperDistill** O _\u2248_58|",
+          "explanation": "Table 2 reports \u224858 JVPs per inner-optimization for HyperDistill. The methodology states that computing the primary JVP f_t and the auxiliary regression samples (x_s, y_s) requires '1\u20132 additional JVPs per step'. With T = 100 inner-steps, a straightforward calculation yields 100\u2013300 JVPs per trajectory. The reported \u224858 is notably lower, suggesting either amortization over the EstimationPeriod, subsampling of the backward pass, or an effective shorter horizon. Without a breakdown of how this average is computed, the computational claim lacks transparency and may mislead readers assessing scalability.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_11",
+          "title": "Minor typographical and phrasing inconsistencies",
+          "quote": "We report mean and and 95% confidence intervals over 5 meta-training runs.",
+          "explanation": "The sentence contains a duplicated conjunction ('and and'). Additionally, the phrase 'every 50 inner-optimization problems' is used to describe the EstimationPeriod. Given the paper's distinction between 'inner-steps' (T=100) and 'inner-optimizations' (full trajectories/M=1000), the term 'problems' ambiguously refers to outer/meta iterations. While the intent is recoverable from context, correcting to 'every 50 meta-iterations' or 'outer updates' would prevent confusion regarding update frequency and align with standard meta-learning terminology.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_12",
+          "title": "Ambiguity in JVP complexity claim (per-step vs. per-horizon)",
+          "quote": "HyperDistill is even comparable to N.IFT(10 _,_ 1) that computes 11 JVPs, whereas HyperDistill computes only a single JVP.",
+          "explanation": "The authors compare the computational cost of HyperDistill to N.IFT(10, 1). The context specifies that N.IFT requires $(N+1) \\times K$ JVPs *per inner-optimization* (i.e., over the full horizon $T$). In contrast, HyperDistill's 'single JVP' refers to the cost *per online hyperparameter update step* (i.e., per inner-step $t$). Over a complete horizon of $T$ steps, HyperDistill computes $T$ JVPs for the distilled terms alone, plus an additional backward pass for collecting distillation samples (noted in the Key Claims as '1\u20132 additional JVPs per step'). If $T > 11$, the total JVP count over a horizon actually exceeds that of N.IFT(10, 1). The authors' intent is clearly to highlight the low per-step overhead that enables true online optimization, but the phrasing conflates per-step and per-horizon costs. This could mislead readers evaluating total computational budgets across different methods. Clarifying 'per inner-step' vs 'per inner-optimization' would resolve the ambiguity.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__qwen3.6-35b-a3b_13",
+          "title": "Oversimplified causal link between DrMAD and hypergradient size prediction",
+          "quote": "Note that DrMAD approximation (Eq. (16)) is accurate (Figure 3(a) and 3(c)), helping to predict the hypergradient size.",
+          "explanation": "The text attributes the accuracy of predicting the hypergradient scaling factor ($\\pi_t^*$) partly to the DrMAD trajectory approximation. While DrMAD does reduce the memory and computational burden of computing intermediate Jacobians ($A_t, B_t$) during the backward pass, its direct impact on $\\pi_t^*$ prediction is indirect. The prediction relies on the linear regression estimator $\\hat{\\theta}$, which is fitted using samples $(x_s, y_s)$. If DrMAD is inaccurate, the backward pass yields noisier approximations of $g_s^{SO}$, which corrupts $y_s$ and degrades $\\hat{\\theta}$. Thus, DrMAD primarily stabilizes the distillation data generation pipeline rather than directly 'helping to predict the size'. The claim is technically reasonable but glosses over the fact that the linear estimator's stability and the Hessian proxy's form ($\\gamma$) are the dominant factors for size prediction. The point is valid but would benefit from more precise framing of the distillation pipeline's components.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1236,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 104687,
+      "completion_tokens": 97227
+    },
+    "progressive_original__qwen3.6-35b-a3b": {
+      "label": "Progressive Original (qwen3.6-35b-a3b)",
+      "model": "qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The manuscript addresses a timely and practically significant challenge in gradient-based meta-learning by proposing an online hyperparameter optimization method that aims to circumvent the computational and memory bottlenecks of existing second-order approaches. The motivation is compelling and clearly articulated, and the comparative analysis of prior algorithms effectively highlights the absence of a method that simultaneously satisfies scalability, online updates, constant memory, and horizon-awareness. However, the paper\u2019s current clarity and technical rigor are compromised by an underspecified description of the core distillation mechanism: while the authors claim to \u201cparameterize a single Jacobian-vector product (JVP) for each HO step and minimize the distance from the true second-order term,\u201d the surrogate architecture, optimization objective, exact mathematical formulation, and training procedure for this distillation remain vague. Furthermore, the strong claims of achieving constant memory, eliminating short-horizon bias, and supporting online updates lack immediate algorithmic or theoretical justification, raising concerns about numerical stability, approximation error propagation, and practical implementability. To strengthen the submission, the authors should provide a precise, step-by-step algorithmic pipeline, clarify how the distilled JVP approximates full-horizon hypergradients without introducing uncontrolled bias or instability, and include preliminary theoretical analysis or targeted ablations to substantiate the claimed efficiency-accuracy trade-off. Overall, while the problem formulation and high-level intuition are promising, the technical exposition requires significantly more precision and empirical grounding before the contributions can be rigorously evaluated.",
+      "comments": [
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_0",
+          "title": "Inconsistent counts of methods and datasets between Abstract and Contributions",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract states that the experimental evaluation uses 'two different meta-learning methods and three benchmark datasets.' However, the contribution list at the end of the introduction claims the algorithm is demonstrated 'with three recent meta-learning models and on two benchmark image datasets.' The numbers for methods/models and datasets are swapped. I carefully checked the surrounding context and the provided paper sections to see if 'methods' and 'models' referred to distinct categories (e.g., meta-learning frameworks vs. specific architectures) or if datasets were grouped differently to justify the count difference. The phrasing, however, strongly indicates a drafting or copy-paste error rather than a deliberate distinction. While this does not undermine the technical claims or methodology, it creates mild ambiguity regarding the actual experimental scope. Standard academic writing conventions expect precise consistency between abstract summaries and detailed contributions, so aligning these counts is necessary for clarity.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_1",
+          "title": "Underspecified dataset update heuristic",
+          "quote": "For $D$, we have assumed Euclidean distance metric as with $w$, but it is not straightforward to think of Euclidean distance between datasets. Instead, we simply interpret $p_t$ and $1-p_t$ as probabilities with which we proportionally subsample each dataset.",
+          "explanation": "The authors derive a Lipschitz-based lower bound for the distillation objective that naturally leads to a joint minimization problem over $(w, D)$. However, when addressing the dataset component, they abruptly discard the optimization formulation and introduce a probabilistic subsampling rule (Eq. 14) without mathematical derivation or justification. While the intent to approximate a continuous dataset space with a discrete subset is understandable, the leap from the Lipschitz bound to random subsampling is unjustified. A careful reader cannot verify whether this heuristic actually minimizes the derived objective, how to theoretically set the subsampling schedule, or what happens if the datasets $D_t$ have different structures or sizes. The method is left underspecified at this critical step.",
+          "comment_type": "logical",
+          "paragraph_index": 41,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_2",
+          "title": "Notation inconsistency: $\\alpha_t$ vs $\\alpha_T$ in normalized JVP definitions",
+          "quote": "We denote the normalized JVP as _ft_ ( _w, D_ ) := _\u03c3_ ( _\u03b1t \u2202_ \u03a6( _w\u2202\u03bb,\u03bb_ ; _D_ ) ) with _\u03c3_ ( _x_ ) = _\u2225xx\u2225_ 2[. ... where _\u03b4t,i_ = _\u03b3[t][\u2212][i] \u2225\u03b1tBi\u2225_ 2 _\u2265_ 0.",
+          "explanation": "The paper formally defines $\\alpha_T = \\frac{\\partial L_{\\text{val}}}{\\partial w_{(w_T, \\lambda)}}$ as the gradient of the validation loss with respect to the final inner weight. However, in the definition of the normalized JVP $f_t$ and the coefficient $\\delta_{t,i}$, the symbol $\\alpha_t$ is used. Given that $L_{\\text{val}}$ is evaluated at the end of the trajectory, the correct scaling factor should be $\\alpha_T$. Using $\\alpha_t$ would incorrectly scale the distillation target by a step-dependent gradient magnitude, which contradicts the global validation gradient definition and could mislead implementation. While this is highly likely an OCR artifact for $T$, if it reflects the authors' original notation, it introduces a conceptual inconsistency in how the projection/scaling of the second-order term is constructed.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_3",
+          "title": "Ambiguous formula rendering: double sum vs. matrix product",
+          "quote": "distill the whole second-order term _gt_[SO] = _\u03b1t_  _i_ =1  _j_ = _i_ +1 _[A][j]_  _Bi_ in Eq. (2)",
+          "explanation": "The OCR renders the second-order term with a double summation over $i$ and $j$. In standard unrolled differentiation and bi-level optimization literature, the second-order term involves a *product* of Jacobians $A_j$ for $j > i$, not a sum. The correct form should be $\\alpha \\sum_{i=1}^t \\left( \\prod_{j=i+1}^t A_j \\right) B_i$. If this is indeed a summation in the source text, it would be mathematically incorrect. Given the rampant OCR errors, I assume it is a misread \\prod symbol. However, the ambiguity is significant enough that a reader unfamiliar with the standard form could reconstruct the formula incorrectly. The authors should ensure the product notation is clearly preserved in the final version.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_4",
+          "title": "Inconsistent definition of mixing coefficient when switching from step index t to horizon size s",
+          "quote": "Denoting ps = (1 \u2212 \u03b3[s\u22121]) / (1 \u2212 \u03b3[s]), we have",
+          "explanation": "In Section 4.2, the sequential update coefficient is defined as pt = (\u03b3 \u2212 \u03b3^t)/(1 \u2212 \u03b3^t). When the authors re-index the problem using horizon size s = T \u2212 t + 1 in Section 4.3, they introduce a different functional form ps = (1 \u2212 \u03b3^{s\u22121})/(1 \u2212 \u03b3^s) without derivation or justification. While both functions monotonically map [1, \u221e) to [0, 1), they assign different weights to intermediate steps (e.g., at index 2, pt = \u03b3/(1+\u03b3) while ps = 1/(1+\u03b3)). Since the update rule is stated to be 'similarly to Eq. (13) and (14)', the functional form should either remain invariant under re-indexing or a clear derivation explaining the structural change should be provided. This ambiguity makes it difficult to precisely implement the w*_s and D*_s updates.",
+          "comment_type": "technical",
+          "paragraph_index": 51,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_5",
+          "title": "Missing mathematical expression for the linear estimator c\u03b3(t; \u03b8)",
+          "quote": "Based on the observation that the form of lower bound in Eq. (10) is roughly proportional to\u2211t i=1 \u03b4t,i = \u2211t i=1 \u03b3t\u2212i \u2225\u03b1tBi\u22252[, we conveniently set c\u03b3(t; \u03b8) to as follows:]",
+          "explanation": "The exact formula for c\u03b3(t; \u03b8) is omitted/garbled in the text. The paper states that \u03b8 \u2208 \u211d is a scalar parameter estimated via linear regression, and that c\u03b3 is set based on the geometric sum of \u03b4t,i. However, without the explicit form of c\u03b3(t; \u03b8) (e.g., whether it is linear in t, incorporates polynomial terms of \u03b3, or directly uses the closed-form geometric sum), the distillation procedure for the hypergradient magnitude is underspecified. Readers cannot reproduce the scaling factor estimation without guessing the intended functional form.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_6",
+          "title": "Boundary condition undefined at \u03b3 = 1",
+          "quote": "1: Input: \u03b3 \u2208 [0, 1], initial \u03bb, and initial \u03c6.",
+          "explanation": "Algorithm 4 declares \u03b3 \u2208 [0, 1], but multiple downstream equations contain terms that become undefined or require limiting cases at \u03b3 = 1. Specifically, ps = (1 \u2212 \u03b3^{s\u22121})/(1 \u2212 \u03b3^s), pt = (\u03b3 \u2212 \u03b3^t)/(1 \u2212 \u03b3^t), and xs = \u2225vs\u22252 \u00b7 1/(1 \u2212 \u03b3^s) all have denominators that vanish at \u03b3 = 1. Since \u03b3 acts as a decaying factor in the trajectory weighting, the valid domain should explicitly be \u03b3 \u2208 [0, 1) or include a defined limit for the \u03b3 = 1 case. This is a minor but necessary clarification for correct implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_7",
+          "title": "Redundant/ambiguous application of normalization function \u03c3(\u00b7)",
+          "quote": "ys = \u03c3(vs)T gsSO",
+          "explanation": "In Section 4.1, the distilled direction ft(w, D) is explicitly defined as \u03c3(\u03b1t \u2202\u03a6/\u2202\u03bb) where \u03c3(x) = x/\u2225x\u22252, making it a unit vector by definition. In Section 4.3, vs is introduced as 'the distilled JVP', which semantically corresponds to ft(ws\u2217, Ds\u2217). If vs is already normalized, applying \u03c3(\u00b7) again in ys = \u03c3(vs)^T gsSO is redundant. If vs is intended to be unnormalized, this contradicts the earlier normalization convention. Clarifying whether vs is normalized or unnormalized would prevent confusion in reproducing the regression targets.",
+          "comment_type": "logical",
+          "paragraph_index": 52,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_8",
+          "title": "Incomplete reporting of HyperDistill results in Table 2",
+          "quote": "|**HyperDistill** O _\u2248_58|**56.37**_\u00b1_**0.27** **60.91**_\u00b1_**0.27** **55.04**_\u00b1_**0.52** **60.82**_\u00b1_**0.33**|",
+          "explanation": "Table 2's header delineates six experimental settings (three models across TinyImageNet and CIFAR100), yet the HyperDistill row only reports four accuracy values. While this likely aligns with the four subplots in Figure 2, omitting two settings without explicit note creates an asymmetric comparison. A careful reader cannot tell if HyperDistill was intentionally excluded from those setups due to cost, methodological incompatibility, or simply omitted for space. Clarifying the scope of reported results would improve completeness.",
+          "comment_type": "logical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_9",
+          "title": "Underjustified setting of \u03c0* = 1 for MetaWeightNet",
+          "quote": "Note that in this meta model the direct gradient is zero, g_[FO] = 0. In this case, \u03c0[\u2217] in HyperDistill has a meaning of nothing but rescaling the learning rate, so we simply set \u03c0[\u2217] = 1.",
+          "explanation": "When g_[FO] = 0, the hypergradient is entirely g_[SO]. The distilled vector f_t is normalized (||f_t||=1), meaning \u03c0* theoretically estimates ||g_[SO]||_2 to preserve the correct step magnitude. Fixing \u03c0* = 1 discards the true gradient norm, relying solely on \u03b7_Hyper to scale updates. While the authors frame this as merely 'rescaling the learning rate', this is a substantial methodological simplification. The text does not explain why the magnitude variation in g_[SO] is negligible or stable enough in the label-corruption setting to justify a fixed scaling factor, leaving a key algorithmic choice under-justified.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_10",
+          "title": "Ambiguity regarding JVP complexity count for HyperDistill",
+          "quote": "|**HyperDistill** O _\u2248_58|",
+          "explanation": "Table 2 reports \u224858 JVPs per inner-optimization for HyperDistill. The methodology states that computing the primary JVP f_t and the auxiliary regression samples (x_s, y_s) requires '1\u20132 additional JVPs per step'. With T = 100 inner-steps, a straightforward calculation yields 100\u2013300 JVPs per trajectory. The reported \u224858 is notably lower, suggesting either amortization over the EstimationPeriod, subsampling of the backward pass, or an effective shorter horizon. Without a breakdown of how this average is computed, the computational claim lacks transparency and may mislead readers assessing scalability.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_11",
+          "title": "Minor typographical and phrasing inconsistencies",
+          "quote": "We report mean and and 95% confidence intervals over 5 meta-training runs.",
+          "explanation": "The sentence contains a duplicated conjunction ('and and'). Additionally, the phrase 'every 50 inner-optimization problems' is used to describe the EstimationPeriod. Given the paper's distinction between 'inner-steps' (T=100) and 'inner-optimizations' (full trajectories/M=1000), the term 'problems' ambiguously refers to outer/meta iterations. While the intent is recoverable from context, correcting to 'every 50 meta-iterations' or 'outer updates' would prevent confusion regarding update frequency and align with standard meta-learning terminology.",
+          "comment_type": "logical",
+          "paragraph_index": 56,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_12",
+          "title": "Ambiguity in JVP complexity claim (per-step vs. per-horizon)",
+          "quote": "HyperDistill is even comparable to N.IFT(10 _,_ 1) that computes 11 JVPs, whereas HyperDistill computes only a single JVP.",
+          "explanation": "The authors compare the computational cost of HyperDistill to N.IFT(10, 1). The context specifies that N.IFT requires $(N+1) \\times K$ JVPs *per inner-optimization* (i.e., over the full horizon $T$). In contrast, HyperDistill's 'single JVP' refers to the cost *per online hyperparameter update step* (i.e., per inner-step $t$). Over a complete horizon of $T$ steps, HyperDistill computes $T$ JVPs for the distilled terms alone, plus an additional backward pass for collecting distillation samples (noted in the Key Claims as '1\u20132 additional JVPs per step'). If $T > 11$, the total JVP count over a horizon actually exceeds that of N.IFT(10, 1). The authors' intent is clearly to highlight the low per-step overhead that enables true online optimization, but the phrasing conflates per-step and per-horizon costs. This could mislead readers evaluating total computational budgets across different methods. Clarifying 'per inner-step' vs 'per inner-optimization' would resolve the ambiguity.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__qwen3.6-35b-a3b_13",
+          "title": "Oversimplified causal link between DrMAD and hypergradient size prediction",
+          "quote": "Note that DrMAD approximation (Eq. (16)) is accurate (Figure 3(a) and 3(c)), helping to predict the hypergradient size.",
+          "explanation": "The text attributes the accuracy of predicting the hypergradient scaling factor ($\\pi_t^*$) partly to the DrMAD trajectory approximation. While DrMAD does reduce the memory and computational burden of computing intermediate Jacobians ($A_t, B_t$) during the backward pass, its direct impact on $\\pi_t^*$ prediction is indirect. The prediction relies on the linear regression estimator $\\hat{\\theta}$, which is fitted using samples $(x_s, y_s)$. If DrMAD is inaccurate, the backward pass yields noisier approximations of $g_s^{SO}$, which corrupts $y_s$ and degrades $\\hat{\\theta}$. Thus, DrMAD primarily stabilizes the distillation data generation pipeline rather than directly 'helping to predict the size'. The claim is technically reasonable but glosses over the fact that the linear estimator's stability and the Hessian proxy's form ($\\gamma$) are the dominant factors for size prediction. The point is valid but would benefit from more precise framing of the distillation pipeline's components.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.1236,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 104687,
+      "completion_tokens": 97227
+    },
+    "progressive__deepseek-v4-flash": {
+      "label": "Progressive (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper presents a timely and well-motivated contribution to gradient-based hyperparameter optimization (HO) for meta-learning, where the need for methods that simultaneously scale to high-dimensional hyperparameters, support online updates, maintain constant memory, and avoid short-horizon bias is clearly articulated through the comparative Table 1. The abstract and introduction are clearly written, effectively establishing the limitations of existing approaches (FMD, RMD, IFT, and one-step lookahead) and positioning the proposed *HyperDistill* as a unifying solution. The core idea\u2014distilling the full second-order term into a single Jacobian-vector product (JVP) via knowledge distillation\u2014is intriguing and well-motivated, though the presentation at this stage lacks sufficient detail on the distillation objective, the training dynamics of the JVP parameterization, and how the method guarantees that the distilled JVP faithfully captures long-range dependencies without incurring additional over-head. While the paper's contributions are promising, the most significant issue apparent from the beginning is the potential for a high computational or architectural burden in learning the distilled JVP while simultaneously performing online optimization; the reader is left wondering whether the method truly satisfies the \u201cconstant memory\u201d and \u201conline\u201d criteria in practice, or whether it merely shifts the complexity to the distillation process itself. Additionally, the abstract's phrasing \u201cminimize the distance from the true second-order term\u201d is ambiguous\u2014does this require access to the true term (which is computationally expensive) at training time? Clarifying this tension early on would strengthen the paper\u2019s clarity and help assess its practical feasibility. Overall, the motivation is crisp and the problem framing is excellent, but a more precise description of the distillation mechanism and its theoretical guarantees is needed to fully evaluate the novelty and impact of the work.",
+      "comments": [
+        {
+          "id": "progressive__deepseek-v4-flash_0",
+          "title": "Missing parentheses in abstract 'horizon length' list item",
+          "quote": "Unrolled differentiation methods do not scale well to high-dimensional hyperparameters or horizon length , Implicit Function Theorem (IFT) based methods are restrictive for online optimization, and short horizon approximations suffer from short horizon bias.",
+          "explanation": "The comma after 'horizon length' and the lack of a closing parenthesis or list separator makes this sentence read awkwardly. The abstract appears to list three issues: (1) scaling to high-dimensional hyperparameters, (2) scaling to horizon length, and (3) IFT restrictions. But the punctuation disrupts the flow. This is a minor stylistic/OCR artifact rather than a substantive error.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_1",
+          "title": "Ambiguous 'parameterize a single Jacobian-vector product (JVP)' in abstract",
+          "quote": "Specifically, we parameterize a single Jacobian-vector product (JVP) for each HO step and minimize the distance from the true second-order term.",
+          "explanation": "The phrase 'parameterize a single Jacobian-vector product (JVP)' is vague. In standard usage, one parameterizes a function or distribution, not a vector product. The authors likely mean they learn/choose a JVP (via distilled weights and data) to approximate the full second-order term. The prose in Section 4 clarifies this (they solve an optimization for w* and D* to align the JVP), but the abstract's wording could mislead a reader into thinking they directly parameterize the JVP itself. Given the later section resolves this, I consider it a minor framing concern.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_2",
+          "title": "Questionable claim: 'two different meta-learning methods and three benchmark datasets' vs. later mention of three models",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract says 'two different meta-learning methods' but the introduction (Contributions bullet) mentions 'three recent meta-learning models and on two benchmark image datasets.' This inconsistency is confusing: does the paper evaluate on two methods or three models? The abstract is likely a simplification, and the introduction may have a typo, but the discrepancy could mislead a reader about the experimental scope. Without seeing the experiments section, it's unclear which is correct. This is a moderate inconsistency.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_3",
+          "title": "Ambiguity in Table 1 caption: 'Horizon_>_1'",
+          "quote": "||Horizon_>_1|O|O|O|O|X|**O**|",
+          "explanation": "The notation 'Horizon_>_1' is ambiguous. Does it mean 'supports horizon greater than 1' (i.e., avoids short-horizon bias) or 'requires horizon > 1 to function'? The surrounding text (Section 1) clarifies that the desired criterion is 'avoid short-horizon bias,' and the row indicates RMD, FMD, DrMAD, IFT all can handle long horizons (O) while one-step (X) cannot. But the label 'Horizon > 1' is not self-explanatory and could be misinterpreted if read in isolation. Still, context resolves it.",
+          "comment_type": "logical",
+          "paragraph_index": 6,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_4",
+          "title": "OCR issue: '**_\u25b3_**' in Table 1 for IFT row under 'Online opt.'",
+          "quote": "||Online opt.|O|X|X|**_\u25b3_**|O|**O**|",
+          "explanation": "The symbol '\u25b3' appears as a placeholder likely representing 'partial' or 'conditional' support for online optimization. The text explains that IFT requires a convergence assumption, making online optimization difficult. The triangle is not standard in comparison tables; a symbol like '~' or '\u25b3' presumably means 'partial.' This is an OCR artifact that remains slightly ambiguous, but the accompanying text clarifies the limitation.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_5",
+          "title": "Potential subscript error in RMD algorithm: 'g_SO \u2190 g_SO + \u03b1Bt' vs. vector product",
+          "quote": "g_SO \u2190g_SO +_\u03b1Bt_",
+          "explanation": "In Algorithm 1, line 5: 'g_SO \u2190 g_SO + \u03b1 B_t' likely intends the vector-Jacobian product \u03b1^T B_t, not scalar multiplication. Since \u03b1 is a row vector (gradient w.r.t. weights) and B_t is a matrix (\u2202\u03a6/\u2202\u03bb), the product should be written more carefully, e.g., \u03b1 B_t or \u03b1^T B_t. However, in the field, it's common to treat \u03b1 as a row vector and write '\u03b1 B_t' as a matrix-vector product yielding a row vector. The notation is standard but could confuse readers not familiar with this convention. Resolved by context.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_6",
+          "title": "Insufficient justification for Lipschitz continuity assumption leading to Eq. (10)-(11)",
+          "quote": "Taking square of the both sides of Eq. (9) and summing over all i = 1, . . . , t, we can easily derive the following lower bound of \u03c0\u02c6_t (See Appendix B). We now maximize this lower bound instead of directly maximizing \u03c0\u02c6_t. Interestingly, it corresponds to the following simple minimization problems for w and D.",
+          "explanation": "The text asserts that maximizing the lower bound derived from the Lipschitz assumption reduces to simple minimization problems for w and D (Eq. (10)-(11) presumably, though not shown in the excerpt). This is a non-trivial claim: the derivation involves summing squared Lipschitz inequalities, leading to a bound that decouples into separate minimization over w and D. The authors reference Appendix B, but the core logic\u2014how the bound transforms from an alignment objective to a centroid-like minimization\u2014is not explained in the main text. For a rigorous paper, this step needs more justification even with the appendix reference. However, given this is a conference paper with space constraints, and the appendix is promised, I mark this as moderate due to the reliance on an omitted derivation.",
+          "comment_type": "logical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_7",
+          "title": "Ambiguity in 'distilled weight point w\u0305 and distilled dataset D\u0305' notation",
+          "quote": "The key idea is to distill the whole second-order term g_t^SO = \u03b1_t ... into a single JVP evaluated at a distilled weight point w\u0305 and with a distilled dataset D\u0305.",
+          "explanation": "The notation uses an overline (w\u0305, D\u0305) to denote the distilled quantities, but later in Section 4.1 they use w_t^* and D_t^*. This inconsistency could confuse readers: the overline notation appears only once, then switches to starred variables. This is a minor inconsistency, likely a remnant from editing.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_8",
+          "title": "Potential misstatement: 'two different meta-learning methods' vs. actual experiments",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract claims two meta-learning methods, but the introduction summary bullet says 'three recent meta-learning models.' This numeric inconsistency is concerning\u2014it could be that the abstract is correct and the introduction overstates, or vice versa. Without seeing the experiments, this is a moderate inconsistency that could mislead about the scope of evaluation.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_9",
+          "title": "Garbled algorithm pseudocode due to OCR corruption",
+          "quote": "10: \u03c0t[\u2217] t[\u2217][, D][\u2190] t[\u2217][c] \u03b3[\u2190][(] t[;][Eq. (] [\u03b8][)][ in Eq. (][13][), Eq. (][15][)][14][).",
+          "explanation": "In Algorithm 3 (HyperDistill) of the passage, line 10 is severely corrupted by OCR. The intended assignment of w_t^* and D_t^* (and possibly \u03c0_t^*) is rendered as a jumble of brackets and symbols. A reader attempting to reproduce the method from this excerpt cannot determine which equation updates each variable. While the surrounding text and earlier equations (13, 14, 15) are partially visible, the direct mapping from algorithm line to those equations is lost. This undermines the clarity of the methodology, especially since Algorithm 3 presents the core procedure of the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_10",
+          "title": "Ambiguous sign in hyperparameter gradient update (Algorithm 3 line 13)",
+          "quote": "g\u03bb \u2190\u2190 g\u03bbt^{FO} \u2212 + \u03b7^{Hyper} \u03c0_t^* f_t(w_t^*, D_t^*)",
+          "explanation": "The line contains both a double assignment arrow and a combined '\u2212 +' symbol. In gradient descent the hyperparameter is typically updated as \u03bb \u2190 \u03bb \u2212 \u03b7\u00b7g_\u03bb, where g_\u03bb = g_\u03bb^{FO} + g_\u03bb^{SO}. The garbled text makes it unclear whether the distilled term is added or subtracted. A reader attempting to implement from the algorithm (which is central to the paper's claim) cannot determine the correct sign. The context does not resolve this because Algorithm 3 is the definitive description of the proposed method.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_11",
+          "title": "Garbled formula for x_s in Algorithm 4 (line 9)",
+          "quote": "xs \u2190\u2225vs\u2225_2\u00b71 1 \u2212 \u2212\u03b3 \u03b3[s]",
+          "explanation": "The expression as printed is mathematically malformed. From the surrounding text ('xs = \u2225vs\u2225_2 \u00b7 (1 \u2212 \u03b3^s)/(1 \u2212 \u03b3)') the intended formula is clear, but the OCR corruption (double '1', double minus, misplaced brackets) could confuse a reader who relies on the algorithm box rather than the prose. Since the algorithm is the primary reference for reproduction, this ambiguity should be fixed.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_12",
+          "title": "Unreadable line for computing v_s, w_s^*, D_s^* in Algorithm 4 (line 12)",
+          "quote": "wvss[\u2217] \u2190[, D] \u03b1s[\u2217] T[\u2190] \u2202 \u03a6[Eq. (] ( w\u2202\u03bbs[\u2217][,] 17 [\u03bb] ; [D] ), Eq. ( s[\u2217] ) 18]",
+          "explanation": "The OCR has mangled this line beyond recognition. The intended operations (compute v_s = \u03b1_T (\u2202\u03a6/\u2202\u03bb)(w_s^*, \u03bb; D_s^*), then derive w_s^* and D_s^* via equations analogous to (13)-(14)) can be guessed from context, but the algorithm becomes non\u2011reproducible without a correct formulation. This is a moderate issue because the distillation of the JVP direction is a core contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_13",
+          "title": "Insufficient justification for the transition from lower bound to separate minimization problems",
+          "quote": "Taking square of the both sides of Eq. (9) and summing over all i = 1, . . . , t, we can easily derive the following lower bound of \u03c0\u0302_t (See Appendix B). \u2026 Interestingly, it corresponds to the following simple minimization problems for w and D.",
+          "explanation": "The text skips from a lower\u2011bound expression to the claim that maximizing that lower bound is equivalent to minimizing a sum of squared distances, i.e., the problems in (11)\u2013(12). The derivation relies on algebraic manipulations that are not shown in the passage (deferred to Appendix B). While this is common practice, the step is non\u2011trivial: one must relate the inner products in the proxy objective to the Lipschitz\u2011based bounds. A reader without access to the appendix cannot verify the equivalence, which is central to the method's efficiency claim. The issue is minor because the appendix likely provides the details, but the main text would benefit from a brief sketch of the key transformation.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_14",
+          "title": "Inconsistent number of JVPs for 1-step baseline",
+          "quote": "One-step Look-ahead Approximation (1-step). (Luketina et al., 2016) ... It requires total (N+1) \u00d7 K JVPs.",
+          "explanation": "The table lists #JVPs per inner-opt as 50 for 1-step, but if one-step lookahead performs online HO at every inner step (t=1..100) with 1 JVP per step, the total would be 100. The text does not specify that 1-step only updates hyperparameters for a subset of steps (e.g., the last 50) as is done for Neumann IFT. This makes the cost comparison ambiguous. The reader cannot tell whether the 50 JVPs come from partial online HO or some other scheme. This undermines the fairness of the computational cost comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_15",
+          "title": "Misleading rough JVP count for Neumann IFT",
+          "quote": "It requires total (N+1) \u00d7 K JVPs. We tune (N,K) among {(2,25), (5,10), (10,5)}, roughly computing 50 JVPs per inner-opt.",
+          "explanation": "The actual computed JVPs per inner-opt for the three configurations are (2+1)*25=75, (5+1)*10=60, (10+1)*5=55, which average about 63. The text says 'roughly 50', which is an underestimate and inconsistent with the numbers later shown in the table (55, 60, 75). This numerical inaccuracy could mislead readers about the relative efficiency of the methods.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_16",
+          "title": "Unclear computation of #JVPs for HyperDistill",
+          "quote": "HyperDistill. ... The linear regression is done every 50 inner-optimization problems.",
+          "explanation": "The table reports \u224858 JVPs per inner-opt for HyperDistill, but the paper does not explain how this number is derived. Algorithm 3 (from earlier sections) appears to involve a full DrMAD pass (199 JVPs) for collecting data, plus a distilled JVP per HO step. If HO updates happen at each inner step (T=100), the total would exceed 58. The amortization from running LinearEstimation every 50 inner-opt is not sufficient to explain 58. Without a clear breakdown, the computational cost claim is not verifiable and the comparison with other methods is misleading.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_17",
+          "title": "Underjustified simplification of \u03c0* for MetaWeightNet",
+          "quote": "in this meta model the direct gradient is zero, g^(FO) = 0. In this case, \u03c0* in HyperDistill has a meaning of nothing but rescaling the learning rate, so we simply set \u03c0* = 1.",
+          "explanation": "While g_FO=0, the hypergradient becomes \u03c0* f_t(w*,D*). Setting \u03c0*=1 discards any learned scaling factor. The scale could affect the magnitude of hyperparameter updates; the learning rate \u03b7^Hyper can absorb some scaling, but fixing \u03c0* to 1 for all steps removes a degree of freedom that the distillation objective was designed to optimize. The authors do not justify that this simplification does not harm performance or that it is equivalent to learning the scale through the learning rate schedule. This is an underspecified method modification.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_18",
+          "title": "Ambiguity in online HO scheduling for 1-step and Neumann IFT",
+          "quote": "Specifically, among total T=100 inner-steps, N.IFT(N,K) means for the last K steps we perform online HO each with N inversion steps.",
+          "explanation": "The text only specifies the partial online HO schedule for Neumann IFT. For 1-step and HyperDistill, it is not stated whether they also perform HO on a subset of steps or on all steps. The table indicates 1-step uses 50 JVPs and HyperDistill ~58, which implies a similar partial schedule, but no explicit description is given. This underspecification makes it difficult to reproduce the exact experimental setup and to understand why these numbers differ from a full online schedule (which would be 100 JVPs).",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__deepseek-v4-flash_19",
+          "title": "Ambiguous claim about DrMAD's role in predicting hypergradient size",
+          "quote": "Note that DrMAD approximation (Eq. (16)) is accurate (Figure 3(a) and 3(c)), helping to predict the hypergradient size.",
+          "explanation": "The referenced figures (3(a) and (c)) show cosine similarity, which measures direction agreement, not magnitude. The size prediction is performed by the linear estimator (\u03b8) using samples of the DrMAD-approximated second-order term. The sentence conflates direction accuracy with size prediction, potentially misleading a reader into thinking DrMAD itself directly predicts the magnitude. It would be clearer to state that the accurate direction of the DrMAD approximation supports reliable size estimation via the linear estimator.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0283,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 94799,
+      "completion_tokens": 51861
+    },
+    "progressive_original__deepseek-v4-flash": {
+      "label": "Progressive Original (deepseek-v4-flash)",
+      "model": "deepseek/deepseek-v4-flash",
+      "overall_feedback": "This paper presents a timely and well-motivated contribution to gradient-based hyperparameter optimization (HO) for meta-learning, where the need for methods that simultaneously scale to high-dimensional hyperparameters, support online updates, maintain constant memory, and avoid short-horizon bias is clearly articulated through the comparative Table 1. The abstract and introduction are clearly written, effectively establishing the limitations of existing approaches (FMD, RMD, IFT, and one-step lookahead) and positioning the proposed *HyperDistill* as a unifying solution. The core idea\u2014distilling the full second-order term into a single Jacobian-vector product (JVP) via knowledge distillation\u2014is intriguing and well-motivated, though the presentation at this stage lacks sufficient detail on the distillation objective, the training dynamics of the JVP parameterization, and how the method guarantees that the distilled JVP faithfully captures long-range dependencies without incurring additional over-head. While the paper's contributions are promising, the most significant issue apparent from the beginning is the potential for a high computational or architectural burden in learning the distilled JVP while simultaneously performing online optimization; the reader is left wondering whether the method truly satisfies the \u201cconstant memory\u201d and \u201conline\u201d criteria in practice, or whether it merely shifts the complexity to the distillation process itself. Additionally, the abstract's phrasing \u201cminimize the distance from the true second-order term\u201d is ambiguous\u2014does this require access to the true term (which is computationally expensive) at training time? Clarifying this tension early on would strengthen the paper\u2019s clarity and help assess its practical feasibility. Overall, the motivation is crisp and the problem framing is excellent, but a more precise description of the distillation mechanism and its theoretical guarantees is needed to fully evaluate the novelty and impact of the work.",
+      "comments": [
+        {
+          "id": "progressive_original__deepseek-v4-flash_0",
+          "title": "Missing parentheses in abstract 'horizon length' list item",
+          "quote": "Unrolled differentiation methods do not scale well to high-dimensional hyperparameters or horizon length , Implicit Function Theorem (IFT) based methods are restrictive for online optimization, and short horizon approximations suffer from short horizon bias.",
+          "explanation": "The comma after 'horizon length' and the lack of a closing parenthesis or list separator makes this sentence read awkwardly. The abstract appears to list three issues: (1) scaling to high-dimensional hyperparameters, (2) scaling to horizon length, and (3) IFT restrictions. But the punctuation disrupts the flow. This is a minor stylistic/OCR artifact rather than a substantive error.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_1",
+          "title": "Ambiguous 'parameterize a single Jacobian-vector product (JVP)' in abstract",
+          "quote": "Specifically, we parameterize a single Jacobian-vector product (JVP) for each HO step and minimize the distance from the true second-order term.",
+          "explanation": "The phrase 'parameterize a single Jacobian-vector product (JVP)' is vague. In standard usage, one parameterizes a function or distribution, not a vector product. The authors likely mean they learn/choose a JVP (via distilled weights and data) to approximate the full second-order term. The prose in Section 4 clarifies this (they solve an optimization for w* and D* to align the JVP), but the abstract's wording could mislead a reader into thinking they directly parameterize the JVP itself. Given the later section resolves this, I consider it a minor framing concern.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_2",
+          "title": "Questionable claim: 'two different meta-learning methods and three benchmark datasets' vs. later mention of three models",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract says 'two different meta-learning methods' but the introduction (Contributions bullet) mentions 'three recent meta-learning models and on two benchmark image datasets.' This inconsistency is confusing: does the paper evaluate on two methods or three models? The abstract is likely a simplification, and the introduction may have a typo, but the discrepancy could mislead a reader about the experimental scope. Without seeing the experiments section, it's unclear which is correct. This is a moderate inconsistency.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_3",
+          "title": "Ambiguity in Table 1 caption: 'Horizon_>_1'",
+          "quote": "||Horizon_>_1|O|O|O|O|X|**O**|",
+          "explanation": "The notation 'Horizon_>_1' is ambiguous. Does it mean 'supports horizon greater than 1' (i.e., avoids short-horizon bias) or 'requires horizon > 1 to function'? The surrounding text (Section 1) clarifies that the desired criterion is 'avoid short-horizon bias,' and the row indicates RMD, FMD, DrMAD, IFT all can handle long horizons (O) while one-step (X) cannot. But the label 'Horizon > 1' is not self-explanatory and could be misinterpreted if read in isolation. Still, context resolves it.",
+          "comment_type": "logical",
+          "paragraph_index": 6,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_4",
+          "title": "OCR issue: '**_\u25b3_**' in Table 1 for IFT row under 'Online opt.'",
+          "quote": "||Online opt.|O|X|X|**_\u25b3_**|O|**O**|",
+          "explanation": "The symbol '\u25b3' appears as a placeholder likely representing 'partial' or 'conditional' support for online optimization. The text explains that IFT requires a convergence assumption, making online optimization difficult. The triangle is not standard in comparison tables; a symbol like '~' or '\u25b3' presumably means 'partial.' This is an OCR artifact that remains slightly ambiguous, but the accompanying text clarifies the limitation.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_5",
+          "title": "Potential subscript error in RMD algorithm: 'g_SO \u2190 g_SO + \u03b1Bt' vs. vector product",
+          "quote": "g_SO \u2190g_SO +_\u03b1Bt_",
+          "explanation": "In Algorithm 1, line 5: 'g_SO \u2190 g_SO + \u03b1 B_t' likely intends the vector-Jacobian product \u03b1^T B_t, not scalar multiplication. Since \u03b1 is a row vector (gradient w.r.t. weights) and B_t is a matrix (\u2202\u03a6/\u2202\u03bb), the product should be written more carefully, e.g., \u03b1 B_t or \u03b1^T B_t. However, in the field, it's common to treat \u03b1 as a row vector and write '\u03b1 B_t' as a matrix-vector product yielding a row vector. The notation is standard but could confuse readers not familiar with this convention. Resolved by context.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_6",
+          "title": "Insufficient justification for Lipschitz continuity assumption leading to Eq. (10)-(11)",
+          "quote": "Taking square of the both sides of Eq. (9) and summing over all i = 1, . . . , t, we can easily derive the following lower bound of \u03c0\u02c6_t (See Appendix B). We now maximize this lower bound instead of directly maximizing \u03c0\u02c6_t. Interestingly, it corresponds to the following simple minimization problems for w and D.",
+          "explanation": "The text asserts that maximizing the lower bound derived from the Lipschitz assumption reduces to simple minimization problems for w and D (Eq. (10)-(11) presumably, though not shown in the excerpt). This is a non-trivial claim: the derivation involves summing squared Lipschitz inequalities, leading to a bound that decouples into separate minimization over w and D. The authors reference Appendix B, but the core logic\u2014how the bound transforms from an alignment objective to a centroid-like minimization\u2014is not explained in the main text. For a rigorous paper, this step needs more justification even with the appendix reference. However, given this is a conference paper with space constraints, and the appendix is promised, I mark this as moderate due to the reliance on an omitted derivation.",
+          "comment_type": "logical",
+          "paragraph_index": 37,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_7",
+          "title": "Ambiguity in 'distilled weight point w\u0305 and distilled dataset D\u0305' notation",
+          "quote": "The key idea is to distill the whole second-order term g_t^SO = \u03b1_t ... into a single JVP evaluated at a distilled weight point w\u0305 and with a distilled dataset D\u0305.",
+          "explanation": "The notation uses an overline (w\u0305, D\u0305) to denote the distilled quantities, but later in Section 4.1 they use w_t^* and D_t^*. This inconsistency could confuse readers: the overline notation appears only once, then switches to starred variables. This is a minor inconsistency, likely a remnant from editing.",
+          "comment_type": "technical",
+          "paragraph_index": 28,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_8",
+          "title": "Potential misstatement: 'two different meta-learning methods' vs. actual experiments",
+          "quote": "We demonstrate the effectiveness of our method on two different meta-learning methods and three benchmark datasets.",
+          "explanation": "The abstract claims two meta-learning methods, but the introduction summary bullet says 'three recent meta-learning models.' This numeric inconsistency is concerning\u2014it could be that the abstract is correct and the introduction overstates, or vice versa. Without seeing the experiments, this is a moderate inconsistency that could mislead about the scope of evaluation.",
+          "comment_type": "logical",
+          "paragraph_index": 2,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_9",
+          "title": "Garbled algorithm pseudocode due to OCR corruption",
+          "quote": "10: \u03c0t[\u2217] t[\u2217][, D][\u2190] t[\u2217][c] \u03b3[\u2190][(] t[;][Eq. (] [\u03b8][)][ in Eq. (][13][), Eq. (][15][)][14][).",
+          "explanation": "In Algorithm 3 (HyperDistill) of the passage, line 10 is severely corrupted by OCR. The intended assignment of w_t^* and D_t^* (and possibly \u03c0_t^*) is rendered as a jumble of brackets and symbols. A reader attempting to reproduce the method from this excerpt cannot determine which equation updates each variable. While the surrounding text and earlier equations (13, 14, 15) are partially visible, the direct mapping from algorithm line to those equations is lost. This undermines the clarity of the methodology, especially since Algorithm 3 presents the core procedure of the paper.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_10",
+          "title": "Ambiguous sign in hyperparameter gradient update (Algorithm 3 line 13)",
+          "quote": "g\u03bb \u2190\u2190 g\u03bbt^{FO} \u2212 + \u03b7^{Hyper} \u03c0_t^* f_t(w_t^*, D_t^*)",
+          "explanation": "The line contains both a double assignment arrow and a combined '\u2212 +' symbol. In gradient descent the hyperparameter is typically updated as \u03bb \u2190 \u03bb \u2212 \u03b7\u00b7g_\u03bb, where g_\u03bb = g_\u03bb^{FO} + g_\u03bb^{SO}. The garbled text makes it unclear whether the distilled term is added or subtracted. A reader attempting to implement from the algorithm (which is central to the paper's claim) cannot determine the correct sign. The context does not resolve this because Algorithm 3 is the definitive description of the proposed method.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_11",
+          "title": "Garbled formula for x_s in Algorithm 4 (line 9)",
+          "quote": "xs \u2190\u2225vs\u2225_2\u00b71 1 \u2212 \u2212\u03b3 \u03b3[s]",
+          "explanation": "The expression as printed is mathematically malformed. From the surrounding text ('xs = \u2225vs\u2225_2 \u00b7 (1 \u2212 \u03b3^s)/(1 \u2212 \u03b3)') the intended formula is clear, but the OCR corruption (double '1', double minus, misplaced brackets) could confuse a reader who relies on the algorithm box rather than the prose. Since the algorithm is the primary reference for reproduction, this ambiguity should be fixed.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_12",
+          "title": "Unreadable line for computing v_s, w_s^*, D_s^* in Algorithm 4 (line 12)",
+          "quote": "wvss[\u2217] \u2190[, D] \u03b1s[\u2217] T[\u2190] \u2202 \u03a6[Eq. (] ( w\u2202\u03bbs[\u2217][,] 17 [\u03bb] ; [D] ), Eq. ( s[\u2217] ) 18]",
+          "explanation": "The OCR has mangled this line beyond recognition. The intended operations (compute v_s = \u03b1_T (\u2202\u03a6/\u2202\u03bb)(w_s^*, \u03bb; D_s^*), then derive w_s^* and D_s^* via equations analogous to (13)-(14)) can be guessed from context, but the algorithm becomes non\u2011reproducible without a correct formulation. This is a moderate issue because the distillation of the JVP direction is a core contribution.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_13",
+          "title": "Insufficient justification for the transition from lower bound to separate minimization problems",
+          "quote": "Taking square of the both sides of Eq. (9) and summing over all i = 1, . . . , t, we can easily derive the following lower bound of \u03c0\u0302_t (See Appendix B). \u2026 Interestingly, it corresponds to the following simple minimization problems for w and D.",
+          "explanation": "The text skips from a lower\u2011bound expression to the claim that maximizing that lower bound is equivalent to minimizing a sum of squared distances, i.e., the problems in (11)\u2013(12). The derivation relies on algebraic manipulations that are not shown in the passage (deferred to Appendix B). While this is common practice, the step is non\u2011trivial: one must relate the inner products in the proxy objective to the Lipschitz\u2011based bounds. A reader without access to the appendix cannot verify the equivalence, which is central to the method's efficiency claim. The issue is minor because the appendix likely provides the details, but the main text would benefit from a brief sketch of the key transformation.",
+          "comment_type": "logical",
+          "paragraph_index": 36,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_14",
+          "title": "Inconsistent number of JVPs for 1-step baseline",
+          "quote": "One-step Look-ahead Approximation (1-step). (Luketina et al., 2016) ... It requires total (N+1) \u00d7 K JVPs.",
+          "explanation": "The table lists #JVPs per inner-opt as 50 for 1-step, but if one-step lookahead performs online HO at every inner step (t=1..100) with 1 JVP per step, the total would be 100. The text does not specify that 1-step only updates hyperparameters for a subset of steps (e.g., the last 50) as is done for Neumann IFT. This makes the cost comparison ambiguous. The reader cannot tell whether the 50 JVPs come from partial online HO or some other scheme. This undermines the fairness of the computational cost comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_15",
+          "title": "Misleading rough JVP count for Neumann IFT",
+          "quote": "It requires total (N+1) \u00d7 K JVPs. We tune (N,K) among {(2,25), (5,10), (10,5)}, roughly computing 50 JVPs per inner-opt.",
+          "explanation": "The actual computed JVPs per inner-opt for the three configurations are (2+1)*25=75, (5+1)*10=60, (10+1)*5=55, which average about 63. The text says 'roughly 50', which is an underestimate and inconsistent with the numbers later shown in the table (55, 60, 75). This numerical inaccuracy could mislead readers about the relative efficiency of the methods.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_16",
+          "title": "Unclear computation of #JVPs for HyperDistill",
+          "quote": "HyperDistill. ... The linear regression is done every 50 inner-optimization problems.",
+          "explanation": "The table reports \u224858 JVPs per inner-opt for HyperDistill, but the paper does not explain how this number is derived. Algorithm 3 (from earlier sections) appears to involve a full DrMAD pass (199 JVPs) for collecting data, plus a distilled JVP per HO step. If HO updates happen at each inner step (T=100), the total would exceed 58. The amortization from running LinearEstimation every 50 inner-opt is not sufficient to explain 58. Without a clear breakdown, the computational cost claim is not verifiable and the comparison with other methods is misleading.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_17",
+          "title": "Underjustified simplification of \u03c0* for MetaWeightNet",
+          "quote": "in this meta model the direct gradient is zero, g^(FO) = 0. In this case, \u03c0* in HyperDistill has a meaning of nothing but rescaling the learning rate, so we simply set \u03c0* = 1.",
+          "explanation": "While g_FO=0, the hypergradient becomes \u03c0* f_t(w*,D*). Setting \u03c0*=1 discards any learned scaling factor. The scale could affect the magnitude of hyperparameter updates; the learning rate \u03b7^Hyper can absorb some scaling, but fixing \u03c0* to 1 for all steps removes a degree of freedom that the distillation objective was designed to optimize. The authors do not justify that this simplification does not harm performance or that it is equivalent to learning the scale through the learning rate schedule. This is an underspecified method modification.",
+          "comment_type": "logical",
+          "paragraph_index": 59,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_18",
+          "title": "Ambiguity in online HO scheduling for 1-step and Neumann IFT",
+          "quote": "Specifically, among total T=100 inner-steps, N.IFT(N,K) means for the last K steps we perform online HO each with N inversion steps.",
+          "explanation": "The text only specifies the partial online HO schedule for Neumann IFT. For 1-step and HyperDistill, it is not stated whether they also perform HO on a subset of steps or on all steps. The table indicates 1-step uses 50 JVPs and HyperDistill ~58, which implies a similar partial schedule, but no explicit description is given. This underspecification makes it difficult to reproduce the exact experimental setup and to understand why these numbers differ from a full online schedule (which would be 100 JVPs).",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__deepseek-v4-flash_19",
+          "title": "Ambiguous claim about DrMAD's role in predicting hypergradient size",
+          "quote": "Note that DrMAD approximation (Eq. (16)) is accurate (Figure 3(a) and 3(c)), helping to predict the hypergradient size.",
+          "explanation": "The referenced figures (3(a) and (c)) show cosine similarity, which measures direction agreement, not magnitude. The size prediction is performed by the linear estimator (\u03b8) using samples of the DrMAD-approximated second-order term. The sentence conflates direction accuracy with size prediction, potentially misleading a reader into thinking DrMAD itself directly predicts the magnitude. It would be clearer to state that the accurate direction of the DrMAD approximation supports reliable size estimation via the linear estimator.",
+          "comment_type": "logical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        }
+      ],
+      "cost_usd": 0.0283,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 94799,
+      "completion_tokens": 51861
+    },
+    "progressive__glm-4.7-flash": {
+      "label": "Progressive (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a compelling solution to the challenge of high-dimensional hyperparameter optimization (HO) in meta-learning, effectively distinguishing itself by addressing the difficult trade-offs between scalability, online capability, and second-order accuracy. The Introduction is a strength; the authors provide a rigorous literature review and a clear critique of existing approaches (Forward-Mode, Reverse-Mode, IFT, and 1-step), ensuring the reader understands *why* a new method is necessary. The writing is technically precise and logically structured, making the motivation for the \"HyperDistill\" algorithm\u2014distilling the full second-order term into a single Jacobian-vector product\u2014sound. The primary issue currently is the level of detail provided for the proposed mechanism; while the problem definition is excellent, the specific construction of the distillation process and its theoretical guarantees remain abstract at this stage. The reader must await the Methodology section to understand how the distillation avoids the short-horizon bias of 1-step methods without incurring the memory costs of full unrolling.",
+      "comments": [
+        {
+          "id": "progressive__glm-4.7-flash_0",
+          "title": "OCR Corruption in Function Definition",
+          "quote": "with \\( \\sigma (x) = \\|xx\\|_2 \\)",
+          "explanation": "The definition of the function \\( \\sigma \\) uses the notation \\( \\|xx\\|_2 \\), which is likely an OCR error for \\( \\|x\\|_2 \\) or a similar vector operation. Given that \\( f_t(w, D) \\) is described as a 'normalized JVP' and is intended to be used in dot products with vectors like \\( g_{SO} \\), \\( f_t \\) must be a vector. The expression \\( \\|xx\\|_2 \\) (e.g., the Frobenius norm of an outer product \\( xx^T \\)) is unlikely to produce a unit vector or a directional vector as implied by the context. The intended definition is almost certainly a normalization operation like \\( \\sigma(x) = x/\\|x\\|_2 \\) or \\( \\sigma(x) = \\|x\\|_2 \\).",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_1",
+          "title": "Confusing Explanation of 1-Step Approximation",
+          "quote": "Specifically, for each step \\( t = 1, \\dots, T \\) we compute the hypergradient by viewing \\( w_{t-1} \\) as constant, which yields \\( dw_t/d\\lambda_t \\approx \\dots = B_t \\) (See Eq. (3)).",
+          "explanation": "The authors describe the one-step lookahead approximation by stating that viewing \\( w_{t-1} \\) as constant 'yields' \\( dw_t/d\\lambda_t \\approx B_t \\). While mathematically correct that the derivative of the local update is \\( B_t \\) when \\( w_{t-1} \\) is fixed, the phrasing implies that this local derivative calculation *is* the approximation itself. In reality, the 'one-step lookahead' approximation (Luketina et al., 2016) refers to truncating the response function for the final loss, i.e., ignoring the terms in Eq. (3) that propagate the effect of \\( \\lambda_t \\) through subsequent steps \\( t+1 \\) to \\( T \\). The text conflates the exact local derivative with the act of truncating the horizon.",
+          "comment_type": "logical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_2",
+          "title": "Underspecified Optimization Correspondence",
+          "quote": "Interestingly, it corresponds to the following simple minimization problems for \\( w \\) and \\( D \\). The following sequential update allows to efficiently evaluate Eq. (12) for each HO step.",
+          "explanation": "The text claims that the optimization based on Lipschitz continuity 'corresponds to the following simple minimization problems' but immediately shifts to describing the algorithmic update steps without explicitly listing these problems or showing the derivation that connects the lower bound maximization to the algorithm. This leaves the reader unable to verify the connection between the theoretical optimization objective and the proposed practical implementation (Algorithm 3).",
+          "comment_type": "logical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_3",
+          "title": "Illegible Algorithm Updates",
+          "quote": "xs \\to ||vs||_2 _ 2 _[1] 1 _[ -] -[\\gamma] \\gamma[s][,] ys \\to \\sigma_ ( _vs_ )[T] _g_[SO]",
+          "explanation": "The description of the update rules in Algorithm 3 contains severe OCR corruption. Lines defining the updates for variables \\( x_s \\) and \\( y_s \\) as well as the variable \\( \u03c0_t^* \\) are rendered as unintelligible strings (e.g., '\\|vs\\|_2 ._[1] 1_[ -] -[\\gamma] \\gamma[s]'). These errors make the specific algorithmic steps difficult to reproduce and prevent verification of the claimed implementation details.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_4",
+          "title": "Incomplete Data Presentation in Table 2",
+          "quote": "HyperDistill O \u224858 | **56.37** \u00b1 0.27 | **60.91** \u00b1 0.27 | **55.04** \u00b1 0.52 | **60.82** \u00b1 0.33 |",
+          "explanation": "While the provided OCR text lists results for ANIL, WarpGrad, and MetaWeightNet on TinyImageNet, and ANIL and WarpGrad (implied by similar magnitudes) on CIFAR100, specific values for WarpGrad/CIFAR100 and MetaWeightNet/CIFAR100 are missing in the HyperDistill row of Table 2. For example, N.IFT and DrMAD rows show values like 53.90 (WarpGrad/CIFAR100 in N.IFT) and 58.45 (WarpGrad/CIFAR100 in 1-step), but these are absent for HyperDistill. This makes the table incomprehensible as a fair comparison.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_5",
+          "title": "Ambiguous Figure Caption in Section 5 Analysis",
+          "quote": "Figure 3: ... (b, c) second-order term g [[SO]] . The curves in (b) correspond to Eq. (7) with various \u03b3 .",
+          "explanation": "The caption suggests that the curves in Figure 3(b) *are* the mathematical object defined by Eq. (7) (the approximation of the target second-order term) for different gamma. However, the plot title is 'Cosine similarity to exact RMD', and the legend includes baselines like '1-step', 'FO', 'DrMAD', and 'HyperDistill'. This implies the curves represent the output of these methods compared to the exact ground truth, not the formula Eq. (7) itself. Using 'correspond to' ambiguously conflates the *target* (Eq. 7) with the *method's output*, which could mislead a reader.",
+          "comment_type": "logical",
+          "paragraph_index": 64,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive__glm-4.7-flash_6",
+          "title": "Structural Ambiguity in Pseudocode",
+          "quote": "for t = 1 to T do ... for t = T downto 1 do ...",
+          "explanation": "The algorithm snippet shows an outer loop for `t=1..T` (likely representing inner steps or meta-iterations) containing a backward pass loop `for t=T..1`. If this nesting is literal, the method would perform a full Reverse-Mode Differentiation (RMD) backward pass for every inner step, contradicting the text's claim of 'online optimization' with 'only a single JVP' per step.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0473,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 95177,
+      "completion_tokens": 103995
+    },
+    "progressive_original__glm-4.7-flash": {
+      "label": "Progressive Original (glm-4.7-flash)",
+      "model": "z-ai/glm-4.7-flash",
+      "overall_feedback": "This manuscript presents a compelling solution to the challenge of high-dimensional hyperparameter optimization (HO) in meta-learning, effectively distinguishing itself by addressing the difficult trade-offs between scalability, online capability, and second-order accuracy. The Introduction is a strength; the authors provide a rigorous literature review and a clear critique of existing approaches (Forward-Mode, Reverse-Mode, IFT, and 1-step), ensuring the reader understands *why* a new method is necessary. The writing is technically precise and logically structured, making the motivation for the \"HyperDistill\" algorithm\u2014distilling the full second-order term into a single Jacobian-vector product\u2014sound. The primary issue currently is the level of detail provided for the proposed mechanism; while the problem definition is excellent, the specific construction of the distillation process and its theoretical guarantees remain abstract at this stage. The reader must await the Methodology section to understand how the distillation avoids the short-horizon bias of 1-step methods without incurring the memory costs of full unrolling.",
+      "comments": [
+        {
+          "id": "progressive_original__glm-4.7-flash_0",
+          "title": "OCR Corruption in Function Definition",
+          "quote": "with \\( \\sigma (x) = \\|xx\\|_2 \\)",
+          "explanation": "The definition of the function \\( \\sigma \\) uses the notation \\( \\|xx\\|_2 \\), which is likely an OCR error for \\( \\|x\\|_2 \\) or a similar vector operation. Given that \\( f_t(w, D) \\) is described as a 'normalized JVP' and is intended to be used in dot products with vectors like \\( g_{SO} \\), \\( f_t \\) must be a vector. The expression \\( \\|xx\\|_2 \\) (e.g., the Frobenius norm of an outer product \\( xx^T \\)) is unlikely to produce a unit vector or a directional vector as implied by the context. The intended definition is almost certainly a normalization operation like \\( \\sigma(x) = x/\\|x\\|_2 \\) or \\( \\sigma(x) = \\|x\\|_2 \\) (if applied to a scalar context, though the vector context suggests normalization).",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_1",
+          "title": "Confusing Explanation of 1-Step Approximation",
+          "quote": "Specifically, for each step \\( t = 1, \\dots, T \\) we compute the hypergradient by viewing \\( w_{t-1} \\) as constant, which yields \\( dw_t/d\\lambda_t \\approx \\dots = B_t \\) (See Eq. (3)).",
+          "explanation": "The authors describe the one-step lookahead approximation by stating that viewing \\( w_{t-1} \\) as constant 'yields' \\( dw_t/d\\lambda_t \\approx B_t \\). While mathematically correct that the derivative of the local update is \\( B_t \\) when \\( w_{t-1} \\) is fixed, the phrasing implies that this local derivative calculation *is* the approximation itself. In reality, the 'one-step lookahead' approximation (Luketina et al., 2016) refers to truncating the response function for the final loss, i.e., ignoring the terms in Eq. (3) that propagate the effect of \\( \\lambda_t \\) through subsequent steps \\( t+1 \\) to \\( T \\). The text conflates the exact local derivative with the act of truncating the horizon.",
+          "comment_type": "logical",
+          "paragraph_index": 26,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_2",
+          "title": "Underspecified Optimization Correspondence",
+          "quote": "Interestingly, it corresponds to the following simple minimization problems for \\( w \\) and \\( D \\). The following sequential update allows to efficiently evaluate Eq. (12) for each HO step.",
+          "explanation": "The text claims that the optimization based on Lipschitz continuity 'corresponds to the following simple minimization problems' but immediately shifts to describing the algorithmic update steps without explicitly listing these problems or showing the derivation that connects the lower bound maximization to the algorithm. This leaves the reader unable to verify the connection between the theoretical optimization objective and the proposed practical implementation (Algorithm 3).",
+          "comment_type": "logical",
+          "paragraph_index": 16,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_3",
+          "title": "Garbled Notation in Algorithm Description",
+          "quote": "_xs = \\| vs \\|_2 ._[1] 1_[ -] -[\\gamma] \\gamma[s][,] ys <- \\sigma_[ (] vs[)][T] _g_[SO]",
+          "explanation": "The description of the update rule for the distilled parameters (likely related to the linear estimation in Algorithm 3) contains severe OCR corruption. The equation for \\( x_s \\) reads as '\\( \\| vs \\|_2 ._[1] 1_[ -] -[\\gamma] \\gamma[s] \\)', which is unintelligible as standard mathematical notation (likely intended to be \\( x_s = \\|v_s\\|_2 (1-\\gamma)^s \\)). This makes the specific algorithmic steps difficult to reproduce from the provided text.",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_4",
+          "title": "Incomplete Data Presentation in Table 2",
+          "quote": "Table 2: Meta-test performance measured in test classification accuracy (%). ... HyperDistill O \u224858 | **56.37** \u00b1 0.27 | **60.91** \u00b1 0.27 | **55.04** \u00b1 0.52 | **60.82** \u00b1 0.33 |",
+          "explanation": "While the provided OCR text lists results for ANIL, WarpGrad, and MetaWeightNet on TinyImageNet, and ANIL and WarpGrad (implied by similar magnitudes) on CIFAR100, specific values for WarpGrad/CIFAR100 and MetaWeightNet/CIFAR100 are missing in the HyperDistill row of Table 2. For example, N.IFT and DrMAD rows show values like 53.90 (WarpGrad/CIFAR100 in N.IFT) and 58.45 (WarpGrad/CIFAR100 in 1-step), but these are absent for HyperDistill. This makes the table incomprehensible as a fair comparison and calls into question the reported success of the method on these specific domain-target settings mentioned in the paper (e.g., Figure 2 and 3 captions).",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "moderate"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_5",
+          "title": "Ambiguous Figure Caption in Section 5 Analysis",
+          "quote": "Figure 3: ... (b, c) second-order term g [[SO]] . The curves in (b) correspond to Eq. (7) with various \u03b3 .",
+          "explanation": "The caption suggests that the curves in Figure 3(b) *are* the mathematical object defined by Eq. (7) (the approximation of the target second-order term) for different gamma. However, the plot title is 'Cosine similarity to exact RMD', and the legend includes baselines like '1-step', 'FO', 'DrMAD', and 'HyperDistill'. This implies the curves represent the output of these methods compared to the exact ground truth, not the formula Eq. (7) itself. Using 'correspond to' ambiguously conflates the *target* (Eq. 7) with the *method's output* (HyperDistill), which could mislead a reader into thinking the baselines are reproducing Eq. (7) rather than comparing their own approximations to the exact RMD.",
+          "comment_type": "logical",
+          "paragraph_index": 64,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_6",
+          "title": "Typographical Error",
+          "quote": "HyperDistill is compuatably efficient.",
+          "explanation": "The word 'compuatably' is a clear typographical error, missing the 'u'. The intent is 'computationally'. This is a minor issue but disrupts the flow of reading.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_7",
+          "title": "OCR Artifact in Figure Caption",
+          "quote": "The curves in (b) correspond to Eq. (7) with various7) with various) with various _\u03b3_.",
+          "explanation": "The string 'various7) with various) with various' appears to be an OCR error where the character sequence '7) with various' was repeated due to misreading or decoding issues. This makes the caption of Figure 3 confusing.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_8",
+          "title": "Garbled Algorithm Description",
+          "quote": "w\u03c0t[\u2217] t[\u2217][, D][\u2190] t[\u2217][c] \u03b3[\u2190]_[(] _[t]_[;][Eq. (] _[ \u03b8]_[)][ in Eq. (][15][), Eq. (][18][)]",
+          "explanation": "This line from Algorithm 3 is illegible due to severe OCR corruption. It attempts to define `\u03c0_t^*` or update a variable but the notation is completely unreadable. Given this is the only snippet showing the algorithm's detail, a reader cannot verify the correctness of the derivation or the intended implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_9",
+          "title": "Malformed Equation Representation",
+          "quote": "xs \u2190\u2225vs\u2225_ 2 _\u00b7_[1] 1 _[\u2212] \u2212[\u03b3] \u03b3[s][,] ys \u2190 \u03c3_ ( _vs_ )[T] _g_[SO]",
+          "explanation": "The formatting of this equation in the algorithm snippet is broken. It appears to be attempting to represent `xs = ||vs||_2 * (1 - \u03b3)` and `ys = \u03c3(vs) * g_SO` or a similar linear estimator, but the OCR has merged variables (e.g., `\u03b3[s]`) and operators into a garbled string.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_10",
+          "title": "Unused Variable Definition",
+          "quote": "\u03c8 \u2190 T \u2212 t + 1",
+          "explanation": "The variable `\u03c8` is defined in the Algorithm 3 pseudocode but never used in the subsequent lines of the text block. While this could be a reference to a skipped section in the PDF, in the provided text it represents an undefined or dead line of code which confuses the algorithm structure.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor"
+        },
+        {
+          "id": "progressive_original__glm-4.7-flash_11",
+          "title": "Structural Ambiguity in Pseudocode",
+          "quote": "for t = 1 to T do ... for t = T downto 1 do ...",
+          "explanation": "The algorithm snippet shows an outer loop for `t=1..T` (likely representing inner steps or meta-iterations) containing a backward pass loop `for t=T..1`. If this nesting is literal, the method would perform a full Reverse-Mode Differentiation (RMD) backward pass for every inner step, contradicting the text's claim of 'online optimization' with 'only a single JVP' per step, unless `T` is very small. The nesting suggests a potential confusion between the outer meta-train loop and the inner history traversal loop in the OCR extraction.",
+          "comment_type": "logical",
+          "paragraph_index": 38,
+          "severity": "moderate"
+        }
+      ],
+      "cost_usd": 0.0473,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": 95177,
+      "completion_tokens": 103995
+    }
+  }
+}

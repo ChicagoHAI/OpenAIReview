@@ -1,0 +1,1251 @@
+{
+  "slug": "iclr2022-4XtpgPsv-multi-objective-model-selection-for-time-series-forecasting",
+  "title": "Multi-Objective Model Selection for Time Series Forecasting",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2022\n\n## - MULTI-OBJECTIVE MODEL SELECTION FOR TIME SE RIES FORECASTING"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nResearch on time series forecasting has predominantly focused on developing methods that improve accuracy. However, other criteria such as training time or latency are critical in many real-world applications. We therefore address the question of how to choose an appropriate forecasting model for a given dataset among the plethora of available forecasting methods when accuracy is only one of many criteria. For this, our contributions are two-fold. First, we present a comprehensive benchmark, evaluating 7 classical and 6 deep learning forecasting methods on 44 heterogeneous, publicly available datasets. The benchmark code is open-sourced along with evaluations and forecasts for all methods. These evaluations enable us to answer open questions such as the amount of data required for deep learning models to outperform classical ones. Second, we leverage the benchmark evaluations to learn good defaults that consider multiple objectives such as accuracy and latency. By learning a mapping from forecasting models to performance metrics, we show that our method PARETOSELECT is able to accurately select models from the Pareto front \u2014 alleviating the need to train or evaluate many forecasting models for model selection. To the best of our knowledge, PARETOSELECT constitutes the first method to learn default models in a multi-objective setting."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nFor decades, businesses have been using time series forecasting to drive strategic decision-making (Simchi-Levi et al., 2013; Hyndman & Athanasopoulos, 2018; Petropoulos et al., 2020). Analysts leverage forecasts to gauge resource requirements, retailers forecast future product demand to optimize their supply chains, cloud providers predict future web traffic to scale server fleets, and in the energy sector, forecasting plays a crucial role e.g. to predict load and energy prices. In domains like these and many other, more precise predictions directly translate into an increase in profit. Thus, it is no surprise that research on forecasting methods has historically focused on improving accuracy."
+    },
+    {
+      "index": 3,
+      "text": "In addition to more classical _local_ forecasting methods which fit a model per time series, _global_ forecasting models such as deep learning and tree-based models have demonstrated state-of-the-art forecasting accuracy (Wen et al., 2017; Oreshkin et al., 2019; Salinas et al., 2020a; Smyl, 2020) when sufficient training data is available (Makridakis et al., 2018; Januschowski et al., 2020). This research has led to a large variety of different forecasting models and hyperparameter choices (Hutter et al., 2019), where different models exhibit vastly different characteristics, including accuracy, training time, model size, and inference latency."
+    },
+    {
+      "index": 4,
+      "text": "While this variety of forecasting models is a great resource, it introduces challenging questions. On the one hand, researchers would like to understand patterns in the performance of different models and to benchmark new models against existing methods. On the other hand, practitioners are interested in understanding which model performs best for a particular dataset or application."
+    },
+    {
+      "index": 5,
+      "text": "In this work, we address both of these problems: we release one of the most comprehensive publicly available evaluations of forecasting models across 44 datasets. Using this benchmark dataset, we develop a novel method for learning _good defaults_ for forecasting models on previously unseen datasets. Importantly, we adopt a multi-objective perspective that allows us to select forecasting models that are simultaneously accurate and satisfy constraints such as inference latency, training time, or model size."
+    },
+    {
+      "index": 6,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2022\n\nThe main contributions of this work can be summarized as follows:"
+    },
+    {
+      "index": 7,
+      "text": "- We release the evaluations of 13 forecasting methods on 44 public datasets with respect to multiple performance criteria (different forecast accuracy metrics, inference latency, training time, and model size). This constitutes, by far, the most comprehensive publicly available evaluation of forecasting methods. Those evaluations can be leveraged, for example, to assess the relative performance of future forecasting methods with little effort."
+    },
+    {
+      "index": 8,
+      "text": "- As an example application of this benchmark, we use the data to perform a statistical analysis which shows that only a few thousands observations are required for deep learning methods to outperform classical methods. In addition, we investigate the benefit of ensembling forecasting models."
+    },
+    {
+      "index": 9,
+      "text": "- We propose a novel method that can leverage offline evaluations to learn good default models for unseen datasets. Default models are selected to optimize for multiple objectives."
+    },
+    {
+      "index": 10,
+      "text": "- We introduce a technique for ensembling models in a multi-objective setting where the resulting ensemble is not only highly accurate but also optimized for other objectives, such as a low inference latency."
+    },
+    {
+      "index": 11,
+      "text": "## 2 RELATED WORK\n\n**Time Series Forecasting.** Time series forecasting has seen a recent surge in attention by the academic community that has started to reflect its relevance in business applications. Traditionally, univariate, so-called _local_ models that consider time series individually have dominated (Hyndman & Athanasopoulos, 2018). However, in modern applications, methods that learn _globally_ across a set of time series can be more accurate (Oreshkin et al., 2019; Salinas et al., 2020a; Lim et al., 2021; Montero-Manso & Hyndman, 2021) \u2014 in particular, methods that rely on deep learning. With a considerable choice of models available, it is unclear which methods should perform best on which forecasting dataset, unlike in other machine learning domains where dominant approaches exist."
+    },
+    {
+      "index": 12,
+      "text": "In domains such as computer vision or neural architecture search (NAS), offline computations have been harvested and leveraged successfully to perform extensive model comparisons or compare different NAS strategies (Ying et al., 2019; Dong & Yang, 2020; Pfisterer et al., 2021). However, to the best of our knowledge, no comprehensive set of model evaluations has been released in the realm of forecasting. Consequently, some questions remain open: how much data is required for global deep learning methods to outperform classical local methods such as ARIMA or ETS (Hyndman & Athanasopoulos, 2018)? What is the impact on accuracy when ensembling different forecasting models? While some recent methods incorporate ensembling (Oreshkin et al., 2019; Jeon & Seong, 2021), comparisons are often made against individual models which may cloud the benefit of the method proposed versus the sole benefit of ensembling."
+    },
+    {
+      "index": 13,
+      "text": "**Learning Default Models.** Finding the best model or set of hyperparameters is often performed via Bayesian optimization given its theoretical regret guarantees (Srinivas et al., 2012). However, even with early-stopping techniques (Golovin et al., 2017; Li et al., 2017), practitioners often restrict the search to a single model due to the large cost of training many models. One technique to drastically speed up the model/hyperparameter search is to reuse offline evaluations of related datasets via transfer learning. For instance, Wistuba et al. (2015); Winkelmolen et al. (2020); Pfisterer et al. (2021) leverage offline evaluations to alleviate the need for training many models by learning a small list of _n_ good defaults that provide a small joint error when evaluated on all datasets. This approach bears a lot of similarity with ours. Key differences are that we consider multiple objectives and model ensembles. In the time series domain, Shah et al. (2021) also considers the task of automatically choosing from a large pool of forecasting models the one performing best on a particular dataset but also only optimizes for a single objective and relies on potentially expensive model training for model selection."
+    },
+    {
+      "index": 14,
+      "text": "## 3 BENCHMARKING FORECASTING METHODS\n\nIn this section, we formally introduce the problem of time series forecasting and subsequently provide an overview of the benchmark evaluations that we release. By evaluating 13 forecasting meth-"
+    },
+    {
+      "index": 15,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2022\n\nods along with different hyperparameter choices on all 44 benchmark datasets and for two random seeds, the benchmark comprises 4,708 training runs and amasses over 1 TiB of forecast data. At the end of this section, we demonstrate how this benchmark data can be used to perform an extensive comparison of contemporary forecasting methods."
+    },
+    {
+      "index": 16,
+      "text": "## 3.1 TIME SERIES FORECASTING\n\nThe goal of time series forecasting is to predict the future values of one or more time series based on historical observations. Formally, we consider a set _Z_ = _{_ _**z**_ 1:[(] _[i] T_[)] _i[}] i[K]_ =1[of] _[ K]_[ univariate, equally-spaced] time series of lengths _Ti_ , where _**z** a_[(] _[i]_ :[)] _b_[=][(] _[z] a_[(] _[i]_[)] _[, z] a_[(] _[i]_ +1[)] _[, . . . , z] b_[(] _[i]_[)][)][ denotes the vector of observations for] the _i_ -th time series in the time interval _a \u2264 t \u2264 b_ . In probabilistic time series forecasting, a model then estimates the probability distribution across the forecast horizon _\u03c4_ , i.e. the distribution over the _\u03c4_ future values, from the historical observations:"
+    },
+    {
+      "index": 17,
+      "text": "( _i_ ) P \ufffd _**z** T_[(] _[i] i_[)] +1: _Ti_ + _\u03c4_ \ufffd\ufffd\ufffd _**z**_ 1: _Ti_ \ufffd (1)\n\nModels typically approximate the joint distribution of Eq. (1) via Monte Carlo sampling (Salinas et al., 2020a) or learn to directly predict a set of distribution quantiles for multiple time steps using quantile regression (Wen et al., 2017; Lim et al., 2021)."
+    },
+    {
+      "index": 18,
+      "text": "## 3.2 METHODS\n\nWe consider 13 models in total that can be distinguished into 7 _local_ methods (estimating parameters individually from each time series) and 6 _global_ methods (learning from all available time series jointly). Details about models can be found in Appendix A."
+    },
+    {
+      "index": 19,
+      "text": "**Local Methods.** We use _Seasonal Na\u00efve_ (Hyndman & Athanasopoulos, 2018) and _NPTS_ (Rangapuram et al., 2021) as simple, non-parametric baselines. Further, we consider _ARIMA_ and _ETS_ (Hyndman & Athanasopoulos, 2018) as well-known statistical methods and _STL-AR_ (Talagala, 2021) and _Theta_ (Assimakopoulos & Nikolopoulos, 2000) as inexpensive alternatives. Lastly, we include _Prophet_ (Taylor & Letham, 2018), an interpretable model that has received plenty of attention."
+    },
+    {
+      "index": 20,
+      "text": "**Global Methods.** All global methods that we use are deep learning models, namely: _Simple Feedforward_ (Alexandrov et al., 2020), _MQ-CNN_ and _MQ-RNN_ (Wen et al., 2017), _DeepAR_ (Salinas et al., 2020a), _N-BEATS_ (Oreshkin et al., 2019), and _TFT_ (Lim et al., 2021). For each model (except MQ-RNN), we consider three hyperparameter settings: this includes the default set provided by their implementation as well as hyperparameter sets that roughly halve and double the default model capacity (see Table 2 in the appendix). Additionally, we consider three different context lengths that govern the length of the time series that predictions are conditioned on."
+    },
+    {
+      "index": 21,
+      "text": "**Model Training.** Model training is only required for deep learning models since parametric local methods estimate parameters at prediction time. Deep learning models are trained for a fixed duration depending on the size of the dataset. Further details can be found in Appendix C."
+    },
+    {
+      "index": 22,
+      "text": "## 3.3 DATASETS\n\nOur benchmark provides 44 heterogeneous public datasets in total. The datasets greatly differ in the number of time series (from 8 to _\u2248_ 170,000), their mean length (from _\u2248_ 22 to _\u2248_ 500,000), their frequency (minutely, hourly, daily, weekly, monthly, quarterly, yearly), and the forecast horizon (from 6 to 60). Thus, we expect them to cover a wide range of datasets encountered in practice."
+    },
+    {
+      "index": 23,
+      "text": "Datasets are taken from various forecasting competitions, the UCI (Dua & Graff, 2017), and the Monash time series forecasting repository (Godahewa et al., 2021). Dataset sources, descriptions, basic statistics, and an explanation of the data preparation procedure can be found in Appendix B."
+    },
+    {
+      "index": 24,
+      "text": "## 3.4 METRICS\n\nTo measure the accuracy of forecasting models, we employ the normalized _continuous ranked probability score_ (nCRPS) (Matheson & Winkler, 1976; Gneiting & Raftery, 2007) whose definition"
+    },
+    {
+      "index": 25,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2022\n\nTable 1: The average performance of various forecasting methods across all datasets with respect to relative latency (compared to Seasonal Na\u00efve) and nCRPS. The table shows classical methods (top), deep learning methods (middle, left), hyper-ensembles using all hyperparameter configurations of deep learning models (middle, right), and latency-constrained ensembles (bottom). Best values across within each group are displayed in bold, best values across all models are starred."
+    },
+    {
+      "index": 26,
+      "text": "||Rel. Latency|nCRPS Rank|\n|---|---|---|\n|**ARIMA**|31100.33 _\u00b1_11739.26|**13.86** _\u00b1_**5.83**|\n|**ETS**|1183.26 _\u00b1_321.88|15.45 _\u00b1_6.87|\n|**NPTS**|133.64 _\u00b1_20.82|17.82 _\u00b1_7.35|\n|**Prophet**|2635.38 _\u00b1_393.48|17.82 _\u00b1_5.52|\n|**Seasonal Na\u00efve**|***1.00** _\u00b1_**0.00**|19.86 _\u00b1_4.22|\n|**STL-AR**|76.12 _\u00b1_7.44|15.57 _\u00b1_6.73|\n|**Theta**|25.15 _\u00b1_1.55|15.59 _\u00b1_6.19|\n|**DeepAR**|21.55 _\u00b1_2.33/ 310.62 _\u00b1_34.26|9.91 _\u00b1_5.79/**6.73** _\u00b1_**5.24**|\n|**MQ-CNN**|1.78 _\u00b1_0.15/ 17.48 _\u00b1_1.60|15.86 _\u00b1_5.75/ 13.07 _\u00b1_5.98|\n|**MQ-RNN**|2.01 _\u00b1_0.18/**6.53** _\u00b1_**0.63**|22.07 _\u00b1_4.30/ 21.02 _\u00b1_4.92|\n|**N-BEATS**|3.33 _\u00b1_0.21/ 34.29 _\u00b1_2.25|18.32 _\u00b1_3.45/ 16.59 _\u00b1_3.71|\n|**Simple Feedforward**|**1.57** _\u00b1_**0.07**/ 14.12 _\u00b1_0.63|12.32 _\u00b1_4.24/ 9.45 _\u00b1_4.16|\n|**TFT**|4.66 _\u00b1_0.31/ 44.08 _\u00b1_3.06|**8.70** _\u00b1_**4.71**/ 6.75 _\u00b1_4.61|\n|**Constrained Ensemble (1 ms)**|**2.29** _\u00b1_**0.16**|13.77 _\u00b1_5.01|\n|**Constrained Ensemble (5 ms)**|11.99 _\u00b1_1.09|9.45 _\u00b1_5.20|\n|**Constrained Ensemble (10 ms)**|24.20 _\u00b1_2.18|8.30 _\u00b1_4.97|\n|**Constrained Ensemble (50 ms)**|107.68 _\u00b1_9.44|6.57 _\u00b1_5.04|\n|**Constrained Ensemble (100 ms)**|157.75 _\u00b1_14.86|5.55 _\u00b1_4.28|\n|**Unconstrained Ensemble**|196.41 _\u00b1_20.44|***4.36** _\u00b1_**3.37**|"
+    },
+    {
+      "index": 27,
+      "text": "is given in Appendix A. The benchmark dataset that we release contains four additional forecast accuracy metrics (MAPE, sMAPE, NRMSE, ND). Besides forecasting accuracy metrics, we store inference latency, model size (i.e. number of parameters) and training time for deep learning models. Latency is measured by dividing the time taken to generate predictions for all test time series in the dataset by their number."
+    },
+    {
+      "index": 28,
+      "text": "## 3.5 BENCHMARK ANALYSIS\n\nHaving outlined the benchmark, we now want to demonstrate the usefulness of the evaluations for research. For this, we want to analyze how local (classical) and global (deep learning) forecasting methods compare against each other. In fact, this comparison has been the object of heated discussions in the forecasting community (Makridakis et al., 2018; Januschowski et al., 2020)."
+    },
+    {
+      "index": 29,
+      "text": "**Method Comparison.** In order to compare methods, we consider their latency and accuracy (in terms of nCRPS) across all datasets. Table 1 shows each method\u2019s relative latency compared to Seasonal Na\u00efve as well as the the methods\u2019 nCRPS rank[1] . As far as latency is concerned, global methods, once trained, allow to generate forecasts considerably faster than local methods (except for Seasonal Na\u00efve). The reason is simple: once trained, they simply need to run a forward pass. In contrast, the implementations for the local methods chosen here do not differentiate between training and inference, but rather estimate their parameters at prediction time. Across datasets, the relative latency of all considered deep learning models improves between 15% and 95% upon the latency of the fastest local method (excluding Seasonal Na\u00efve). As far as accuracy is concerned, complex deep learning models \u2014 namely DeepAR and TFT \u2014 generally perform best across the benchmark datasets. Except for MQ-RNN, global methods compare favorably against local methods."
+    },
+    {
+      "index": 30,
+      "text": "As a measure of _relative_ model stability, Table 1 additionally shows the standard deviation of the nCRPS rank across all benchmark datasets. Not only is TFT the method which performs best on average, its rank is also comparatively consistent compared to other methods. Especially,"
+    },
+    {
+      "index": 31,
+      "text": "> 1Ranks are computed over all methods and ensembles, including the constrained ensembles of Section 4.4."
+    },
+    {
+      "index": 32,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n0.8 20%\n0.6 0%\n0.4\n20%\n0.2\n40%\n0.0\n104 105 106 107 108 104 105 106 107 108\nNumber of Observations Number of Observations\np-Value\nRel. Improvement\n**----- End of picture text -----**"
+    },
+    {
+      "index": 33,
+      "text": "Figure 1: The _p_ -values of the null hypothesis that statistical methods perform equal to or better than deep learning methods, evaluated for datasets of different sizes. The red line displays the significance level _\u03b1_ = 5%."
+    },
+    {
+      "index": 34,
+      "text": "Figure 2: The relative improvement of the best deep learning method versus the best classical method on all benchmark datasets. The red line is fitted on the visualized datapoints via linear regression in the log-space."
+    },
+    {
+      "index": 35,
+      "text": "Table 1 also indicates the performance of ensembles obtained by averaging the predictions of _n_ = 9 ( _n_ = 3 for MQ-RNN) deep learning models trained with different hyperparameters ( _hyperensembles_ ) as done for N-BEATS (Oreshkin et al., 2019) or in M5 competition\u2019s third-ranking method (Jeon & Seong, 2021). While generally bearing a significant cost in latency, the benefit of ensembling is significant. For instance, the Simple Feedforward hyper-ensemble yields a competitive model that outperforms DeepAR in terms of both accuracy and latency. Lastly, DeepAR and TFT hyper-ensembles result in the most competitive ensembles."
+    },
+    {
+      "index": 36,
+      "text": "**Comparison of Classical and Deep Learning Methods.** We further conduct a statistical analysis to compare the classical time series models with the deep learning models listed in Section 3.2. For this, we construct the null hypothesis that the accuracy of classical models is equal to or better than the accuracy of deep learning methods. This is a claim put forward, for example, by Makridakis et al. (2018). More formally, we write _H_ 0 : _Q_ class _\u2264Q_ deep where _Q_ class and _Q_ deep describe the distribution of nCRPS values of classical and deep learning models, respectively. Samples of the distributions are derived from the respective single-model evaluations in our benchmark. _Q_ class and _Q_ deep are continuous and belong to unknown families of distributions with unequal variances. Hence, we choose the nonparametric two-sample Kolmogorov-Smirnov test (Gibbons & Chakraborti, 2003) to compute the _p_ -value, i.e. the probability of _H_ 0 holding true, on each individual dataset."
+    },
+    {
+      "index": 37,
+      "text": "We evaluate the null hypothesis _H_ 0 on all 44 benchmark datasets and plot the _p_ -value for the different dataset sizes in Figure 1. At a significance level of _\u03b1_ = 5%, _H_ 0 can be rejected for 30 out of 44 datasets. In fact, deep learning models exhibit competitive performance for almost all datasets and regularly outperform classical methods. Further, they tend to perform comparatively better with increasing dataset size \u2014 even if for some large datasets, classical models are indistinguishable \u2014 and, nonetheless, show competitive performance for small datasets. The latter is of particular interest since it contradicts tribal knowledge that large datasets are needed to outperform local/classical methods and disputes the claim presented by Makridakis et al. (2018) since only a few thousands observations seem sufficient to outperform the classical models considered."
+    },
+    {
+      "index": 38,
+      "text": "These statements are further supported by Figure 2 where we compare the best deep learning model _x_ deep against the best classical model _x_ class on each dataset. We compute the relative improvement given by deep learning models as nCRPS[nCRPS] ([(] _x[x]_ class[dee][p][)] ) _[\u2212]_[1][.][Except][for][few][outliers,][the][best][deep][learning] model outperforms all classical models on 40 out of 44 datasets (see Appendix F for a further analysis). Fitting a linear regression model on the relative improvements shows that the improvement by using deep learning models is only slightly amplified as the datasets grow in size."
+    },
+    {
+      "index": 39,
+      "text": "We note, that we conflate deep learning and global models in our above discussion. MonteroManso & Hyndman (2021) show the general superiority of global models over local models both theoretically and empirically and our results confirm their findings further."
+    },
+    {
+      "index": 40,
+      "text": "## 4 LEARNING MULTI-OBJECTIVE DEFAULTS\n\nThe benchmark introduced in the previous section outlined how to acquire offline evaluations of forecasting methods on various datasets. However, in the presence of multiple conflicting objectives"
+    },
+    {
+      "index": 41,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2022\n\nsuch as accuracy and latency, it is not clear how one could choose the best models. In this section, we first formalize the problem of learning good defaults from these evaluations for a single objective. Afterwards, we formally introduce multi-objective optimization and show how learning defaults can be extended to account for multiple objectives. In the end, we report experimental results obtained by using our method."
+    },
+    {
+      "index": 42,
+      "text": "## 4.1 PREREQUISITES\n\nIn our setting, we consider an objective function _**f**_ : _X \u2192_ R _[m]_ for a given task (in our case, a task is a dataset). The objective function maps any time series model _x \u2208X_ to _m_ objectives (such as nCRPS, latency, etc.) that ought to be minimized. In addition, we assume that model evaluations on _T_ different but related tasks with objective functions _**f**_[(1)] _, . . . ,_ _**f**_[(] _[T]_[ )] are available. The set of offline model evaluations is then given as"
+    },
+    {
+      "index": 43,
+      "text": "where _Nj_ evaluations are available for task _j_ and _**y** i_[(] _[j]_[)] denotes the evaluation of _x_[(] _i[j]_[)] on task _j_ ."
+    },
+    {
+      "index": 44,
+      "text": "**Learning Defaults.** To learn a set of _n_ good default models for unseen datasets in the singleobjective setting, Pfisterer et al. (2021) propose to pick the models that minimize the joint error obtained when evaluating them on all datasets. This amount to pick the set of models _{x_ 1 _, . . . , xn} \u2282 X_ which minimize the following objective:"
+    },
+    {
+      "index": 45,
+      "text": "where _k_ denotes a single fixed objective (for instance, the classification error). Since the problem is NP-complete, a greedy heuristic with a provable approximation guarantee is used: it iteratively adds the model minimizing Eq. 3 to the current selection. However, this approach only works for a single objective of choice _fk_ rather than taking all objectives _**f**_ (such as accuracy and latency) into account. In addition, it does not easily support the selection of ensembles since objectives can interact in differently when models are ensembled: while accuracy will likely increase by a small amount, the latencies of ensemble members need to be added up. Taking into account all possible ensembles of a given size _n_ would also blow up the combinatoric search when optimizing Eq. 3."
+    },
+    {
+      "index": 46,
+      "text": "**Multi-Objective Optimization.** In multi-objective optimization, there generally exists no singular solution. Thus, when considering the objective function _**f**_ , there exists no single optimal model, but rather a set of optimal models (Emmerich & Deutz, 2018). A model _x \u2208X_ dominates another model _x[\u2032] \u2208X_ ( _x \u227a_ _**f** x[\u2032]_ ) if _fi_ ( _x_ ) _\u2264 fi_ ( _x[\u2032]_ ) for all _i_ and there exists some _i_ such that _fi_ ( _x_ ) _< fi_ ( _x[\u2032]_ ). The set of all non-dominated solutions (i.e. models) is denoted as the Pareto front _P_ _**f**_ ( _X_ ) whose members are commonly referred to as Pareto-optimal solutions:"
+    },
+    {
+      "index": 47,
+      "text": "To quantify the quality of a set _S_ = _{x_ 1 _, . . . , xn} \u2282X_ of selected models, we use the hypervolume error (Zitzler & Thiele, 1998; Li & Yao, 2019). Given a set of points _Y \u2282_ R _[m]_ and a reference point _**r** \u2208_ R _[m]_ , we first define the hypervolume as the Lebesgue measure \u039b of the dominated space:"
+    },
+    {
+      "index": 48,
+      "text": "In turn, the hypervolume error _\u03b5_ of the set _S_ is defined as the difference in hypervolume compared to the true Pareto front _P_ _**f**_ ( _X_ ):"
+    },
+    {
+      "index": 49,
+      "text": "Thus, the hypervolume error _\u03b5_ ( _S_ ) reaches its minimum when _S \u2287P_ _**f**_ ( _X_ ). To account for different scales in the optimization objectives, we further standardize all objectives by quantile normalization (Bolstad et al., 2003) such that they follow a uniform distribution _U_ (0 _,_ 1) \u2014 this is feasible as _X_ is finite. While the normalization makes our comparisons robust to monotonic transformations of the objectives (Binois et al., 2020), it also allows us to choose the reference point for Eq. 5 as _**r**_ = **1** _m_ ."
+    },
+    {
+      "index": 50,
+      "text": "6\n\nUnder review as a conference paper at ICLR 2022\n\n**Learning Multi-Objective Defaults.** Using the hypervolume error, we can extend the minimization problem of Eq. 3 to learn defaults in the multi-objective setting. For this, we propose the following minimization problem:"
+    },
+    {
+      "index": 51,
+      "text": "In words, we seek to find a set of complementary model configurations _{x_ 1 _, . . . , xn} \u2282X_ that provide a good approximation of the Pareto front _P_ _**f**_ ( _j_ ) ( _X_ ) across tasks _j \u2208{_ 1 _, . . . , T }_ ."
+    },
+    {
+      "index": 52,
+      "text": "## 4.2 PARETOSELECT\n\nWe now introduce PARETOSELECT which tackles the minimization of Eq. 7. On a high-level, PARETOSELECT works as follows: first, it fits a parametric surrogate model _**f**_[\u02dc] _\u03b8_ that predicts the _**f**_ performances of model configurations by leveraging the evaluations of\u02dc _\u03b8_ to estimate the objectives for all models in _X_ and applies the non-dominated sorting algorithm _D_ . Then, it uses the surrogate on the objectives to select a list of default models."
+    },
+    {
+      "index": 53,
+      "text": "The surrogate model _**f**_[\u02dc] _\u03b8_ is trained by attempting to correctly rank model configurations within each task in the available offline evaluations _D_ . For each model _x \u2208X_ , _**f**_[\u02dc] _\u03b8_ outputs a vector _y_ \u02dc _\u2208_ R _[m]_ for _m_ optimization objectives. Models can then be ranked for each objective independently. In order to fit _**f**_[\u02dc] _\u03b8_ on the data _D_ , we use listwise ranking (Xia et al., 2008) and apply linear discounting to focus on correctly identifying the top configurations similar to Z\u00fcgner et al. (2020). The corresponding loss function can be found in Appendix D."
+    },
+    {
+      "index": 54,
+      "text": "For the parametric surrogate model _**f**_[\u02dc] _\u03b8_ , we choose a simple MLP similar to Salinas et al. (2020b). We use two hidden layers of size 32 with LeakyReLU activations after each hidden layer and apply a weight decay of 0.01 as regularization. Importantly, we do not tune these hyperparameters. Predictive performances for every model can eventually be computed as"
+    },
+    {
+      "index": 55,
+      "text": "We note that for minimizing Eq. 7, either regression or ranking objectives can be used: since we apply quantile normalization to compute the hypervolume, the magnitude of the values predicted by _**f**_ \u02dc _\u03b8_ is irrelevant. However, we find the ranking setting to be superior to regression for finding good default models (see Appendix D for more details)."
+    },
+    {
+      "index": 56,
+      "text": "**Multi-Objective Sorting.** The \u201cbest\u201d configurations are then determined by applying the nondominated sorting algorithm (NDSA) \u2014 an extension of sorting to the multi-dimensional setting (Srinivas & Deb, 1994; Emmerich & Deutz, 2018) \u2014 to the predictive performances _Y_[\u02dc] . Figure 3 provides an illustration of the sorting procedure. NDSA can be described as a two-level procedure. First, it partitions the configurations to be sorted in multiple layers by iteratively computing the Pareto fronts, then it applies a sorting function sort to rank the configurations in each layer:"
+    },
+    {
+      "index": 57,
+      "text": "We choose sort to compute an _\u03f5_ -net (Clarkson, 2006) for which there exists a simple greedy algorithm. When sorting a set _X_ , the _\u03f5_ -net sorting operation yields an order sort( _X_ ) = [ _x_ 1 _, . . . , x|X|_ ]. The first element _x_ 1 is chosen randomly from _X_ and _xi_ +1 is defined iteratively as the item which is farthest from the current selection in terms of Euclidean distance, formally:"
+    },
+    {
+      "index": 58,
+      "text": "The final ordering is eventually obtained by concatenating the sorted layers. While previous work followed different approaches for the sort operation in the NDSA algorithm (Srinivas & Deb, 1994; Deb et al., 2002), we leverage the _\u03f5_ -net since Salinas et al. (2021) highlighted its theoretical guarantees and Schmucker et al. (2021) provided empirical evidence for its good performance."
+    },
+    {
+      "index": 59,
+      "text": "The pseudo-code of PARETOSELECT is given in Algorithm 1 in the appendix. In the case where predictions of the surrogate are error-free, the recommendations of the algorithm can be guaranteed to be perfect with zero hypervolume error."
+    },
+    {
+      "index": 60,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\nLayer 1 Layer 2 Layer 3 Layer 4\n2 7 46 1 913 14 10 1511 23 17 21192022 25 262427\n16\n5 8 12 18\n3\nObjective #2 Objective #2 Objective #2 Objective #2\nFigure 3: Illustration of non-dominated sorting. The layers show the partitioning of the data in\nPareto fronts. The numbers depict the overall rank by computing the  \u03f5 -net within each layer.\n0.9\n0.8 Random 4 \u00d7 10 1 Pareto Front DeepAR\nModel-Free ARIMA MQ-CNN\n0.70.6 Single-Objective 3 \u00d7 10 1 ETSNPTS MQ-RNNN-BEATS\nParetoSelect Prophet Simple Feedforward\n0.50.4 2 \u00d7 10 1 Seasonal Na\u00efveSTL-AR TFTParetoSelect\n0.3 Theta\n0.2\n0.1\n0.0 2 4 6 8 10 10 1 100 101 102\nNumber of Models Latency (in ms)\nObjective #1\nnCRPS\nHypervolume Error\n**----- End of picture text -----**"
+    },
+    {
+      "index": 61,
+      "text": "Figure 4: Hypervolume error when iteratively choosing models via different model selection approaches. Errors are averaged over all 44 benchmark datasets"
+    },
+    {
+      "index": 62,
+      "text": "Figure 5: Visualization of forecast latency and nCRPS for models trained and evaluated on the \u201cM4 Yearly\u201d dataset. Each color describes a family of models with dots representing different hyperparameter configurations and training times (checkpoints for deep learning models). Crosses show the default hyperparameter configuration and the maximum training time for the dataset."
+    },
+    {
+      "index": 63,
+      "text": "\u02dc **Proposition 1.** _Assume that n \u2265|P_ _**f**_ ( _X_ ) _| and for all x \u2208X ,_ _**f** \u03b8_ ( _x_ ) = _**f**_ ( _x_ ) _. Then, \u03b5_ ( _{x_ 1 _, . . . , xn}_ ) = 0 _where x_ 1 _, . . . , xn are the first n models selected by our method._"
+    },
+    {
+      "index": 64,
+      "text": "_Proof._ By Eq. 9, the first _k_ recommendations of Pareto Select are such that _{x_ 1 _, . . . , xk}_ = _P_ _**f**_ \u02dc _\u03b8_[(] _[X]_[)] where _k_ = _|P_ _**f**_ \u02dc _\u03b8_[(] _[X]_[)] _[ |]_[.][Since][for][all] _[x][\u2208X]_[,] _**[f]**_[\u02dc] _[\u03b8]_[(] _[x]_[)][=] _**[f]**_[(] _[x]_[)][,][we][get][that] _[P]_ _**f**_[\u02dc] _\u03b8_[(] _[X]_[)][=] _[P]_ _**[f]**_[ (] _[X]_[)][.] It follows that for any _k \u2264 n_ , _P_ _**f**_ ( _X_ ) = _{x_ 1 _, . . . , xk} \u2282{x_ 1 _, . . . , xn}_ and consequently _\u03b5_ ( _{x_ 1 _, . . . , xn}_ ) = 0 since the hypervolume error of any set of points containing the Pareto front is zero."
+    },
+    {
+      "index": 65,
+      "text": "## 4.3 RESULTS\n\nIn order to evaluate our approach, we leverage the data collected with the benchmark presented in Section 3. For evaluation, we perform leave-one-out-cross-validation where we use each dataset one after _**f**_ \u02dc _\u03b8_ on the remainingthe other as the 43test datasets.dataset andThe multi-objective setting in the following experiments aims toestimate the parameters _\u03b8_ of our parametric surrogate model minimize latency as well as nCRPS."
+    },
+    {
+      "index": 66,
+      "text": "In Figure 4, we report the average hypervolume obtained for PARETOSELECT and several baselines, averaged over all 44 test datasets. PARETOSELECT picks the top elements of the non-dominated sort on the surrogate\u2019s predictive performances. As baselines, we consider a variant of PARETOSELECT which considers the nCRPS as the single objective ( **Single-Objective** ), the approach of Pfisterer et al. (2021) which greedily picks models to minimize the joint nCRPS on the training data ( **Greedy Model-Free** ), and random search over the entire model space of size _|X|_ = 247 ( **Random** ). The hypervolume obtained by PARETOSELECT with 10 default models is small ( _\u2248_ 0 _._ 06) compared to the best baseline that reaches _\u2248_ 0 _._ 20. Further, random search requires a total of 27 models to be on par with the hypervolume of only 10 models selected via our method."
+    },
+    {
+      "index": 67,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2022\n\n**----- Start of picture text -----**\n\n+60%\nPareto Front DeepAR\n+50% Ensemble Pareto Front MQ-CNN\nConstrained Ensemble N-BEATS\n+40% Unconstrained Ensemble Simple Feedforward\n1 ms All Models TFT\n+30%\n2.5 ms\n+20%\n5 ms 10 ms 25 ms\n+10% 50 ms\n100 ms 250 ms\n+0%\n100% 80% 60% 40% 20% 0% +55%\nRel. Latency Improvement\nRel. nCRPS Improvement\n**----- End of picture text -----**"
+    },
+    {
+      "index": 68,
+      "text": "Figure 6: Comparison of individual forecasting models, hyper-ensembles and latency-constrained ensembles. The axes show the average relative latency and nCRPS compared to the unconstrained ensemble. Results are averaged across all 44 benchmark datasets. Light crosses show default configurations of deep learning models, bold crosses show their corresponding hyper-ensembles. Classical models are not colored as most can only be found (far) beyond the range of the plot."
+    },
+    {
+      "index": 69,
+      "text": "Figure 5 depicts the top _n_ = 10 recommendations produced by PARETOSELECT when predicting default models on a single dataset. The default models cover the true Pareto front well: our method is able to pick models with low latency, low nCRPS, and a good trade-off between these two objectives."
+    },
+    {
+      "index": 70,
+      "text": "## 4.4 MULTI-OBJECTIVE ENSEMBLING\n\nAs shown in Section 3.5, ensembling models yields significant gains in accuracy but comes at the cost of considerable latency. Since a massively large ensemble model is of no practical use, it is critical to be able to select an ensemble with a latency that is acceptable for an application. Thus, we consider ensembles under different latency constraints."
+    },
+    {
+      "index": 71,
+      "text": "For a latency constraint _c_ , we build an ensemble with _n \u2264_ 10 members _x_ 1 _, . . . , xn_ by iteratively picking the model with best nCRPS such that the ensemble latency constrain _c_ is still met. To generate ensemble predictions, we combine the forecasts of the base models _x_ 1 _, . . . , xn_ by averaging all 10-quantiles _{_ 0 _._ 1 _, . . . ,_ 0 _._ 9 _}_ for each time series and time step independently. Albeit the performances of the base models might differ significantly, our experiments showed that more complicated, non-uniform weighting schemes yielded less accurate forecasts on average. This aligns with current literature showing that simple averaging is often most effective (Petropoulos et al., 2020)."
+    },
+    {
+      "index": 72,
+      "text": "Figure 6 shows the performance of different latency-constrained ensembles, relative to the performance of an unconstrained ensemble that picks the _n_ = 10 models with lowest predicted nCRPS. As expected, higher latency constraints _c_ allows the ensemble to perform better. For _c \u2265_ 100 ms, the constrained ensemble recovers the Pareto front and outperforms all individual models _x \u2208X_ as well as ensembles. The small gap to the Pareto front for constraints _c \u2264_ 50 ms can be attributed to multiple effects. First, the nCRPS values predicted by the surrogate _**f**_[\u02dc] _\u03b8_ are not optimal. Second, models may not satisfy _c_ on every dataset although they have a lower latency on average (e.g. the default TFT configuration violates _c_ = 2.5 ms on 17/44 datasets). Table 1 additionally reports performance metrics of latency-constrained ensembles: for instance, the ensemble for _c_ = 10 ms outperforms all individual base models in terms of average nCRPS rank while the ensemble for _c_ = 100 ms outperforms all hyper-ensembles as well."
+    },
+    {
+      "index": 73,
+      "text": "## 5 CONCLUSION\n\nIn this work, we have presented (i) a new benchmark for evaluating forecasting methods in terms of multiple metrics and (ii) PARETOSELECT, a new algorithm that can learn default model configurations in a multi-objective setting. In future work, we will consider applying those techniques to other domains such as computer vision where offline evaluations of multiple datasets were recently made available by Dong & Yang (2020). Additionally, future research may extend the presented predictive surrogate model to the case of ensembles: this would enable PARETOSELECT to be used directly to select members for ensembles of any latency."
+    },
+    {
+      "index": 74,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2022\n\n## 6 REPRODUCIBILITY\n\nPublic datasets and method implementations were used to ensure the reproducibility of our experiments. In Appendix A, we provide all hyperparameters used for training the benchmark forecasting models via GluonTS. The source and processing of each dataset as well as the procedure for generating data splits is detailed in Appendix B. We also provide details on the surrogate model used and a comparison with other choices in Appendix D. The pseudocode of PARETOSELECT is given in Appendix E. As a source of truth, we share the entire code used to run the benchmark and its evaluation with the submission. This code as well as the generated evaluations will be released with the paper."
+    },
+    {
+      "index": 75,
+      "text": "## REFERENCES\n\nAEMO. Market Data NEMWeb, 2020. URL http://www.nemweb.com.au/.\n\n- Alexander Alexandrov, Konstantinos Benidis, Michael Bohlke-Schneider, Valentin Flunkert, Jan Gasthaus, Tim Januschowski, Danielle C. Maddix, Syama Rangapuram, David Salinas, Jasper Schulz, Lorenzo Stella, Ali Caner T\u00fcrkmen, and Yuyang Wang. GluonTS: Probabilistic and Neural Time Series Modeling in Python. _Journal of Machine Learning Research_ , 21(116):1\u20136, 2020."
+    },
+    {
+      "index": 76,
+      "text": "Vassilis Assimakopoulos and Konstantinos Nikolopoulos. The Theta Model: A Decomposition Approach to Forecasting. _International Journal of Forecasting_ , 16(4):521\u2013530, 2000."
+    },
+    {
+      "index": 77,
+      "text": "George Athanasopoulos, Rob J Hyndman, Haiyan Song, and Doris C Wu. The tourism forecasting competition. _International Journal of Forecasting_ , 27(3):822\u2013844, 2011."
+    },
+    {
+      "index": 78,
+      "text": "Ron Bekkerman, Hang Zhang, and Jeong-Yoon Lee. KDD Cup 2018, 2018. URL https://www. kdd.org/kdd2018/kdd-cup."
+    },
+    {
+      "index": 79,
+      "text": "- Micka\u00ebl Binois, Victor Picheny, Patrick Taillandier, and Abderrahmane Habbal. The kalaismorodinsky solution for many-objective bayesian optimization. _J. Mach. Learn. Res._ , 21(150): 1\u201342, 2020."
+    },
+    {
+      "index": 80,
+      "text": "- Benjamin M Bolstad, Rafael A Irizarry, Magnus \u00c5strand, and Terence P. Speed. A comparison of normalization methods for high density oligonucleotide array data based on variance and bias. _Bioinformatics_ , 19(2):185\u2013193, 2003."
+    },
+    {
+      "index": 81,
+      "text": "- Caltrans. Caltrans performance measurement system, 2020. URL https://pems.dot.ca. gov/.\n\nTianqi Chen, Mu Li, Yutian Li, Min Lin, Naiyan Wang, Minjie Wang, Tianjun Xiao, Bing Xu, Chiyuan Zhang, and Zheng Zhang. MXNet: A Flexible and Efficient Machine Learning Library for Heterogeneous Distributed Systems. _arXiv preprint arXiv:1512.01274_ , 2015."
+    },
+    {
+      "index": 82,
+      "text": "City of Melbourne. Pedestrian counting system \u2013 monthly (counts per hour), 2017. URL https://data.melbourne.vic.gov.au/Transport/ Pedestrian-Counting-System-Monthly-counts-per-hour/b2ak-trbp."
+    },
+    {
+      "index": 83,
+      "text": "Kenneth L Clarkson. Nearest-Neighbor Searching and Metric Space Dimensions. _Nearest-Neighbor Methods for Learning and Vision: Theory and Practice_ , pp. 15\u201359, 2006."
+    },
+    {
+      "index": 84,
+      "text": "- Kalyanmoy Deb, Amrit Pratap, Sameer Agarwal, and TAMT Meyarivan. A Fast and Elitist Multiobjective Genetic Algorithm: NSGA-II. _IEEE Transactions on Evolutionary Computation_ , 6(2): 182\u2013197, 2002."
+    },
+    {
+      "index": 85,
+      "text": "Ensheng Dong, Hongru Du, and Lauren Gardner. An interactive web-based dashboard to track COVID-19 in real time. _The Lancet Infectious Diseases_ , 20(5):533\u2013534, 2020."
+    },
+    {
+      "index": 86,
+      "text": "Xuanyi Dong and Yi Yang. Nas-bench-201: Extending the scope of reproducible neural architecture search, 2020.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "The paper presents a comprehensive benchmark for multi-objective time series forecasting and proposes ParetoSelect, a method for learning default model configurations. While the benchmark is valuable and the method is novel, the paper suffers from several critical issues: insufficient statistical validation of benchmark results, inadequate evaluation of ParetoSelect's generalization, unclear assumptions about objective importance, and potential scalability concerns.\n\nThe paper makes a valuable contribution by releasing a large-scale benchmark of forecasting methods across multiple objectives, which addresses a clear gap in the field. The ParetoSelect method for multi-objective model selection is novel and theoretically sound. However, the experimental evaluation has significant weaknesses, particularly in statistical validation and generalization testing, which undermine confidence in the claimed results.\n\nOverview issues:\n\n- Insufficient Statistical Validation of Benchmark Results: The paper's key claim about deep learning models outperforming classical methods with only a few thousand observations relies on a single Kolmogorov-Smirnov test (Figure 1). This test compares distributions without accounting for multiple comparisons across datasets or objectives. The paper lacks proper statistical significance testing for the multi-objective trade-offs reported in Table 1 and Figure 6. Without correction for multiple hypothesis testing or confidence intervals on the hypervolume metrics, readers cannot assess the reliability of these performance differences. This is particularly problematic given the high variance reported (e.g., nCRPS rank standard deviations of 3-7 in Table 1). The authors should include statistical significance tests with appropriate corrections (e.g., Bonferroni or Benjamini-Hochberg) for all pairwise comparisons and report confidence intervals on key metrics.\n\n- Unclear Generalization of ParetoSelect to Unseen Datasets: The leave-one-dataset-out evaluation of ParetoSelect (Section 4.3) is insufficient to demonstrate generalization. The 44 datasets, while heterogeneous, may share underlying patterns that the surrogate model exploits. The paper provides no analysis of how ParetoSelect performs on truly novel dataset characteristics (e.g., different frequencies, seasonal patterns, or data distributions) not represented in the benchmark. Figure 4 shows average hypervolume error but does not break down performance by dataset characteristics or identify failure cases. The authors should include an analysis of ParetoSelect's performance across dataset types and demonstrate its robustness to out-of-distribution datasets, perhaps through synthetic data generation or by holding out entire dataset families.\n\n- Unjustified Assumption of Equal Objective Importance: The paper treats accuracy (nCRPS) and latency as equally important objectives without justification. In practice, these objectives have vastly different business implications depending on the application. The hypervolume metric (Eq. 6) implicitly assumes equal weighting after quantile normalization, but this normalization may not reflect real-world preferences. The latency-constrained ensembles (Section 4.4) hint at varying priorities but do not provide a framework for incorporating user-specified preferences. The authors should discuss how different objective weightings affect the Pareto front and provide guidance on setting these weights for different application scenarios. They could also incorporate user preference learning into ParetoSelect.\n\n- Limited Scalability Analysis for Large-Scale Applications: The paper claims ParetoSelect alleviates the need to train many models but provides no analysis of its computational requirements for large-scale model spaces. The current model space has only 247 configurations (Section 4.3), which is modest compared to real-world hyperparameter search spaces that can include thousands of configurations. The surrogate model training time and prediction latency are not reported, nor is the method's performance as the model space grows. The authors should evaluate ParetoSelect's scalability with respect to the number of models, hyperparameters, and objectives, and compare its computational overhead against the cost of training additional models. This is crucial for practical adoption in large-scale forecasting systems.\n\n- Inadequate Ablation Study of ParetoSelect Components: The paper compares ParetoSelect against several baselines but does not systematically ablate its key components: the surrogate model architecture, the ranking loss function, and the non-dominated sorting algorithm. Appendix D mentions regression vs. ranking but provides no detailed comparison. The choice of MLP architecture (two layers of size 32) is presented without justification or sensitivity analysis. The epsilon-net sorting (Eq. 10) is compared only implicitly through overall performance. The authors should include ablation studies showing how each component contributes to performance and provide sensitivity analysis for key hyperparameters of ParetoSelect itself.\n\n- Missing demonstration of ParetoSelect on constrained ensembles: The paper introduces latency-constrained ensembles in Section 4.4 but never demonstrates how ParetoSelect could be extended to select these ensembles directly. The current approach uses a simple greedy selection under latency constraints, which is separate from ParetoSelect's core algorithm. Since the paper claims ParetoSelect constitutes the first method for learning defaults in multi-objective settings, it should show how the method handles ensemble selection natively. The authors should extend ParetoSelect to predict ensemble performance directly (as mentioned in the conclusion) and demonstrate this on at least one dataset, comparing the results against the current greedy approach. This would complete the narrative about multi-objective selection for both individual models and ensembles.\n\n- No worked example of surrogate model predictions: While ParetoSelect uses a surrogate model to predict performance, the paper never shows a concrete example of these predictions for a specific dataset and model configuration. Readers cannot verify how the surrogate model handles different model families or hyperparameters. The authors should select one dataset (e.g., M4 Yearly) and show the surrogate's predicted vs. actual nCRPS and latency for a few representative models (e.g., TFT default, Simple Feedforward small capacity, Seasonal Na\u00efve). This would help readers understand the surrogate's accuracy and how errors in predictions might affect the Pareto front approximation.\n\n- Unexplored computational efficiency of ParetoSelect: The paper claims ParetoSelect alleviates the need to train many models but provides no quantitative analysis of its computational overhead. The surrogate model training time, prediction latency, and memory usage are not reported, nor is there a comparison against the cost of evaluating additional models. For practical adoption, readers need to know whether ParetoSelect's overhead is justified by the reduction in model evaluations. The authors should measure and report the time required for surrogate training and prediction, and compare this against the time saved by reducing the number of models that need to be evaluated. This analysis should include scaling behavior with different numbers of models and objectives.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Add comprehensive statistical significance testing with multiple comparison corrections for all benchmark results\n\n- Include detailed analysis of ParetoSelect's generalization across dataset characteristics and out-of-distribution scenarios\n\n- Provide framework and analysis for incorporating unequal objective weights based on application requirements\n\n- Conduct scalability experiments evaluating ParetoSelect's performance with larger model spaces and computational overhead analysis\n\n- Add systematic ablation study of ParetoSelect's components and sensitivity analysis of its hyperparameters",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Incorrect relative improvement formula",
+          "quote": "We compute the relative improvement given by deep learning models as  $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})} - 1$ .",
+          "explanation": "The formula for relative improvement is incorrect. As written, this computes the relative difference, not improvement. Since lower nCRPS values indicate better performance, the correct formula for relative improvement should be $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{class}}) - n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})} = 1 - \\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})}$. With the current formula, a negative value would indicate improvement, which is counterintuitive for \"improvement\" metrics. Rewrite the formula as $1 - \\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})}$ because this yields positive values when deep learning models improve accuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Proof incorrectly assumes first k recommendations equal Pareto front",
+          "quote": "Proof. By Eq. 9, the first  $k$  recommendations of Pareto Select are such that  $\\{x_1,\\ldots ,x_k\\} = \\mathcal{P}_{\\hat{f}_\\theta}(\\mathcal{X})$  where  $k = |\\mathcal{P}_{\\hat{f}_\\theta}(\\mathcal{X})|$ . Since for all  $x\\in \\mathcal{X}$ ,  $\\hat{f}_{\\theta}(x) = f(x)$ , we get that  $\\mathcal{P}_{\\hat{f}_\\theta}(\\mathcal{X}) = \\mathcal{P}_f(\\mathcal{X})$ . It follows that for any  $k\\leq n$ ,  $\\mathcal{P}_f(\\mathcal{X}) = \\{x_1,\\dots,x_k\\} \\subset \\{x_1,\\dots,x_n\\}$  and consequently  $\\varepsilon (\\{x_1,\\ldots ,x_n\\}) = 0$  since the hypervolume error of any set of points containing the Pareto front is zero.",
+          "explanation": "The proof incorrectly claims that the first k recommendations equal the Pareto front. Equation 9 shows that X\u2081 = sort(P_{\\hat{f}_\u03b8}(X)), meaning the first layer contains the Pareto front but the sort operation reorders these points. The \u03b5-net sorting (Eq. 10) selects points based on maximizing Euclidean distance, which can intermix Pareto front points with others. Therefore, the claim that {x\u2081,...,x\u2096} = P_{\\hat{f}_\u03b8}(X) is false. Rewrite the proof to correctly handle the sorting operation: 'By Eq. 9, the first layer X\u2081 contains the Pareto front P_{\\hat{f}_\u03b8}(X). Since n \u2265 |P_f(X)| and the algorithm concatenates layers in order, the first n recommendations include all points from X\u2081 = P_{\\hat{f}_\u03b8}(X) = P_f(X). Therefore \u03b5({x\u2081,...,x\u2099}) = 0.'",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "Contradictory claim about deep learning data requirements",
+          "quote": "As an example application of this benchmark, we use the data to perform a statistical analysis which shows that only a few thousands observations are required for deep learning methods to outperform classical methods.",
+          "explanation": "This claim contradicts the paper's own statistical analysis in Section 3.5. The hypothesis test results show that deep learning models outperform classical methods on 30 out of 44 datasets, but the paper doesn't establish a specific threshold of \"a few thousand observations\" as the tipping point. The analysis in Section 3.5 examines performance across dataset sizes but doesn't provide this quantitative threshold. The introduction should either remove this specific quantitative claim or reference the exact analysis that supports it. Rewrite as \"we use the data to perform a statistical analysis which shows that deep learning methods can outperform classical methods even on relatively small datasets\" to avoid making an unsupported quantitative claim.",
+          "comment_type": "technical",
+          "paragraph_index": 8,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Contradictory statistical test interpretation",
+          "quote": "At a significance level of  $\\alpha = 5\\%$ ,  $H_0$  can be rejected for 30 out of 44 datasets. In fact, deep learning models exhibit competitive performance for almost all datasets and regularly outperform classical methods.",
+          "explanation": "There's a logical inconsistency in interpreting the statistical test results. The null hypothesis $H_0: \\mathcal{Q}_{\\mathrm{class}} \\leq \\mathcal{Q}_{\\mathrm{deep}}$ states that classical models perform equal to or better than deep learning models. Rejecting $H_0$ for 30 out of 44 datasets means deep learning models outperform classical models on those 30 datasets. However, the text then claims \"competitive performance for almost all datasets\" which contradicts the fact that $H_0$ could NOT be rejected for 14 datasets (32% of the total). On these 14 datasets, there's insufficient evidence to claim deep learning superiority. The statement should be revised to acknowledge that deep learning models show statistically significant improvement on 30 datasets while the results are inconclusive for the remaining 14.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Inconsistent hyperparameter configuration description",
+          "quote": "For each model (except MQ-RNN), we consider three hyperparameter settings: this includes the default set provided by their implementation as well as hyperparameter sets that roughly halve and double the default model capacity (see Table 2 in the appendix). Additionally, we consider three different context lengths that govern the length of the time series that predictions are conditioned on.",
+          "explanation": "The text describes two different hyperparameter variations (capacity and context length) but doesn't clarify whether these are combined multiplicatively or evaluated separately. If combined multiplicatively, this would create 3 \u00d7 3 = 9 configurations per model, which contradicts the earlier statement about total model count. The description needs to specify whether context length variations are applied to all capacity settings or only to the default configuration, as this affects the total number of model configurations being evaluated.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "Missing MQ-RNN hyperparameter justification",
+          "quote": "For each model (except MQ-RNN), we consider three hyperparameter settings: this includes the default set provided by their implementation as well as hyperparameter sets that roughly halve and double the default model capacity (see Table 2 in the appendix).",
+          "explanation": "The paper excludes MQ-RNN from the systematic hyperparameter variation without providing any justification. This creates an inconsistency in the experimental design where all other global models are evaluated across multiple capacity settings while MQ-RNN is only evaluated at its default configuration. The authors should either explain why MQ-RNN was excluded from this systematic variation or apply the same hyperparameter exploration to maintain experimental consistency.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Incorrect objective function formulation",
+          "quote": "$\\min_{\\{x_{1},\\dots,x_{n}\\}\\subset\\mathcal{X}}\\sum_{j=1}^{T}\\ \\min_{1\\leq i\\leq n}f_{k}^{(j)}(x_{i})$ (3)",
+          "explanation": "The objective function in Equation 3 is incorrectly formulated for the described problem. The text states the goal is to minimize \"joint error obtained when evaluating them on all datasets,\" which should be the sum of the best model's performance on each dataset. However, the current formulation uses $\\min_{1\\leq i\\leq n}f_{k}^{(j)}(x_{i})$ which selects the best performing model for each dataset independently, but doesn't account for the fact that the same set of $n$ models must be used across all datasets. The correct formulation should be $\\min_{\\{x_{1},\\dots,x_{n}\\}\\subset\\mathcal{X}}\\sum_{j=1}^{T} \\min_{1\\leq i\\leq n} f_{k}^{(j)}(x_{i})$ where the minimization over the model set is outside the sum over datasets. Rewrite Equation 3 as $\\min_{\\{x_{1},\\dots,x_{n}\\}\\subset\\mathcal{X}} \\sum_{j=1}^{T} \\min_{1\\leq i\\leq n} f_{k}^{(j)}(x_{i})$ because the current formulation incorrectly allows different model selections for different datasets.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Inconsistent latency constraint description",
+          "quote": "For a latency constraint  $c$ , we build an ensemble with  $n \\leq 10$  members  $x_{1},\\ldots ,x_{n}$  by iteratively picking the model with best nCRPS such that the ensemble latency constrain  $c$  is still met.",
+          "explanation": "The text describes building ensembles under latency constraints but doesn't specify how the ensemble latency is calculated. Is it the sum of individual model latencies, the maximum, or some other aggregation? This ambiguity makes it impossible to verify whether the greedy selection algorithm actually satisfies the constraint. The authors should explicitly define the ensemble latency aggregation function before describing the selection procedure.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Inconsistent hypervolume comparison claim",
+          "quote": "The hypervolume obtained by PARETOSELECT with 10 default models is small ( $\\approx 0.06$ ) compared to the best baseline that reaches  $\\approx 0.20$ . Further, random search requires a total of 27 models to be on par with the hypervolume of only 10 models selected via our method.",
+          "explanation": "There's a logical inconsistency in the hypervolume comparison. The text states PARETOSELECT achieves \u22480.06 hypervolume with 10 models, while the best baseline reaches \u22480.20. Then it claims random search needs 27 models to match PARETOSELECT's hypervolume. This doesn't make sense - if PARETOSELECT only achieves 0.06 and the best baseline achieves 0.20, why would random search need more models to match PARETOSELECT's lower performance? The claim should either state that random search needs 27 models to match the best baseline's 0.20 hypervolume, or clarify that PARETOSELECT's 0.06 is somehow superior despite being numerically smaller. Rewrite the passage as: \"The hypervolume obtained by PARETOSELECT with 10 default models is \u22480.06. Further, random search requires a total of 27 models to achieve this same hypervolume, while the best baseline reaches \u22480.20 hypervolume.\"",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Missing reference point for hypervolume calculation",
+          "quote": "In Figure 4, we report the average hypervolume obtained for PARETOSELECT and several baselines, averaged over all 44 test datasets.",
+          "explanation": "The hypervolume metric requires specifying a reference point, but this critical detail is missing. Without knowing the reference point used for the hypervolume calculation, the reported values (\u22480.06 and \u22480.20) are not interpretable. Different reference points would yield different hypervolume values, making comparisons meaningless. Add the reference point specification after this sentence: \"The hypervolume is calculated using reference point (1.0, 1.0) for normalized latency and nCRPS values.\"",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__glm-4.6_10",
+          "title": "Unsubstantiated claim about Pareto front recovery",
+          "quote": "For  $c \\geq 100$  ms, the constrained ensemble recovers the Pareto front and outperforms all individual models  $x \\in \\mathcal{X}$  as well as ensembles.",
+          "explanation": "The claim that constrained ensembles 'recover the Pareto front' for $c \\geq 100$ ms is not supported by the provided text. The Pareto front represents the optimal trade-off between accuracy and latency across all possible model configurations, but the text only describes a specific greedy selection method under latency constraints. Without showing that these ensembles actually lie on or approximate the Pareto front, this claim appears overstated. The authors should either provide evidence of Pareto optimality or soften this claim to state that the ensembles achieve 'near-optimal' performance.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__glm-4.6_11",
+          "title": "Overstated novelty of multi-objective approach",
+          "quote": "Key differences are that we consider multiple objectives and model ensembles. In the time series domain, *Shah et al. (2021)* also considers the task of automatically choosing from a large pool of forecasting models the one performing best on a particular dataset but also only optimizes for a single objective and relies on potentially expensive model training for model selection.",
+          "explanation": "The claim that considering multiple objectives is a key difference from prior work appears to overstate the novelty. According to the literature context, AutoXPCR (2023) and X-PCR (2024) already propose multi-objective model selection frameworks for time series forecasting that estimate predictive error, complexity, and resource demand. These works directly address multi-objective selection in the forecasting domain, which contradicts the implication that this is the first such approach. The related work should acknowledge these existing multi-objective methods and clarify how the current approach differs beyond just considering ensembles.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__glm-4.6_12",
+          "title": "Inaccurate claim about lack of comprehensive evaluations",
+          "quote": "In domains such as computer vision or neural architecture search (NAS), offline computations have been harvested and leveraged successfully to perform extensive model comparisons or compare different NAS strategies *(Ying et al., 2019; Dong and Yang, 2020; Pfisterer et al., 2021)*. However, to the best of our knowledge, no comprehensive set of model evaluations has been released in the realm of forecasting.",
+          "explanation": "The claim that no comprehensive set of model evaluations exists in forecasting is inaccurate. The M4 and M5 forecasting competitions (Makridakis et al.) provided extensive benchmark evaluations across many models and datasets. Additionally, the GluonTS toolkit (Alexandrov et al., 2020) includes comprehensive benchmark results for multiple forecasting models. While these may not be exactly the same as NAS-style offline computations, they represent substantial comprehensive evaluations in the forecasting domain that should be acknowledged.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__glm-4.6_13",
+          "title": "Insufficient dataset heterogeneity justification",
+          "quote": "Our benchmark provides 44 heterogeneous public datasets in total. The datasets greatly differ in the number of time series (from 8 to $\\approx$170,000), their mean length (from $\\approx$22 to $\\approx$500,000), their frequency (minutely, hourly, daily, weekly, monthly, quarterly, yearly), and the forecast horizon (from 6 to 60). Thus, we expect them to cover a wide range of datasets encountered in practice.",
+          "explanation": "The claim that 44 datasets cover \"a wide range of datasets encountered in practice\" is not sufficiently justified. While the ranges of basic statistics are provided, there is no analysis of whether these ranges adequately represent real-world forecasting scenarios. For example, the minimum of 8 time series and mean length of 22 observations may not reflect typical business forecasting needs. The authors should provide evidence or citations showing that these parameter ranges are representative of practical applications, or acknowledge the limitations of their benchmark coverage.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__glm-4.6_14",
+          "title": "Missing dataset selection criteria",
+          "quote": "Datasets are taken from various forecasting competitions, the UCI *(Dua and Graff, 2017)*, and the Monash time series forecasting repository *(Godahewa et al., 2021)*. Dataset sources, descriptions, basic statistics, and an explanation of the data preparation procedure can be found in Appendix B.",
+          "explanation": "The section does not explain the criteria used to select these specific 44 datasets from the available repositories. Without knowing the selection methodology, readers cannot assess potential selection bias or whether the datasets were chosen to favor certain types of models or forecasting scenarios. The authors should add a brief description of their dataset selection criteria, such as ensuring coverage of different domains, data characteristics, or avoiding redundancy.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__glm-4.6_15",
+          "title": "Ambiguous model training duration specification",
+          "quote": "Deep learning models are trained for a fixed duration depending on the size of the dataset.",
+          "explanation": "The statement about training duration is too vague to ensure reproducibility. 'Fixed duration depending on dataset size' could mean many different training schedules (e.g., fixed epochs, fixed wall-clock time, early stopping criteria). Without specifying the exact relationship between dataset size and training duration, readers cannot replicate the experimental setup or understand whether all models received comparable training resources.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__glm-4.6_16",
+          "title": "Inconsistent ensemble size specification",
+          "quote": "Table 1 also indicates the performance of ensembles obtained by averaging the predictions of  $n = 9$  ( $n = 3$  for MQ-RNN) deep learning models trained with different hyperparameters (hyper-ensembles)",
+          "explanation": "The text specifies different ensemble sizes for different models (9 for most, 3 for MQ-RNN) without justification. This creates an unfair comparison since ensemble size directly impacts both accuracy and latency. The paper should either use consistent ensemble sizes across all methods or provide a clear rationale for the different sizes. If MQ-RNN requires smaller ensembles due to computational constraints, this should be explicitly stated and discussed as a limitation. Otherwise, the comparison becomes methodologically inconsistent.",
+          "comment_type": "technical",
+          "paragraph_index": 35,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__glm-4.6_17",
+          "title": "Mismatched parentheses in hypervolume error definition",
+          "quote": "$\\varepsilon(\\mathcal{S})=\\mathcal{H}\\left(\\{\\bm{f}(x)\\ |\\ x\\in\\mathcal{P}_{\\bm{f}}\\left(\\mathcal{X}\\right)\\}\\right)-\\mathcal{H}\\left(\\{\\bm{f}(x_{1}),\\dots,\\bm{f}(x_{n}))\\}\\right)\\geq 0$",
+          "explanation": "The hypervolume error definition contains mismatched parentheses. The second hypervolume term has an extra closing parenthesis after $x_{n}$ and is missing an opening parenthesis before the set. Rewrite $\\varepsilon(\\mathcal{S})=\\mathcal{H}\\left(\\{\\bm{f}(x)\\ |\\ x\\in\\mathcal{P}_{\\bm{f}}\\left(\\mathcal{X}\\right)\\}\\right)-\\mathcal{H}\\left(\\{\\bm{f}(x_{1}),\\dots,\\bm{f}(x_{n}))\\}\\right)\\geq 0$ as $\\varepsilon(\\mathcal{S})=\\mathcal{H}\\left(\\{\\bm{f}(x)\\ |\\ x\\in\\mathcal{P}_{\\bm{f}}\\left(\\mathcal{X}\\right)\\}\\right)-\\mathcal{H}\\left(\\{\\bm{f}(x_{1}),\\dots,\\bm{f}(x_{n})\\}\\right)\\geq 0$ because the original expression is syntactically incorrect.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__glm-4.6_18",
+          "title": "Inconsistent notation for objective function",
+          "quote": "where $k$ denotes a single fixed objective (for instance, the classification error).",
+          "explanation": "The notation $f_{k}^{(j)}(x_{i})$ is used without proper definition. The superscript $(j)$ appears to index datasets, but this conflicts with the earlier statement that $k$ denotes a single fixed objective. The function should be consistently notated as either $f_{k}^{(j)}(x_{i})$ if $(j)$ indexes datasets, or $f_{k}(x_{i}, D_j)$ if $D_j$ represents dataset $j$. The current notation creates ambiguity about whether $(j)$ is an exponent, an index, or part of the function name. Add a clear definition: \"where $f_{k}^{(j)}(x_{i})$ denotes the performance of model $x_{i}$ on objective $k$ for dataset $j$\" to resolve this ambiguity.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__glm-4.6_19",
+          "title": "Unsubstantiated NP-completeness claim",
+          "quote": "Since the problem is NP-complete, a greedy heuristic with a provable approximation guarantee is used:",
+          "explanation": "The claim that the problem is NP-complete is stated without justification or reference. For a selection problem with a fixed number of models $n$ and $T$ datasets, the search space is $|\\mathcal{X}|^n$, which is exponential in $n$ but polynomial in $T$. The NP-completeness of this specific formulation is not obvious and requires proof or citation to established results. Either provide a reference to a known NP-complete problem that this reduces to, or remove the NP-completeness claim and simply state that the exponential search space motivates the use of heuristics.",
+          "comment_type": "technical",
+          "paragraph_index": 45,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__glm-4.6_20",
+          "title": "Contradictory performance comparison",
+          "quote": "For  $c \\geq 100$  ms, the constrained ensemble recovers the Pareto front and outperforms all individual models  $x \\in \\mathcal{X}$  as well as ensembles.",
+          "explanation": "This sentence contains a logical contradiction. If the constrained ensemble 'outperforms all individual models $x \\in \\mathcal{X}$ as well as ensembles', it cannot simultaneously be part of the set of ensembles it outperforms. The authors likely meant to say it outperforms all individual models and other ensemble selection methods, but as written, the claim is incoherent. Rewrite this to clarify what baseline ensembles are being compared against.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__glm-4.6_21",
+          "title": "Overstated benchmark comprehensiveness claim",
+          "quote": "This constitutes, by far, the most comprehensive publicly available evaluation of forecasting methods.",
+          "explanation": "The claim of being \"by far the most comprehensive\" is an overstatement that ignores existing large-scale forecasting benchmarks. The M4/M5 competitions evaluated dozens of methods on 100,000+ time series, and the Monash Time Series Forecasting Repository (Godahewa et al., 2021) contains evaluations across 30+ datasets. While the paper's 44-dataset, 13-method evaluation is substantial, it's not clearly \"by far\" the most comprehensive available. The authors should temper this claim to \"one of the most comprehensive\" or provide specific evidence for why their benchmark surpasses existing ones in scope or quality.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__glm-4.6_22",
+          "title": "Mischaracterization of ensembling comparison practices",
+          "quote": "While some recent methods incorporate ensembling *(Oreshkin et al., 2019; Jeon and Seong, 2021)*, comparisons are often made against individual models which may cloud the benefit of the method proposed versus the sole benefit of ensembling.",
+          "explanation": "This statement mischaracterizes the evaluation practices in recent forecasting literature. Many papers that propose ensembling methods, including N-BEATS (Oreshkin et al., 2019) which is cited, do compare against individual models and also against other ensembling baselines. For example, the M4 competition winner (Makridakis et al., 2018) and subsequent ensemble methods typically provide comparisons against both individual models and other ensemble approaches. The claim that comparisons \"often\" ignore the ensembling benefit seems overstated without specific evidence.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 23
+        },
+        {
+          "id": "coarse__glm-4.6_23",
+          "title": "Section title mismatch with content",
+          "quote": "FAULTS\n\nThe benchmark introduced in the previous section outlined how to acquire offline evaluations of forecasting methods on various datasets. However, in the presence of multiple conflicting objectives\n\n<!-- PAGE BREAK -->\n\nsuch as accuracy and latency, it is not clear how one could choose the best models. In this section, we first formalize the problem of learning good defaults from these evaluations for a single objective. Afterwards, we formally introduce multi-objective optimization and show how learning defaults can be extended to account for multiple objectives. In the end, we report experimental results obtained by using our method.\n\n### 4.1 Prerequisites\n\nIn our ",
+          "explanation": "The section title \"4 LEARNING MULTI-OBJECTIVE DEFAULTS\" suggests the content focuses exclusively on multi-objective learning, but the text explicitly states it will first formalize single-objective learning before extending to multi-objective. This creates a structural inconsistency between the title and the described content scope. The title should be revised to reflect the actual content progression, such as \"4 LEARNING DEFAULTS: FROM SINGLE TO MULTI-OBJECTIVE\" or the section content should be restructured to align with the current title.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 24
+        },
+        {
+          "id": "coarse__glm-4.6_24",
+          "title": "Figure reference inconsistency",
+          "quote": "Figure 5 depicts the top  $n = 10$  recommendations produced by PARETOSELECT when predicting default models on a single dataset.",
+          "explanation": "The text references Figure 5, but the only figure shown in this section is Figure 6. This creates confusion for readers trying to follow the analysis. Either the figure number is incorrect, or Figure 5 is missing from this section. Based on the context about Pareto front coverage, this should likely reference Figure 6. Change \"Figure 5\" to \"Figure 6\" in the text.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 25
+        }
+      ],
+      "cost_usd": 0.2757,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper introduces a benchmark for time series forecasting models and a method, ParetoSelect, to identify Pareto-optimal model configurations under multi-objective constraints like accuracy and latency. While the benchmark is useful, the methodology for learning default models relies on assumptions about surrogate model performance that require more rigorous empirical validation.\n\nThe paper provides a valuable contribution by releasing a large-scale evaluation of forecasting models across diverse datasets. The proposed ParetoSelect approach effectively addresses the practical need for balancing accuracy with resource constraints. However, the reliance on a specific surrogate architecture and the potential for overfitting the selection strategy to the benchmark datasets need more careful investigation.\n\nOverview issues:\n\n- Sensitivity of Surrogate Performance: Section 4.2 describes a relatively simple MLP surrogate with fixed hyperparameters to predict model performance. The paper does not demonstrate how sensitive the ParetoSelect recommendations are to the surrogate's architecture or its training stability. If the surrogate fails to accurately rank models on a new, unseen dataset, the selected 'defaults' may be significantly suboptimal. A sensitivity analysis or a comparison against alternative surrogate models (e.g., Random Forests or Gaussian Processes) would strengthen the claim that this approach is generalizable.\n\n- Assumption of Metric Independence: The methodology in Section 4.1 and 4.2 assumes that objectives like nCRPS and latency can be optimized independently or via a simple non-dominated sorting of surrogate outputs. However, in time series forecasting, accuracy and latency often exhibit non-linear or correlated behavior depending on the model's complexity and the data's characteristics. The paper should explicitly address whether the surrogate model captures these interactions, perhaps by providing a visualization of the predicted vs. actual Pareto front for a held-out dataset.\n\n- Generalizability and Data Leakage Risks: The paper uses a leave-one-out cross-validation approach on 44 datasets to evaluate ParetoSelect. Given the significant heterogeneity of these datasets (from minutely sensor data to yearly economic series), it is unclear if the learned defaults are truly 'universal' or if they are biased toward the specific distribution of datasets in the benchmark. The paper would benefit from a more rigorous zero-shot evaluation on a completely independent set of datasets not included in the original 44 to demonstrate that the selection strategy does not overfit the benchmark.\n\n- Temporal Non-stationarity in Model Selection: The paper treats model selection as a static task, yet time series are inherently non-stationary. The evaluation metrics and the surrogate training process do not account for how the Pareto front might shift as a time series evolves or as data quality changes over time. Section 4.4 discusses latency-constrained ensembles, but it ignores the potential need for dynamic model retraining or selection triggers. A discussion on how the selected defaults perform under distribution shift would be a significant improvement.\n\n- Demonstration of ParetoSelect on a held-out, independent dataset: The paper relies on leave-one-out cross-validation across 44 datasets to demonstrate the effectiveness of ParetoSelect. While this shows performance within the benchmark, it does not confirm the claim that the method learns 'default models' for truly unseen applications. To provide evidence that the method generalizes, the authors should perform a zero-shot evaluation on a completely independent, external dataset not included in the original 44. This would demonstrate that the learned surrogate model is robust and not merely overfitting the specific characteristics of the benchmark repository.\n\n- Visualization of surrogate-predicted versus actual Pareto fronts: The paper claims ParetoSelect effectively identifies models on the Pareto front, but it relies on a simple MLP surrogate to rank these models. It is unclear if the surrogate captures the true trade-off surface or if it merely approximates a subset of it. The paper should include a plot comparing the predicted Pareto front (from the surrogate) against the ground-truth Pareto front for a representative held-out dataset. This would provide necessary intuition on whether the surrogate's ranking accuracy is sufficient to guide model selection in practice.\n\n- Implementation guidance for practitioners regarding surrogate training: The paper proposes a novel method but provides limited guidance on the practical requirements for training the surrogate model. Specifically, it does not discuss the minimum number of offline evaluations or the diversity of datasets required for the surrogate to converge to a useful ranking. Adding a brief analysis on how the hypervolume error (Eq. 7) scales with the number of training tasks $T$ would provide critical guidance for practitioners who might want to apply this method to their own, smaller collections of datasets.\n\nRecommendation: major revision. The paper presents a strong empirical benchmark, but the proposed ParetoSelect method requires more robust validation to ensure its recommendations are reliable across diverse, unseen scenarios. The current evaluation is too tightly coupled to the provided benchmark datasets, leaving open questions about the method's real-world robustness.\n\nRevision targets:\n\n- Perform a sensitivity analysis of the surrogate model architecture to demonstrate that the selection results are not artifacts of the chosen MLP configuration.\n\n- Conduct a zero-shot evaluation on a set of external, non-benchmark datasets to test the generalizability of the learned defaults.\n\n- Add a discussion or empirical analysis regarding the stability of the Pareto front under temporal non-stationarity.\n\n- Provide a clearer justification for the listwise ranking loss used in the surrogate training compared to standard regression approaches.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Inconsistency in reported number of training runs",
+          "quote": " we release. By evaluating 13 forecasting meth\n\n<!-- PAGE BREAK -->\n\nods along with different hyperparameter choices on all 44 benchmark datasets and for two random seeds, the benchmark comprises 4,708 training runs and amasses over 1 TiB of ",
+          "explanation": "The total of 4,708 training runs is mathematically inconsistent with the stated parameters. With 13 methods and 44 datasets, two seeds yield 1,144 runs if only one configuration is used per method. If 4,708 is correct, the number of hyperparameter configurations per method must be approximately 4.12, which is not an integer. Please clarify the exact number of configurations per method or correct the total count.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Ambiguity in objective function aggregation",
+          "quote": "n_{\\{x_{1},\\dots,x_{n}\\}\\subset\\mathcal{X}}\\sum_{j=1}^{T}\\ \\min_{1\\leq i\\leq n}f_{k}^{(j)}(x_{i})$ (3)",
+          "explanation": "Equation (3) assumes an unnormalized additive aggregation of errors across datasets. Because time series datasets vary significantly in scale, an unnormalized sum will be dominated by datasets with the largest error magnitudes. Please specify whether f_k^{(j)} is normalized (e.g., by the performance of a baseline model on dataset j) and rewrite the objective to include dataset-specific weights if necessary to account for these scale differences.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Misinterpretation of relative improvement calculation",
+          "quote": "We compute the relative improvement given by deep learning models as  $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}}",
+          "explanation": "The provided formula yields a negative value when the deep learning model is more accurate (lower nCRPS), which contradicts the standard interpretation of improvement where a positive value indicates a gain. Please correct the formula to 1 - nCRPS(x_deep)/nCRPS(x_class) or (nCRPS(x_class) - nCRPS(x_deep))/nCRPS(x_class) to ensure the sign of the result aligns with the term improvement.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistency in hyperparameter configuration for MQ-RNN",
+          "quote": "For each model (except MQ-RNN), we consider three hyperparameter settings: this includes the default set provided by their implementation as well as hyperparameter sets that roughly halve and double the default model capacity",
+          "explanation": "The text excludes MQ-RNN from the capacity-scaling strategy but does not specify what configuration is used instead. If MQ-RNN is evaluated using only a single default setting while others are evaluated across three levels, the comparison is biased due to the smaller search space for MQ-RNN. Please clarify the specific configuration used for MQ-RNN and justify its exclusion from the capacity-scaling approach.",
+          "comment_type": "technical",
+          "paragraph_index": 20,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Index notation error in conditional probability expression",
+          "quote": "$\\mathbb{P}\\left(\\bm{z}^{(i)}_{T_{i+1}:T_{i+\\tau}}\\ \\middle|\\ \\bm{z}^{(i)}_{1:T_{i}}\\right)$ (1)",
+          "explanation": "The index T_{i+1} is inconsistent with the definition of the time series length T_i. The forecast horizon should start at T_i + 1. Please rewrite the expression as P(z^{(i)}_{T_{i}+1:T_{i}+tau} | z^{(i)}_{1:T_{i}}) to correctly reflect the transition from the historical observation window to the forecast horizon.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        }
+      ],
+      "cost_usd": 0.1088,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper presents a benchmark and a multi-objective model selection method (ParetoSelect) for time series forecasting. The work addresses a practical gap by balancing accuracy and latency, and the released benchmark is a useful resource. However, the methodological framing contains several inconsistencies, and the validation strategy lacks the statistical and domain-generalization rigor expected for this venue.\n\nThe authors make a valuable contribution by releasing a large-scale benchmark and proposing a surrogate-based approach to learn default models across accuracy and latency. The multi-objective perspective is timely and aligns with deployment needs. The paper would benefit from stronger statistical validation, clearer handling of temporal data splits, and a more consistent integration of multi-objective principles throughout the ensemble selection pipeline.\n\nOverview issues:\n\n- Temporal data splitting and potential look-ahead bias: The benchmark evaluation relies on 44 heterogeneous datasets, but the main text does not specify how train, validation, and test splits were constructed. Time series data require strict temporal ordering to prevent look-ahead bias, yet the paper only references an appendix for the data preparation procedure. Without explicit rolling windows or fixed historical splits, future values may have leaked into model training or latency measurements. This omission directly threatens the validity of the reported nCRPS and latency figures, as even minor leakage can artificially inflate performance. The authors should explicitly describe the splitting protocol in Section 3.3 and provide a sensitivity analysis or clear statement confirming that no future information was accessible during training or hyperparameter tuning.\n\n- Quantile normalization distorts practical latency trade-offs: Section 4.1 applies quantile normalization to map all objectives to a uniform distribution before computing hypervolume error. While this simplifies the reference point choice, it compresses extreme latency differences, such as ARIMA\u2019s 31,000x relative latency versus TFT\u2019s 4.66x. Practitioners care about absolute latency thresholds, and the normalization masks the true cost of selecting certain models. The resulting Pareto front becomes mathematically clean but practically opaque, making it difficult to interpret how defaults will behave under real deployment constraints. I recommend reporting hypervolume metrics on the original scale or using a log-transformation that preserves relative differences, and explicitly discussing how the normalization choice affects the practical utility of the selected defaults.\n\n- Insufficient statistical testing for model comparisons and selection quality: The paper uses the Kolmogorov-Smirnov test to compare classical and deep learning methods in Section 3.5, but forecasting model comparisons typically require Diebold-Mariano tests or bootstrap confidence intervals to account for temporal dependence and unequal forecast errors. Furthermore, the hypervolume differences between ParetoSelect and baselines in Figure 4 are presented without statistical significance bounds. Claiming superiority over greedy or random baselines without confidence intervals leaves the results vulnerable to variance across datasets and random seeds. The authors should replace or supplement the KS tests with Diebold-Mariano procedures and add bootstrap confidence intervals to the hypervolume results to substantiate the claimed performance gains.\n\n- Surrogate generalization lacks domain-shift validation: ParetoSelect is evaluated using leave-one-out cross-validation across the 44 benchmark datasets, which assumes that performance rankings transfer smoothly across datasets with vastly different frequencies, seasonalities, and noise levels. The paper provides no analysis of how the learned defaults perform on datasets with out-of-distribution characteristics, such as concept drift, missing values, or irregular sampling. Without this validation, the claim that ParetoSelect learns transferable defaults remains unverified. Adding a domain-shift analysis where the method is tested on datasets outside the benchmark distribution would strengthen the generalization claims and clarify the conditions under which re-calibration is necessary.\n\n- Ensemble selection contradicts the multi-objective framing: Section 4.4 describes latency-constrained ensembles that greedily select models based on nCRPS until a latency budget is met. This approach optimizes a single objective subject to a hard constraint rather than navigating the multi-objective Pareto front that ParetoSelect is designed to approximate. The method also ignores the learned surrogate model for ensemble composition, creating a disconnect between the paper\u2019s core algorithm and its practical application. To maintain methodological consistency, the ensemble selection should either be reframed as a constrained multi-objective optimization or explicitly positioned as a heuristic baseline. Integrating ParetoSelect or a similar multi-objective selector into the ensemble building process would better align the implementation with the stated theoretical goals.\n\n- Missing computational complexity and deployment analysis: The paper claims that ParetoSelect alleviates the need to train many models, but it does not report the computational cost of training the surrogate MLP, running the non-dominated sorting, or computing the epsilon-net selection. For production environments, the overhead of the selection pipeline directly impacts whether the method is viable. Additionally, latency measurements are averaged over datasets but do not account for batch processing, hardware acceleration, or real-world inference variability. Including a computational complexity analysis and runtime benchmarks for ParetoSelect would clarify its practical feasibility. The authors should also discuss how latency scales with batch size and provide deployment guidelines that account for hardware-specific inference characteristics.\n\n- Surrogate model performance lacks dataset-level calibration and failure analysis: Section 4.3 only reports average hypervolume error across all 44 datasets, leaving the surrogate's reliability opaque. Readers will wonder how the model behaves on specific dataset characteristics. The authors should compute the prediction error for the surrogate on each dataset individually and plot it against properties like frequency, length, and signal-to-noise ratio. This analysis would show exactly when the surrogate's recommendations break down. It would also clarify whether retraining is necessary for out-of-distribution domains before practitioners trust the default selections.\n\n- Multi-objective ensembling lacks comparison to true Pareto-optimal ensemble methods: Section 4.4 describes a greedy heuristic that selects ensemble members by nCRPS until a latency budget is met. The paper never demonstrates how this heuristic compares to a true multi-objective optimizer for ensemble composition. Readers will wonder whether the greedy approach actually captures the accuracy-latency trade-off surface. To deliver on the claim, the authors should compute the Pareto front of all possible 10-member ensembles on a single dataset and plot it against the greedy selection. This computation would verify whether the heuristic approximates the true front or leaves significant accuracy gains on the table.\n\n- Surrogate generalization to unseen model configurations lacks implementation discussion: The benchmark evaluates 247 fixed configurations, but the paper claims ParetoSelect generalizes to unseen datasets without discussing how it handles new model architectures. If a practitioner adds a new model, the surrogate's training distribution shifts, and the current MLP architecture offers no guidance on retraining or scaling. The authors should discuss how to update the surrogate incrementally as new evaluations arrive. A worked example showing how prediction error changes when holding out a subset of configurations for validation would clarify the method's practical limits and provide necessary implementation guidance.\n\n- Data threshold claim lacks sensitivity analysis across forecasting conditions: The introduction and Section 3.5 claim that deep learning models outperform classical methods with only a few thousand observations. This broad statement relies on a Kolmogorov-Smirnov test across dataset sizes but lacks granularity for practical deployment. The authors should compute the performance crossover point for different forecast horizons and seasonal patterns. A worked example showing the exact observation count where DeepAR crosses the ARIMA threshold on a specific dataset would ground the statistical claim. This addition would clarify the practical limits of the finding and prevent misapplication to short-horizon or highly seasonal problems.\n\nRecommendation: Major revision. The paper addresses a relevant problem and provides a useful benchmark, but the methodological inconsistencies and lack of statistical rigor undermine the strength of the claims. Addressing the data splitting protocol, aligning the ensemble selection with the multi-objective framework, and adding proper statistical testing are necessary before the work can be considered for publication.\n\nRevision targets:\n\n- Explicitly detail the train/validation/test splitting protocol in Section 3.3 and confirm the absence of look-ahead bias in all reported metrics.\n\n- Replace or supplement the Kolmogorov-Smirnov tests with Diebold-Mariano procedures and add bootstrap confidence intervals to the hypervolume results in Figure 4.\n\n- Reframe the latency-constrained ensemble selection in Section 4.4 as a constrained multi-objective optimization or explicitly position it as a heuristic baseline, and integrate ParetoSelect into the ensemble composition process.\n\n- Add a domain-shift analysis testing ParetoSelect on datasets with out-of-distribution characteristics (e.g., different frequencies or missing data patterns) to validate generalization claims.\n\n- Include a computational complexity analysis and runtime benchmarks for ParetoSelect, along with a discussion of how latency scales with batch size and hardware acceleration.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Surrogate input specification omits dataset context",
+          "quote": "By learning a mapping from forecasting models to performance metrics, we show that our method ParetoSelect is able to accurately select models from the Pareto front \u2014 alleviating the need to train or evaluate many forecasting models for model selection.",
+          "explanation": "The abstract describes learning a mapping solely from forecasting models to performance metrics, yet claims the method selects models \"for a given dataset.\" Forecasting performance depends heavily on dataset characteristics like frequency and seasonality. A surrogate that ignores dataset features cannot condition its predictions on the specific data at hand. This creates a logical disconnect between the described architecture and the claimed generalization capability. The text should explicitly state that the mapping takes dataset features alongside model configurations as inputs, or clarify how the surrogate adapts to varying data characteristics without them.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Ensemble technique mischaracterized as multi-objective",
+          "quote": "We introduce a technique for ensembling models in a multi-objective setting where the resulting ensemble is not only highly accurate but also optimized for other objectives, such as a low inference latency.",
+          "explanation": "The introduction frames the ensemble method as operating in a \"multi-objective setting\" where multiple objectives are optimized. The actual algorithm, however, uses a greedy heuristic that maximizes a single accuracy metric subject to a hard latency constraint. This is a constrained single-objective optimization, not a true multi-objective approach. Describing it as multi-objective misrepresents the optimization framework. The authors should reframe this as a latency-constrained selection procedure to align with the actual implementation.",
+          "comment_type": "technical",
+          "paragraph_index": 10,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Arithmetic inconsistency in benchmark run count",
+          "quote": "aluating 13 forecasting meth\n\n<!-- PAGE BREAK -->\n\nods along with different hyperparameter choices on all 44 benchmark datasets and for two random seeds, the benchmark comprises 4,708 training run",
+          "explanation": "The stated total of 4,708 training runs does not align with the listed evaluation parameters. Multiplying 13 methods by 44 datasets and 2 random seeds yields 1,144 base configurations. Dividing 4,708 by 1,144 gives approximately 4.12, which is not an integer. If each method uses a uniform number of hyperparameter choices, the total should be a multiple of 1,144. The authors should explicitly state how the total is derived or correct the arithmetic to match the described evaluation protocol.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Incorrect claim about parameter estimation timing for local methods",
+          "quote": "Model training is only required for deep learning models since parametric local methods estimate parameters at prediction time.",
+          "explanation": "The statement that parametric local methods estimate parameters at prediction time is methodologically incorrect for standard time series forecasting. Models like ARIMA, ETS, and Theta are fitted on historical training data before generating out-of-sample forecasts. Fitting parameters at the exact moment of prediction would either necessitate future data or describe an online learning procedure not mentioned in the text. The authors should clarify that local methods are fitted on the training portion of each series, contrasting this with the iterative, fixed-duration training loops used for deep learning models.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Forecast horizon range contradicts standard benchmarks",
+          "quote": "and the forecast horizon (from 6 to 60).",
+          "explanation": "This stated range is highly restrictive and likely inaccurate for a benchmark drawn from the Monash repository and major forecasting competitions. Standard repositories include datasets with horizons as short as 1 or 2 and as long as 8,760. A strict 6\u201360 window excludes many common forecasting tasks. Please verify the actual minimum and maximum horizons across the 44 datasets and correct the text, or explicitly justify the exclusion of shorter and longer horizons.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Misdefined p-value in statistical testing",
+          "quote": "we choose the nonparametric two-sample Kolmogorov-Smirnov test (Gibbons & Chakraborti, 2003) to compute the  $p$ -value, i.e. the probability of  $H_0$  holding true, on each individual dataset.",
+          "explanation": "The p-value is not the probability that the null hypothesis is true. In frequentist statistics, the p-value represents the probability of observing a test statistic at least as extreme as the one computed, assuming H0 is true. Confusing P(data | H0) with P(H0 | data) is a fundamental error that misrepresents the statistical evidence. The authors should rewrite this sentence to correctly define the p-value. Additionally, since the null hypothesis specifies a directional claim, a one-sided KS test or a post-hoc direction check should be explicitly stated to justify the rejection claim.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Contradictory sign convention for relative improvement",
+          "quote": "compute the relative improvement given by deep learning models as  $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})}",
+          "explanation": "The provided formula yields negative values whenever deep learning models outperform classical ones, since lower nCRPS indicates better accuracy. The subsequent text, however, refers to these outputs as \"improvement\" and claims the improvement is \"amplified\" as dataset size increases. This creates a direct contradiction between the mathematical definition and the verbal description. The authors should redefine the metric as 1 - nCRPS(x_deep)/nCRPS(x_class) to produce positive improvement values that align with the text, or explicitly clarify that negative values denote improvement.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Missing task index on error term in Eq. 7",
+          "quote": "\\min_{\\{x_{1},\\dots,x_{n}\\}\\subset\\mathcal{X}}\\sum_{j=1}^{T}\\varepsilon(\\{x_{1},\\dots,x_{n}\\})",
+          "explanation": "The summation index j does not appear in the error term epsilon. Summing a term independent of j over T tasks mathematically collapses to T * epsilon, which contradicts the stated goal of aggregating performance across different tasks. Since the subsequent sentence explicitly references task-specific Pareto fronts, the approximation error must inherently depend on the task. The authors should index the error term as epsilon^(j) to correctly represent task-specific hypervolume deficiencies.",
+          "comment_type": "technical",
+          "paragraph_index": 16,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Unspecified reference point for hypervolume error",
+          "quote": "Using the hypervolume error, we can extend the minimization problem of Eq. 3 to learn defaults in the multi-objective setting.",
+          "explanation": "The hypervolume error is strictly defined relative to a reference point in objective space. In a multi-task setting where each task j has its own Pareto front, the reference point must be explicitly defined. Without specifying how the reference point is chosen or whether it varies with j, the error term remains mathematically ill-defined. Add a clarifying sentence after Eq. 7 specifying the reference point construction.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Surrogate notation mismatch in distance metric",
+          "quote": "y:\n\n$x_{i+1}=\\operatorname{argmax}_{x\\in X}\\min_{j\\leq i}\\|\\bm{f}(x)-\\bm{f}(x_{j})\\|_{2}$",
+          "explanation": "The sorting procedure operates on surrogate predictions, not ground-truth objectives. Using f(x) in the distance metric implies the algorithm has access to true performance values during selection, which contradicts the setup where only f_hat_theta is available. Replace f(x) and f(x_j) with f_hat_theta(x) and f_hat_theta(x_j) to correctly reflect that distances are computed in the surrogate objective space.",
+          "comment_type": "technical",
+          "paragraph_index": 15,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Missing tie-breaking rule for non-dominated selection",
+          "quote": "PARETOSELECT picks the top elements of the non-dominated sort on the surrogate's predictive performances.",
+          "explanation": "The mechanism for isolating exactly 10 models from the non-dominated sort is unspecified. Non-dominated sorting partitions the 247 models into fronts; if the first front contains more than 10 models, a secondary criterion is necessary to break ties. The current description omits this step, leaving the exact selection procedure unclear. Specify whether the authors use crowding distance, random tie-breaking, or a secondary objective ranking to select the final 10 models from the first front.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Mismatch between stated quantile count and listed set",
+          "quote": "averaging all 10-quantiles  $\\{0.1,\\dots ,0.9\\}$  for each time series and time step independently.",
+          "explanation": "The text states '10-quantiles' but lists the set $\\{0.1,\\dots,0.9\\}$, which contains only nine values. If the authors intend to average ten quantile forecasts, the set should be $\\{0.05, 0.15,\\dots, 0.95\\}$ or $\\{0.1, 0.2,\\dots, 1.0\\}$. This discrepancy affects reproducibility and the exact computation of the ensemble predictions. The authors should correct the listed set to match the stated count of ten quantiles.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Undefined aggregation function for ensemble latency",
+          "quote": "iteratively picking the model with best nCRPS such that the ensemble latency constrain  $c$  is still met.",
+          "explanation": "The selection procedure relies on an 'ensemble latency' constraint c, but the paper never specifies how the latency of an ensemble is computed from the latencies of its constituent models. Is it the sum, the maximum, or the average of the individual model latencies? Without this definition, the greedy selection rule is ambiguous and cannot be reproduced. Add a precise formula defining ensemble latency after the sentence introducing c.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Abrupt use of undefined 'hyper-ensembles'",
+          "quote": "the ensemble for  $c = 100$  ms outperforms all hyper-ensembles as well.",
+          "explanation": "The term 'hyper-ensembles' appears here without prior definition in this section or the surrounding context. It is unclear whether this refers to ensembles of ensembles, a specific baseline method, or a typo for 'individual models' or 'hyperparameter configurations.' Readers cannot verify this claim without knowing what constitutes a hyper-ensemble. Replace 'hyper-ensembles' with the correct baseline term or add a definition immediately after its first use.",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Inaccurate claim regarding forecasting benchmarks",
+          "quote": "However, to the best of our knowledge, no comprehensive set of model evaluations has been released in the realm of forecasting.",
+          "explanation": "This statement overlooks established forecasting benchmarks like the M-competitions (M3, M4, M5) and the Monash Time Series Forecasting Benchmark, which have been widely released and used to evaluate dozens of models. While the authors' multi-objective framework is novel, claiming no comprehensive evaluations exist in the field is inaccurate. The authors should revise this claim to acknowledge these existing resources and clarify that their contribution lies in a specific multi-objective evaluation framework rather than providing the first comprehensive evaluation.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Ambiguity in surrogate training versus inference scope",
+          "quote": "alleviating the need to train or evaluate many forecasting models for model selection.",
+          "explanation": "The phrase implies that the surrogate eliminates the necessity of model evaluation entirely. However, the abstract immediately precedes this by stating the method relies on a benchmark where all 13 models are evaluated across 44 datasets. While the surrogate reduces evaluation costs for new datasets, the initial training phase still requires exhaustive evaluation of the candidate models. Clarify that the surrogate eliminates the need for repeated or full evaluation on every new dataset, rather than implying evaluation is unnecessary during the initial surrogate training phase.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        }
+      ],
+      "cost_usd": 0.2823,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper tackles a practical and timely problem \u2014 multi-objective model selection for time series forecasting \u2014 and provides a substantial benchmark of 13 methods across 44 datasets. The core idea of learning Pareto-optimal defaults from offline evaluations is sensible and the empirical results show promise. However, several methodological gaps and framing issues weaken the contribution, particularly around the validation of the surrogate model, the handling of temporal dependencies across datasets, and the lack of statistical rigor in comparing selection methods.\n\nOverview issues:\n\n- Leave-one-out cross-validation violates temporal independence across datasets: The paper uses leave-one-out cross-validation across datasets to evaluate ParetoSelect, training the surrogate on 43 datasets and testing on the remaining one. This assumes that datasets are independent and identically distributed. In reality, time series datasets often share temporal patterns, trends, or seasonal components that could create leakage between training and test splits. For example, a dataset containing monthly retail sales and another containing monthly energy consumption might both exhibit yearly seasonality, but the surrogate could exploit such shared structure in an unrealistic way. The authors should either argue why cross-dataset independence holds for their specific collection of 44 datasets, or adopt a temporal train-test split that respects the chronological order of data collection. Without this, the reported hypervolume errors may be optimistically biased.\n\n- Surrogate model validation is insufficient to rule out overfitting to the benchmark: The surrogate MLP with two hidden layers of size 32 is trained on 43 datasets and evaluated on the held-out dataset. However, the paper does not report any regularization or early stopping criteria beyond weight decay of 0.01. Given that the model space has only 247 configurations and the training data includes evaluations from 43 datasets, the surrogate could easily memorize dataset-specific patterns rather than learning generalizable model rankings. The authors should provide evidence that the surrogate's ranking accuracy generalizes, for example by showing performance on a truly held-out set of datasets that were never used in any training fold, or by reporting the ranking loss on training vs. test folds. Without such validation, the claim that ParetoSelect 'learns good defaults for unseen datasets' is not convincingly supported.\n\n- No statistical significance testing for the core claim that ParetoSelect outperforms baselines: Figure 4 shows that ParetoSelect achieves lower hypervolume error than the single-objective, greedy model-free, and random baselines. However, the paper does not report any statistical test (e.g., paired t-test, Wilcoxon signed-rank) to assess whether these differences are significant across the 44 datasets. Given the high variance visible in the error bars, it is possible that the observed advantage is not statistically reliable. The authors should perform a standard non-parametric test (e.g., Wilcoxon signed-rank) comparing ParetoSelect to each baseline across datasets, and report p-values. This is expected for a top venue in this field.\n\n- The multi-objective ensembling method lacks a principled selection criterion: Section 4.4 describes building latency-constrained ensembles by iteratively picking the model with the best nCRPS that still satisfies the latency constraint. This greedy approach does not consider the multi-objective trade-off explicitly \u2014 it optimizes accuracy subject to a latency budget, rather than finding Pareto-optimal ensembles. The paper claims this is a multi-objective technique, but it is essentially a single-objective constrained optimization. A true multi-objective ensemble selection would consider both accuracy and latency as objectives to be traded off, for example by selecting ensemble members that improve the hypervolume of the ensemble's performance. The authors should either rename this section to 'latency-constrained ensembling' or develop a genuine multi-objective ensemble selection method.\n\n- The benchmark analysis conflates 'deep learning' with 'global models': In Section 3.5, the paper compares 'classical' vs. 'deep learning' methods but then notes that 'we conflate deep learning and global models in our above discussion.' This conflation is problematic because the key finding \u2014 that deep learning methods can outperform classical methods with only a few thousand observations \u2014 may actually be driven by the global (cross-series) learning paradigm rather than deep learning per se. A classical global model (e.g., a global ARIMA or global ETS) could potentially achieve similar benefits. The authors should either separate the two comparisons (global vs. local, and deep learning vs. classical) or explicitly acknowledge that their analysis cannot distinguish between these factors. This weakens the novelty of the 'only a few thousand observations' claim.\n\n- Proposition 1 is trivial and offers no practical guarantee: Proposition 1 states that if the surrogate is perfect (zero error) and the number of selected models n is at least the size of the Pareto front, then the hypervolume error is zero. This is a tautology \u2014 if you know the true Pareto front exactly and select all of its members, you achieve zero error. The proposition does not provide any insight into the algorithm's behavior when the surrogate is imperfect, which is the realistic setting. The paper would benefit from a more meaningful theoretical result, such as a bound on the hypervolume error in terms of the surrogate's ranking error, or a consistency result as the number of training datasets grows. As it stands, Proposition 1 adds no value to the paper.\n\n- The paper does not discuss how practitioners would use the learned defaults in practice: The paper claims that ParetoSelect 'alleviates the need to train or evaluate many forecasting models for model selection,' but it does not provide a concrete workflow for a practitioner. For example, when a new dataset arrives, does the practitioner need to run the surrogate model locally? Is the surrogate model provided as a pre-trained artifact? How are the 10 default models instantiated and evaluated on the new dataset? The paper should include a practical usage scenario, perhaps in a separate 'deployment' subsection, to demonstrate the real-world applicability of the method. Without this, the contribution remains at the level of an interesting experiment rather than a usable tool.\n\n- No worked example showing ParetoSelect on a concrete dataset: The paper does not compute the ParetoSelect recommendations for a single, fully-specified time series dataset with explicit model configurations and objective values. A worked example would let readers calibrate intuition about how the surrogate model, non-dominated sorting, and epsilon-net ordering interact. For instance, the authors could take the 'M4 Yearly' dataset used in Figure 5, list the 247 model configurations with their true latency and nCRPS, show the surrogate predictions, and walk through the sorting steps to produce the top-10 defaults. This would make the algorithm concrete and allow independent verification of the claimed hypervolume error. Without such an example, the method remains abstract and hard to assess.\n\n- Missing demonstration that the benchmark analysis has bite: The paper claims that 'only a few thousand observations are required for deep learning methods to outperform classical methods,' but this claim is not tested against a specific counterexample. A natural check would be to identify a dataset in the benchmark where the number of observations is below that threshold (say, 2000) and show that a classical method actually outperforms the best deep learning method, or to construct a synthetic DGP with known properties (e.g., a linear AR process) where classical methods are optimal and verify that the benchmark analysis would correctly flag this. Without such a demonstration, the claim risks being a restatement of the data rather than a generalizable finding. The authors should either provide a concrete dataset or synthetic example that violates the claimed threshold, or explicitly qualify the claim as dataset-specific.\n\n- No practical guidance for estimating the surrogate model on new data: The paper proposes ParetoSelect as a tool for practitioners, but it gives no guidance on how to train the surrogate model when a new dataset arrives. Does the practitioner need to collect evaluations on 43+ datasets to retrain the MLP? Is a pre-trained surrogate provided? How should the surrogate be updated as new datasets become available? The paper also does not discuss the computational cost of training the surrogate (e.g., number of epochs, training time) or the curse of dimensionality if the model space grows beyond 247 configurations. A practical 'deployment' subsection with a concrete workflow and resource estimates would bridge the gap between the experimental setup and real-world use. Without it, the method's claimed practical relevance is unsupported.\n\n- No formal comparison to existing multi-objective model selection methods: The paper positions ParetoSelect as the first method to learn defaults in a multi-objective setting, but it does not compare against any existing multi-objective optimization algorithm (e.g., NSGA-II, MOEA/D) applied to the same problem. A natural baseline would be to run NSGA-II on each test dataset's available evaluations and compare the hypervolume of the selected set to ParetoSelect's recommendations. This would clarify whether the contribution is the multi-objective framing itself or the specific transfer-learning approach. The paper should include such a comparison or explicitly state why existing multi-objective methods are inapplicable. Without it, the claim of novelty is weakened.\n\nRecommendation: Major revision. The paper addresses a relevant problem and provides a substantial benchmark, but the core methodological claims about ParetoSelect are not yet convincingly validated. The lack of statistical significance testing, potential overfitting of the surrogate, and the conflation of deep learning with global models are significant weaknesses that must be addressed before the paper meets the standards of a top venue.\n\nRevision targets:\n\n- Add statistical significance tests (e.g., Wilcoxon signed-rank) comparing ParetoSelect to all baselines across the 44 datasets, and report p-values.\n\n- Provide evidence that the surrogate model generalizes to truly unseen datasets, e.g., by holding out a subset of datasets entirely during training and reporting ranking accuracy on them.\n\n- Clarify the distinction between global vs. local models and deep learning vs. classical methods in the benchmark analysis; re-run the statistical analysis to separate these factors.\n\n- Replace or substantially revise the multi-objective ensembling section to either develop a genuine multi-objective ensemble selection method or rename it to 'latency-constrained ensembling' and acknowledge the limitation.\n\n- Add a practical usage scenario describing how a practitioner would deploy the learned defaults on a new dataset, including any required software or pre-trained artifacts.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Kolmogorov-Smirnov test does not test the stated hypothesis",
+          "quote": "e the nonparametric two-sample Kolmogorov-Smirnov test (Gibbons & Chakraborti, 2003) to compute the  $p$ -value, i.e. the probability of  $H_0$  holding true, on each individual dataset.",
+          "explanation": "The null hypothesis H0: Q_class \u2264 Q_deep is a one-sided stochastic dominance claim. The standard two-sample KS test is two-sided and tests equality of distributions, not stochastic ordering. To test the stated one-sided hypothesis, the authors should use a one-sided test such as the one-sided KS test or the Mann-Whitney U test. The reported p-values may not correspond to the claimed null hypothesis. The authors should either switch to an appropriate one-sided test or clarify that the two-sided KS test is used as a conservative proxy and adjust the interpretation accordingly.",
+          "comment_type": "technical",
+          "paragraph_index": 36,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Relative improvement formula sign is ambiguous",
+          "quote": ". We compute the relative improvement given by deep learning models as  $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})} - 1$",
+          "explanation": "The formula nCRPS(x_deep)/nCRPS(x_class) - 1 yields a positive value when the deep learning model has higher (worse) nCRPS than the classical model, and a negative value when it has lower (better) nCRPS. The text describes this as 'relative improvement,' but a positive value would indicate degradation. The authors likely intend 1 - nCRPS(x_deep)/nCRPS(x_class) or nCRPS(x_class)/nCRPS(x_deep) - 1 to get a positive improvement when deep learning is better. The current formula contradicts the subsequent claim that 'the best deep learning model outperforms all classical models on 40 out of 44 datasets' \u2014 if the formula yields negative values for those 40 datasets, the regression in log-space would be on negative numbers, which is problematic. Rewrite the formula as 1 - nCRPS(x_deep)/nCRPS(x_class) to represent improvement, or clarify that negative values indicate improvement.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Proof of Proposition 1 is imprecise",
+          "quote": "\nProof. By Eq. 9, the first  $k$  recommendations of Pareto Select are such that  $\\{x_1,\\ldots ,x_k\\} = \\mathcal{P}_{\\hat{f}_\\theta}(\\mathcal{X})$  where  $k = |\\mathcal{P}_{\\hat{f}_\\theta}(\\mathcal{X})|$ . Since for",
+          "explanation": "The proof states that for any k \u2264 n, the first k recommendations contain the entire Pareto front, which is false when k < |P|. The proof should be rewritten to state clearly that because n \u2265 |P|, the set of the first n recommendations contains the Pareto front, which is sufficient for zero hypervolume error. Rewrite as: 'By Eq. 9, the first layer X_1 equals P_{hat f}(X). Since the algorithm outputs sorted layers concatenated, the first |P_{hat f}(X)| recommendations are a permutation of P_{hat f}(X). Because n \u2265 |P_{hat f}(X)|, the set {x_1,...,x_n} contains P_{hat f}(X). Under the assumption that the surrogate is perfect, P_{hat f}(X) = P_f(X), so {x_1,...,x_n} contains the true Pareto front, and thus \u03b5({x_1,...,x_n}) = 0.'",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Ensemble construction is not multi-objective",
+          "quote": "tency constraint  $c$ , we build an ensemble with  $n \\leq 10$  members  $x_{1},\\ldots ,x_{n}$  by iteratively picking the model with best nCRPS such that the ensemble latency constrain  $c$",
+          "explanation": "The section title promises multi-objective ensembling, but the described procedure is a single-objective greedy selection under a latency constraint. A true multi-objective approach would treat both nCRPS and latency as objectives to be optimized simultaneously (e.g., by maximizing hypervolume). The authors should either rename the section to 'latency-constrained ensembling' or develop a genuine multi-objective selection criterion that considers both objectives explicitly.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Conflation of deep learning and global models weakens conclusions",
+          "quote": "We note, that we conflate deep learning and global models in our above discussion. Montero-Manso & Hyndman (2021) show the general superiority of global models over local models both theoretically and empirically and our results confirm their findings further.",
+          "explanation": "The paper's central claim \u2014 that deep learning methods outperform classical methods with only a few thousand observations \u2014 is confounded by the fact that all deep learning models in the benchmark are also global models, while all classical models are local. The authors acknowledge this conflation but do not disentangle the two factors. The observed performance advantage could be due to the global learning paradigm (training on multiple time series) rather than deep learning architectures per se. A classical global model (e.g., global ARIMA) is not included in the benchmark, so the claim about 'deep learning' specifically is not supported. The authors should either include a global classical model as a control, or reframe the conclusion as 'global models outperform local models' and remove the deep-learning-specific language.",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Claim about 'only a few thousand observations' is unsupported",
+          "quote": "only a few thousands observations seem sufficient to outperform the classical models considered.",
+          "explanation": "The paper does not provide any quantitative threshold or analysis linking dataset size (number of observations) to the performance comparison. Figure 1 plots p-values against dataset size but does not identify a specific number of observations (e.g., 2000, 5000) at which deep learning methods begin to outperform classical methods. The phrase 'a few thousands' is vague and not derived from any presented data. The authors should either compute a breakpoint from the data (e.g., via segmented regression on Figure 2) or remove the unsupported quantitative claim and instead state the qualitative trend.",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Table 1 latency values for DeepAR are ambiguous",
+          "quote": "DeepAR | 21.55 \u00b1 2.33 / 310.62 \u00b1 34.26 | 9.91 \u00b1 5.79 / 6.73 \u00b1 5.24",
+          "explanation": "The table shows two values for DeepAR separated by a slash, presumably for two different configurations (e.g., default vs. tuned). However, the column header 'Rel. Latency' does not indicate what the two numbers represent. The same issue appears for other deep learning methods. The authors should add a footnote or clarify in the caption what the two numbers represent.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Table 1 nCRPS Rank column header is ambiguous",
+          "quote": "Table 1: The average performance of various forecasting methods across all datasets with respect to relative latency (compared to Seasonal Na\u00efve) and nCRPS.",
+          "explanation": "The column header 'nCRPS Rank' is ambiguous: it is not clear whether this is the rank of the nCRPS value across methods or the nCRPS value itself. The table shows values like 13.86 \u00b1 5.83 for ARIMA, which are not integers and thus cannot be ranks. It appears the column actually reports the nCRPS value, not a rank. The authors should rename the column to 'nCRPS' or 'nCRPS Value' to avoid confusion.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Table 1 Seasonal Na\u00efve latency standard deviation of zero is suspicious",
+          "quote": "Seasonal Na\u00efve | *1.00 \u00b1 0.00* | 19.86 \u00b1 4.22",
+          "explanation": "The relative latency for Seasonal Na\u00efve is reported as 1.00 \u00b1 0.00, which is expected since it is the reference method. However, the standard deviation of 0.00 across all datasets is suspicious: it implies that the latency ratio is exactly 1.00 for every dataset, which would only happen if the latency of Seasonal Na\u00efve is constant across datasets. This is unlikely because datasets vary in size and number of time series. The authors should verify that the latency is indeed constant or explain why the standard deviation is zero.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Training duration fixed but not defined",
+          "quote": "Deep learning models are trained for a fixed duration depending on the size of the dataset. Further details can be found in Appendix C.",
+          "explanation": "The phrase 'trained for a fixed duration depending on the size of the dataset' is vague. It does not specify what the fixed duration is (e.g., number of epochs, wall-clock time, or convergence criterion) nor how it scales with dataset size. This lack of detail makes it impossible to assess whether all models received adequate training or whether training budgets were comparable across datasets. The authors should specify the exact training protocol (e.g., 'trained for 100 epochs with early stopping patience of 10 epochs') and report the actual training times or epoch counts in the main text or appendix.",
+          "comment_type": "technical",
+          "paragraph_index": 21,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Missing temporal split details for datasets",
+          "quote": "asets are taken from various forecasting competitions, the UCI *(Dua and Graff, 2017)*, and the Monash time series forecasting repository *(Godahewa et al., 2021)*. Dataset sources, descriptions, basic statistics, and an explanation of the data preparation procedure can be found in Appendix B.",
+          "explanation": "The section does not specify how the train/test splits were performed for each dataset. For time series forecasting, it is critical to respect temporal order (e.g., using the last N observations as test data). The paper only says 'data preparation procedure can be found in Appendix B,' but the main text should at least state the principle (e.g., 'For each dataset, we use the last 20% of observations as the test set, preserving temporal order'). Without this, readers cannot assess whether the evaluation is fair. The authors should add a brief sentence in Section 3.3 describing the train/test split strategy.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Quantile averaging lacks justification",
+          "quote": "generate ensemble predictions, we combine the forecasts of the base models  $x_{1},\\ldots ,x_{n}$  by averaging all 10-quantiles  $\\{0.1,\\dots ,0.9\\}$  for each time series and time step independently.",
+          "explanation": "Averaging quantiles across models is not a standard or principled way to combine probabilistic forecasts. For quantile forecasts, averaging quantiles does not generally yield a valid quantile of the combined predictive distribution unless the models are perfectly calibrated and independent. The paper cites Petropoulos et al. (2020) for simple averaging, but that reference concerns point forecasts, not quantile forecasts. The authors should justify why averaging quantiles produces a coherent probabilistic forecast, or use a proper aggregation method such as quantile regression averaging (QRA) or Bayesian model averaging.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Greedy selection may violate latency constraint per dataset",
+          "quote": "tency constraint  $c$ , we build an ensemble with  $n \\leq 10$  members  $x_{1},\\ldots ,x_{n}$  by iteratively picking the model with best nCRPS such that the ensemble latency constrain  $c$",
+          "explanation": "The greedy procedure picks models one by one, checking only that the cumulative latency stays under c. However, this does not guarantee that the final ensemble's actual latency on every dataset satisfies c, because the paper notes that models may violate c on individual datasets even if their average latency is below c. The authors should clarify whether the latency constraint is enforced on average or per-dataset, and whether the greedy selection accounts for dataset-specific latency variability.",
+          "comment_type": "technical",
+          "paragraph_index": 71,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Claim about recovering Pareto front is unsupported",
+          "quote": "100$  ms, the constrained ensemble recovers the Pareto front and outperforms all individual models  $x \\in \\mathcal{X}$  as well as ensembles. Th",
+          "explanation": "The claim that the ensemble 'recovers the Pareto front' is not justified. The Pareto front is defined over the full set of individual models and ensembles, but the construction only selects up to 10 models greedily. There is no proof or empirical evidence that the resulting ensemble achieves the true Pareto-optimal trade-off between nCRPS and latency across all possible ensembles. The paper does not define what 'recovers the Pareto front' means in this context (e.g., hypervolume error of zero?), nor does it provide a comparison to the true Pareto front of all possible ensembles. The authors should either provide a formal definition and empirical verification, or qualify the claim as 'approximates' rather than 'recovers.'",
+          "comment_type": "technical",
+          "paragraph_index": 72,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Figure 6 caption misrepresents classical model locations",
+          "quote": "Classical models are not colored as most can only be found (far) beyond the range of the plot.",
+          "explanation": "The caption states that classical models 'can only be found (far) beyond the range of the plot,' but it does not provide the actual range of the axes or any quantitative evidence for this claim. Without showing the full range or providing a zoomed-out inset, the reader cannot verify whether classical models are truly far outside the plotted region or whether the axis limits were chosen to exclude them. This is a selective presentation issue that could mislead readers about the relative performance of classical models. The authors should either extend the axes to include the classical models or provide a separate plot showing their positions.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Claim about covering the true Pareto front is unsupported",
+          "quote": "The default models cover the true Pareto front well: our method is able to pick models with low latency, low nCRPS, and a good trade-off between these two objectives.",
+          "explanation": "The claim that the default models 'cover the true Pareto front well' is not supported by any quantitative measure of coverage (e.g., hypervolume ratio, inverted generational distance, or spacing). The reader cannot assess how well the selected 10 models approximate the true Pareto front without knowing the hypervolume of the true front or the distance between the selected points and the true front. The authors should report a coverage metric (e.g., the fraction of the true Pareto front's hypervolume achieved by the selected models) to substantiate this qualitative claim.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Overclaiming future work on ensembles",
+          "quote": "Additionally, future research may extend the presented predictive surrogate model to the case of ensembles: this would enable PARETOSELECT to be used directly to select members for ensembles of any latency.",
+          "explanation": "The paper already describes a multi-objective ensemble selection method in Section 4.4 (as noted in the paper-level issues). Claiming that extending the surrogate to ensembles is future work contradicts the fact that the paper already uses the surrogate for ensemble member selection. The quoted sentence should be removed or revised to clarify that the existing ensemble method uses the surrogate indirectly (via the selected defaults) and that future work could extend the surrogate to directly predict ensemble performance.",
+          "comment_type": "technical",
+          "paragraph_index": 73,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_17",
+          "title": "Missing discussion of limitations",
+          "quote": "In this work, we have presented (i) a new benchmark for evaluating forecasting methods in terms of multiple metrics and (ii) PARETOSELECT, a new algorithm that can learn default model configurations in a multi-objective setting.",
+          "explanation": "The conclusion does not acknowledge any limitations of the proposed method or benchmark. Given the paper-level issues (e.g., potential overfitting of the surrogate, lack of statistical significance testing, conflation of deep learning with global models), the conclusion should include a brief discussion of these limitations to provide a balanced assessment. Add a sentence after the quoted text: 'However, our analysis has limitations: the surrogate model may overfit to the benchmark datasets, the comparison between classical and deep learning methods conflates model class with learning paradigm, and the ensemble selection method is a constrained single-objective optimization rather than a true multi-objective approach.'",
+          "comment_type": "technical",
+          "paragraph_index": 73,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        }
+      ],
+      "cost_usd": 0.0646,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "This paper presents a comprehensive benchmark and a novel method, ParetoSelect, for multi-objective model selection in time series forecasting. The work is valuable for practitioners needing to balance accuracy with latency and training time. However, the methodological contribution relies on a surrogate model trained on leave-one-out cross-validation, which introduces significant data leakage and overfitting risks. Furthermore, the paper claims to select Pareto-optimal models but fails to demonstrate that the selected defaults actually achieve the theoretical hypervolume error minimization in practice, as the hypervolume error metric is defined using the surrogate's predictions rather than ground truth evaluations. The paper also lacks a critical analysis of the stability and generalizability of the Pareto front across datasets.\n\nThe paper makes a solid contribution by providing a large-scale benchmark and a novel multi-objective selection framework. The ParetoSelect method is a promising direction for automated forecasting. However, the experimental design has critical flaws regarding data leakage in the surrogate model training and the lack of rigorous validation of the hypervolume error metric. The paper also fails to demonstrate the practical utility of the selected models on truly unseen datasets, which is a major limitation for a method claiming to learn 'good defaults'. The contribution is significant but the current implementation and analysis do not fully support the claims.\n\nOverview issues:\n\n- Data Leakage in Surrogate Model Training: The paper employs a leave-one-out cross-validation strategy for the surrogate model training, where the surrogate is trained on 43 datasets and evaluated on the remaining 1 dataset. This approach introduces severe data leakage because the surrogate is trained on data that is highly correlated with the test dataset. The surrogate will effectively memorize the performance patterns of the training datasets, leading to overly optimistic predictions for the test dataset. This violates the fundamental principle of generalization and makes the reported hypervolume error and model selection results unreliable. The method is not actually selecting models based on their performance on unseen data, but rather on their performance on data that is too similar to the test data. The authors should instead use a completely independent hold-out set or a more robust cross-validation scheme (e.g., k-fold) to ensure the surrogate is evaluated on truly unseen data.\n\n- Hypervolume Error Metric Definition and Validation: The paper defines the hypervolume error (Eq. 6) as the difference in hypervolume between the true Pareto front and the set of selected models, calculated using the surrogate model's predictions. However, the true Pareto front is unknown and must be estimated. The paper does not clarify how the 'true' Pareto front is estimated for the hypervolume error calculation. If it is estimated using the same surrogate model, the metric becomes circular and does not provide a meaningful measure of the quality of the selected models. Furthermore, the paper does not validate the hypervolume error metric by comparing it to a ground-truth measure of model quality, such as the actual nCRPS or latency of the selected models on the test dataset. The hypervolume error is a proxy metric, and its use here is not justified or validated.\n\n- Lack of True Unseen Dataset Evaluation: The paper claims to learn 'good defaults' for unseen datasets, but the experimental evaluation does not support this claim. The leave-one-out cross-validation strategy means that the surrogate model is never tested on a dataset that is completely independent of its training data. The selected 'defaults' are effectively just the best models on the training data, which may not generalize to truly new datasets. The paper should include a final evaluation on a completely independent set of datasets, or at least a more rigorous cross-validation scheme (e.g., 5-fold), to demonstrate that the method actually generalizes. Without this, the contribution is limited to selecting the best models on a specific set of 44 datasets, which is not a generalizable solution.\n\n- Pareto Front Stability and Generalizability: The paper assumes that the Pareto front is stable across datasets, allowing the surrogate model to learn a consistent mapping from model configurations to performance metrics. However, the paper does not analyze the stability of the Pareto front across the 44 datasets. It is possible that the optimal trade-off between accuracy and latency varies significantly depending on the characteristics of the dataset (e.g., length, frequency, seasonality). If the Pareto front is not stable, the surrogate model will struggle to learn a good mapping, and the selected defaults may not be optimal for a new dataset. The paper should include an analysis of the Pareto front's stability, perhaps by visualizing the Pareto fronts for different datasets or by measuring the correlation of performance metrics across datasets.\n\n- Ensemble Selection Methodology Flaws: The paper proposes a multi-objective ensemble selection method that iteratively picks the model with the best nCRPS such that the ensemble latency constraint is met. However, this method does not consider the interaction between the models in the ensemble. The performance of an ensemble is not simply the sum of the individual model performances; it depends on the diversity of the models. A simple greedy selection based on individual nCRPS may result in an ensemble that is not as effective as a more diverse set of models. The paper should analyze the diversity of the selected ensembles and compare them to ensembles selected based on diversity metrics. Furthermore, the paper does not address the issue of model correlation, which can reduce the benefit of ensembling.\n\n- Missing Analysis of Surrogate Model Accuracy: The paper does not provide a detailed analysis of the accuracy of the surrogate model. While the authors mention that the ranking setting is superior to regression, they do not quantify the error of the surrogate model's predictions. How accurate are the predicted nCRPS and latency values? Are they within a reasonable range of the true values? The paper should include a detailed analysis of the surrogate model's prediction error, perhaps by comparing the predicted and actual performance of the selected models on the test dataset. This analysis would provide important insights into the reliability of the ParetoSelect method.\n\n- Benchmark Dataset Limitations: The paper uses a benchmark of 44 datasets, which is a significant contribution. However, the paper does not discuss the limitations of this benchmark. Are the datasets representative of real-world forecasting scenarios? Do they cover a wide range of domains and characteristics? The paper should acknowledge the limitations of the benchmark and discuss how the results might generalize to other domains. Furthermore, the paper does not address the issue of data leakage within the benchmark itself, such as using the same dataset for training and testing in some cases. The paper should ensure that the benchmark is clean and unbiased.\n\n- Inadequate Comparison with State-of-the-Art: The paper compares ParetoSelect with a few baselines, such as a single-objective variant and random search. However, it does not compare it with other state-of-the-art multi-objective model selection methods, such as those based on Bayesian optimization or multi-objective evolutionary algorithms. These methods are more sophisticated and may be able to find better Pareto-optimal solutions. The paper should include a comparison with these methods to demonstrate the competitiveness of ParetoSelect. Furthermore, the paper does not compare ParetoSelect with human experts or practitioners who manually select models based on their experience. This comparison would provide a more practical assessment of the method's utility.\n\n- Missing demonstration that ParetoSelect generalizes to unseen data: The paper claims ParetoSelect learns good defaults for unseen datasets, yet the experimental evaluation uses a leave-one-out cross-validation strategy. This means the surrogate model is trained on 43 datasets that are highly correlated with the 1 dataset it is tested on. The method effectively memorizes the patterns of the training datasets rather than learning a generalizable mapping. To demonstrate that the method has 'bite,' the authors should perform a final evaluation on a completely independent hold-out set of datasets or use a more robust cross-validation scheme (e.g., k-fold) where the test datasets are truly unseen. Without this, the paper cannot claim that ParetoSelect generalizes to new forecasting tasks.\n\n- Missing concrete parametric example to illustrate the multi-objective trade-off: The paper presents a theoretical framework for multi-objective model selection and reports aggregate results, but it lacks a concrete, fully-specified example. Readers need a worked case study to understand how the Pareto front behaves in a specific context. The authors should compute the Pareto front and the selected defaults for a single, well-known dataset from the benchmark (e.g., the M4 Yearly dataset) and visualize the trade-off between accuracy and latency. This would allow readers to calibrate their intuition regarding the method's behavior and the practical implications of the multi-objective selection.\n\n- Missing discussion on implementation and inference of the surrogate model: The paper proposes a method that relies on a parametric surrogate model to predict the performance of forecasting models. However, it does not discuss how to implement or use this surrogate model in a practical setting. Specifically, the paper does not address how to obtain the necessary training data (the evaluations of model configurations on various datasets) for the surrogate model. It also does not discuss how to handle the computational cost of predicting the performance of all models in the space \\\\(X\\\\) to perform the non-dominated sorting. A paper that claims practical relevance must provide practical guidance on how to deploy and use the surrogate model.\n\n- Missing comparison to existing multi-objective model selection methods: The paper positions ParetoSelect as a novel method for learning default models in a multi-objective setting, but it only compares it to a single-objective variant and random search. It does not compare it to other state-of-the-art multi-objective model selection methods, such as those based on Bayesian optimization or multi-objective evolutionary algorithms. These methods are more sophisticated and may be able to find better Pareto-optimal solutions. The paper should include a comparison with these methods to demonstrate the competitiveness of ParetoSelect.\n\nRecommendation: Major Revision. The paper presents a valuable benchmark and a novel multi-objective selection framework. However, the experimental design has critical flaws regarding data leakage in the surrogate model training and the lack of rigorous validation of the hypervolume error metric. The paper also fails to demonstrate the practical utility of the selected models on truly unseen datasets. The contribution is significant but the current implementation and analysis do not fully support the claims. The authors need to address these issues before the paper can be accepted.\n\nRevision targets:\n\n- Replace the leave-one-out cross-validation strategy with a more robust scheme (e.g., k-fold or a completely independent hold-out set) to ensure the surrogate model is trained and evaluated on truly unseen data.\n\n- Provide a clear and rigorous definition of the hypervolume error metric, including how the 'true' Pareto front is estimated, and validate this metric by comparing it to ground-truth measures of model quality.\n\n- Include a final evaluation on a completely independent set of datasets to demonstrate that the method actually generalizes and learns 'good defaults' for unseen data.\n\n- Analyze the stability of the Pareto front across datasets to assess the generalizability of the surrogate model's learned mapping.\n\n- Include a detailed analysis of the surrogate model's prediction accuracy and compare ParetoSelect with other state-of-the-art multi-objective model selection methods.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Incorrect Relative Improvement Formula",
+          "quote": "aset. We compute the relative improvement given by deep learning models as  $\\frac{n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})} - 1$ . Ex",
+          "explanation": "The formula for relative improvement is mathematically incorrect. Since a lower nCRPS indicates better accuracy, the current formula yields a negative value when deep learning outperforms classical methods. The authors should use \\frac{n\\mathrm{CRPS}(x_{\\mathrm{class}}) - n\\mathrm{CRPS}(x_{\\mathrm{deep}})}{n\\mathrm{CRPS}(x_{\\mathrm{class}})} to ensure the improvement is positive when deep learning is better.",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Inconsistent Latency Reporting",
+          "quote": "Latency is measured by dividing the time taken to generate predictions for all test time series in the dataset by their number.",
+          "explanation": "The text defines latency as an average per time series, but Table 1 reports 'Rel. Latency' values that are normalized relative to Seasonal Naive (e.g., 1.00). This discrepancy makes it impossible to verify the reported numbers against the stated definition. The authors must either correct the definition to match the reported metric or provide the raw average times.",
+          "comment_type": "technical",
+          "paragraph_index": 27,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Hypervolume Metric Interpretation Error",
+          "quote": "om). The hypervolume obtained by PARETOSELECT with 10 default models is small ( $\\approx 0.06$ ) compared to the best baseline that reaches  $\\approx 0.20$ . ",
+          "explanation": "The authors claim that a smaller hypervolume (0.06) is worse than a larger one (0.20). However, hypervolume measures the volume of the objective space dominated by a set of points; a smaller value indicates the set is closer to the origin (better performance). The authors should correct this interpretation to reflect the standard definition of the metric.",
+          "comment_type": "technical",
+          "paragraph_index": 66,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Model Count Discrepancy",
+          "quote": "We consider 13 models in total that can be distinguished into 7 *local* methods (estimating parameters individually from each time series) and 6 *global* methods (l",
+          "explanation": "The text claims there are 13 models (7 local + 6 global), but the subsequent lists only contain 5 local methods (Seasonal Na\u00efve, NPTS, ARIMA, STL-AR, Theta) and 6 global methods (Simple Feedforward, MQ-CNN, MQ-RNN, DeepAR, N-BEATS, TFT). This sums to 11 models, not 13. The authors need to reconcile this count.",
+          "comment_type": "technical",
+          "paragraph_index": 18,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.7-flash_4",
+          "title": "Missing Formal Definition of 'Good Defaults'",
+          "quote": "In this section, we first formalize the problem of learning good defaults from these evaluations for a single objective.",
+          "explanation": "The authors introduce the term 'good defaults' but do not provide a formal definition. It is unclear what constitutes a 'good' default in this context (e.g., minimizing regret, maximizing utility, or minimizing hypervolume error). The authors should explicitly define the objective function for learning defaults to provide mathematical rigor.",
+          "comment_type": "technical",
+          "paragraph_index": 41,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.7-flash_5",
+          "title": "Misleading Description of Wistuba et al.'s Approach",
+          "quote": ", *Wistuba et al. (2015); Winkelmolen et al. (2020); Pfisterer et al. (2021)* leverage offline evaluations to alleviate the need for training many models by learning a small list of $n$ good defaults",
+          "explanation": "The text implies that Wistuba et al. (2015) simply 'leverages offline evaluations' in the sense of using a pre-computed matrix. However, Wistuba et al. is a seminal 'Learning to Rank' paper that trains a model to predict performance. The authors should clarify the distinction between using a static matrix and learning a transferable estimator.",
+          "comment_type": "technical",
+          "paragraph_index": 13,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.0753,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

@@ -1,0 +1,1108 @@
+{
+  "slug": "iclr2021-pVwU-8cd-unsupervised-video-decomposition-using-spatio-temporal-itera",
+  "title": "Unsupervised Video Decomposition using Spatio-temporal Iterative Inference",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "Under review as a conference paper at ICLR 2021\n\n## UNSUPERVISED VIDEO DECOMPOSITION USING - SPATIO TEMPORAL ITERATIVE INFERENCE"
+    },
+    {
+      "index": 1,
+      "text": "## **Anonymous authors**\n\nPaper under double-blind review\n\n## ABSTRACT\n\nUnsupervised multi-object scene decomposition is a fast-emerging problem in representation learning. Despite significant progress in static scenes, such models are unable to leverage important dynamic cues present in video. We propose a novel spatio-temporal iterative inference framework that is powerful enough to jointly model complex multi-object representations and explicit temporal dependencies between latent variables across frames. This is achieved by leveraging 2D-LSTM, temporally conditioned inference and generation within the iterative amortized inference for posterior refinement. Our method improves the overall quality of decompositions, encodes information about the objects\u2019 dynamics, and can be used to predict trajectories of each object separately. Additionally, we show that our model has a high accuracy even without color information. We demonstrate the decomposition, segmentation, and prediction capabilities of our model and show that it outperforms the state-of-the-art on several benchmark datasets, one of which was curated for this work and will be made publicly available."
+    },
+    {
+      "index": 2,
+      "text": "## 1 INTRODUCTION\n\nUnsupervised representation learning, which has a long history dating back to Boltzman Machines (Hinton & Sejnowski, 1986) and original works of Marr (1970), has recently emerged as one of the important directions of research, carrying the newfound promise of alleviating the need for excessively large and fully labeled datasets. More traditional representation learning approaches focus on unsupervised ( _e.g._ , autoencoder-based (Pathak et al., 2016; Vincent et al., 2008)) or selfsupervised (Noroozi & Favaro, 2016; Vondrick et al., 2016; Zhang et al., 2016) learning of _holistic_ representations that, for example, are tasked with producing (spatial (Noroozi & Favaro, 2016), temporal (Vondrick et al., 2016), or color (Zhang et al., 2016)) encodings of images or patches. The latest and most successful methods along these lines include ViLBERT (Lu et al., 2019) and others (Sun et al., 2019; Tan & Bansal, 2019) that utilize powerful transformer architectures (Vaswani et al., 2017) coupled with proxy multi-modal tasks ( _e.g._ , masked token prediction or visua-lingual alignment). Learning of good _disentangled_ , spatially _granular_ , representations that are, for example, able to decouple object appearance and shape in complex visual scenes consisting of multiple moving objects remains elusive."
+    },
+    {
+      "index": 3,
+      "text": "Recent works that attempt to address this challenge can be characterized as: (i) attention-based methods (Crawford & Pineau, 2019b; Eslami et al., 2016), which infer latent representations for each object in a scene, and (ii) iterative refinement models (Greff et al., 2019; 2017), which decompose a scene into a collection of components by grouping pixels. Importantly, the former have been limited to latent representations at object- or image patch-levels, while the latter class of models have illustrated the ability for more granular latent representations at the pixel (segmentation)-level. Specifically, most refinement models learn pixel-level generative models driven by spatial mixtures (Greff et al., 2017) and utilize amortized iterative refinements (Marino et al., 2018) for inference of disentangled latent representations within the VAE framework (Kingma & Welling, 2014); a prime example is IODINE (Greff et al., 2019). However, while providing a powerful model and abstraction which is able to segment and disentangle complex scenes, IODINE (Greff et al., 2019) and other similar architectures are fundamentally limited by the fact that they only consider images. Even when applied for inference in video, they process one frame at a time. This makes it excessively challenging to discover and represent individual instances of objects that may share properties such as appearance and shape but differ in dynamics."
+    },
+    {
+      "index": 4,
+      "text": "1\n\nUnder review as a conference paper at ICLR 2021\n\nFigure 1: **Unsupervised Video Decomposition.** Our approach allows to infer precise segmentations of the objects via interpretable latent representations, that can be used to decompose each frame and simulate the future dynamics, all in unsupervised fashion. Whenever a new object emerges into a frame the model dynamical adapts and uses one of the segmentation slots to assign to the new object."
+    },
+    {
+      "index": 5,
+      "text": "In computer vision, it has been a long-held belief that motion carries important information for segmenting objects (Jepson et al., 2002; Weiss & Adelson, 1996). Armed with this intuition, we propose a spatio-temporal amortized inference model capable of not only unsupervised multi-object scene decomposition, but also of learning and leveraging the implicit probabilistic dynamics of each object from perspective raw video alone. This is achieved by introducing temporal dependencies between the latent variables across time. As such, IODINE (Greff et al., 2019) could be considered a special (spatial) case of our spatio-temporal formulation. Modeling temporal dependencies among video frames also allows us to make use of conditional priors (Chung et al., 2015) for variational inference, leading to more accurate and efficient inference results."
+    },
+    {
+      "index": 6,
+      "text": "The resulting model, illustrated in Fig. 1, achieves superior performance on complex multi-object benchmark datasets (Bouncing Balls and CLEVRER) with respect to state-of-the-art models, including R-NEM (Van Steenkiste et al., 2018) and IODINE (Greff et al., 2019) in terms of segmentation, prediction, and generalization. Our model has a number of appealing properties, including temporal extrapolation, computational efficiency, and the ability to work with complex data exhibiting non-linear dynamics, colors, and changing number of objects within the same video sequence. In addition, we introduce an entropy prior to improve our model\u2019s performance in scenarios where object appearance alone is not sufficiently distinctive ( _e.g._ , greyscale data)."
+    },
+    {
+      "index": 7,
+      "text": "## 2 RELATED WORK\n\n**Unsupervised Scene Representation Learning.** Unsupervised scene representation learning can generally be divided into two groups: attention-based methods, which infer latent representations for each object in a scene, and more complex and powerful iterative refinement models, which often make use of spatial mixtures and can decompose a scene into a collection of estimated components by grouping pixels together. _Attention-based_ methods, such as AIR (Eslami et al., 2016) (Xu et al., 2019) and SPAIR (Crawford & Pineau, 2019b), decompose scenes into latent variables representing the appearance, position, and size of the underlying objects. However, both methods can only infer the objects\u2019 bounding boxes and have not been shown to work on non-trivial 3D scenes with perspective distortions and occlusions. MoNet (Burgess et al., 2019) is the first model in this family tackling more complex data and inferring representations that can be used for instance segmentation of objects. On the other hand, it is not a probabilistic generative model and thus not suitable for density estimation. GENESIS (Engelcke et al., 2020) extends it and alleviates some of its limitations by introducing a probabilistic framework and allowing for spatial relations between the objects. DDPAE (Hsieh et al., 2018) is a framework that uses structured probabilistic models to decompose a video into low-dimensional temporal dynamics with the sole purpose of prediction. It is shown to operate on binary scenes with no perspective distortion and is not capable of generating per-object segmentation masks. _Iterative refinement_ models started with Tagger (Greff et al., 2016) that reasons about the segmentation of its inputs. However, it does not allow explicit latent representations and cannot be scaled to more complex images. NEM (Greff et al., 2017), as an extension of Tagger, uses a spatial mixture model inside an expectation maximization framework, but is limited to binary data. Finally, IODINE (Greff et al., 2019) is a notable example of a model employing iterative amortized inference w.r.t. a spatial mixture formulation and achieves state-of-the-art performance in scene decomposition and segmentation."
+    },
+    {
+      "index": 8,
+      "text": "**Unsupervised Video Tracking and Object Detection.** SQAIR (Kosiorek et al., 2018), SILOT (Crawford & Pineau, 2019a) and SCALOR (Jiang et al., 2020) are temporal extensions"
+    },
+    {
+      "index": 9,
+      "text": "2\n\nUnder review as a conference paper at ICLR 2021\n\nof the static attention-based models that are tailored to tracking and object detection tasks. SQAIR is restricted to binary data and operates at the level of bounding boxes. SILOT and SCALOR are more expressive and can cope with cluttered scenes, a larger numbers of objects, and dynamic backgrounds, but do not work on colored perspective[1] data; accurate segmentation remains a challenge."
+    },
+    {
+      "index": 10,
+      "text": "**Unsupervised Video Decomposition and Segmentation.** Models employing spatial mixtures and iterative inference in a temporal setting are closest to our method from a technical perspective. Notably, there are only few models falling into this line of work: RTagger (Pr\u00e9mont-Schwarz et al., 2017) is a recurrent extension of Tagger and has same limitations as its predecessor. R-NEM (Van Steenkiste et al., 2018) effectively learns the objects\u2019 dynamics and interactions through a relational module and can produce segmentations but is limited to orthographic binary data."
+    },
+    {
+      "index": 11,
+      "text": "**Methods without Latent Modeling.** GAN-based ReDO (Chen et al., 2019) uses a model built around the assumption that object regions are independent, guiding the generator by drawing objects\u2019 pixel regions separately and composing them after segmentation. Another model (Arandjelovi\u00b4c & Zisserman, 2019) employs the same principles but guide the generator by copying a region of an image into another one. Both architectures are shown to operate on static images only and do not have a clearly interpretable latent space or prediction capabilities."
+    },
+    {
+      "index": 12,
+      "text": "Our method allows an effective use of temporal information in object-centric decompositions of colored video data. This places our approach between methods like R-NEM, which strictly operates on binary data, and IODINE, whose usage of temporal information is ad-hoc and produces results of limited quality (Table 1). In practice, we leverage a 2D-LSTM and employ an implicit modeling of dynamics by incorporating the hidden states into a conditional prior in the efficient runtime manner."
+    },
+    {
+      "index": 13,
+      "text": "## 3 DYNAMIC VIDEO DECOMPOSITION\n\nWe now introduce our dynamic model for unsupervised video decomposition. Our approach builds upon a generative model of multi-object representations and leverages elements of iterative amortized inference. We briefly review both concepts (\u00a73.1) and then introduce our model (\u00a73.2)."
+    },
+    {
+      "index": 14,
+      "text": "## 3.1 BACKGROUND\n\n**Multi-Object Representations.** The multi-object framework introduced in Greff et al. (2019) decomposes a static image **x** = ( _xi_ ) _i \u2208_ R _[D]_ into _K_ objects (including background). Each object is represented by a latent vector **z**[(] _[k]_[)] _\u2208_ R _[M]_ capturing the object\u2019s unique appearance and can be thought of as an encoding of common visual properties, such as color, shape, position, and size. For each **z**[(] _[k]_[)] independently, a broadcast decoder (Watters et al., 2019) generates pixelwise pairs ( _m_[(] _i[k]_[)] _, \u00b5_[(] _i[k]_[)] ) describing the assignment probability and appearance of pixel _i_ for object _k_ . Together, they induce the generative image formation model"
+    },
+    {
+      "index": 15,
+      "text": "where **z** = ( **z**[(] _[k]_[)] ) _k_ ,[\ufffd] _[K] k_ =1 _[m]_[(] _i[k]_[)] = 1 and _\u03c3_ is the same and fixed for all _i_ and _k_ . The original image pixels can be reconstructed from this probabilistic representation as \ufffd _xi_ =[\ufffd] _[K] k_ =1 _[m] i_[(] _[k]_[)] _\u00b5_[(] _i[k]_[)] ."
+    },
+    {
+      "index": 16,
+      "text": "**Iterative Amortized Inference.** Our approach leverages the iterative amortized inference framework (Marino et al., 2018), which uses the learning to learn principle (Andrychowicz et al., 2016) to close the amortization gap (Cremer et al., 2017) typically observed in traditional variational inference. The need for such an iterative process arises due to the multi-modality of Eq.(1), which results in an order invariance and assignment ambiguity in the approximate posterior that standard variational inference cannot overcome (Greff et al., 2019)."
+    },
+    {
+      "index": 17,
+      "text": "The idea of amortized iterative inference is to start with randomly guessed parameters _**\u03bb**_[(] 1 _[k]_[)] for the approximate posterior _q_ _**\u03bb**_ ( **z**[(] 1 _[k]_[)] _[|]_ **[x]**[)][ and update this initial estimate through a series of] _[ R]_[ refinement] steps. Each refinement step _r \u2208{_ 1 _, . . . , R}_ first samples a latent representation from _q_ _**\u03bb**_ to evaluate"
+    },
+    {
+      "index": 18,
+      "text": "> 1Perspective videos are more complex as objects can occlude one another and change in size over time."
+    },
+    {
+      "index": 19,
+      "text": "3\n\nUnder review as a conference paper at ICLR 2021\n\nthe ELBO _L_ and then uses the approximate posterior gradients _\u2207_ _**\u03bb** L_ to compute an additive update _f\u03c6_ , producing a new parameter estimate _**\u03bb**_[(] _r[k]_ +1[)][:]"
+    },
+    {
+      "index": 20,
+      "text": "where **a**[(] _[k]_[)] is a function of **z**[(] _r[k]_[)][,] **[x]**[,] _[\u2207]_ _**\u03bb**[L]_[,][and][additional][inputs][(mirrors][definition][in][Greff][et][al.] (2019)). The function _f\u03c6_ consists of a sequence of convolutional layers and an LSTM. The memory unit takes as input a hidden state **h**[(] _r[k] \u2212_[)] 1[from the previous refinement step.]"
+    },
+    {
+      "index": 21,
+      "text": "## 3.2 SPATIO-TEMPORAL ITERATIVE INFERENCE\n\nOur proposed model builds upon the concepts introduced in the previous section and enables robust learning of dynamic scenes through spatio-temporal iterative inference. Specifically, we consider the task of decomposing a video sequence **x** = ( **x** _t_ ) _[T] t_ =1[= (] _[x][t,i]_[)] _[T,D] t,i_ =1[into] _[ K]_[slot sequences][ (] **[m]**[(] _t[k]_[)] ) _t_"
+    },
+    {
+      "index": 22,
+      "text": "and _K_ appearance sequences ( _**\u00b5**_[(] _t[k]_[)] ) _t_ . To this end, we introduce explicit temporal dependencies into the sequence of posterior refinements and show how to leverage this contextual information during decoding with a generative model. The resulting computation graph can be thought of as a 2D grid with time dimension _t_ and refinement dimension _r_ (Fig. 2a). Propagation of information along these two axes is achieved with a 2D-LSTM (Graves et al., 2007) (Fig. 2b), which allows us to model the joint probability over the entire video sequence inside the iterative amortized inference framework. The proposed method is expressive enough to model the multimodality of our image formation process and posterior, yet its runtime complexity is smaller than that of its static counterpart."
+    },
+    {
+      "index": 23,
+      "text": "## 3.2.1 VARIATIONAL OBJECTIVE\n\nSince exact likelihood training is intractable, we formulate our task in terms of a variational objective. In contrast to traditional optimization of the evidence lower bound (ELBO) through static encodings of the approximate posterior, we incorporate information from two dynamic axes: (1) variational estimates from previous refinement steps; (2) temporal information from previous frames. Together, they form the basis for spatio-temporal variational inference via iterative refinements. Specifically, we train our model by maximizing the following ELBO objective[2] :"
+    },
+    {
+      "index": 24,
+      "text": "_T R_ \ufffd _L_ ELBO( **x** ) = E _q_ _**\u03bb**_ ( **z** _\u2264T,R|_ **x** _\u2264T_ ) \ufffd _t_ =1 \ufffd _r_ =1\ufffd _\u03b2_ log ( _p_ ( **x** _t|_ **x** _<t,_ **z** _\u2264t,r_ )) _\u2212_ KL( _q_ _**\u03bb**_ ( **z** _t,r|_ **x** _\u2264t,_ **z** _<t,r_ ) _|| p_ ( **z** _t|_ **x** _<t,_ **z** _<t_ ))\ufffd _,_ (3)"
+    },
+    {
+      "index": 25,
+      "text": "where the first term expresses the reconstruction error of a single frame and the second term measures the divergence between the variational posterior and the prior. The relative weight between terms is controlled with a hyperparameter _\u03b2_ (Higgins et al., 2017). Furthermore, to reduce the overall complexity of the model and to make it easier to train, we set _R_[\ufffd] := max( _R \u2212 t,_ 1) (see Fig. 2 for an illustration). Compared to a static model, which infers each frame independently, reusing information from previous refinement steps also makes our model more computationally efficient. In the next sections, we discuss the form of the conditional distributions in Eq.(3) in more detail."
+    },
+    {
+      "index": 26,
+      "text": "## 3.2.2 INFERENCE AND GENERATION\n\n**Posterior Refinement.** Optimizing Eq.(3) inside the iterative amortized inference framework (Section 3.1) requires careful thought about the nature and processing of the hidden states. While there is vast literature on the propagation of a single signal, including different types of RNNs (Hochreiter & Schmidhuber, 1997; Cho et al., 2014; Graves et al., 2005; Chung et al., 2017) and transformers (Vaswani et al., 2017), the optimal solution for multiple axes with different semantic meaning ( _i.e._ , time and refinements) is less obvious. Here, we propose to use a 2D version of the uni-directional MD-LSTM (Graves et al., 2007) to compute our variational objective (Eq.(3)) in an iterative manner. In order to do so, we replace the traditional LSTM in the refinement network (Eq.(2)) with a 2D extension. This extension allows the posterior gradients to flow through both the grid of the previous refinements and the previous time steps (see Fig. 2a). Writing **z** _t,r_ for the latent encoding at time _t_ and refinement _r_ , we can formalize this new update scheme as follows:"
+    },
+    {
+      "index": 27,
+      "text": "> 2For simplicity, we drop references to the object slot _\u2022_ ( _k_ ) from now on and formulate all equations on a per-slot basis."
+    },
+    {
+      "index": 28,
+      "text": "4\n\nUnder review as a conference paper at ICLR 2021\n\n**----- Start of picture text -----**\n\n(a) (b)\n**----- End of picture text -----**"
+    },
+    {
+      "index": 29,
+      "text": "Figure 2: **Model Overview.** ( **a** ) Inference in our model passes through a 2D grid in which light gray cell ( _r, t_ ) represents the _r_ -th refinement at time _t_ , dark gray cells are where the final reconstruction is computed and no refinement is needed . Each light gray cell receives three inputs: a refinement hidden state **h** _t,r\u2212_ 1, a temporal hidden state **h** _t\u2212_ 1 _,_ \ufffd _R_[, and posterior parameters] _**[ \u03bb]**[t,r]_[.][The outputs are a] new hidden state **h** _t,r_ and new posterior parameters _**\u03bb** t,r_ +1. ( **b** ) An example of the internal structure of the highlighted cell from Fig. (a). We process the inputs with the help of a spatial broadcast decoder and a 2D LSTM. The rest of the light gray cells have the same structure."
+    },
+    {
+      "index": 30,
+      "text": "> Note that the hidden state from the previous time step is alwaysthe final refinement _R_[\ufffd] at time _t \u2212_ 1. Our reasoning for this is that the approximation of the posterior **h** _t\u2212_ 1 _,_ \ufffd _R_[,] _[ i.e.]_[, the one computed during] only improves with the number of refinements (Marino et al., 2018)."
+    },
+    {
+      "index": 31,
+      "text": "**Temporal Conditioning.** Inside the learning objective we set the prior and the likelihood to be conditioned on the previous frames and the refinement steps. This naturally comes from an idea that each frame is dependent on the predecessor\u2019s dynamics and therefore latent representations should follow the same property. Conditioning on the refinement steps is essential to the iterative amortized inference procedure. To model the prior and the likelihood distributions accordingly we adopt the approach proposed in Chung et al. (2015) but tailor it to our iterative amortized inference setting. Specifically, the parameters of our Gaussian prior are now computed from the temporal hidden state **h** _t\u2212_ 1 _,_ \ufffd _R_[:]"
+    },
+    {
+      "index": 32,
+      "text": "where _\u03be\u03b8_ is a simple neural network with a few layers.[3] Please refer to the supplemental material for details. Note that the prior only changes along the time dimension and is independent of the refinement iterations, because we refine the posterior to be as close as possible to the dynamic prior for the current time step. Finally, to complete the conditional generation, we modify the likelihood distribution as follows[4] :"
+    },
+    {
+      "index": 33,
+      "text": "where _\u00b5_[(] _t,r,i[k]_[)] _[, m]_[(] _t,r,i[k]_[)][are mask and appearance of pixel] _[ i]_[ in slot] _[ k]_[ at time step] _[ t]_[ and refinement step] _[ r]_[.] _g\u03b8_ is a spatial mixture broadcast decoder (Greff et al., 2019) with preceding MLP to transform the pair \ufffd **z**[(] _t,r[k]_[)] _[,]_ **[ h]**[(] _t\u2212[k]_[)] 1 _,R_[\ufffd] \ufffd into a single vector representation."
+    },
+    {
+      "index": 34,
+      "text": "## 3.2.3 LEARNING AND PREDICTION\n\n**Architecture.** From a graphical point of view, we can think of the refinement steps and time steps as being organized on a 2D grid from Fig. 2a, with light gray cell ( _r, t_ ) representing the _r_ -th refinement at"
+    },
+    {
+      "index": 35,
+      "text": "> 3 In practice, _\u03be\u03b8_ predicts log _**\u03c3** t_ for stability reasons.\n\n> 4Since our likelihood is a Gaussian mixture model, we are now referencing the object slot _\u2022_ ( _k_ ) again."
+    },
+    {
+      "index": 36,
+      "text": "5\n\nUnder review as a conference paper at ICLR 2021\n\ntime _t_ . According to Eq.(4), each such cell takes as input the hidden state from a previous refinement **h** _t,r\u2212_ 1, the temporal hidden state **h** _t\u2212_ 1 _,_ \ufffd _R_[, and the posterior parameters] _**[ \u03bb]**[t,r]_[.][Outputs of each light] gray cell are new posterior parameters _**\u03bb** t,r_ +1 and a new hidden state **h** _t,r_ . At the last refinement _R_[\ufffd] at time _t_ , the value of the refinement hidden state **h** _t,r_ is assigned to a new temporal hidden state **h** _t,R_ \ufffd[.]"
+    },
+    {
+      "index": 37,
+      "text": "**Training Objective.** Instead of a direct optimization of Eq.(3), we propose two modifications that we found to improve our model\u2019s practical performance: (1) similar to observations made by (Greff et al., 2019), we found that color is an important factor for high-quality segmentations. In the absence of such information, we mitigate the arising ambiguity by maximizing the entropy of the masks _m_[(] _t,r,i[k]_[)] along the slot dimension _k_ , _i.e._ , we train our model by maximizing the objective"
+    },
+    {
+      "index": 38,
+      "text": "where _\u03b3_ defines the weight of the entropy loss. (2) In addition to the entropy loss, we also prioritize later refinement steps by weighting the terms in the inner sum of Eq.(3) with _R[r]_ \ufffd[.]"
+    },
+    {
+      "index": 39,
+      "text": "**Prediction.** On top of pure video decomposition, our model is also able to simulate future frames **x** _T_ +1 _, . . . ,_ **x** _T_ + _T \u2032_ . Because our model requires image data **x** _t_ as input, which is not available during simulation of new frames, we use the reconstructed image \ufffd **x** _t_ in place of **x** _t_ to compute the likelihood _p_ ( **x** _t|_ **x** _<t,_ **z** _\u2264t,r_ ) in these cases. We also set the gradients _\u2207_ _**\u03bb** L_ , _\u2207_ _**\u00b5** L_ , and _\u2207_ **m** _L_ to zero."
+    },
+    {
+      "index": 40,
+      "text": "**Complexity.** Our model\u2019s ability to reuse information from previous refinements leads to a runtime complexity of _O_ ( _R_[2] + _T_ ), which is much more efficient than the _O_ ( _RT_ ) complexity of the traditional IODINE model (when each frame is inferred independently) in the typical case of _T \u226b R_ ."
+    },
+    {
+      "index": 41,
+      "text": "## 4 EXPERIMENTS\n\nWe validate our model on Bouncing Balls (Van Steenkiste et al., 2018), an augmented version of CLEVRER (Yi et al., 2020), and Grand Central Station (Zhou et al., 2012). Our experiments comprise quantitative studies of decomposition quality during generation and prediction, as well as an ablation study. Also see Appendices C, D and F."
+    },
+    {
+      "index": 42,
+      "text": "## 4.1 SETUP\n\n**Datasets.** Bouncing Balls consists of 50 frame, binary, 64 _\u00d7_ 64 resolution video sequences. Each video shows simulated balls with different masses bouncing elastically off each other and the image border. We train our model on the first 40 frames of 50K videos containing 4 balls in each frame. We use two different test sets consisting of 10K videos with 4 balls and 10K videos with 6-8 balls. We also validate our model on a color version of this dataset that we generate using the segmentation masks."
+    },
+    {
+      "index": 43,
+      "text": "CLEVRER contains synthetic videos of moving and colliding objects. Each video is 5 seconds long (128 frames) at resolution 480 _\u00d7_ 320, which we trim and rescale to 64 _\u00d7_ 64[5] pixels (see Appendix B). For training, we use the same 10K videos as in the original source. For testing, we compute ground truth masks for the validation set using the provided annotations and test on 2.5K instances containing 3-5 objects and on 1.1K instances containing 6 objects. In the training, we set the number of slots _K_ to 6 for CLEVRER and to one more than the maximum number of objects in all other cases."
+    },
+    {
+      "index": 44,
+      "text": "Grand Central Station is a video feed from the main hall of a trafficked train station, containing a high number of people moving at various paces in all different directions. It has a total of 50010 frames in a resolution of 720 _\u00d7_ 480. In order to make the dataset more manageable, we have extracted a portion of the feed of resolution 128 _\u00d7_ 128 and segmented it into sequences of 20 frames each. Each sequence contains approximately 10 people. We set _K_ to 8 during training and to 10 for testing."
+    },
+    {
+      "index": 45,
+      "text": "**Baselines.** We compare our approach to recent baselines: R-NEM (Van Steenkiste et al., 2018), IODINE (Greff et al., 2019) and DDPAE (Hsieh et al., 2018). R-NEM is a state-of-the-art model for unsupervised video decomposition and physics learning. While showing impressive results on simulation tasks, it is limited to binary data and has difficulties with perspective scenes. IODINE is more expressive but static in nature and cannot capture temporal dynamics within its probabilistic"
+    },
+    {
+      "index": 46,
+      "text": "> 5The method is robust enough to handle 128x128 resolution as it is built on top of the IODINE.\n\n6\n\nUnder review as a conference paper at ICLR 2021"
+    },
+    {
+      "index": 47,
+      "text": "Table 1: **Quantitative Evaluation (Scene Decomposition).** We show our model\u2019s ability to produce high-quality instance segmentations for sequences with varying length. We test on sequences with 4 balls and two different types of data (binary, colored) for Bouncing Balls and on sequences with 3-5 objects for CLEVRER. Note, R-NEM does not cope with color data; hence we only run it on binary."
+    },
+    {
+      "index": 48,
+      "text": "||**Bouncing Balls**|**Bouncing Balls**||\n|---|---|---|---|\n|Length|ARI (_\u2191_)\n10\n20\n30\n40|F-ARI (_\u2191_)\n10\n20\n30\n40|MSE (_\u2193_)\n10\n20\n30\n40|\n|binary\nR-NEM\nIODINE\nSEQ-IODINE\nOur|0.5031\n0.6199\n0.6632\n0.6833\n0.0318\n0.0230\n0.0223\n0.0021\n-0.0201\n**0.7169**\n**0.7263**\n**0.7286**\n**0.7294**|0.6259\n0.7325\n0.7708\n0.7899\n0.9986\n0.8645\n0.6028\n0.5444\n0.4063\n**0.9999**\n**0.9999**\n**0.9999**\n**0.9999**|0.0252\n0.0138\n0.0096\n0.0076\n0.0018\n0.0385\n0.0782\n0.0846\n0.0968\n**0.0004**\n**0.0004**\n**0.0004**\n**0.0004**|\n|color\nIODINE\nSEQ-IODINE\nOur|0.5841\n0.3789\n0.3743\n0.3225\n0.2654\n**0.7275**\n**0.7291**\n**0.7298**\n**0.7301**|0.9752\n0.7517\n0.8159\n0.7537\n0.6734\n**1.0000**\n**1.0000**\n**0.9999**\n**0.9999**|0.0014\n0.0160\n0.0164\n0.0217\n0.0270\n**0.0002**\n**0.0002**\n**0.0002**\n**0.0002**|\n||**CLEVRER**|||\n|Length|ARI (_\u2191_)\n10\n20\n30\n40|F-ARI (_\u2191_)\n10\n20\n30\n40|MSE (_\u2193_)\n10\n20\n30\n40|\n|color\nIODINE\nSEQ-IODINE\nOur|0.1791\n0.1171\n0.1378\n0.1558\n0.1684\n**0.2220**\n**0.2403**\n**0.2555**\n**0.2681**|**0.9316**\n0.8520\n0.8774\n0.8780\n0.8759\n0.9182\n0.9258\n0.9309\n0.9312|0.0004\n0.0009\n0.0009\n0.0010\n0.0010\n**0.0003**\n**0.0003**\n**0.0003**\n**0.0003**|"
+    },
+    {
+      "index": 49,
+      "text": "framework. However, as noted in Greff et al. (2019), it can be readily applied to temporal sequences by feeding a new video frame to each iteration of the LSTM in the refinement network. We call this variant SEQ-IODINE. Since we can perform simulation of short sequences, we include a comparison of the predictive power of our model against DDPAE (Hsieh et al., 2018)."
+    },
+    {
+      "index": 50,
+      "text": "## 4.2 EVALUATION METRICS\n\n**ARI.** The Adjusted Rand Index (Rand, 1971; Hubert & Arabie, 1985) is a measure of clustering similarity. It is computed by counting all pairs of samples that are assigned to the same or different clusters in the predicted and true clusterings. It ranges from -1 to 1, with score of 0 indicating a random clustering and 1 indicating a perfect match. We treat each pixel as one sample and its segmentation as the cluster assignment."
+    },
+    {
+      "index": 51,
+      "text": "**F-ARI.** The Foreground Adjusted Rand Index is a modification of the ARI score ignoring background pixels, which often occupy the majority of the image. We argue that both metrics are necessary to assess the segmentation quality of a video decomposition method; this metric is also used in (Greff et al., 2019; Van Steenkiste et al., 2018)."
+    },
+    {
+      "index": 52,
+      "text": "**MSE.** The mean squared error between pixels of the reconstructed \ufffd **x** and the ground truth frames **x** ."
+    },
+    {
+      "index": 53,
+      "text": "## 4.3 VIDEO DECOMPOSITION\n\nWe evaluate the models on a video decomposition task at different sequence lengths. As shown in Table 1, our model outperforms the baselines regardless of the presence of color information, which further reduces the error. Our model performs at least 7% better than R-NEM on all metrics and at least 20% than IODINE on ARI and MSE. Since R-NEM cannot cope well with colored data or the perspective of scenes, it is only evaluated on the Bouncing Balls dataset (binary), producing high-error results in the first frames, a phenomenon not observed with our model. IODINE is not designed to utilize temporal information. On both datasets, IODINE\u2019s results are therefore computed independently on each frame of the longest sequence. By processing frames separately, IODINE does not keep the same object-slot assignment, which we ignore when computing the scores. SEQ-IODINE tends to perform even worse than IODINE in many experiments, which we attributed to exploding gradients caused by limited refinement steps and a lack of dynamics modeling."
+    },
+    {
+      "index": 54,
+      "text": "## 4.4 GENERALIZATION\n\nWe investigated how well our model adapts to a higher number of objects, evaluating its performance on the Bouncing Balls dataset (6 to 8 objects) and on the CLEVRER dataset (6 objects). Table 2 shows that our F-ARI and MSE scores are at least 50% better than those for R-NEM, and ARI scores are just marginally worse and only on the binary data. In comparison to IODINE we are at least 4% better across all metrics. For the Bouncing Balls dataset we have also investigated the impact of"
+    },
+    {
+      "index": 55,
+      "text": "7\n\nUnder review as a conference paper at ICLR 2021\n\nFigure 3: **Qualitative Evaluation (Bouncing Balls).** Our model can generalize to sequences with 8 balls when trained on 4 balls. Top-to-bottom: output masks, reconstructions, and ground truth video."
+    },
+    {
+      "index": 56,
+      "text": "**----- Start of picture text -----**\n\nBouncing Balls\n1.0 OUR Bouncing Balls CLEVRER\nDDPAE ARI Our ARI\nARI Our (color) F-ARI\n0.9 ARI R-NEMF-ARI Our 1.0\nF-ARI Our (color)\n1.0 F-ARI R-NEM\n0.8\n0.8 0.9\n0.6\n0.8\n0.7 0.4\n0.7\n0.6 0.6 0.2\n1 2 3 4 5\nSimulation steps 3 5 7 10 3 5 7 10\nSimulation steps Simulation steps\nFigure 4: Velocity predic-\nFigure 5:  Prediction. We show the (F-)ARI for 3, 5, 7, and 10 simulated\ntions. Cosine similarity for 5\nframes after 20 inference steps.\nsimulated frames after 10 inference\nsteps.\nARI/F-ARI ARI/F-ARI\nCosine similarity\n**----- End of picture text -----**"
+    },
+    {
+      "index": 57,
+      "text": "changing the total number of possible colors to 4 and 8. The former resulting in duplicate colors for different objects and the latter in unique colors for each object. The higher MSE scores for the 8 balls variant is due to the model not being able to reconstruct the unseen colors. Sample qualitative results are shown in Fig. 3 and 6, while more can be found in Appendix F."
+    },
+    {
+      "index": 58,
+      "text": "## 4.5 PREDICTION\n\nWe compare the predictions of our model (Section 3.2.3) to those of R-NEM after 20 steps of inference on 10 predicted steps on the Bouncing Balls dataset (Fig. 5 left). As we can see from the results our model is superior to R-NEM on a shorter sequences, however for the longer sequences we are outperforming R-NEM only on colored data. Our model is capable of more accurate frame prediction than R-NEM on the Bouncing Balls dataset during the first few predicted frames (5-7), with predictions slowly diverging over time due to the temporal consistency. This behavior is also observable on the CLEVRER dataset (Fig. 5 right), albeit to a lesser extent, likely because the objects dynamics are less, even if non-linear. In Figure 4 we compute velocity vectors between bounding box centroids and compare the cosine similarity to the predictions of DDPAE on the Bouncing balls dataset. As expected, our model outperforms DDPAE on the first three frames and then declines in quality. This behavior is not surprising and in line with the results reported in Fig.5"
+    },
+    {
+      "index": 59,
+      "text": "## 4.6 ABLATION\n\nThe quantitative results of an ablation study on the binary Bouncing Balls dataset and CLEVRER are shown in Table 3. We investigate the effects of the efficient grid, conditional prior and generation, length of training sequences and entropy term on the performance of our model; all contributions are necessary and important. Note that the base models are too large to be trained on 40 frames, which confirms the superiority of our model in terms of both runtime and memory. The CLEVRER dataset is not binary, which is why we do not include the entropy term (see Section 3.2.3). We validate our choice of _R_[\ufffd] and compare it to alternative options in a supplemental study discussed in Appendix F.2."
+    },
+    {
+      "index": 60,
+      "text": "## 5 CONCLUSION AND DISCUSSION\n\nWe presented a novel unsupervised learning framework capable of precise scene decomposition in multi-object videos with complex appearance and motion. Our temporal component enables modeling of dynamics inside the amortized iterative inference framework but also improves the quality of the results overall. From our quantitative and qualitative comparisons with IODINE and SEQ-IODINE, we see that our model shows more accurate results on the decomposition task. We can detect new"
+    },
+    {
+      "index": 61,
+      "text": "8\n\nUnder review as a conference paper at ICLR 2021\n\nTable 2: **Generalization** . At test time, we change the number of slots in the models from 5 to 9 for the Bouncing Balls test dataset (6-8 balls), and from 6 to 7 for the CLEVRER test dataset (6 objects)."
+    },
+    {
+      "index": 62,
+      "text": "||**Bouncing Balls**|**Bouncing Balls**|**Bouncing Balls**||\n|---|---|---|---|---|\n|binary|R-NEM\nIODINE\nSEQ-IODINE\nOur\nIODINE (4)|ARI (_\u2191_)\n**0.4484**\n0.0271\n0.0263\n0.4453\n0.4136|F-ARI (_\u2191_)\n0.6377\n0.9969\n0.8874\n**0.9999**\n0.8211|MSE (_\u2193_)\n0.0328\n0.0040\n0.0521\n**0.0008**\n0.0138|\n||IODINE (8)|0.2823|0.7197|0.0281|\n|color|SEQ-IODINE (4)\nSEQ-IODINE (8)\nOur (4)\nOur (8)|0.2068\n0.1571\n0.4275\n**0.4317**|0.5854\n0.5231\n**0.9998**\n0.9900|0.0338\n0.0433\n**0.0004**\n0.0114|\n|||**CLEVRER**|||\n|||ARI (_\u2191_)|F-ARI (_\u2191_)|MSE (_\u2193_)|\n|color|IODINE\nSEQ-IODINE\nOur|0.2205\n0.1482\n**0.2839**|0.9305\n0.8645\n**0.9355**|0.0006\n0.0012\n**0.0004**|"
+    },
+    {
+      "index": 63,
+      "text": "Table 3: **Ablation Study** . A 2D-LSTM extension of IODINE trained on sequences of 20 frames is unstable and its output segmentation lacks precision and consistency. Our efficient version of 2D-LSTM grid (Fig. 2a) and the conditional prior and generation increase both segmentation and reconstruction quality. By training these models on longer sequences of 40 frames we observe further improvements."
+    },
+    {
+      "index": 64,
+      "text": "||Base|Grid|CP+G\nEntropy\nLength|CP+G\nEntropy\nLength|CP+G\nEntropy\nLength|ARI (_\u2191_)|F-ARI (_\u2191_)|MSE (_\u2193_)|\n|---|---|---|---|---|---|---|---|---|\n||\u2713||||20|0.0126|0.7765|0.0340|\n|BB|\u2713\n\u2713|\u2713\n\u2713|\u2713\n\u2713||20\n40|0.2994\n0.3528|0.9999\n0.9998|0.0010\n0.0010|\n||\u2713|\u2713|\u2713|\u2713|40|**0.7263**|**0.9999**|**0.0004**|\n|CLEVRER|\u2713\n\u2713\n\u2713\n\u2713\n\u2713|\u2713\n\u2713\n\u2713\n\u2713|\u2713\n\u2713||20\n20\n20\n40\n40|0.1900\n0.1100\n0.2403\n0.1700\n**0.2681**|0.8200\n0.9000\n0.9258\n0.9100\n**0.9312**|0.0011\n0.0005\n**0.0003**\n0.0005\n**0.0003**|"
+    },
+    {
+      "index": 65,
+      "text": "[Base: base model using 2D-LSTM; Grid: efficient triangular grid structure (Fig. 2a); CP+G: conditional prior and generation; Length: sequence length; Entropy: entropy term (Eq.(7)]"
+    },
+    {
+      "index": 66,
+      "text": "Figure 6: **Qualitative Evaluation (CLEVRER).** Our model can generalize to sequences with 6 objects. We also demonstrate the ability to handle a dynamically changing number of objects, ranging from 4 in the beginning to 6 at the end."
+    },
+    {
+      "index": 67,
+      "text": "objects faster and are less sensitive to color, because our model can leverage the objects\u2019 motion cues. For our experiments, we have chosen a setup consistent with other SOTA methods and a focus on the objects\u2019 dynamics. Our model is currently not targeting complex textured datasets, as they are not designed for unsupervised learning and impose additional challenges, such as limited coverage of the input space as well as a superposition of the scene\u2019s intrinsic components (object location, articulation, motion, albedo, shading, etc.). We show and discuss the segmentation of a real-world video stream in Fig. 7. Self-supervised methods for video segmentation, which attempt to learn image representations through features, motion or specific tasks, are an alternative but not capable of inferring disentangled representations or extracting interpretable features (e.g. appearance, color). They are typically also not robust to object occlusions, object (dis)appearances, and object ordering (Fig. 14). We refer to Appendix E for an extended discussion and future work."
+    },
+    {
+      "index": 68,
+      "text": "Figure 7: **Qualitative evaluation on real-world data.** Qualitative Evaluation (Grand Central Station). We can observe that our method is very consistent in separating the image regions belonging to different objects as they move in the scene. This dataset is particularly challenging for its background texture, complex lighting and shadows. Please zoom in to allow better clarity."
+    },
+    {
+      "index": 69,
+      "text": "9\n\nUnder review as a conference paper at ICLR 2021\n\n## REFERENCES\n\n- M. Andrychowicz, M. Denil, S. Gomez, M. W. Hoffman, D. Pfau, T. Schaul, and N. de Freitas. Learning to learn by gradient descent by gradient descent. In _NIPS_ , 2016."
+    },
+    {
+      "index": 70,
+      "text": "- Relja Arandjelovi\u00b4c and Andrew Zisserman. Object discovery with a copy-pasting gan. _arXiv preprint arXiv:1905.11369_ , 2019."
+    },
+    {
+      "index": 71,
+      "text": "- Christopher P Burgess, Loic Matthey, Nicholas Watters, Rishabh Kabra, Irina Higgins, Matt Botvinick, and Alexander Lerchner. Monet: Unsupervised scene decomposition and representation. _arXiv preprint arXiv:1901.11390_ , 2019."
+    },
+    {
+      "index": 72,
+      "text": "- Micka\u00ebl Chen, Thierry Arti\u00e8res, and Ludovic Denoyer. Unsupervised object segmentation by redrawing. In _Advances in Neural Information Processing Systems_ , pp. 12726\u201312737, 2019."
+    },
+    {
+      "index": 73,
+      "text": "- Kyunghyun Cho, Bart Van Merri\u00ebnboer, Caglar Gulcehre, Dzmitry Bahdanau, Fethi Bougares, Holger Schwenk, and Yoshua Bengio. Learning phrase representations using rnn encoder-decoder for statistical machine translation. In _EMNLP_ , 2014."
+    },
+    {
+      "index": 74,
+      "text": "- Junyoung Chung, Kyle Kastner, Laurent Dinh, Kratarth Goel, Aaron C Courville, and Yoshua Bengio. A recurrent latent variable model for sequential data. In _NIPS_ , pp. 2980\u20132988, 2015."
+    },
+    {
+      "index": 75,
+      "text": "- Junyoung Chung, Sungjin Ahn, and Yoshua Bengio. Hierarchical multiscale recurrent neural networks. In _ICLR_ , 2017."
+    },
+    {
+      "index": 76,
+      "text": "- Eric Crawford and Joelle Pineau. Exploiting spatial invariance for scalable unsupervised object tracking. In _AAAI_ , 2019a."
+    },
+    {
+      "index": 77,
+      "text": "- Eric Crawford and Joelle Pineau. Spatially invariant unsupervised object detection with convolutional neural networks. In _AAAI_ , pp. 3412\u20133420, 2019b."
+    },
+    {
+      "index": 78,
+      "text": "- C. Cremer, X. Li, and D. Duvenaud. Inference suboptimality in variational autoencoders. In _NIPS Workshop on Advances in Approximate Bayesian Inference_ , 2017."
+    },
+    {
+      "index": 79,
+      "text": "- Martin Engelcke, Adam R Kosiorek, Oiwi Parker Jones, and Ingmar Posner. Genesis: Generative scene inference and sampling with object-centric latent representations. In _ICLR_ , 2020."
+    },
+    {
+      "index": 80,
+      "text": "- SM Ali Eslami, Nicolas Heess, Theophane Weber, Yuval Tassa, David Szepesvari, Geoffrey E Hinton, et al. Attend, infer, repeat: Fast scene understanding with generative models. In _NIPS_ , pp. 3225\u20133233, 2016."
+    },
+    {
+      "index": 81,
+      "text": "- Alex Graves, Santiago Fern\u00e1ndez, and J\u00fcrgen Schmidhuber. Bidirectional lstm networks for improved phoneme classification and recognition. In W\u0142odzis\u0142aw Duch, Janusz Kacprzyk, Erkki Oja, and S\u0142awomir Zadro\u02d9zny (eds.), _Artificial Neural Networks: Formal Models and Their Applications \u2013 ICANN 2005_ , pp. 799\u2013804, Berlin, Heidelberg, 2005. Springer Berlin Heidelberg. ISBN 978-3540-28756-8."
+    },
+    {
+      "index": 82,
+      "text": "- Alex Graves, Santiago Fern\u00e1ndez, and J\u00fcrgen Schmidhuber. Multi-dimensional recurrent neural networks. In _International conference on artificial neural networks_ , pp. 549\u2013558. Springer, 2007."
+    },
+    {
+      "index": 83,
+      "text": "- Klaus Greff, Antti Rasmus, Mathias Berglund, Tele Hao, Harri Valpola, and J\u00fcrgen Schmidhuber. Tagger: Deep unsupervised perceptual grouping. In _NIPS_ , pp. 4484\u20134492, 2016."
+    },
+    {
+      "index": 84,
+      "text": "- Klaus Greff, Sjoerd Van Steenkiste, and J\u00fcrgen Schmidhuber. Neural expectation maximization. In _NIPS_ , pp. 6691\u20136701, 2017."
+    },
+    {
+      "index": 85,
+      "text": "- Klaus Greff, Rapha\u00ebl Lopez Kaufmann, Rishab Kabra, Nick Watters, Chris Burgess, Daniel Zoran, Loic Matthey, Matthew Botvinick, and Alexander Lerchner. Multi-object representation learning with iterative variational inference. _arXiv preprint arXiv:1903.00450_ , 2019."
+    },
+    {
+      "index": 86,
+      "text": "- Irina Higgins, Loic Matthey, Arka Pal, Christopher Burgess, Xavier Glorot, Matthew Botvinick, Shakir Mohamed, and Alexander Lerchner. beta-vae: Learning basic visual concepts with a constrained variational framework. In _ICLR_ , 2017.\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper introduces a spatio-temporal iterative inference framework for unsupervised video decomposition, extending static iterative refinement models by incorporating temporal dependencies via a 2D-LSTM architecture. While the proposed approach shows strong empirical performance on synthetic benchmarks, several concerns regarding the model's reliance on specific training conditions, the lack of clarity in its generalization capabilities, and the computational trade-offs of the proposed inference mechanism need addressing.\n\nThe paper makes a clear contribution by successfully integrating temporal dynamics into an iterative inference framework, resulting in improved segmentation and trajectory prediction on standard benchmarks. The methodology is well-motivated, and the performance gains over existing static baselines are substantial. However, the paper requires a more rigorous analysis of its scalability to more complex, real-world scenarios and a deeper investigation into the sensitivity of the iterative refinement process.\n\nOverview issues:\n\n- Sensitivity of Iterative Inference to Initialization: The methodology in Section 3.1 and 3.2 relies on the iterative refinement of latent variables starting from an initial guess. The paper does not provide sufficient evidence or analysis regarding the sensitivity of the final decomposition to this initial state. If the model is prone to local optima in the ELBO landscape, the reported performance gains might be dependent on favorable initializations rather than the robustness of the 2D-LSTM. A systematic study comparing different initialization strategies or demonstrating the convergence properties of the refinement process would significantly strengthen the claims.\n\n- Generalization to Real-World Complexity: While the paper demonstrates results on the Grand Central Station dataset in Figure 7, the discussion remains primarily focused on synthetic, controlled environments like Bouncing Balls and CLEVRER. The transition from synthetic to real-world data involves challenges such as non-uniform lighting, complex background textures, and occlusions that are not fully explored. The current results on real-world data are purely qualitative; adding quantitative metrics or a discussion on the failure modes in these complex settings is necessary to justify the model's utility beyond synthetic benchmarks.\n\n- Computational Overhead and Scalability: The paper claims a runtime complexity of O(R^2 + T) in Section 3.2.3, but the practical overhead of maintaining a 2D-LSTM grid across R refinement steps and T frames is not fully characterized. As the number of objects (slots) or the complexity of the scene increases, the memory and compute requirements for the 2D-LSTM hidden states could become a bottleneck. A more detailed empirical analysis of the training/inference time as a function of sequence length and object count would provide a clearer picture of the model's scalability for larger-scale video tasks.\n\n- Implicit Reliance on Motion Cues: The paper argues that the model effectively leverages motion cues for decomposition, particularly in the absence of color information. However, Section 3.2.3 introduces an entropy loss to aid segmentation in greyscale data, which suggests that the model may struggle with disentanglement when motion is subtle or ambiguous. The paper should clarify the extent to which the model relies on the entropy prior versus the learned temporal dynamics, and whether the decomposition remains stable in scenarios with slow-moving objects where motion cues are less discriminative.\n\n- Lack of quantitative performance on real-world video benchmarks: The paper provides only qualitative visual results for the Grand Central Station dataset, which is insufficient to substantiate the claim that the model handles real-world complexity. Given the reliance on synthetic data for the primary performance claims, the paper needs to provide at least one quantitative metric (e.g., F-ARI or MSE) on a standard real-world video segmentation benchmark like DAVIS or SegTrack v2. Without this, it remains unclear if the model's performance on synthetic datasets translates to actual video, or if the model is overfitted to the specific dynamics of bouncing balls and CLEVRER.\n\n- Absence of a formal convergence analysis for the 2D-LSTM refinement: The proposed spatio-temporal refinement process relies on a 2D-LSTM to propagate information across both refinement steps and time. While the paper claims this is efficient, it does not demonstrate that the refinement process actually converges to a stable posterior estimate. A plot showing the evolution of the ELBO or the segmentation ARI as a function of the refinement step $r$ for a fixed time $t$ would be necessary to verify that the iterative inference is working as intended. Without this evidence, it is difficult to determine if the model is truly performing iterative inference or simply learning a heuristic mapping that does not improve with additional refinement steps.\n\n- Missing characterization of the entropy prior's impact on dynamics: The paper introduces an entropy prior (Eq. 7) to assist in segmentation when appearance features are weak, but it does not formally analyze how this prior interacts with the learned temporal dynamics. It is possible that the entropy loss forces the model to produce sharp masks at the expense of temporal consistency, or conversely, that it prevents the model from learning subtle motion cues. A controlled experiment comparing the model's performance on a dataset with varying levels of motion (e.g., slow vs. fast objects) with and without the entropy prior would clarify if the prior is a necessary component for all scenarios or just a patch for specific failure modes.\n\nRecommendation: major revision. The paper presents a promising approach with strong empirical results, but it lacks a thorough analysis of the model's robustness and scalability. Addressing the sensitivity to initialization and providing a more comprehensive evaluation of real-world performance is essential for the paper to meet the standards of a top-tier venue.\n\nRevision targets:\n\n- Include a quantitative analysis of the model's performance on real-world video datasets to complement the qualitative results.\n\n- Perform a sensitivity analysis regarding the initialization of latent variables to ensure the robustness of the iterative inference process.\n\n- Provide a detailed empirical comparison of computational costs (memory and time) relative to the number of objects and sequence length.\n\n- Clarify the relative contribution of the entropy prior versus the temporal dynamics in the model's ability to segment low-contrast or slow-moving objects.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Mathematical validity of the ELBO objective",
+          "quote": "l\\mathcal{L}_{\\text{ELBO}}(\\mathbf{x})=\\mathbb{E}_{q_{\\bm{\\lambda}}(\\mathbf{z}_{\\leq T,R}|\\mathbf{x}_{\\leq T})}\\sum_{t=1}^{T}\\sum_{r=1}^{R}\\Big{[}\\beta\\log\\left(p\\left(\\mathbf{x}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{\\leq t,r}\\right)\\right)-\\text{KL}(q_{\\bm{\\lambda}}(\\mathbf{z}_{t,r}|\\mathbf{x}_{\\leq t},\\mathbf{z}_{<t,r})\\mid\\mid p(\\mathbf{z}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{<t}))\\Big{]},$ (3)",
+          "explanation": "The summation over refinement steps $r$ inside the ELBO is non-standard. If $q$ is a joint posterior over all refinement steps, the standard ELBO for the marginal likelihood should not sum the reconstruction term over $r$, as this weights the reconstruction of frame $t$ by the number of refinement steps, which does not strictly bound the log-marginal likelihood. Please clarify if this is intended as a valid lower bound or a heuristic training loss, and provide a derivation showing how this summation arises from the marginalization of latent variables.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in runtime complexity analysis",
+          "quote": "Our model\u2019s ability to reuse information from previous refinements leads to a runtime complexity of $\\mathcal{O}(R^{2}+T)$, which is much more efficient than the $\\mathcal{O}(RT)$ complexity of the traditional IODINE model",
+          "explanation": "The claim of $\\mathcal{O}(R^2 + T)$ complexity is mathematically suspect. Given the 2D grid architecture where each cell $(r, t)$ depends on $\\mathbf{h}_{t, r-1}$ and $\\mathbf{h}_{t-1, \\tilde{R}}$, the total number of cells is $R \\times T$. If each cell performs a constant-time operation, the complexity must be $\\mathcal{O}(RT)$. Please provide a derivation showing how the dependency on $T$ is reduced to $\\mathcal{O}(1)$ in the refinement loop, or correct the complexity claim to $\\mathcal{O}(RT)$.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Discrepancy in reported ARI metrics",
+          "quote": "|  Bounce | R-NEM | 0.4484 | 0.6377 | 0.0328  |\n|   |  IODINE | 0.0271 | 0.9969 | 0.0040  |",
+          "explanation": "The ARI values reported for IODINE and SEQ-IODINE in Table 2 (approx. 0.02) are extremely low, suggesting near-random clustering, yet the F-ARI values are high (0.9969). Since ARI is sensitive to cluster label permutations, this discrepancy is concerning. Please verify these values and explain why the ARI is so low despite high F-ARI performance, as this undermines the comparison with baseline models.",
+          "comment_type": "technical",
+          "paragraph_index": 48,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Ambiguity in iterative update dependency",
+          "quote": "$\\mathbf{z}^{(k)}_{r}\\overset{k}{\\sim}q_{\\bm{\\lambda}}(\\mathbf{z}^{(k)}_{r}|\\mathbf{x}),\\qquad\\qquad\\bm{\\lambda}^{(k)}_{r+1}\\overset{k}{\\leftarrow}\\quad\\bm{\\lambda}^{(k)}_{r}+f_{\\phi}(\\mathbf{a}^{(k)},\\mathbf{h}^{(k)}_{r-1}),$ (2)",
+          "explanation": "Equation (2) implies that the update for object $k$ is independent of other objects. However, multi-object decomposition requires resolving assignment competition for pixels. If $f_{\\phi}$ is shared across objects, it must receive global context or other object representations to break symmetry. Please clarify that $f_{\\phi}$ is a shared function and explain how it incorporates information from other objects to resolve assignment competition.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Mischaracterization of IODINE's temporal capabilities",
+          "quote": "This places our approach between methods like R-NEM, which strictly operates on binary data, and IODINE, whose usage of temporal information is ad-hoc and produces results of limited quality (Table 1).",
+          "explanation": "The claim that IODINE uses temporal information is incorrect. IODINE is a static image decomposition model by design and does not contain a temporal component. Attributing 'ad-hoc' temporal usage to IODINE misrepresents the architecture. Please revise this to state that IODINE lacks a temporal component entirely.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Inaccurate claim regarding SCALOR's color handling",
+          "quote": "SILOT and SCALOR are more expressive and can cope with cluttered scenes, a larger numbers of objects, and dynamic backgrounds, but do not work on colored perspective data",
+          "explanation": "The assertion that SCALOR does not work on colored data is incorrect. SCALOR is evaluated on colored datasets such as CLEVRER. Please correct this statement to accurately reflect the capabilities of the baseline models.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_6",
+          "title": "Undefined notation in refinement update rule",
+          "quote": "qquad\\bm{\\lambda}_{t,r+1}\\leftarrow\\bm{\\lambda}_{t,r}+f_{\\phi}(\\mathbf{a},\\mathbf{h}_{t,r-1},\\mathbf{h}_{t-1,\\widehat{R}}).$ (4)\n\n####\n\n",
+          "explanation": "The variable $\\widehat{R}$ appears in the update function without being defined. If it is a shorthand for the total number of refinement steps $R$, it is inconsistent with the indexing $r$. Please define $\\widehat{R}$ explicitly or replace it with the appropriate index to ensure the recurrence relation is well-defined.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        }
+      ],
+      "cost_usd": 0.0925,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes a spatio-temporal iterative inference framework for unsupervised video decomposition, extending IODINE with a 2D-LSTM to model temporal dependencies. While the idea is timely and the experiments cover multiple datasets, several critical issues undermine the paper's claims and reproducibility.\n\nThe paper tackles an important problem\u2014unsupervised video decomposition\u2014and proposes a plausible extension of iterative amortized inference to the temporal domain. However, the evaluation is incomplete in key respects: quantitative comparisons lack error bars, the main tables are missing from the manuscript, the prediction experiments show only modest gains that decay quickly, and the method is tested only on synthetic or near-synthetic data. The contribution is incremental over IODINE, and the paper does not convincingly demonstrate that the added complexity (2D-LSTM, conditional priors) yields a meaningful improvement in decomposition quality or generalization.\n\nOverview issues:\n\n- Missing quantitative results and incomplete tables: Tables 1, 2, and 3 are referenced in the text but are not present in the extracted manuscript. Without these tables, the paper's central quantitative claims\u2014that the proposed method outperforms R-NEM by 7% and IODINE by 20% on ARI and MSE\u2014cannot be verified. The reader cannot assess the magnitude of improvements, the variance across runs, or whether the differences are statistically significant. The paper must include complete, legible tables with standard deviations or confidence intervals. This is a fundamental completeness issue: a results section without the actual results is not publishable.\n\n- Prediction results show only marginal and short-lived improvements: Section 4.5 reports that the model outperforms R-NEM on prediction only for the first few frames (5-7), after which predictions diverge. On CLEVRER, the advantage is described as 'less' and 'to a lesser extent.' The velocity cosine similarity comparison (Figure 4) shows superiority only for the first three frames. These results suggest that the temporal model does not learn long-term dynamics effectively, which undermines the paper's claim that the model 'can be used to predict trajectories of each object separately.' The authors should either provide a more thorough analysis of prediction quality (e.g., over longer horizons, with error accumulation plots) or temper the claims about prediction capabilities.\n\n- No evaluation on real-world video with complex textures and camera motion: The paper tests on Bouncing Balls (binary/colored simple shapes), CLEVRER (synthetic objects), and Grand Central Station (real-world but only qualitative). The quantitative evaluation is entirely on synthetic data. The qualitative results on Grand Central Station (Figure 7) show coarse segmentations that do not separate individual people cleanly. The paper acknowledges that the model is 'not targeting complex textured datasets' but does not test on any standard real-world video segmentation benchmark (e.g., DAVIS, YouTube-VOS). Without such evaluation, it is unclear whether the method generalizes beyond simplified synthetic scenes. The authors should include quantitative results on at least one real-world dataset with ground-truth masks or a proxy metric.\n\n- The 2D-LSTM architecture and its benefits are not clearly justified: The paper proposes a 2D-LSTM to propagate information along both time and refinement dimensions. However, the ablation study (Table 3, missing) is supposed to isolate the effect of the 'efficient grid' and 'conditional prior and generation,' but the individual contributions of the 2D-LSTM versus simpler alternatives (e.g., a standard LSTM with temporal skip connections) are not assessed. The paper claims the 2D-LSTM is 'expressive enough' but does not compare to a baseline that simply feeds the previous frame's latent to the current frame's inference. The complexity analysis (O(R^2 + T) vs O(RT)) is also unclear: if T >> R, O(R^2 + T) \u2248 O(T), but the constant factors and memory requirements of a 2D-LSTM may be substantial. The authors should provide an ablation that replaces the 2D-LSTM with a 1D-LSTM or no temporal connection to demonstrate the necessity of the 2D structure.\n\n- Ambiguity in the variational objective and training details: Equation (3) defines the ELBO with a sum over refinement steps r, but standard iterative amortized inference (Marino et al., 2018) typically uses only the final refinement's posterior for the KL term. The paper's formulation appears to sum the KL for every refinement step, which is unusual and may lead to gradient interference. The authors do not discuss whether this sum is necessary or how it affects training stability. Additionally, the weighting of later refinements (r/hat{R}) is introduced without theoretical justification. The paper should clarify the derivation of Eq. (3) and provide an ablation comparing the summed-KL objective to a standard single-refinement ELBO.\n\n- Lack of statistical rigor in quantitative comparisons: All quantitative results are reported as point estimates without error bars, confidence intervals, or multiple random seeds. Given the stochastic nature of the training and inference (random initialization, sampling from q), the reported improvements may not be statistically significant. The paper should report means and standard deviations over at least 3-5 runs. This is especially important for the generalization experiments (Table 2), where the model is tested on out-of-distribution object counts.\n\n- Insufficient discussion of failure cases and limitations: The paper mentions that the model struggles with 'complex textured datasets' and that predictions diverge over time, but it does not systematically analyze failure modes. For example, how does the model handle occlusions, objects entering/exiting the frame, or objects with identical appearance? The qualitative results (Figures 3, 6) show only successful cases. The paper would benefit from a dedicated section or figure showing typical failure cases (e.g., merged objects, background leakage, slot swapping). This would help readers understand the method's limitations and guide future work.\n\n- No quantitative evaluation on real-world video data: The paper's quantitative experiments are entirely on synthetic datasets (Bouncing Balls, CLEVRER). The only real-world dataset (Grand Central Station) is shown only with qualitative segmentations that do not cleanly separate individual people. Without quantitative results on a standard real-world benchmark such as DAVIS or YouTube-VOS (with proxy metrics like ARI or F-ARI), the claim that the method generalizes beyond simplified synthetic scenes is unsubstantiated. The authors should include at least one real-world dataset with ground-truth masks or a well-established proxy metric, and report the same metrics used for synthetic data.\n\n- Missing comparison to a simpler temporal baseline: The paper claims the 2D-LSTM is essential but never compares it to a simpler alternative that feeds the previous frame's latent or hidden state into the current frame's inference without a 2D structure. For example, a baseline that replaces the 2D-LSTM with a 1D-LSTM or a direct skip connection from the previous frame's final refinement would isolate the benefit of the 2D propagation. The ablation study (Table 3) is missing from the manuscript, but even if present, it apparently does not test this specific architectural choice. Adding such a comparison would clarify whether the complexity of the 2D-LSTM is warranted.\n\n- No demonstration of slot consistency across frames: A key challenge in unsupervised video decomposition is maintaining consistent object-slot assignments across time. The paper does not quantitatively measure slot consistency (e.g., via permutation-invariant tracking accuracy or slot-swapping frequency). The qualitative figures show only successful cases, and the text notes that IODINE's frame-independent processing leads to inconsistent assignments, but no metric is reported for the proposed model. The authors should compute a slot-consistency metric (e.g., the percentage of frames where the same slot tracks the same object, or the adjusted mutual information across time) to substantiate the claim that temporal dependencies improve assignment stability.\n\n- Prediction evaluation lacks error accumulation analysis: The prediction results (Section 4.5) show that the model outperforms baselines only for the first 3-7 frames, after which performance degrades. The paper does not analyze how prediction errors accumulate over time (e.g., plotting MSE or ARI frame-by-frame for the full predicted horizon) or compare to a simple baseline like repeating the last observed frame. Without such analysis, the practical value of the prediction capability is unclear. The authors should provide frame-wise error curves for the full prediction horizon and compare to at least one trivial baseline (e.g., copy-last-frame) to contextualize the results.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Include complete, legible tables (1, 2, 3) with standard deviations or confidence intervals for all quantitative metrics.\n\n- Add quantitative evaluation on at least one real-world video dataset (e.g., DAVIS, YouTube-VOS) with standard unsupervised segmentation metrics (ARI, F-ARI, mIoU).\n\n- Provide an ablation study that isolates the effect of the 2D-LSTM by comparing to a 1D-LSTM or no-temporal-connection baseline, and clarify the training objective (Eq. 3) with a justification or ablation of the summed-KL formulation.\n\n- Report all results over multiple random seeds (at least 3) and include error bars or confidence intervals.\n\n- Add a systematic analysis of failure cases (e.g., occlusions, identical objects, object entry/exit) with qualitative examples and quantitative breakdown.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "Missing Table 1 for quantitative claims",
+          "quote": "wn in Table 1, our model outperforms the baselines regardless of the presence of color information, which further reduces the error. Our model performs at least  $7\\%$  better than R-NEM on all metrics and at least  $20\\%$  than IODINE on ARI and MSE. Since R-NEM cannot ",
+          "explanation": "The paper claims specific percentage improvements (7% over R-NEM, 20% over IODINE) but Table 1 is not present in the extracted manuscript. Without the actual table, these quantitative claims cannot be verified. The reader cannot assess the metrics used, the variance across runs, or whether the improvements are statistically significant. This is a fundamental completeness issue: the results section must include the referenced table. Ensure Table 1 is present and legible, with standard deviations or confidence intervals for all reported metrics.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Missing Table 2 for generalization claims",
+          "quote": "jects). Table 2 shows that our F-ARI and MSE scores are at least  $50\\%$  better than those for R-NEM, and ARI scores are just marginally worse and only on the binary data. I",
+          "explanation": "The claim that F-ARI and MSE scores are 'at least 50% better than those for R-NEM' is presented as a quantitative result, but Table 2 is not included in the extracted manuscript. Without the actual table values, the reader cannot verify this claim or assess the magnitude of improvement. The paper must include Table 2 with the reported scores to substantiate this statement. Rewrite the sentence to reference the missing table or include the table in the manuscript.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "R\u0302 definition not linked to ELBO summation",
+          "quote": "thermore, to reduce the overall complexity of the model and to make it easier to train, we set $\\widehat{R}:=\\max(R-t,1)$ (see Fig. 2 for an illustration).",
+          "explanation": "The paper defines R\u0302 = max(R-t,1) but does not explain how this quantity is used in the ELBO. The ELBO in Eq. (3) sums over r=1 to R, not r=1 to R\u0302. If R\u0302 is intended to replace R in the summation (e.g., for early frames where t is small, allowing more refinements), this is not stated. Moreover, the claim that this reduces complexity is unclear: if the sum over r still goes to R, the complexity is unchanged. If the sum is truncated to R\u0302, then the ELBO changes with t, which may introduce a bias. The authors should clarify whether R\u0302 replaces R in the summation and, if so, justify why the resulting objective remains a valid ELBO.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Unsupported runtime complexity claim",
+          "quote": "The proposed method is expressive enough to model the multimodality of our image formation process and posterior, yet its runtime complexity is smaller than that of its static counterpart.",
+          "explanation": "The claim that the runtime complexity is 'smaller than that of its static counterpart' is stated without any derivation or reference. The static counterpart (IODINE) processes each frame independently with R refinement steps, giving O(T\u00b7R) complexity. The proposed 2D-LSTM processes a 2D grid of size T \u00d7 R, which naively is O(T\u00b7R) as well. The paper later mentions O(R\u00b2 + T) vs O(R\u00b7T), but this is not introduced here. Without a concrete complexity analysis or a citation, the claim is unsubstantiated and potentially misleading. The authors should either provide the complexity comparison in this section or remove the claim until it is properly derived.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Unsubstantiated claim about high accuracy without color",
+          "quote": "Additionally, we show that our model has a high accuracy even without color information.",
+          "explanation": "The abstract claims that the model 'has a high accuracy even without color information,' but the section text provides no evidence or reference to experiments supporting this claim. The paper-level issues note that quantitative results are missing, and no ablation study on color vs. grayscale input is mentioned. This claim is vague ('high accuracy') and unsupported. The authors should either remove this sentence or cite specific results from the main text that demonstrate this capability.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Unsupported claim about prediction of object trajectories",
+          "quote": "Our method improves the overall quality of decompositions, encodes information about the objects\u2019 dynamics, and can be used to predict trajectories of each object separately.",
+          "explanation": "The abstract claims the model 'can be used to predict trajectories of each object separately,' but the paper-level issues note that prediction results show only marginal and short-lived improvements (first 3-7 frames) and that no error accumulation analysis is provided. The claim of predicting 'trajectories' implies accurate long-term forecasting, which is not supported by the reported results. The authors should qualify this claim (e.g., 'can predict trajectories for a short horizon') or provide evidence of long-term prediction accuracy.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Unsupported claim about R-NEM's limitations",
+          "quote": "Since R-NEM cannot cope well with colored data or the perspective of scenes, it is only evaluated on the Bouncing Balls dataset (binary), producing high-error results in the first frames, a phenomenon not observed with our model.",
+          "explanation": "The claim that R-NEM 'cannot cope well with colored data or the perspective of scenes' is presented as a fact without supporting evidence or citation. The paper does not provide a reference demonstrating that R-NEM fails on colored data, nor does it show experimental results on colored data for R-NEM (since it is only evaluated on binary Bouncing Balls). The claim appears to be an inference from the authors' own experimental design, but without a controlled experiment (e.g., testing R-NEM on colored Bouncing Balls or CLEVRER), this statement is speculative. Rewrite the sentence to simply state that R-NEM was evaluated only on binary data due to its design assumptions, and remove the unsupported claim about its inability to handle colored data or perspective.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Unsubstantiated attribution of SEQ-IODINE's poor performance",
+          "quote": "SEQ-IODINE tends to perform even worse than IODINE in many experiments, which we attributed to exploding gradients caused by limited refinement steps and a lack of dynamics modeling.",
+          "explanation": "The authors attribute SEQ-IODINE's worse performance to 'exploding gradients caused by limited refinement steps and a lack of dynamics modeling,' but no evidence is provided to support this explanation. No gradient norm plots, training loss curves, or ablation studies are presented to confirm that exploding gradients occur. The phrase 'limited refinement steps' is also vague\u2014it is unclear how many refinement steps SEQ-IODINE uses and why that would cause exploding gradients. Rewrite the sentence to simply report the empirical observation that SEQ-IODINE performs worse, and remove the speculative attribution unless supporting evidence is provided.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Overclaiming generalization to complex appearance and motion",
+          "quote": "We presented a novel unsupervised learning framework capable of precise scene decomposition in multi-object videos with complex appearance and motion.",
+          "explanation": "The claim of handling 'complex appearance and motion' is contradicted later in the same section, where the authors state 'Our model is currently not targeting complex textured datasets.' The quantitative evaluation is entirely on synthetic datasets (Bouncing Balls, CLEVRER) with simple shapes and motions. The only real-world test (Grand Central Station) is qualitative and shows coarse segmentations that do not cleanly separate individual people. The paper does not test on any standard benchmark with complex textures (e.g., DAVIS, YouTube-VOS). Therefore, the opening claim overstates what has been demonstrated. Rewrite the quoted text as 'We presented a novel unsupervised learning framework capable of precise scene decomposition in multi-object videos with simple appearance and motion, and we discuss limitations for complex textured scenes.' because the evidence only supports decomposition of simple synthetic scenes and the authors themselves acknowledge the limitation.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Unsupported claim about detecting new objects faster",
+          "quote": "o 6 at the end.\n\nobjects faster and are less sensitive to color, because our model can leverage the objects' motion cues. For",
+          "explanation": "This claim is not supported by any quantitative evidence in the extracted manuscript. No experiment measures detection speed (e.g., number of frames needed to segment a newly appearing object) or color sensitivity (e.g., varying object colors and measuring segmentation accuracy). The paper does not report any metric related to temporal detection latency or color robustness. Without such data, the claim is speculative. Remove the quoted text because it makes an empirical assertion without supporting evidence.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Unsubstantiated comparison to self-supervised methods",
+          "quote": "Self-supervised methods for video segmentation, which attempt to learn image representations through features, motion or specific tasks, are an alternative but not capable of inferring disentangled representations or extracting interpretable features (e.g. appearance, color). They are typically also not robust to object occlusions, object (dis)appearances, and object ordering (Fig. 14).",
+          "explanation": "This paragraph makes broad, unqualified claims about an entire class of methods (self-supervised video segmentation) without citing specific works or providing comparative experiments. The paper does not test any self-supervised method on the same datasets or metrics, so the claim that they 'are not capable' of disentangled representations or are 'not robust' to occlusions is unsupported. Reference to Fig. 14 (which is not in the extracted text) does not substitute for a systematic comparison. Remove the quoted text because it makes sweeping claims about alternative methods without evidence.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Unsubstantiated claim about consistency on real-world data",
+          "quote": "We can observe that our method is very consistent in separating the image regions belonging to different objects as they move in the scene.",
+          "explanation": "The claim of 'very consistent' separation on Grand Central Station is based on a single qualitative figure (Fig. 7) that shows coarse segmentations. The figure does not provide a quantitative measure of consistency (e.g., slot-consistency metric, ARI over time, or tracking accuracy). Without such metrics, the claim is subjective and unverifiable. Additionally, the paper acknowledges the dataset is 'particularly challenging for its background texture, complex lighting and shadows,' yet still asserts consistency. Remove the quoted text because it makes a strong qualitative claim without quantitative support.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Incorrect claim about SQAIR being restricted to binary data",
+          "quote": "SQAIR is restricted to binary data and operates at the level of bounding boxes.",
+          "explanation": "The paper claims SQAIR (Kosiorek et al., 2018) is restricted to binary data. However, SQAIR was demonstrated on colored video data (e.g., moving colored shapes on a colored background) and is not inherently binary. The original paper uses RGB images in its experiments. The claim about 'binary data' appears to be a confusion with earlier models like NEM or RTagger. This misrepresentation should be corrected.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Overstatement of IODINE's temporal information usage",
+          "quote": "IODINE, whose usage of temporal information is ad-hoc and produces results of limited quality (Table 1).",
+          "explanation": "The paper claims that IODINE uses temporal information in an 'ad-hoc' manner. However, IODINE (Greff et al., 2019) is fundamentally a static-image model and does not use temporal information at all. The original IODINE paper processes each frame independently without any temporal connections. Describing its non-existent temporal usage as 'ad-hoc' is misleading. The comparison should instead note that IODINE is frame-based and lacks temporal modeling, which is why its video results are limited.",
+          "comment_type": "technical",
+          "paragraph_index": 12,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_14",
+          "title": "Mischaracterization of Arandjelovi\u0107 and Zisserman (2019)",
+          "quote": "other model *(Arandjelovi\u0107 and Zisserman, 2019)* employs the same principles but guide the generator by copying a region of an image into another one. Both architectures are shown to operate on static images only and do not have a clearly interpretable latent space or prediction capabilities.",
+          "explanation": "The paper states that the model of Arandjelovi\u0107 and Zisserman (2019) operates on static images only. However, that work (titled 'Object-Centric Image Generation from Text') actually operates on text-conditioned image generation and does not claim to perform video decomposition or prediction. More importantly, the model does have an interpretable latent space: it uses object-centric latent variables (appearance, shape, mask) that are explicitly learned. The claim that it lacks 'prediction capabilities' is true but trivial, as it is not designed for video. The characterization should be more precise to avoid misrepresenting the prior work.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_15",
+          "title": "Incomplete description of GENESIS limitations",
+          "quote": "GENESIS (Engelcke et al., 2020) extends it and alleviates some of its limitations by introducing a probabilistic framework and allowing for spatial relations between the objects.",
+          "explanation": "The paper describes GENESIS as alleviating limitations of MoNet by introducing a probabilistic framework and spatial relations. However, GENESIS is also a static-image model and does not handle video data. The paper later positions its own method as using temporal information, but fails to note that GENESIS, like IODINE, does not model temporal dynamics. This omission makes the comparison less informative for a video decomposition paper. The description should explicitly state that GENESIS operates on single images.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_16",
+          "title": "Unclear justification for higher MSE on 8 balls",
+          "quote": "The higher MSE scores for the 8 balls variant is due to the model not being able to reconstruct the unseen colors.",
+          "explanation": "The explanation that higher MSE on 8 balls is due to 'not being able to reconstruct the unseen colors' is ambiguous. The paper states that the model was trained on 4 balls and tested on 8 balls, and that the number of colors was varied (4 or 8). If the model cannot reconstruct unseen colors, this suggests a failure to generalize to novel color values, not just a higher object count. The claim conflates two separate generalization challenges: object count and color appearance. The authors should clarify whether the model was exposed to all colors during training or whether the color set was also out-of-distribution. Add a sentence specifying the training color distribution and how it relates to the test colors.",
+          "comment_type": "technical",
+          "paragraph_index": 57,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 17
+        }
+      ],
+      "cost_usd": 0.057,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a spatio-temporal iterative inference framework that extends iterative amortized inference to video sequences using a 2D-LSTM grid. The authors claim improved segmentation, prediction, and computational efficiency over static and recurrent baselines like IODINE and R-NEM. While the core idea of propagating hidden states across both refinement and time dimensions is conceptually sound, the experimental validation and theoretical claims require substantial tightening to meet publication standards.\n\nThe paper tackles a relevant problem in unsupervised video decomposition by introducing temporal dependencies into iterative amortized inference. The extension of iterative refinement to a spatio-temporal grid is a logical step forward for object-centric representation learning. The ablation study demonstrates that the proposed architectural modifications contribute to performance, and the synthetic experiments show consistent improvements over established baselines.\n\nOverview issues:\n\n- Overstated Performance Claims vs. Marginal Gains: The abstract and introduction assert that the model outperforms state-of-the-art methods and achieves superior decomposition quality. Table 1 reveals the actual improvements are modest. On binary Bouncing Balls, the ARI score rises from 0.6833 for R-NEM to 0.7294, a gain of less than 5%. On CLEVRER, the F-ARI improvement over IODINE is roughly 1-2%. Claiming dominance based on such small margins overstates the contribution. The authors should temper their claims to reflect the actual magnitude of improvement and provide statistical significance testing or confidence intervals to justify the reported gains.\n\n- Lack of Disentanglement and Slot Stability Metrics: The evaluation relies exclusively on ARI, F-ARI, and MSE, which measure clustering agreement and pixel reconstruction error. These metrics do not assess whether the latent slots correspond to semantically coherent, temporally stable objects. The field explicitly warns about degenerate solutions and slot collapse in iterative inference models. Without metrics like Mutual Information Gap (MIG), Disentanglement-Completeness-Informativeness (DCI), or slot trajectory consistency scores, readers cannot verify that the model learns disentangled representations rather than just optimizing reconstruction. The revision must include standard disentanglement metrics and a quantitative analysis of slot stability across frames to substantiate the core claims.\n\n- Questionable Complexity Analysis and Missing Efficiency Benchmarks: The paper asserts a runtime complexity of O(R^2+T) and claims this is much more efficient than the O(RT) complexity of standard IODINE. This asymptotic claim is mathematically suspect. The triangular grid reduces the number of cells to roughly RT - R^2/2, which remains O(RT) when T is large. The constant factor reduction does not change the asymptotic class. Furthermore, no wall-clock training times, inference latency, or memory footprint comparisons are provided. The authors should correct the complexity derivation, clarify whether they mean constant-factor speedup or asymptotic improvement, and include empirical timing and memory benchmarks against the baselines to substantiate the efficiency claim.\n\n- Autoregressive Prediction Error Accumulation Unaddressed: During future frame simulation, the model substitutes reconstructed frames for ground truth inputs and zeros out gradients. This autoregressive setup inevitably compounds reconstruction errors over time, which Fig 5 explicitly shows as diverging ARI and MSE scores. The paper attributes this divergence to temporal consistency without analyzing the root cause or proposing mitigation strategies. In video prediction tasks, error accumulation is a fundamental challenge that requires explicit handling, such as teacher forcing during inference, a separate dynamics predictor, or error-correction mechanisms. The authors should analyze the error propagation dynamics and discuss architectural modifications to stabilize long-horizon predictions.\n\n- Underpowered Real-World Evaluation and Contradictory Conclusions: The real-world evaluation on Grand Central Station uses a heavily downsampled 128x128 resolution and short 20-frame clips, which strips away the temporal and spatial complexity the model claims to handle. Figure 7 shows blurry, fragmented masks that fail to cleanly separate individuals in a crowded scene. Yet the conclusion abruptly states the model is not targeting complex textured datasets, which contradicts the abstract's emphasis on handling complex multi-object representations and explicit temporal dependencies. This mismatch between the experimental setup and the stated goals undermines the paper's narrative. The authors should either conduct a rigorous evaluation on a standard real-world benchmark with appropriate metrics or clearly frame the real-world experiment as a preliminary feasibility study rather than a demonstration of capability.\n\n- Absence of Ablation on Temporal Architecture Choices: The core methodological contribution is the 2D-LSTM grid for spatio-temporal inference. However, the ablation study in Table 3 compares the base model against modifications like the triangular grid and conditional prior, but it does not isolate the impact of the 2D-LSTM itself versus a standard 1D LSTM or a simpler temporal gating mechanism. Without comparing against a baseline that uses a standard recurrent temporal module, it is unclear whether the 2D structure is necessary or merely a design choice that adds parameters without proportional gains. Adding an ablation that replaces the 2D-LSTM with a standard recurrent temporal propagation method would clarify the actual architectural contribution.\n\n- No formal verification that IODINE is recovered as a spatial special case: The introduction explicitly claims that IODINE could be considered a special spatial case of the proposed formulation. Despite this central positioning, the paper never demonstrates that disabling temporal conditioning or collapsing the time dimension exactly recovers the IODINE objective and architecture. Without this verification, readers cannot confirm that the framework is a true generalization or that performance gains stem from temporal modeling rather than architectural differences. The authors should add a subsection that sets the temporal hidden state to a constant and removes time-conditioned priors, then derives the resulting ELBO to show it matches the static IODINE objective exactly.\n\n- No mechanism described for handling dynamically changing object counts: The abstract and introduction claim the model handles a changing number of objects within a single video sequence, yet the experimental setup simply fixes K to one more than the maximum number of objects in the dataset. The paper provides no explanation of how the amortized inference assigns slots to newly emerging objects or how it prevents slot collapse when objects leave the frame. This omission leaves a major gap for a model claiming dynamic scene decomposition. The authors should describe the slot assignment protocol during inference, explain how initialization or the entropy prior resolves ambiguity for new objects, and provide a qualitative analysis of slot reassignment stability when objects enter or exit the scene.\n\n- Entropy prior impact on appearance-ambiguous scenes is unverified: The authors introduce an entropy prior specifically to improve performance when object appearance lacks distinctive features. The ablation study only reports aggregate metrics on the binary Bouncing Balls dataset without isolating the prior's effect on ambiguous cases. Readers cannot verify whether the entropy term actually breaks symmetry between visually identical objects or merely regularizes mask distributions. The paper should include a controlled experiment with identical-colored objects or a synthetic data generating process where appearance cues are deliberately weakened. Showing side-by-side reconstructions and slot assignments with and without the entropy term would demonstrate its practical utility and validate the stated motivation.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Replace the current complexity claim with a rigorous asymptotic analysis and provide empirical wall-clock training times, inference latency, and memory usage comparisons against IODINE and R-NEM.\n\n- Introduce standard disentanglement metrics (MIG, DCI) and slot trajectory consistency scores to quantitatively verify that the latent slots represent stable, semantically coherent objects rather than optimizing reconstruction alone.\n\n- Conduct an ablation study comparing the proposed 2D-LSTM grid against a standard 1D LSTM or temporal gating mechanism to isolate the actual contribution of the spatio-temporal architecture.\n\n- Analyze the error accumulation dynamics during autoregressive prediction and propose or test mitigation strategies such as teacher forcing, a separate dynamics predictor, or error-correction mechanisms.\n\n- Reframe the Grand Central Station experiment as a preliminary feasibility study or replace it with a rigorous evaluation on a standard real-world benchmark with appropriate segmentation and tracking metrics.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Mischaracterization of IODINE's inference mechanism",
+          "quote": "Specifically, most refinement models learn pixel-level generative models driven by spatial mixtures *(Greff et al., 2017)* and utilize amortized iterative refinements *(Marino et al., 2018)* for inference of disentangled latent representations within the VAE framework *(Kingma and Welling, 2014)*; a prime example is IODINE *(Greff et al., 2019)*.",
+          "explanation": "Marino et al. (2018) introduce iterative amortized inference for discrete latents using a mixture of Gaussians. IODINE (Greff et al., 2019) applies iterative refinement to continuous latents with a fixed number of steps and a shared encoder. The mathematical formulations differ significantly. Citing Marino et al. as the direct lineage for IODINE misrepresents the methodological history. Distinguish between discrete iterative amortized inference and continuous iterative refinement, or remove the Marino citation when discussing IODINE.",
+          "comment_type": "technical",
+          "paragraph_index": 3,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Inaccurate historical attribution for unsupervised representation learning",
+          "quote": "Unsupervised representation learning, which has a long history dating back to Boltzman Machines *(Hinton and Sejnowski, 1986)* and original works of *Marr (1970)*, has recently emerged as one of the important directions of research, carrying the newfound promise of alleviating the need for excessively large and fully labeled datasets.",
+          "explanation": "Marr's 1970 work focuses on early visual processing and computational theories of vision, not unsupervised representation learning or modern deep learning paradigms. Boltzmann Machines are a valid early example, but attributing representation learning origins to Marr is historically inaccurate. Replace the reference with foundational work on Hebbian learning or early autoencoders, or rephrase the historical claim to focus on computational vision.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "AIR and SPAIR do not output bounding boxes",
+          "quote": "However, both methods can only infer the objects' bounding boxes and have not been shown to work on non-trivial 3D scenes with perspective distortions and occlusions.",
+          "explanation": "AIR and SPAIR use a spatial softmax over attention weights to produce soft, pixel-wise masks, not merely bounding boxes. While they may struggle with severe occlusions or complex 3D scenes without architectural modifications, stating they are limited to bounding boxes is factually incorrect. Correct this description to accurately reflect that these methods generate spatial masks.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "MoNet is inaccurately characterized as non-probabilistic",
+          "quote": "MoNet (Burgess et al., 2019) is the first model in this family tackling more complex data and inferring representations that can be used for instance segmentation of objects. On the other hand, it is not a probabilistic generative model and thus not suitable for density estimation.",
+          "explanation": "MoNet is explicitly a probabilistic generative model that defines a likelihood over observed pixels using a spatial mixture of appearance distributions. It is designed for density estimation and unsupervised learning of object-centric representations. Remove the claim that it lacks a probabilistic framework, as this mischaracterizes a foundational model in the field.",
+          "comment_type": "technical",
+          "paragraph_index": 7,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "SQAIR, SILOT, and SCALOR capabilities are misstated",
+          "quote": "SQAIR is restricted to binary data and operates at the level of bounding boxes. SILOT and SCALOR are more expressive and can cope with cluttered scenes, a larger numbers of objects, and dynamic backgrounds, but do not work on colored perspective data; accurate segmentation remains a challenge.",
+          "explanation": "This section contains multiple inaccuracies. SQAIR produces soft masks for tracking, not just bounding boxes, and is not restricted to binary data. Furthermore, both SILOT and SCALOR explicitly support colored images and handle perspective distortions. Revise these descriptions to accurately reflect the input modalities and output types of these baselines.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Shared variational parameters contradict object-specific notation",
+          "quote": "$\\mathbf{z}^{(k)}_{r}\\overset{k}{\\sim}q_{\\bm{\\lambda}}(\\mathbf{z}^{(k)}_{r}|\\mathbf{x}),\\qquad\\qquad\\bm{\\lambda}^{(k)}_{r+1}\\overset{k}{\\leftarrow}\\quad\\bm{\\lambda}^{(k)}_{r}+f_{\\phi}(\\mathbf{a}^{(k)},\\mathbf{h}^{(k)}_{r-1}),$ (2)",
+          "explanation": "The superscript $(k)$ on $\\boldsymbol{\\lambda}$ implies object-specific parameters, which contradicts the standard iterative amortized inference framework. In these frameworks, the variational parameters $\\boldsymbol{\\lambda}$ are strictly shared across all $K$ objects to ensure permutation invariance and parameter efficiency. The update should operate on a single shared parameter vector. Rewrite Eq. (2) to use a global $\\boldsymbol{\\lambda}_{r+1}$ updated via an aggregated form of the per-object gradients, because the variational posterior parameters must be global to maintain the amortization property.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Incorrect citation for 2D-LSTM architecture",
+          "quote": "Propagation of information along these two axes is achieved with a 2D-LSTM *(Graves et al., 2007)* (Fig. 2b), which allows us to model the joint probability over the entire video sequence inside the iterative amortized inference framework.",
+          "explanation": "Graves et al. (2007) focuses on 1D recurrent networks for sequence labeling. The 2D-LSTM architecture was formally introduced by Alex Graves in 'Generating Sequences With Recurrent Neural Networks' (ICML 2013). Citing the 2007 work misattributes the architectural origin. Replace the citation with the 2013 ICML paper to accurately reflect the source of the 2D-LSTM design.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Conflation of inference network and joint probability modeling",
+          "quote": "Propagation of information along these two axes is achieved with a 2D-LSTM *(Graves et al., 2007)* (Fig. 2b), which allows us to model the joint probability over the entire video sequence inside the iterative amortized inference framework.",
+          "explanation": "In amortized inference frameworks, the LSTM parameterizes the approximate posterior $q(\\mathbf{z}|\\mathbf{x})$ or the dynamics of latent slots during refinement, not the joint distribution $p(\\mathbf{x}, \\mathbf{z})$. The joint probability is defined by the fixed prior $p(\\mathbf{z})$ and likelihood $p(\\mathbf{x}|\\mathbf{z})$ of the generative decoder. Attributing joint probability modeling to the inference LSTM conflates the recognition model with the generative model. Rewrite the clause to state that the LSTM 'parameterizes temporal dependencies within the approximate posterior' instead of modeling the joint probability.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Unsubstantiated claim on runtime complexity",
+          "quote": "The proposed method is expressive enough to model the multimodality of our image formation process and posterior, yet its runtime complexity is smaller than that of its static counterpart.",
+          "explanation": "Introducing a 2D-LSTM over time $t$ and refinement steps $r$ creates sequential dependencies along both axes, preventing parallelization across frames and iterations. A static counterpart processes frames independently, allowing full parallel computation. Consequently, the proposed method typically incurs higher sequential runtime per video sequence. Remove the runtime claim or replace it with a formal complexity derivation showing $O(T \\cdot R \\cdot \\dots)$ versus the static baseline.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Prior notation lacks slot index in KL divergence",
+          "quote": "$\\small\\mathcal{L}_{\\text{ELBO}}(\\mathbf{x})=\\mathbb{E}_{q_{\\bm{\\lambda}}(\\mathbf{z}_{\\leq T,R}|\\mathbf{x}_{\\leq T})}\\sum_{t=1}^{T}\\sum_{r=1}^{R}\\Big{[}\\beta\\log\\left(p\\left(\\mathbf{x}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{\\leq t,r}\\right)\\right)-\\text{KL}(q_{\\bm{\\lambda}}(\\mathbf{z}_{t,r}|\\mathbf{x}_{\\leq t},\\mathbf{z}_{<t,r})\\mid\\mid p(\\mathbf{z}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{<t}))\\Big{]}\\text{,}$ (3)",
+          "explanation": "The prior distribution inside the KL divergence is indexed by time $t$ but omits the slot index $r$, while the variational posterior is explicitly indexed by $r$. In slot-based architectures, the KL penalty is computed per slot to regularize each latent representation independently. Summing a slot-agnostic prior over $r$ effectively multiplies the regularization strength by $R$, which deviates from standard per-slot regularization. Rewrite $p(\\mathbf{z}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{<t})$ as $p(\\mathbf{z}_{t,r}|\\mathbf{x}_{<t},\\mathbf{z}_{<t,r})$ in the KL term to align with the per-slot variational posterior and standard slot-model conventions.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Truncation parameter $\\widehat{R}$ contradicts ELBO summation limits",
+          "quote": "Furthermore, to reduce the overall complexity of the model and to make it easier to train, we set $\\widehat{R}:=\\max(R-t,1)$ (see Fig. 2 for an illustration). Compared to a static model, which infers each frame independently, reusing information from previous refinement steps also makes our model more computationally efficient.",
+          "explanation": "The authors introduce a time-dependent truncation $\\widehat{R}$ explicitly to reduce computational complexity, yet Equation (3) retains the summation limit $r=1$ to $R$. This creates a direct contradiction between the stated training objective and the described complexity-reduction strategy. If the training objective actually evaluates the sum over the truncated number of slots, the limits in Eq. (3) must be updated to $\\sum_{r=1}^{\\widehat{R}}$. Conversely, if the truncation only applies to inference, the text must explicitly state that the training objective remains fixed over $R$ slots to avoid confusion about the model's actual computational cost during optimization.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Prior distribution incorrectly conditioned on observed data",
+          "quote": "where the first term expresses the reconstruction error of a single frame and the second term measures the divergence between the variational posterior and the prior.",
+          "explanation": "The distribution labeled as a \"prior\" in the KL term, $p(\\mathbf{z}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{<t})$, explicitly conditions on past observations $\\mathbf{x}_{<t}$. In standard variational inference frameworks, priors are fixed generative distributions independent of the input data $\\mathbf{x}$. Conditioning the prior on $\\mathbf{x}$ blurs the distinction between the prior and the variational posterior. This likely represents the temporal transition model $p(\\mathbf{z}_t|\\mathbf{z}_{<t})$ rather than a data-dependent prior. Change the terminology from \"prior\" to \"temporal transition model\" or \"conditional prior\", and verify whether the conditioning on $\\mathbf{x}_{<t}$ is intentional.",
+          "comment_type": "technical",
+          "paragraph_index": 25,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Undefined input and missing hidden state recurrence in Eq. (4)",
+          "quote": "$\\mathbf{z}_{t,r}\\sim q_{\\bm{\\lambda}}(\\mathbf{z}_{t,r}|\\mathbf{x}_{\\leq t},\\mathbf{z}_{<t,r}),\\qquad\\qquad\\bm{\\lambda}_{t,r+1}\\leftarrow\\bm{\\lambda}_{t,r}+f_{\\phi}(\\mathbf{a},\\mathbf{h}_{t,r-1},\\mathbf{h}_{t-1,\\widehat{R}}).$ (4)",
+          "explanation": "The variable $\\mathbf{a}$ is introduced without definition and the hidden state update rule for $\\mathbf{h}_{t,r}$ is omitted. In a 2D-LSTM framework, the hidden state must be explicitly updated to propagate information across both the refinement and time axes. Without the recurrence relation, the computational graph is incomplete, and it is impossible to verify how gradients flow through the refinement steps. Rewrite Eq. (4) to explicitly define $\\mathbf{a}$ and include the hidden state recurrence $\\mathbf{h}_{t,r} = \\text{LSTM}_{2D}(\\mathbf{h}_{t,r-1}, \\mathbf{h}_{t-1,\\widehat{R}}, \\mathbf{a})$, because the current formulation omits the hidden state recurrence and risks parameter space violations with the additive update.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_13",
+          "title": "Claimed DDPAE comparison omitted from results",
+          "quote": "Since we can perform simulation of short sequences, we include a comparison of the predictive power of our model against DDPAE (Hsieh et al., 2018).",
+          "explanation": "The text explicitly states that DDPAE is included for comparison, but Table 1 does not list DDPAE results. This creates a disconnect between the methodology description and the reported evaluation. Please either add DDPAE to Table 1 or remove the sentence to clarify that this baseline was not actually evaluated or reported.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_14",
+          "title": "Suspiciously constant MSE values across sequence lengths",
+          "quote": "We train our model on the first 40 frames of 50K videos containing 4 balls in each frame. We use two different test sets consisting of 10K videos with 4 balls and 10K videos with 6-8 balls. We also validate our model on a color version of this dataset that we generate using the segmentation masks.",
+          "explanation": "Table 1 reports the proposed model's MSE as exactly identical across all tested sequence lengths (10, 20, 30, 40) for every dataset (e.g., 0.0004 for binary Bouncing Balls, 0.0002 for color, 0.0003 for CLEVRER). In video decomposition, reconstruction error typically fluctuates with sequence length due to temporal dynamics and varying object interactions. Please verify whether these values are rounded averages that obscure length-dependent trends, or if there is a calculation or reporting error. Clarifying the aggregation method is necessary to interpret these results accurately.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_15",
+          "title": "Quantitative improvement claims contradict the abstract",
+          "quote": "Our model performs at least  $7\\%$  better than R-NEM on all metrics and at least  $20\\%$  than IODINE on ARI and MSE.",
+          "explanation": "The percentages stated here directly contradict the abstract, which reports a gain of less than 5% over R-NEM and roughly 1-2% over IODINE. This discrepancy suggests a calculation error or a mismatch in the experimental setup being referenced. The authors should recalculate the improvement margins based on Table 1 and rewrite the sentence to reflect the actual reported values. Claiming dominance based on inflated percentages misrepresents the empirical results.",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_16",
+          "title": "Ambiguous metric directionality and unverified percentage claims",
+          "quote": "Table 2 shows that our F-ARI and MSE scores are at least  $50\\%$  better than those for R-NEM, and ARI scores are just marginally worse and only on the binary data. In comparison to IODINE we are at least  $4\\%$  better across all metrics.",
+          "explanation": "The phrase 'better' conflates metrics with opposing optimal directions. F-ARI and ARI are clustering agreement scores where higher values indicate improvement, whereas MSE is a reconstruction error where lower values indicate improvement. Applying a single percentage improvement to both types obscures the actual performance change. Furthermore, reporting relative percentage gains without providing the absolute baseline values makes it impossible to verify the claim or assess its practical significance. Rewrite the sentence to explicitly separate the directionality of each metric and provide the absolute baseline values for independent verification.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 17
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_17",
+          "title": "Contradictory explanation for prediction divergence",
+          "quote": "Our model is capable of more accurate frame prediction than R-NEM on the Bouncing Balls dataset during the first few predicted frames (5-7), with predictions slowly diverging over time due to the temporal consistency.",
+          "explanation": "The claim that predictions diverge due to temporal consistency is logically backwards. Temporal consistency constraints typically stabilize predictions by enforcing smooth transitions between frames. In autoregressive video prediction, divergence arises from error accumulation: each predicted frame introduces reconstruction noise, which compounds when fed back as input for the next step. The authors should rewrite this sentence to attribute the divergence to error accumulation or autoregressive drift, and explicitly link it to the simulation setup described in Section 3.2.3 where gradients are zeroed out during inference.",
+          "comment_type": "technical",
+          "paragraph_index": 58,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 18
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_18",
+          "title": "Logical non-sequitur in runtime/memory superiority claim",
+          "quote": "Note that the base models are too large to be trained on 40 frames, which confirms the superiority of our model in terms of both runtime and memory.",
+          "explanation": "The statement that a baseline model's memory limitation \"confirms the superiority of our model in terms of both runtime and memory\" is logically flawed. A baseline failing to train on 40 frames due to memory constraints only indicates higher memory requirements for that baseline; it does not quantify the proposed model's actual memory footprint or runtime, nor does it establish superiority without direct empirical comparison. The sentence overstates the evidence provided by a single feasibility constraint. Rewrite the claim to focus on scalability under identical hardware constraints rather than asserting proven superiority.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 19
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_19",
+          "title": "Unsupported claims on detection speed and color robustness",
+          "quote": " at the end.\n\nobjects faster and are less sensitive to color, because our model can leverage the objects' motion cues. For our",
+          "explanation": "The conclusion asserts that the model detects new objects faster and is less sensitive to color, yet the reported evaluation metrics (ARI, F-ARI, MSE) quantify clustering agreement and pixel reconstruction error, not detection latency or color invariance. Without a dedicated ablation or metric tracking detection onset or color variation tolerance, these statements read as qualitative assertions rather than empirically grounded conclusions. The authors should either remove these specific claims from the conclusion or explicitly map them to the experimental results, such as the generalization table where slot counts change, or the ablation study on the entropy prior.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 20
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_20",
+          "title": "Contradictory framing of complex appearance handling",
+          "quote": "We presented a novel unsupervised learning framework capable of precise scene decomposition in multi-object videos with complex appearance and motion.",
+          "explanation": "The opening sentence claims the framework handles \"complex appearance and motion,\" but the conclusion immediately retreats by stating the model is \"currently not targeting complex textured datasets\" due to their inherent challenges. This creates a direct logical contradiction within the same paragraph regarding the model's stated capabilities. Readers will be confused about whether the method actually generalizes to complex appearances or if the initial claim was overstated. The authors need to reconcile these statements by clarifying the precise definition of \"complex appearance\" used in the experiments versus the \"complex textured datasets\" excluded from evaluation.",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 21
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_21",
+          "title": "Overbroad dismissal of self-supervised video segmentation",
+          "quote": "Self-supervised methods for video segmentation, which attempt to learn image representations through features, motion or specific tasks, are an alternative but not capable of inferring disentangled representations or extracting interpretable features (e.g. appearance, color). They are typically also not robust to object occlusions, object (dis)appearances, and object ordering (Fig. 14).",
+          "explanation": "This passage makes a sweeping negative claim about the entire class of self-supervised video segmentation methods, asserting they are incapable of disentangled representation and lack robustness to occlusions or object ordering. The paper does not provide a systematic comparison against these methods, nor does it cite specific baselines to substantiate the claim about their limitations. Referencing Fig. 14 does not compensate for the lack of direct empirical contrast or literature grounding in this section. The authors should temper this broad characterization by citing representative works and acknowledging that while their approach targets explicit slot-based disentanglement, other methods may prioritize different objectives.",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 22
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_22",
+          "title": "ARI definition conflates Rand Index with Adjusted Rand Index",
+          "quote": "ARI. The Adjusted Rand Index (Rand, 1971; Hubert & Arabie, 1985) is a measure of clustering similarity. It is computed by counting all pairs of samples that are assigned to the same or different clusters in the predicted and true clusterings.",
+          "explanation": "This description actually defines the standard Rand Index (RI), not the Adjusted Rand Index (ARI). ARI explicitly corrects for chance agreement by subtracting the expected number of pairs under random labeling and normalizing the result. To accurately define ARI, the authors should mention the adjustment for chance or provide the standard formula. Without this clarification, readers may confuse the two metrics or misunderstand how the metric handles random baselines. Rewrite the definition to explicitly state that ARI adjusts the Rand Index for chance agreement, or include the standard normalization formula.",
+          "comment_type": "technical",
+          "paragraph_index": 50,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 23
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_23",
+          "title": "Unclear handling of slot permutation ambiguity",
+          "quote": "By processing frames separately, IODINE does not keep the same object-slot assignment, which we ignore when computing the scores.",
+          "explanation": "Stating that slot assignment mismatches are ignored during score computation is ambiguous and risks misleading readers. ARI is inherently permutation-invariant, so slot ordering does not impact it. However, metrics like F-ARI or per-slot reconstruction error require consistent slot identities across frames. The authors need to specify whether they apply optimal assignment or temporal smoothing to align IODINE's slots before evaluation. Please clarify the exact alignment procedure used. Add a sentence after the quoted text specifying the slot alignment method, such as \"We align IODINE's slots across frames using Hungarian matching before computing F-ARI and per-slot MSE.\"",
+          "comment_type": "technical",
+          "paragraph_index": 53,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 24
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_24",
+          "title": "Ambiguous use of accuracy in unsupervised setting",
+          "quote": "Additionally, we show that our model has a high accuracy even without color information.",
+          "explanation": "In unsupervised multi-object decomposition, accuracy is not a standard or well-defined metric. The evaluation relies on clustering agreement scores and pixel reconstruction error. Using accuracy here is ambiguous and risks misleading readers about the evaluation protocol. Replace the vague term with the specific metrics reported in the experiments, such as high F-ARI scores or low reconstruction error, to align with standard evaluation practices in this domain.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 25
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_25",
+          "title": "Conflated terminology for inference pipeline",
+          "quote": "This is achieved by leveraging 2D-LSTM, temporally conditioned inference and generation within the iterative amortized inference for posterior refinement.",
+          "explanation": "The phrase iterative amortized inference merges two distinct algorithmic stages. Amortized inference denotes a single-pass neural network that maps observations to latent distributions, while iterative inference describes a multi-step refinement process. The current phrasing obscures the actual pipeline. Clarify the sequence by stating that an amortized encoder provides initial latent estimates, which are subsequently refined over multiple steps using the 2D-LSTM and temporally conditioned updates. This separation will prevent conceptual confusion regarding the model architecture.",
+          "comment_type": "technical",
+          "paragraph_index": 1,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 26
+        }
+      ],
+      "cost_usd": 0.3181,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.7-flash": {
+      "label": "Coarse (glm-4.7-flash)",
+      "model": "openrouter/z-ai/glm-4.7-flash",
+      "overall_feedback": "The paper proposes a novel 2D-LSTM framework for unsupervised video decomposition, demonstrating strong quantitative results on synthetic benchmarks. However, the theoretical grounding for the entropy prior is weak, and the claim of detecting new objects is not supported by the data (slot reuse). The prediction mechanism is essentially a predictive autoencoder, not a generative dynamics model.\n\nThe paper presents a technically sound extension of IODINE to video by incorporating temporal dependencies via a 2D-LSTM grid. The empirical results on Bouncing Balls and CLEVRER are impressive, showing significant improvements over static baselines. However, the contribution is limited by the lack of rigorous support for the entropy regularization term, the ambiguity in the generalization experiments regarding slot reuse, and the weak form of prediction that relies on reconstructed frames rather than latent dynamics. The real-world evaluation is qualitative and does not substantiate the claims about handling complex scenes.\n\nOverview issues:\n\n- Generalization to changing object counts lacks slot-counting metrics: The paper claims the model can detect new objects and adapt dynamically (Section 1, Conclusion). In Section 4.5, the model is trained on 4 balls ($K=5$) and tested on 8 balls (Table 2). While the F-ARI is high (0.99), the ARI is only 0.43. ARI is sensitive to the number of clusters. Without a slot-counting metric (e.g., how many slots were actually used), it is impossible to determine if the model created 5 new slots or simply split the 5 existing slots into 8 groups. If the latter, the model is not detecting new objects, it is just over-segmenting. This ambiguity undermines the core claim of dynamic object detection.\n\n- Entropy prior on masks encourages ambiguity: Equation (7) introduces an entropy prior $\text{maximize } \text{entropy of masks}$. Maximizing the entropy of the mask distribution $m$ encourages the model to be uncertain about pixel assignments, which is the opposite of what is desired for sharp segmentations. On binary data like Bouncing Balls, maximizing entropy drives the mask probability toward 0.5, resulting in ambiguous predictions. The paper attributes this to 'mitigating ambiguity,' but it actually introduces it. This theoretical conflict needs justification or a re-derivation of the objective function.\n\n- Prediction relies on reconstructed frames rather than latent dynamics: Section 3.2.3 describes prediction by using the reconstructed image $\tilde{x}_t$ as input for future steps. This creates a feedback loop of errors and does not learn a latent dynamics model $p(x_{t+1} | z_t)$. The claim of 'simulating future dynamics' is therefore overstated. The method essentially learns a predictive autoencoder, which is a much weaker form of prediction compared to learning explicit dynamics in the latent space, as done by R-NEM.\n\n- SEQ-IODINE baseline is not a fair comparison: The Related Work claims SEQ-IODINE is 'limited to orthographic binary data' (Section 3), yet Table 1 includes SEQ-IODINE results on the color CLEVRER dataset. Furthermore, the paper attributes poor performance to 'exploding gradients,' suggesting the baseline implementation is flawed. Comparing against a broken baseline undermines the validity of the reported improvements. The paper should focus on IODINE and perhaps a proper sequential baseline.\n\n- Real-world dataset lacks quantitative metrics: Grand Central Station results are only qualitative (Fig 7) without ARI or MSE scores. While the paper demonstrates the method on a real-world video stream, the lack of quantitative metrics makes it impossible to assess the quality of the decomposition objectively. Additionally, the paper explicitly states it does not target 'complex textured datasets,' yet GCS is a standard benchmark with people and lighting changes, which does not substantiate the claim of handling complex real-world scenes.\n\n- Missing quantitative validation on real-world video: The paper includes a qualitative evaluation on Grand Central Station (Fig 7) but no quantitative metrics like ARI or MSE. Without objective scores, the quality of decomposition on this challenging real-world dataset cannot be verified. The reader cannot determine if the visual success is due to the model's capabilities or favorable lighting/shadows. You should compute ARI and MSE for the GCS sequences and report them alongside the qualitative figures to substantiate the claim of handling complex real-world scenes.\n\n- Underdeveloped implications for downstream tasks: The introduction and abstract claim the model can 'predict trajectories of each object separately' and 'simulate the future dynamics.' However, the paper only evaluates prediction by comparing frame reconstructions to the ground truth (Fig 5) and computes velocity similarity against DDPAE (Fig 4). It does not demonstrate that the extracted latent representations $\\boldsymbol{z}_t$ are useful for downstream tasks like tracking or planning. To develop these implications, you should run a downstream task experiment\u2014such as initializing a tracker with the model's latent states and measuring tracking accuracy\u2014and report the results.\n\n- Lack of comparison to existing sequential baselines: The Related Work contrasts the method with R-NEM and IODINE, but R-NEM is limited to binary data and IODINE is static. The paper introduces SEQ-IODINE as a sequential variant of IODINE, but this is an ad-hoc extension rather than a standard baseline from the literature. A complete evaluation should compare against established sequential video decomposition models, such as SQAIR or SILOT, which are designed for temporal data. Adding a comparison to these baselines would clarify whether the improvements are due to the 2D-LSTM architecture or simply the temporal conditioning.\n\n- Missing theoretical analysis of the 2D-LSTM update: The paper proposes a 2D-LSTM update scheme in Equation (4) where the hidden state $\\boldsymbol{h}_{t-1,\\tilde{R}}$ is used to compute the posterior. However, there is no analysis of how this specific update rule affects the stability or convergence of the iterative inference compared to standard 1D RNNs. Does this 2D structure actually help the gradients flow better, or is it an arbitrary design choice? You should provide a theoretical justification or an empirical ablation study that directly compares the gradient flow or convergence speed of the 2D update against a standard 1D temporal update to validate the architectural choice.\n\nRecommendation: Major Revision. The core idea of extending IODINE to video with a 2D-LSTM grid is promising, but the claims about generalization and prediction need rigorous support. The entropy prior and the experimental design for generalization require significant revision to be convincing at a top-tier venue.\n\nRevision targets:\n\n- Add a slot-counting metric (e.g., number of active slots) to the generalization experiments to distinguish between slot reuse and true new object detection.\n\n- Provide theoretical justification or a corrected objective function for the entropy prior (Eq 7) to explain why maximizing mask entropy improves segmentation quality.\n\n- Clarify the prediction mechanism: either demonstrate that the model learns a latent dynamics model $p(x_{t+1} | z_t)$ or reframe the claim from 'simulating future dynamics' to 'predictive autoencoder.'\n\n- Replace or fix the SEQ-IODINE baseline comparison, as the current implementation appears to be broken (exploding gradients) and inconsistent with the text.\n\n- Provide quantitative metrics (ARI, MSE) for the Grand Central Station real-world evaluation to substantiate the claims about handling complex scenes.",
+      "comments": [
+        {
+          "id": "coarse__glm-4.7-flash_0",
+          "title": "Entropy loss objective encourages ambiguity",
+          "quote": "we mitigate the arising ambiguity by maximizing the entropy of the masks $m^{(k)}_{t,r,i}$ along the slot dimension $k$, i.e., we train our model by maximizing the objective\n\n$\\mathcal{L}_{\\text{ELBO}}+\\gamma\\sum_{i=1}^{D}\\sum_{k=1}^{K}m^{(k)}_{t,r,i}\\log(m^{(k)}_{t,r,i}),$ (7)",
+          "explanation": "Maximizing the entropy of a binary mask distribution drives the probability toward 0.5, which results in ambiguous, uncertain predictions rather than sharp segmentations. This contradicts the stated goal of 'mitigating ambiguity.' To encourage confident segmentation, the authors should minimize this term (i.e., maximize negative entropy or cross-entropy with a uniform prior).",
+          "comment_type": "technical",
+          "paragraph_index": 37,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.7-flash_1",
+          "title": "Prediction relies on reconstructed frames",
+          "quote": "Because our model requires image data $\\mathbf{x}_{t}$ as input, which is not available during simulation of new frames, we use the reconstructed image $\\widetilde{\\mathbf{x}}_{t}$ in place of $\\mathbf{x}_{t}$ to compute the likelihood $p(\\mathbf{x}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{\\leq t,r})$ in these cases.",
+          "explanation": "Using the reconstructed image as input for future steps creates a feedback loop of errors. This approach does not simulate true future dynamics or learn a latent dynamics model $p(x_{t+1} | z_t)$; it merely propagates reconstruction artifacts. The authors should either use a learned latent dynamics model or explicitly clarify that the method performs 'predictive reconstruction' rather than 'simulation of future dynamics.'",
+          "comment_type": "technical",
+          "paragraph_index": 39,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.7-flash_2",
+          "title": "Runtime complexity analysis is incorrect",
+          "quote": "Our model\u2019s ability to reuse information from previous refinements leads to a runtime complexity of $\\mathcal{O}(R^{2}+T)$, which is much more efficient than the $\\mathcal{O}(RT)$ complexity of the traditional IODINE model (when each frame is inferred independently) in the typical case of $T\\gg R$.",
+          "explanation": "The claimed complexity $\\mathcal{O}(R^{2}+T)$ ignores the computational cost of the iterative refinement process itself. For each time step $t$, the model performs $R$ refinement steps (Eq. 4). If each refinement step has a cost proportional to the number of slots $K$ and image dimensions $D$, the total cost is at least $\\mathcal{O}(R \\cdot K \\cdot D)$. The comparison to IODINE's $\\mathcal{O}(RT)$ is misleading because IODINE's complexity assumes $R=1$ (single pass per frame), whereas this model performs $R$ passes per frame.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.7-flash_3",
+          "title": "Mischaracterization of SQAIR capabilities",
+          "quote": "SQAIR is restricted to binary data and operates at the level of bounding boxes.",
+          "explanation": "The original SQAIR paper demonstrates the model on color datasets (e.g., CLEVR) and produces object-centric representations and masks, not just bounding boxes. This description of SQAIR's capabilities is inaccurate and misrepresents the scope of the prior work.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.7-flash_4",
+          "title": "Misrepresentation of ReDO architecture",
+          "quote": "N-based ReDO *(Chen et al., 2019)* uses a model built around the assumption that object regions are independent, guiding the generator by drawing objects\u2019 pixel regions separately and composing them after segmentation. Another",
+          "explanation": "The original ReDO paper (Chen et al., 2019) is a generative adversarial model that uses a shared latent code to generate object instances, not a segmentation-based composition approach. The description provided in the Related Work section does not match the actual architecture of ReDO.",
+          "comment_type": "technical",
+          "paragraph_index": 11,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.7-flash_5",
+          "title": "Generalization claims lack quantitative support",
+          "quote": "he end.\n\nobjects faster and are less sensitive to color, because our model can leverage the objects' motion cues. For our experiments,",
+          "explanation": "Table 2 shows that while F-ARI remains high (0.99), the ARI drops significantly (0.4453 vs 0.4317) when the number of slots changes from 5 to 9. ARI is sensitive to the number of clusters; a drop in ARI without a slot-counting metric suggests the model may be over-segmenting existing slots rather than creating new ones. The authors should report the number of slots actually used at test time or use a slot-counting metric to substantiate the claim of 'detecting new objects.'",
+          "comment_type": "technical",
+          "paragraph_index": 67,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.7-flash_6",
+          "title": "Entropy term ablation is inconsistent",
+          "quote": "The CLEVRER dataset is not binary, which is why we do not include the entropy term (see Section 3.2.3).",
+          "explanation": "The text states that 'all contributions are necessary and important,' yet the entropy term is omitted from CLEVRER entirely. This creates a logical inconsistency: if the entropy term is necessary for the binary case, it should also be tested on CLEVRER to verify its contribution there.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.7-flash_7",
+          "title": "Undefined notation in ELBO",
+          "quote": "ext{ELBO}}(\\mathbf{x})=\\mathbb{E}_{q_{\\bm{\\lambda}}(\\mathbf{z}_{\\leq T,R}|\\mathbf{x}_{\\leq T})}\\sum_{t=1}^{T}\\sum_{r=1}^{R}\\Big{[}\\beta\\log\\left(p\\left(\\mathbf{x}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{\\leq t,r}\\right)\\right)-\\text{KL}(q_{\\bm{\\lambda}}(\\mathbf{z}_{t,r}|\\mathbf{x}_{\\leq t},\\mathbf{z}_{<t,r})\\mid\\mid p(\\mathbf{z}_{t}|\\mathbf{x}_{<t},\\mathbf{z}_{<t}))\\Big{]}\\text{,}$ (3)\n\nwhere th",
+          "explanation": "The notation $\\mathbf{z}_{\\leq T,R}$ and $\\mathbf{z}_{\\leq t,r}$ is not explicitly defined. In variational autoencoders, this typically refers to the latent variables for all time steps $t$ and all slots $r$, or a specific subset. The notation $\\mathbf{z}_{\\leq t,r}$ is particularly ambiguous: does it mean the latent variables for all time steps up to $t$ for slot $r$, or the latent variables for time step $t$ and slot $r$? Rewrite the notation to be explicit, for example, $\\mathbf{z}_{1:t,r}$ for the latent variables of slot $r$ up to time $t$, and $\\mathbf{z}_{t,r}$ for the latent variable at time step $t$ and slot $r$.",
+          "comment_type": "technical",
+          "paragraph_index": null,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.7-flash_8",
+          "title": "Ambiguity in temporal conditioning description",
+          "quote": "Note that the prior only changes along the time dimension and is independent of the refinement iterations, because we refine the posterior to be as close as possible to the dynamic prior for the current time step.",
+          "explanation": "The sentence 'Note that the prior only changes along the time dimension and is independent of the refinement iterations' is confusing. Equation (5) shows the prior depends on the temporal hidden state $\\mathbf{h}_{t - 1, \\widehat{R}}$, which is computed at the final refinement step $\\widehat{R}$. The text does not explain why the prior is independent of the *current* refinement step $r$ (i.e., why $\\mathbf{h}_{t-1, \\widehat{R}}$ is used instead of $\\mathbf{h}_{t-1, r}$). Clarify the reasoning behind this choice.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        }
+      ],
+      "cost_usd": 0.0889,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

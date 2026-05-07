@@ -1,0 +1,1199 @@
+{
+  "slug": "neurips2021-kB8eks2E-faster-matchings-via-learned-duals",
+  "title": "Faster Matchings via Learned Duals",
+  "paragraphs": [
+    {
+      "index": 0,
+      "text": "## **Faster Matchings via Learned Duals**\n\n**Michael Dinitz Sungjin Im** Johns Hopkins University UC Merced `mdinitz@cs.jhu.edu sim3@ucmerced.edu`"
+    },
+    {
+      "index": 1,
+      "text": "## **Thomas Lavastida**\n\nCarnegie Mellon University `tlavasti@andrew.cmu.edu`\n\n**Benjamin Moseley** Carnegie Mellon University `moseleyb@andrew.cmu.edu`"
+    },
+    {
+      "index": 2,
+      "text": "**Sergei Vassilvitskii** Google `sergeiv@google.com`\n\n## **Abstract**\n\nA recent line of research investigates how algorithms can be augmented with machine-learned predictions to overcome worst case lower bounds. This area has revealed interesting algorithmic insights into problems, with particular success in the design of competitive online algorithms. However, the question of improving algorithm running times with predictions has largely been unexplored."
+    },
+    {
+      "index": 3,
+      "text": "We take a first step in this direction by combining the idea of machine-learned predictions with the idea of \u201cwarm-starting\" primal-dual algorithms. We consider one of the most important primitives in combinatorial optimization: weighted bipartite matching and its generalization to _b_ -matching. We identify three key challenges when using learned dual variables in a primal-dual algorithm. First, predicted duals may be infeasible, so we give an algorithm that efficiently maps predicted infeasible duals to nearby feasible solutions. Second, once the duals are feasible, they may not be optimal, so we show that they can be used to quickly find an optimal solution. Finally, such predictions are useful only if they can be learned, so we show that the problem of learning duals for matching has low sample complexity. We validate our theoretical findings through experiments on both real and synthetic data. As a result we give a rigorous, practical, and empirically effective method to compute bipartite matchings."
+    },
+    {
+      "index": 4,
+      "text": "## **1 Introduction**\n\nClassical algorithm analysis considers worst case performance of algorithms, capturing running times, approximation and competitive ratios, space complexities, and other notions of performance. Recently there has been a renewed interest in finding formal ways to go beyond worst case analysis [41], to better understand performance of algorithms observed in practice, and develop new methods tailored to typical inputs observed."
+    },
+    {
+      "index": 5,
+      "text": "An emerging line of research dovetails this with progress in machine learning, and asks how algorithms can be augmented with machine-learned predictors to circumvent worst case lower bounds when the predictions are good, and approximately match them otherwise (see Mitzenmacher and Vassilvitskii [36] for a survey). Naturally, a rich area of applications of this paradigm has been in online algorithms, where the additional information revealed by the predictions reduces the uncertainty about the future and can lead to better choices, and thus better competitive ratios. For instance, see the work by Lykouris and Vassilvitskii [33], Rohatgi [40], Jiang et al. [29] on caching; Antoniadis et al. [3], D\u00fctting et al. [19] on the classic secretary problem; Purohit et al. [39], Lattanzi et al. [32] on scheduling; Purohit et al. [39], Anand et al. [2] on ski rental; and Bamas et al. [8] on set cover."
+    },
+    {
+      "index": 6,
+      "text": "35th Conference on Neural Information Processing Systems (NeurIPS 2021).\n\nHowever, the power of predictions is not limited to improving online algorithms. Indeed, the aim of the empirical paper that jump-started this area by Kraska et al. [31] was to improve running times for basic indexing problems. The main goal and contribution of this work is to show that at least in one important setting (weighted bipartite matching), we can give formal justification for using machine learned predictions to improve running times: there are predictions which can provably be learned, and if these predictions are \u201cgood\u201d then we have running times that outperform standard methods both in theory and empirically."
+    },
+    {
+      "index": 7,
+      "text": "How can predictions help with running time? One intuitive approach, which has been used extensively in practice, is through the use of \u201cwarm-start\u201d heuristics [46, 23, 22, 37], where instead of starting with a blank slate, the algorithm begins with some starting state (which we call a warm-start \u201csolution\u201d or \u201cseed\u201d) which hopefully allows for faster completion. While it is a common technique, there is a dearth of analysis understanding what constitutes a good warm-start, when such initializations are helpful, and how they can best be leveraged."
+    },
+    {
+      "index": 8,
+      "text": "Thus we have a natural goal: put warm-start heuristics on firm theoretical footing by interpreting the warm-start solution as learned predictions. In this set up we are given a number of instances of the problem (the training set), and we can use them to compute a warm-start solution that will (hopefully) allow us to more quickly compute the optimal solution on future, test-time, instances. There are three challenges that we must address:"
+    },
+    {
+      "index": 9,
+      "text": "- (i) **Feasibility.** The learned prediction (warm-start solution) might not even be _feasible_ for the specific instance we care about! For example, the learned solution may be matching an edge that does not exist in the graph at testing time."
+    },
+    {
+      "index": 10,
+      "text": "- (ii) **Optimization.** If the warm-start solution is feasible and near-optimal then we want the algorithm to take advantage of it. In other words, we would like our running time to be a function of the quality of the learned solution."
+    },
+    {
+      "index": 11,
+      "text": "- (iii) **Learnability.** It is easy to design predictions that are enormously helpful but which cannot actually be learned (e.g., the \u201cprediction\u201d is the optimal solution). We need to ensure that a typical solution learned from a few instances of the problem generalizes well to new examples, and thus offers potential speedups."
+    },
+    {
+      "index": 12,
+      "text": "If we can overcome these three challenges, we will have an _end-to-end_ framework for speeding up algorithms via learned predictions: use the solution to challenge (iii) to learn the predictions from historical data, use the solution to challenge (i) to quickly turn the prediction into something feasible for the particular problem instance while preserving near-optimality, and then use this as a warm-start seed in the solution to challenge (ii)."
+    },
+    {
+      "index": 13,
+      "text": "## **1.1 Our Contributions**\n\nWe focus on one of the fundamental primitives of combinatorial optimization: computing bipartite matchings. For the bipartite minimum-weight perfect matching (MWPM) problem, as well as its extension to _b_ -matching, we show that the above three challenges can be solved."
+    },
+    {
+      "index": 14,
+      "text": "A key conceptual question is finding a specification of the seed, and an algorithm to use it that satisfies the desiderata above. We have discussed warm-start \u201csolutions\u201d, so it is tempting to think that a good seed is a partial solution: a set of matched edges that can then be expanded to a optimal matching. After all, this is the structure we maintain in most classical matching algorithms. Moreover, any such solution is feasible (one can simply set non-existing edges to have very high weight), eschewing the need for the feasibility step. At the same time, as has been observed previously in the context of online matchings [13, 45], this _primal_ solution is brittle, and a minor modification in the instance (e.g. an addition of a single edge) can completely change the set of optimal edges."
+    },
+    {
+      "index": 15,
+      "text": "Instead, following the work of [13, 45], we look at the _dual_ problem; that is, the dual to the natural linear program. We quantify the \u201cquality\u201d of a prediction _y_ \u02c6 by its _\u2113_ 1-distance from the true optimal \u02c6 dual _y[\u2217]_ , i.e., by _\u2225y \u2212 y[\u2217] \u2225_ 1. The smaller quantities correspond to better predictions. Since the dual is a packing problem we must contend with feasibility: we give a simple linear time algorithm that converts the prediction _y_ \u02c6 into a feasible dual while increasing the _\u2113_ 1 distance by a factor of at most 3."
+    },
+    {
+      "index": 16,
+      "text": "Next, we run the Hungarian method starting with the resulting feasible dual. Here, we show that the running time is in proportional to the _\u2113_ 1 distance of the feasible dual to the optimal dual (Theorem 5). Finally, we show via a pseudo-dimension argument that not many samples are needed before the"
+    },
+    {
+      "index": 17,
+      "text": "2\n\nempirically optimal seed is a good approximation of the true optimum (Theorem 6), and that this empirical optimum can be computed efficiently. For the learning argument, we assume that matching _D_ ."
+    },
+    {
+      "index": 18,
+      "text": "Putting it all together gives us our main result.\n\n**Theorem 1** (Informal) **.** _There are three algorithms (feasibility, optimization, learning) with the following guarantees._"
+    },
+    {
+      "index": 19,
+      "text": "- _Given a (possibly infeasible) dual y_ \u02c6 _from the learning algorithm, there exists an O_ ( _m_ + _n_ ) _time algorithm that takes a problem instance c, and outputs a feasible dual y_ \u02c6 _[\u2032]_ ( _c_ ) _such that_ \u02c6 \u02c6"
+    },
+    {
+      "index": 20,
+      "text": "- _\u2225y[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _\u2264_ 3 _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _._\n\n- _The optimization algorithm takes as input feasible dual y_ \u02c6 _[\u2032]_ ( _c_ ) _and outputs a minimum weight_ \u02c6"
+    },
+    {
+      "index": 21,
+      "text": "- _perfect matching, and runs in time O_[\u02dc] ( _m[\u221a] n \u00b7_ min _{\u2225y[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _,[\u221a] n}_ ) _._"
+    },
+    {
+      "index": 22,
+      "text": "- _After O_[\u02dc] ( _C_[2] _n_[3] ) _samples from an unknown distribution D over problem instances, the_ \u02c6"
+    },
+    {
+      "index": 23,
+      "text": "- _learning algorithm produces duals_ \u02c6 _y so that_ E _c\u223cD_ [ _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1] _is approximately minimum among all possible choices of y_ \u02c6 _, where C is the maximum edge cost and y[\u2217]_ ( _c_ ) _is an optimal dual for instance c._"
+    },
+    {
+      "index": 24,
+      "text": "_Combining these gives a single algorithm that, with access to O_[\u02dc] ( _C_[2] _n_[3] ) _problem instance samples from D, has expected running time on future instances from D of only O_[\u02dc] ( _m[\u221a] n_ min _{\u03b1,[\u221a] n}_ ) _, where \u03b1_ = min _y_ E _c\u223cD_ [ _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1] _._"
+    },
+    {
+      "index": 25,
+      "text": "We emphasize that the Hungarian method with _O_[\u02dc] ( _mn_ ) running time is the standard algorithm in practice. Although there are other theoretically faster exact algorithms for bipartite minimumweight perfect matching [38, 21, 20, 18] that run in _O_ ( _m[\u221a] n_ log( _nC_ )), they are relatively complex\u02dc (using various scaling techniques). Very recent breakthroughs give algorithms of run time _O_ (( _m_ + _n_[1] _[.]_[5] ) log[2] ( _C_ )) for the minimum-weight perfect matching problem and several interesting extensions [43, 44]. However, the algorithms are highly complicated and their practical performance is yet to be demonstrated. In fact, we could not find any implementation of the above algorithms, except for the Hungarian method, of which multiple implementations are readily available."
+    },
+    {
+      "index": 26,
+      "text": "Note that our result shows that we can speed up the Hungarian method as long as the _\u2113_ 1-norm error \u02c6 of the learned dual, i.e., _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 is _o_ ( _[\u221a] n_ ). Further, as the projection step that converts the learned dual into a feasible dual takes only linear time, the overhead of our method is essentially negligible. Therefore, even if the prediction is of poor quality, our method has worst-case running time that is _never_ worse than that of the Hungarian algorithm. Even our learning algorithm is simple, consisting of a straightforward empirical risk minimization algorithm (the analysis is more complex and involves bounding the \u201cpseudo-dimension\u201d of the loss functions)."
+    },
+    {
+      "index": 27,
+      "text": "We validate our theoretical results via experiments. For each dataset we first feed a small number of samples (fewer than our theoretical bounds) to our learning algorithm. We then compare the running time of our algorithm to that of the classical Hungarian algorithm on new instances."
+    },
+    {
+      "index": 28,
+      "text": "Details of these experiments can be found in Section 4. At a high level they show that our algorithm is _significantly_ faster in practice. Further, our experiment shows only very few samples are needed to achieve a notable speed-up. This confirms the power of our approach, giving a theoretically rigorous yet also practical method for warm-start primal-dual algorithms."
+    },
+    {
+      "index": 29,
+      "text": "## **1.2 Related Work**\n\n**Matchings and** _b_ **-Matchings:** Bipartite matchings are one of the most well studied problems in combinatorial optimization, with a long history of algorithmic improvements. We refer the interested reader to Duan and Pettie [17] for an overview. We highlight some particular results here. If edges have no weights and thus the goal is to find the maximum cardinality matching (see Section 2 for a formal definition), the fastest running time had long been _O_ ( _m[\u221a] n_ ) [14, 30, 27] until the recent breakthrough with _O_[\u02dc] ( _m_ + _n_[1] _[.]_[5] ) running time was discovered [43]. We are interested in the weighted versions of these problems and when all edge weights are integral. Let _C_ be the maximum edge weight, _n_ be the number of vertices, and _m_ the number of edges. For finding exact solutions to the minimum weight perfect matching problem, the scaling technique leads to a running time of _O_ ( _m[\u221a] n_ log( _C_ )) [38, 21, 20, 18]."
+    },
+    {
+      "index": 30,
+      "text": "3\n\nLarge scale bipartite matchings have been studied extensively in the online setting, as they represent the basic problem in ad allocations [34]. While the ad allocation is inherently online, most of the methods precompute a dual based solution based on a sample of the input [13, 45], and then argue that this solution is approximately optimal on the full instance. In contrast, we strive to compute the _exactly optimal_ solution, but use previous instances to improve the running time of the approach."
+    },
+    {
+      "index": 31,
+      "text": "**Algorithms with Predictions:** Kraska et al. [31] showed how to use machine learned predictions to improve heavily optimized indexing algorithms. The original paper was purely empirical and came with no rigorous guarantees; recently there has been a flurry of work putting such approaches on a strong theoretical foundation, evaluating the benefit of augmenting classical algorithms with machine learned predictions, see [36] for a survey. Online and streaming algorithms in particular have seen significant successes, as predictions reveal information about the future and can help guide the algorithms\u2019 choices. This has led to the design of new methods for caching [33, 40, 29], scheduling [39, 32], frequency counting [12, 28, 1], and membership testing [35, 42] that can break through worst-case lower bounds when the predictions are of sufficiently high quality."
+    },
+    {
+      "index": 32,
+      "text": "Most of the above work abstracts the predictions as access to an error-prone oracle and asks how to best use predictions: getting performance gains when the predictions are good, but limiting the losses when they are not. A related emergent area is that of data driven algorithm design [25, 7, 5, 4, 6, 11]. Here, the objective is to \u201clearn\u201d a good algorithm for a particular family of inputs. The goal is not typically to tie the performance of the algorithm to the quality of the prediction, but rather to show that the prediction makes sense; that is only a small number of problem samples are needed in order to ensure the learned algorithm generalizes to new data points."
+    },
+    {
+      "index": 33,
+      "text": "## **1.3 Roadmap**\n\nWe present our theoretical results on min-cost perfect bipartite matching in Section 3. The experiments are presented in Section 4. The extension to _b_ -matching, as well as all missing proofs, can be found in the full version of this paper as supplementary materials."
+    },
+    {
+      "index": 34,
+      "text": "## **2 Preliminaries**\n\n**Notation:** Let _G_ = ( _V, E_ ) be an undirected graph. When _G_ is bipartite we will use _L_ and _R_ to refer to the two sides of the bipartition. We will let _N_ ( _i_ ) := _{e \u2208 E | i \u2208 e}_ be the set of edges adjacent to vertex _i_ . For a set _S \u2286 V_ , let \u0393( _S_ ) be the vertex neighborhood of _S_ . For a vector _y \u2208_ R _[n]_ , we let _\u2225y\u2225_ 1 =[\ufffd] _i[|][y][i][|]_[ be its] _[ \u2113]_[1][-norm.][Let] _[ \u27e8][x, y][\u27e9]_[be the standard inner product on][ R] _[n]_[.]"
+    },
+    {
+      "index": 35,
+      "text": "**Linear Programming and Complementary Slackness:** Here we recall optimality conditions for linear programming that are used to ensure the correctness of some algorithms we present. Consider the primal-dual pair of linear programs below."
+    },
+    {
+      "index": 36,
+      "text": "A pair of solutions _x, y_ for ( _P_ ) and ( _D_ ), respectively, satisfy complementary slackness if _x[\u22a4]_ ( _c \u2212 A[\u22a4] y_ ) = 0. The following lemma is well-known."
+    },
+    {
+      "index": 37,
+      "text": "**Lemma 2.** _Let x be a feasible solution for_ ( _P_ ) _and y be a feasible solution for_ ( _D_ ) _. If the pair x, y satisfies complementary slackness, then x and y are optimal solutions for their respective problems._"
+    },
+    {
+      "index": 38,
+      "text": "**Maximum Cardinality Matching:** Let _G_ = ( _V, E_ ) be a bipartite graph on _n_ vertices and _m_ edges. A matching _M \u2286 E_ is a collection of non-intersecting edges. The Hopcroft-Karp algorithm for finding a matching maximizing _|M |_ runs in time _O_ ( _[\u221a] n \u00b7 m_ ) [26], which is still state-of-the-art for general bipartite graphs. For moderately dense graphs, a recent result by van den Brand et al. [43] gives a better running time of _O_[\u02dc] ( _m_ + _n_[1] _[.]_[5] ) (where _O_[\u02dc] hides polylogarithmic factors)."
+    },
+    {
+      "index": 39,
+      "text": "**Minimum Weight Perfect Matching (MWPM):** Again, let _G_ = ( _V, E_ ) be a bipartite graph on _n_ vertices and _m_ with costs _c \u2208_ Z _[E]_ +[on the edges, and let] _[ C]_[be the maximum cost.][A matching] _[ M]_[is] _perfect_ if every vertex is matched by _M_ . The objective of this problem is to find a perfect matching _M_ minimizing the cost _c_ ( _M_ ) :=[\ufffd] _e\u2208M[c][e]_[.]"
+    },
+    {
+      "index": 40,
+      "text": "4\n\nWhen looking for optimal solutions we can assume that _G_ is a complete graph by adding all possible edges not in _E_ with weight _Cn_[2] . It is easy to see that any _o_ ( _n_ ) approximate solution would not use any of these edges."
+    },
+    {
+      "index": 41,
+      "text": "## **3 Faster Min-Weight Perfect Matching**\n\nIn this section we describe how predictions can be used to speed up the bipartite Minimum Weight Perfect Matching (MWPM) problem."
+    },
+    {
+      "index": 42,
+      "text": "The MWPM problem can be modeled by the following linear program and its dual \u2013 the primal-dual view will be very useful for our algorithm and analysis. We will sometimes refer to a set of dual variables _y_ as dual _prices_ . Both LPs are well-known to be integral, implying that there always exist integral optimal solutions."
+    },
+    {
+      "index": 43,
+      "text": "Suppose we are given a prediction _y_ \u02c6 of a dual solution. If _y_ \u02c6 is feasible, then by complementary slackness we can check if _y_ \u02c6 represents an optimal dual solution by running a maximum cardinality matching algorithm on the graph _G[\u2032]_ = ( _V, E[\u2032]_ ), \u02c6 where _E[\u2032]_ = _{e_ = _ij \u2208 E | yi_ + \u02c6 _yj_ = _cij}_ is the set of tight edges. If this matching is perfect, then its incidence vector _x_ satisfies complementary slackness with _y_ \u02c6 and thus represents an optimal solution by Lemma 2."
+    },
+    {
+      "index": 44,
+      "text": "We now consider the problem from another angle, factoring _i\u2208V_ in learning aspects. Suppose the graph _G_ = ( _V, E_ ) is fixed _yi_ + _yj \u2264 ce \u2200e_ = _ij \u2208 E_ but the edge cost vector _c \u2208_ Z _[E]_ +[varies (is drawn from some] distribution _D_ ). If we are given an optimal dual _y[\u2217]_ as a prediction, then we can solve the problem by solving the max cardinality matching problem only once. However, the optimal dual can significantly change depending on edge cost _c_ . Nevertheless, we will show how to learn \u201cgood\u201d dual values and use them later to solve new MWPM instances faster. Specifically, we seek to design an end-to-end algorithm addressing all the aforementioned challenges:"
+    },
+    {
+      "index": 45,
+      "text": "1. **Feasiblity** (Section 3.1). The learned dual _y_ \u02c6 may not be feasible for MWPM-D with some specific cost vector _c_ . We show how to quickly convert it to a feasible dual _y_ \u02c6 _[\u2032]_ ( _c_ ) by appropriately decreasing the dual values (the more we decrease them, the further we move \u02c6 \u02c6"
+    },
+    {
+      "index": 46,
+      "text": "away from the optimum). Finding the feasible dual minimizing _\u2225y \u2212 y[\u2032]_ ( _c_ ) _\u2225_ 1 turns out to be a variant of the vertex cover problem, for which we give a simple 2-approximation running in _O_ ( _m_ + _n_ ) time. As a result, we have _\u2225y_ \u02c6 _[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _\u2264_ 3 _\u2225y_ \u02c6 _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1. See Theorem 4."
+    },
+    {
+      "index": 47,
+      "text": "2. **Optimization** (Section 3.2). Now that we have a feasible solution _y_ \u02c6 _[\u2032]_ ( _c_ ), we want to find an optimal solution starting with _y_ \u02c6 _[\u2032]_ ( _c_ ) in time that depends on the quality of _y_ \u02c6 _[\u2032]_ ( _c_ ). Fortunately, the Hungarian algorithm can be seeded with any feasible dual, so we can \u201cwarm-start\u201d it with _y_ \u02c6 _[\u2032]_ ( _c_ ). We show that its running time will be proportional to _|\u2225y_ \u02c6 _[\u2032]_ ( _c_ ) _\u2225_ 1 _\u2212\u2225y[\u2217]_ ( _c_ ) _\u2225_ 1 _| \u2264_ \u02c6"
+    },
+    {
+      "index": 48,
+      "text": "_\u2225y[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1. Our analysis does not depend on the details of the Hungarian algorithm, and so applies to a broader class of primal-dual algorithms."
+    },
+    {
+      "index": 49,
+      "text": "3. **Learnability** (Section 3.3). The target dual we seek to learn is arg min _y_ E _c\u223cD\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ ; here _y[\u2217]_ ( _c_ ) is the optimal dual for MWPM-D with cost vector _c_ . We show we can efficiently learn _y_ \u02c6 that is arbitrarily close to the target vector after _O_[\u02dc] ( _C_[2] _n_[3] ) samples from _D_ . See Theorem 6."
+    },
+    {
+      "index": 50,
+      "text": "Combining all of these gives the following, which is a more formal version of Theorem 1. Let _D_ be an arbitrary distribution over edge costs where every vector in the support of _D_ has maximum cost _C_ . For any edge cost vector _c_ , let _y[\u2217]_ ( _c_ ) denote the optimal dual solution."
+    },
+    {
+      "index": 51,
+      "text": "**Theorem 3.** _For any p, \u03f5 >_ 0 _, there is an algorithm which:_\n\n- _nC_ 2 \u02c6\n\n- _\u2022 After O_ \ufffd\ufffd _\u03f5_ \ufffd ( _n_ log _n_ + log(1 _/p_ ))\ufffd _samples from D, returns dual values y such that_ E _c\u223cD_ [ _\u2225y_ \u02c6 _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1] _\u2264_ min E _c\u223cD_ [ _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1] + _\u03f5 with probability at least_ 1 _\u2212 p. y_"
+    },
+    {
+      "index": 52,
+      "text": "- _Using the learned dual y_ \u02c6 _, given edge costs c, computes a min-cost perfect matching in time_ \u02c6"
+    },
+    {
+      "index": 53,
+      "text": "- _O_ ( _m[\u221a] n \u00b7_ min _{\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _,[\u221a] n}_ ) _._\n\nIn the rest of this section we detail our proof of this Theorem."
+    },
+    {
+      "index": 54,
+      "text": "5\n\n## **3.1 Recovering a Feasible Dual Solution (Feasibility)**\n\nLet _y_ \u02c6 be an infeasible set of (integral) dual prices \u2013 this should be thought of as the \u201cgood\u201d dual obtained by our learning algorithm. Our goal in this section is to find a new _feasible_ dual solution _y_ \u02c6 _[\u2032]_ ( _c_ ) that is close to _y_ \u02c6, for a given MWPM-D instance with cost _c_ . In particular we seek to find the closest feasible dual under the \u02c6 _\u2113_ 1 norm, i.e. one minimizing _\u2225y[\u2032]_ ( _c_ ) _\u2212_ \u02c6 _y\u2225_ 1."
+    },
+    {
+      "index": 55,
+      "text": "Looking at (MWPM-D), it is clear that we need to decrease the given dual values _y_ \u02c6 in order to make it feasible. More"
+    },
+    {
+      "index": 56,
+      "text": "**Algorithm 1** Fast Approx. for Distance to Feasibility\n\n1: **procedure** FASTAPPROX( _G_ = ( _V, E_ ) _, r_ ) 2: _\u2200i \u2208 V_ , _\u03b4i \u2190_ 0 3: **while** _E_ = _\u2205_ **do** 4: Let _i_ be an arbitrary vertex of _G_ 5: **while** _i_ has a neighbor **do** 6: _j \u2190_ arg max _j\u2032\u2208N_ ( _i_ ) _rij\u2032_ 7: _\u03b4i \u2190 rij_ 8: Delete _i_ and all its edges from _G_ 9: _i \u2190 j_ 10: Return _\u03b4_"
+    },
+    {
+      "index": 57,
+      "text": "formally, we are looking for a vector of non-negative perturbations _\u03b4_ such that _y_ \u02c6 _[\u2032]_ := _y_ \u02c6 _\u2212 \u03b4_ is feasible. We model finding the best set of perturbations, in terms of preserving _y_ \u02c6\u2019s dual objective value, as a linear program.Define _re_ := _y_ \u02c6 _i_ + \u02c6Let _yj F \u2212_ := _ce_ for each edge _{e_ = _ij \u2208 E e|_ = _y_ \u02c6 _i_ + \u02c6 _ijy\u2208j > cF_ . Asserting that _ij}_ be the set of dual infeasible edges under _y_ \u02c6 _\u2212 \u03b4_ is feasible for (MWPM-D) _y_ \u02c6. while minimizing the amount lost in the dual objective leads to the following linear program:"
+    },
+    {
+      "index": 58,
+      "text": "Note that this is a variant of the vertex cover problem\u2014the problem becomes exactly the vertex cover problem if _rij_ = 1 for all edges _ij_ . We could directly solve this linear program, but we are interested in making this step efficient. To find a fast approximation for (1), we take a simple greedy approach."
+    },
+    {
+      "index": 59,
+      "text": "Algorithm 1 is a modification of the algorithm of Drake and Hougardy [15] which walks through the graph setting _\u03b4i_ appropriately at each step to satisfy the covering constraints in (1). The analysis is based on interpreting the algorithm through the lens of primal-dual\u2014the dual of (1) turns out to be a maximum weight matching problem with new edge weights _rij_ ."
+    },
+    {
+      "index": 60,
+      "text": "A similar analysis as in Drake and Hougardy [15] implies this is a 2-approximation which runs in _O_ ( _m_ + _n_ ) time (all proofs are in the Supplementary material). This essentially immediately implies the following theorem (the 2-approximation turns into 3 due to a use of the triangle inequality). **Theorem 4.** _There is a O_ ( _m_ + _n_ ) _time algorithm that takes an infeasible integer dual_ \u02c6 _y and constructs_ \u02c6 \u02c6 \u02c6 _a feasible integer dual_ \u02c6 _y[\u2032]_ ( _c_ ) _for MWPM-D with cost vector c such that \u2225y[\u2032]_ ( _c_ ) _\u2212 y\u2225_ 1 _\u2264_ 2 _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _where y[\u2217]_ ( _c_ ) _is the optimal dual solution for MWPM-D with cost vector c. Thus by triangle inequality_ \u02c6 \u02c6 _we have \u2225y[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _\u2264_ 3 _\u2225y \u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1 _._"
+    },
+    {
+      "index": 61,
+      "text": "## **3.2 Seeding Hungarian with a Feasible Dual (Optimization)**\n\nIn this section we assume that we are given a feasible integral dual _y_ \u02c6 _[\u2032]_ ( _c_ ) for an input with cost vector _c_ and the goal is to find an optimal solution. We want to analyze the running time in terms of \u02c6 _\u2225y[\u2032]_ ( _c_ ) _\u2212 y[\u2217]_ ( _c_ ) _\u2225_ 1, the distance to optimality. We use a simple primal-dual schema to achieve this, which is given formally in Algorithm 2."
+    },
+    {
+      "index": 62,
+      "text": "To satisfy complementary slackness, we must only choose edges with _yi_ + _yj_ = _cij_ . Let _E[\u2032]_ be the set of such edges. We find a maximum cardinality matching in the graph _G[\u2032]_ = ( _V, E[\u2032]_ ). If the resulting matching _M_ is perfect then we are done by complementary slackness (Lemma 2) Otherwise, in steps 7-9 we modify the dual in a way that guarantees a strict increase in the dual objective. Since all parameters of the problem are integral, this strict increase then implies our desired bound on the number of iterations."
+    },
+    {
+      "index": 63,
+      "text": "\u02c6 We will show this algorithm performs at most _O_ ( _\u2225y[\u2217]_ ( _c_ ) _\u2212 y[\u2032]_ ( _c_ ) _\u2225_ 1) iterations. We can further improve this by ensuring the algorithm runs no longer than the standard Hungarian algorithm in the \u02c6 case that we have large error in the prediction, i.e., _\u2225y[\u2217]_ ( _c_ ) _\u2212 y[\u2032]_ ( _c_ ) _\u2225_ 1 is large. In particular, steps 6 and 11 do not precisely specify the choice of the set _S_ and the matching _M_ . If we instantiate these steps appropriately (let _S_ = _L \\ C_ for step 6, where _C_ is a minimum vertex cover, and update _M_ along shortest-augmenting-paths for step 11) then we recover the Hungarian Algorithm. Together, we can prove the following theorem."
+    },
+    {
+      "index": 64,
+      "text": "6\n\n**Theorem 5.** _For an arbitrary cost vector c, the Hungarian method starting with a feasible integer dual_ \u02c6 \u02c6 _solution y[\u2032]_ ( _c_ ) _finds a minimum weight perfect matching in O_[\u02dc] ( _m[\u221a] n \u00b7_ min _{\u2225y[\u2217]_ ( _c_ ) _\u2212 y[\u2032]_ ( _c_ ) _\u2225_ 1 _,[\u221a] n}_ ) _time, where y[\u2217]_ ( _c_ ) _is an optimal dual solution._"
+    },
+    {
+      "index": 65,
+      "text": "## **3.3 Learning Optimal Advice (Learning)**\n\nNow we want to formally instantiate the \u201clearning\u201d part of our framework: if there is a good starting dual solution for a given input distribution, we want to find it without seeing too many samples. The formal model we will use is derived from data driven algorithm design and PAC learning."
+    },
+    {
+      "index": 66,
+      "text": "We imagine solving many problem instances drawn from the same distribution. To formally model this, we let _D_ be an unknown distribution over instances. For simplicity, we consider the graph _G_ = ( _V, E_ ) to be fixed with vary-"
+    },
+    {
+      "index": 67,
+      "text": "**Algorithm 2** Simple Primal-Dual Scheme for MWPM\n\n1: **procedure** MWPM-PD( _G_ = ( _V, E_ ) _, c, y_ ) 2: _E[\u2032] \u2190{e \u2208 E | yi_ + _yj_ = _cij_ } _\u25b7_ Tight Edges 3: _G[\u2032] \u2190_ ( _V, E[\u2032]_ ) _\u25b7G_ containing only tight edges 4: _M \u2190_ Maximum cardinality matching in _G[\u2032]_ 5: **while** _M_ is not a perfect matching **do** 6: Find _S \u2286 L_ such that _|S| > |_ \u0393( _S_ ) _|_ in _G[\u2032]_ 7: _\u03f5 \u2190_ min _i\u2208S,j\u2208R\\_ \u0393( _S_ ) _{cij \u2212 yi \u2212 yj}_ 8: _\u2200i \u2208 S_ , _yi \u2190 yi_ + _\u03f5_ 9: _\u2200j \u2208_ \u0393( _S_ ), _yj \u2190 yj \u2212 \u03f5_ 10: Update _E[\u2032] , G[\u2032]_ 11: _M \u2190_ Maximum cardinality matching in _G[\u2032]_ 12: Return _M_"
+    },
+    {
+      "index": 68,
+      "text": "ing costs. Thus _D_ is a distribution over cost vectors _c \u2208_ R _[E]_ . We assume that the costs in this distribution are bounded. Let _C_ := max _c\u223cD_ max _e\u2208E ce_ be finite and known to the algorithm. Our goal is to find the (not necessarily feasible) dual assignment that performs \u201cbest\u201d in expectation over the distribution. Based on Theorems 4 and 5 , we know that the \u201ccost\u201d of using dual values _y_ when the optimal dual is _y[\u2217]_ is bounded by _O_ ( _m[\u221a] n\u2225y[\u2217] \u2212 y\u2225_ 1), and hence it is natural to define the \u201ccost\u201d of _y_ as _\u2225y[\u2217] \u2212 y\u2225_ 1."
+    },
+    {
+      "index": 69,
+      "text": "For every _c \u2208_ R _[E]_ we will let _y[\u2217]_ ( _c_ ) be a fixed optimal dual solution for _c_ :\n\nHere we assume without loss of generality that _y[\u2217]_ ( _c_ ) is integral as the underlying polytope is known to be integral. We will let the loss of a dual assignment _y_ be its _\u2113_ 1-distance from the optimal solution:"
+    },
+    {
+      "index": 70,
+      "text": "Our goal is to learn dual values \u02c6 _y_ which minimize E _c\u223cD_ [ _L_ ( _y, c_ )]. Let _y[\u2217]_ denote the vector minimizing this objective, _y[\u2217]_ = arg min _y_ E _c\u223cD_ [ _L_ ( _y, c_ )]."
+    },
+    {
+      "index": 71,
+      "text": "We will give PAC-style bounds, showing that we only need a small number of samples in order to have a good probability of learning an approximately-optimal solution _y_ \u02c6. Our algorithm is conceptually quite simple: we minimize the empirical loss after an appropriate number of samples. In the supplementary we show that this can be done efficiently, giving the following theorem."
+    },
+    {
+      "index": 72,
+      "text": "_nC_ 2 **Theorem 6.** _There is an algorithm that after s_ = _O_ \ufffd\ufffd _\u03f5_ \ufffd ( _n_ log _n_ + log(1 _/p_ ))\ufffd _samples returns dual values y_ \u02c6 _such that_ E _c\u223cD_ [ _L_ (\u02c6 _y, c_ )] _\u2264_ E _c\u223cD_ [ _L_ ( _y[\u2217] , c_ )] + _\u03f5 with probability at least_ 1 _\u2212 p. The algorithm runs in time polynomial in n, m and s._"
+    },
+    {
+      "index": 73,
+      "text": "This theorem, together with Theorems 4 and 5, immediately implies Theorem 3.\n\nAt the heart of the proof of Theorem 6 lies the proof of the following theorem regarding pseudodimensions of _\u2113_ 1-norm distance functions, which may be of independent interest."
+    },
+    {
+      "index": 74,
+      "text": "**Theorem 7.** _Let Hn_ = _{fy | y \u2208_ R _[n] } where fy_ : R _[n] \u2192_ R _is defined by fy_ ( _x_ ) = _\u2225y \u2212 x\u2225_ 1 _. The pseudo-dimension of Hn is at most O_ ( _n_ log _n_ ) _._"
+    },
+    {
+      "index": 75,
+      "text": "We remark that minimizing this emprical loss can be efficiently implemented by taking the coordinatewise median of each optimal dual, i.e. taking _yj_ = median( _x_[1] _j[, x]_[2] _j[, . . . , x][s] j_[)][ for each] _[ j][\u2208][V]_[ .]"
+    },
+    {
+      "index": 76,
+      "text": "7\n\n|Dataset|BlogFeedback[10]\nCovertype\nKDD\nSkin[9]\nShuttle|\n|---|---|\n|# of Points (_n_)\n52,397\n581,012\n98,942\n100,000\n43500\n# of Features (_d_)\n281\n54\n38\n4\n10\nTable 1: Datasets used in experiments based on Euclidean data||"
+    },
+    {
+      "index": 77,
+      "text": "## **4 Experiments**\n\nIn this section we present experimental results on both synthetic and real data sets. Our goal is to validate the two main hypotheses in this work. First we show that warm-starting the Hungarian algorithm with learned duals provides an empirical speedup. Next, we show that the sample complexity of learning good duals is small, ensuring that our approach is viable in practice. We present some representative experimental results here; additional results are in the Supplementary Material."
+    },
+    {
+      "index": 78,
+      "text": "**Experiment Setup:** All of our experiments were run on Google Cloud Platform [24] `e2-standard-2` virtual machines with 2 virtual CPU\u2019s and 8 GB of memory."
+    },
+    {
+      "index": 79,
+      "text": "We consider two different setups for learning dual variables and evaluating our algorithms.\n\n- Batch: In this setup, we receive _s_ samples _c_ 1 _, c_ 2 _, . . . , cs_ from the distribution of problem instances, learn the appropriate dual variables, and then test on new instances drawn from the distribution."
+    },
+    {
+      "index": 80,
+      "text": "- Online: A natural use case for our approach is an _online_ setting, where instance graphs _G_ 1 _, G_ 2 _, . . ._ arrive one at a time. When deciding on the best warm start solution for _Gt_ we can use all of the data from _G_ 1 _, . . . , Gt\u2212_ 1. This is a standard scenario in industrial applications like ad matching, where a new ad allocation plan may need to be computed daily or hourly."
+    },
+    {
+      "index": 81,
+      "text": "**Datasets:** To study the effect of the different algorithm parameters, we first run a study on synthetic data. Let _n_ be the number of nodes on one side of the bipartition and let _\u2113, v_ be two parameters we set later. First, we divide the _n_ nodes on each side of the graph into _\u2113_ groups of equal size. The weight of all edges going from the _i_ \u2019th group on the left side and the _j_ \u2019th group on the right side is initialized to some value _Wi,j_ drawn from a geometric distribution with mean 250. Then to generate a particular graph instance, we perturb each edge weight with independent random noise according to a binomial distribution, shifted and scaled so that it has mean 0 and variance _v_ . We refer to this as the _type_ model (each type consists of a group of nodes). We use _n_ = 500, _\u2113 \u2208{_ 50 _,_ 100 _}_ and vary _v_ from 0 to 2[20] ."
+    },
+    {
+      "index": 82,
+      "text": "We use the following model of generating instances from real data. Let _X_ be a set of _n_ points in R _[d]_ , and fix a parameter _k_ . We first divide _X_ randomly into two sets, _XL_ and _XR_ and compute a _k_ -means clustering on each partition. To generate an instance _G_ = ( _L \u222a R, E_ ), we sample one point from each cluster on each side, generating 2 _k_ points in total. The points sampled from _XL_ (resp. _XR_ ) form the vertices in _L_ (resp. _R_ ). The weight of an ( _i, j_ ) edge is the Euclidean distance between these two points. Changing _k_ allows us to control the size of the instance."
+    },
+    {
+      "index": 83,
+      "text": "We use several datasets from the UCI Machine Learning repository [16]. See Table 1 for a summary. For the KDD and Skin datasets we used a sub-sample of the original data (sizes given in Table 1)."
+    },
+    {
+      "index": 84,
+      "text": "**Implemented Algorithms and Metrics:** We implemented the Hungarian Algorithm (a particular instantiation of Algorithm 2, as discussed in Section 3.2) allowing for arbitrary seeding of a feasible integral dual. We experimented with having initial dual of 0 (giving the standard Hungarian Algorithm) as the baseline and having the initial duals come from our learning algorithm followed by Algorithm 1 to ensure feasibility (which we refer to as \u201cLearned Duals\u201d). We also added the following \u201ctightening\u201d heuristic, which is used in all standard implementations of the Hungarian algorithm: given any feasible dual solution _y_ , set _yi \u2190 yi_ + min _j\u2208N_ ( _i_ ) _{cij \u2212 yi \u2212 yj}_ for all nodes _i_ on one side of the bipartition. This can be quickly carried out in _O_ ( _n_ + _m_ ) time, and guarantees that each node on that side has at least one edge in _E[\u2032]_ . We compare the runtime and number of primal-dual iterations, reporting mean values and error bars denoting 95% confidence intervals. The runtime results are in the supplementary material, and exhibit similar behavior (i.e., the extra running time caused by using Algorithm 1 in Learned Duals is negligible)."
+    },
+    {
+      "index": 85,
+      "text": "To learn initial duals we use a small number of independent samples of each instance type. We compute an optimal dual solution for each instance in the sample. To combine these together into"
+    },
+    {
+      "index": 86,
+      "text": "8\n\na single dual solution, we compute the median value for each node\u2019s set of dual values. This is an efficient implementation of the empirical risk minimization algorithm from Section 3.3."
+    },
+    {
+      "index": 87,
+      "text": "**Results:** First, we examine the performance of Learned Duals in the batch setting described above. For these experiments, we used 20 training instances to learn the initial duals and then tested those on 10 new instances. For the type model, we used _\u2113_ = 50 and considered varying the variance parameter _v_ . The left plot in Figure 1 shows the results as we increase _v_ from 0 to 300. We see a moderate improvement in this case, even when the noise variance is larger than the mean value of an edge weight. Going further, in the middle plot of Figure 1 we consider increasing the noise variance in powers of two geometrically. Note that even when the noise significantly dominates the original signal from the mean weights (and hence the training instances should not help on the test instances), our method is comparable to the Hungarian method."
+    },
+    {
+      "index": 88,
+      "text": "Continuing with the Batch setting, the right plot in Figure 1 summarizes our results for the clustering derived instances on all datasets with _k_ = 500 (similar results hold for other values of _k_ ; see the Supplementary Materials). We see an improvement across all datasets, and a greater than 2x improvement on all but the Covertype dataset."
+    },
+    {
+      "index": 89,
+      "text": "Figure 2 has three plots on the online setting. We aim to show that not too many samples are needed to learn effective duals. From left to right, the plots in Figure 2 show the performance averaged over 20 repetitions of the experiment with 20 time points on the type model with _\u2113_ = 100 _, v_ = 200, and the clustering derived instances on the KDD and Covertype datasets with _k_ = 500, respectively. We see that only a few iterations are needed to see a significant separation between the run time of our method with learned duals and the standard Hungarian method, with further steady improvement as we see more instances. Additional plots for the other datasets are in the Supplementary Materials."
+    },
+    {
+      "index": 90,
+      "text": "We see similar trends in both the real and synthetic data sets. We conclude the following.\n\n- The theory is predictive of practice. Empirically, learning dual variables can lead to significant speed-up. This speed-up is achieved in both the batch and online settings."
+    },
+    {
+      "index": 91,
+      "text": "- As the distribution is more concentrated, the learning algorithm performs better (as one would suspect)."
+    },
+    {
+      "index": 92,
+      "text": "- When the distribution is not concentrated and there is little to learn, then the algorithm has performance similar to the widely used Hungarian algorithm."
+    },
+    {
+      "index": 93,
+      "text": "All together, these results demonstrate the strong potential for improvements in algorithm run time using machine-learned predictions for the weighted matching problem."
+    },
+    {
+      "index": 94,
+      "text": "**----- Start of picture text -----**\n\nType Model Iteration Count vs. Noise Variance 210 Type Model Iteration Count vs. Noise Variance Clustering-Based Instances, k = 500\n60 HungarianLearned DualsMethod 29 HungarianLearned DualsMethod 1000 HungarianLearned DualsMethod\n50 28\n40 27 800\n30 26 600\n20 25 400\n24\n10 200\n23\n0 0.0 0.2 Noise Variance / Mean Weight0.4 0.6 0.8 1.0 1.2 2 6 2 3 Noise Variance / Mean Weight20 23 26 29 212 0 Shuttle Skin Blog FeedbackDataset Covertype KDD\nIteration Count Iteration Count Iteration Count\n**----- End of picture text -----**"
+    },
+    {
+      "index": 95,
+      "text": "Figure 1: Iteration count results for the Batch setting. The left figure gives the iteration count for the type model (synthetic data) versus linearly increasing _v_ , while the middle geometrically increases _v_ . The right figure summarizes the results for clustering based instances (real data) in the batch setting."
+    },
+    {
+      "index": 96,
+      "text": "## **5 Conclusion and Future Work**\n\nIn this work we showed how to use learned predictions to warm-start primal-dual algorithms for weighted matching problems to improve their running times. We identified three key challenges of feasibility, learnability and optimization, for any such scheme, and showed that by working in the dual space we could give rigorous performance guarantees for each. Finally, we showed that our proposed methods are not only simpler, but also more efficient in practice."
+    },
+    {
+      "index": 97,
+      "text": "9\n\n**----- Start of picture text -----**\n\nType Model, v = 200 - Online Setting KDD - Online Setting Covertype - Online Setting\n45.0 1200 600  HungarianMethod\n Learned Duals\n42.5\n40.0 1000 550\n37.5 800 Method 500\n35.0  Hungarian Learned Duals\n32.5 600 450\n30.0\n27.5  HungarianMethod 400 400\n25.0  Learned Duals 350\n0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19\nInstance Number Instance Number Instance Number\nIteration Count Iteration Count Iteration Count\n**----- End of picture text -----**"
+    },
+    {
+      "index": 98,
+      "text": "Figure 2: Iteration count results for the Online setting. The left figure is for the type model (synthetic data), while the middle and right are for the clustering based instances (real data) with _k_ = 500 on KDD and Covertype, respectively."
+    },
+    {
+      "index": 99,
+      "text": "An immediate avenue for future work is to extend these results to other combinatorial optimization problems. The key ingredient is identifying an appropriate intermediate representation: it must be simple enough to be learnable with small sample complexity, yet sophisticated enough to capture the underlying structure of the problem at hand."
+    },
+    {
+      "index": 100,
+      "text": "## **Acknowledgments and Disclosure of Funding**\n\nMichael Dinitz was supported in part by NSF grant CCF-1909111. Sungjin Im was supported in part by NSF grants CCF-1617653 and CCF-1844939. Thomas Lavastida and Benjamin Moseley were supported in part by NSF grants CCF-1824303, CCF-1845146, CCF-1733873 and CMMI-1938909. Benjamin Moseley was additionally supported in part by a Google Research Award, an Infor Research Award, and a Carnegie Bosch Junior Faculty Chair."
+    },
+    {
+      "index": 101,
+      "text": "## **References**\n\n- [1] Anders Aamand, Piotr Indyk, and Ali Vakilian. (learned) frequency estimation algorithms under zipfian distribution. _arXiv preprint arXiv:1908.05198_ , 2019."
+    },
+    {
+      "index": 102,
+      "text": "- [2] Keerti Anand, Rong Ge, and Debmalya Panigrahi. Customizing ML predictions for online algorithms. In _Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event_ , volume 119 of _Proceedings of Machine Learning Research_ , pages 303\u2013313. PMLR, 2020. URL `http://proceedings.mlr.press/v119/anand20a. html` ."
+    },
+    {
+      "index": 103,
+      "text": "- [3] Antonios Antoniadis, Themis Gouleakis, Pieter Kleer, and Pavel Kolev. Secretary and online matching problems with machine learned advice. In Hugo Larochelle, Marc\u2019Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin, editors, _Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual_ , 2020. URL `https://proceedings.neurips. cc/paper/2020/hash/5a378f8490c8d6af8647a753812f6e31-Abstract.html` ."
+    },
+    {
+      "index": 104,
+      "text": "- [4] Maria-Florina Balcan, Travis Dick, Tuomas Sandholm, and Ellen Vitercik. Learning to branch. In Jennifer G. Dy and Andreas Krause, editors, _Proceedings of the 35th International Conference on Machine Learning, ICML 2018, Stockholmsm\u00e4ssan, Stockholm, Sweden, July 10-15, 2018_ , volume 80 of _Proceedings of Machine Learning Research_ , pages 353\u2013362. PMLR, 2018. URL `http://proceedings.mlr.press/v80/balcan18a.html` ."
+    },
+    {
+      "index": 105,
+      "text": "- [5] Maria-Florina Balcan, Travis Dick, and Ellen Vitercik. Dispersion for data-driven algorithm design, online learning, and private optimization. In Mikkel Thorup, editor, _59th IEEE Annual Symposium on Foundations of Computer Science, FOCS 2018, Paris, France, October 7-9, 2018_ , pages 603\u2013614. IEEE Computer Society, 2018. doi: 10.1109/FOCS.2018.00064. URL `https://doi.org/10.1109/FOCS.2018.00064` ."
+    },
+    {
+      "index": 106,
+      "text": "- [6] Maria-Florina Balcan, Travis Dick, and Colin White. Data-driven clustering via parameterized lloyd\u2019s families. In Samy Bengio, Hanna M. Wallach, Hugo Larochelle, Kristen Grauman,\n\n10"
+    }
+  ],
+  "methods": {
+    "coarse__qwen3-235b-a22b-2507": {
+      "label": "Coarse (qwen3-235b-a22b-2507)",
+      "model": "openrouter/qwen/qwen3-235b-a22b-2507",
+      "overall_feedback": "The paper presents a compelling and timely contribution at the intersection of learning-augmented algorithms and combinatorial optimization. It makes a strong conceptual case for using learned duals as warm starts in primal-dual methods, and provides a clean theoretical framework addressing feasibility, optimization, and learnability. The empirical validation across synthetic and real datasets is a notable strength, demonstrating practical speedups in both batch and online settings. The idea of projecting infeasible predictions into feasible duals via a vertex-cover-inspired subroutine is elegant and well-motivated.\n\nOverview issues:\n\n- Feasibility projection analysis overlooks integrality and may not preserve runtime guarantees: The projection algorithm (Algorithm 1) is analyzed as a 2-approximation for a variant of vertex cover, leading to a factor-3 bound in Theorem 4 via triangle inequality. However, the analysis does not establish that the resulting dual \\(\\hat{y}'(c)\\) remains integral, which is required for the subsequent Hungarian method to maintain its standard runtime and correctness guarantees. While the optimal dual \\(y^*(c)\\) is integral, the perturbation \\(\\delta\\) computed by the greedy procedure may not be, and no rounding or integrality-preserving mechanism is described. This gap undermines the claimed \\(\\tilde{O}(m\\sqrt{n} \\cdot \\min\\{\\|\\hat{y}' - y^*\\|_1, \\sqrt{n}\\})\\) runtime in Theorem 5, which typically assumes integral duals. The authors must either prove that their projection preserves integrality or adapt the Hungarian method to handle fractional duals with the same efficiency.\n\n- Optimization runtime bound lacks rigorous justification and conflicts with known Hungarian complexity: Theorem 5 claims the Hungarian method runs in \\(\\tilde{O}(m\\sqrt{n} \\cdot \\min\\{\\|\\hat{y}' - y^*\\|_1, \\sqrt{n}\\})\\) time when warm-started, suggesting a direct dependence on the \\(\\ell_1\\) distance to optimality. However, no detailed analysis supports this bound. Standard analyses of the Hungarian method tie runtime to the number of augmenting path iterations, which depends on dual slacks and graph structure, not directly on \\(\\ell_1\\) distance. A small \\(\\ell_1\\) gap could still require \\(\\Omega(n)\\) iterations if the dual is misaligned in key components. The claim that the bound improves upon the standard \\(\\tilde{O}(mn)\\) only when \\(\\|\\hat{y}' - y^*\\|_1 = o(\\sqrt{n})\\) is plausible but unsubstantiated. The authors should either provide a full proof in the main text or significantly qualify the claim.\n\n- Learnability analysis assumes optimal duals are available for training, which is computationally prohibitive: The learning framework (Section 3.3, Theorem 6) assumes access to optimal dual solutions \\(y^*(c)\\) for training instances, which are as hard to compute as solving the original matching problem exactly. This creates a circularity: to speed up matching via learned duals, one must first solve many matching instances to obtain training labels. For large graphs, this negates the practical benefit of the method. The paper does not address how to approximate \\(y^*(c)\\) during training or bound the error propagation from using inexact duals. Real-world deployment would require a scalable labeling procedure, yet the experiments do not clarify whether optimal duals were computed or approximated for the 20 training instances used.\n\n- Empirical evaluation lacks ablation of the projection step and underreports computational overhead: The experiments report iteration counts and speedups but do not isolate the cost of Algorithm 1 (projection to feasibility). While the paper claims the \\(O(m+n)\\) projection is negligible, this has not been verified experimentally, especially for dense graphs or poor predictions requiring large adjustments. An ablation study comparing warm-start performance with and without projection \u2014 or with different projection quality \u2014 would strengthen the claims. Moreover, runtime results are relegated to supplementary material, and the main text only shows iteration counts, making it impossible to assess whether the observed speedups are due to fewer iterations or also reflect actual wall-clock gains after accounting for prediction and projection overhead.\n\n- Generalization claims are not supported by evaluation across diverse problem distributions: The experiments use a narrow set of synthetic and real datasets, but do not test the method's robustness to distribution shift \u2014 a key concern in learning-augmented algorithms. For instance, training on low-variance synthetic data and testing on high-variance instances (or vice versa) could reveal degradation not captured in Figure 1. The paper asserts robustness when 'there is little to learn', but does not quantify prediction quality or correlate \\(\\|\\hat{y} - y^*\\|_1\\) with observed speedup in the experiments. Including such a correlation plot would validate the theoretical dependence of runtime on prediction error and strengthen the end-to-end narrative.\n\n- No ablation of projection step overhead in experiments: The paper claims that the projection of infeasible predicted duals to feasible ones takes only linear time and thus has negligible overhead. However, the experimental section reports only iteration counts and relegates runtime measurements to supplementary material, without isolating the cost of the projection step. A complete evaluation would include an ablation that compares the total wall-clock time with and without the projection, particularly under poor predictions that require substantial adjustments. To properly validate the claim, the authors should report the runtime of Algorithm 1 as a fraction of total solve time across datasets, especially for dense graphs like Covertype where projection might dominate. Without this, the practical benefit of the method remains uncertain.\n\n- Missing demonstration of speedup on standard benchmark instances: The experiments use either synthetic type models or real data transformed via k-means clustering, but do not evaluate on standard weighted bipartite matching benchmarks from libraries like DIMACS or instances used in prior algorithmic work. As a result, it is unclear whether the speedups generalize to problem classes with known structure, such as grid graphs or assignment problems with geometric costs. The paper should include results on at least one canonical benchmark\u2014such as the assignment problem derived from image keypoints or standard MWPM instances from the literature\u2014to demonstrate that the learned duals provide speedup in well-established settings. This would strengthen the claim of practical effectiveness beyond the specific data generation processes used.\n\n- No analysis of prediction quality versus speedup correlation: The core theoretical claim is that running time depends on the \u2113\u2081 error of the learned dual. Yet the experiments do not report the actual \u2113\u2081 distances between learned duals and optimal duals, nor do they plot speedup against this error. A key missing figure is a scatter plot showing, for multiple test instances, the relationship between \u2016\u0177 - y*\u2016\u2081 and the reduction in iterations or time. Without this, the paper fails to empirically validate its main theoretical mechanism. Adding such a plot\u2014even on a single dataset\u2014would demonstrate whether the observed speedups are indeed driven by prediction accuracy as claimed, closing the loop between theory and practice.\n\n- Unvalidated assumption that median-of-optimal-duals is learnable at scale: The learning method relies on computing the coordinate-wise median of optimal duals from training instances. However, solving for exact optimal duals is as expensive as solving the full matching problem, making this approach impractical for large-scale deployment. The paper does not address how to approximate the optimal duals during training\u2014such as via early-stopped Hungarian or dual averaging\u2014nor does it analyze the impact of using noisy labels. To support practical use, the authors should either provide evidence that good predictions can be learned from approximate duals (e.g., by comparing median-of-exact vs. median-of-approximate in a small-scale experiment) or relax the learning model to work with coarser supervision.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Prove that the feasibility projection (Algorithm 1) outputs integral duals or adapt the optimization phase to handle fractional duals without sacrificing runtime guarantees.\n\n- Provide a rigorous proof of the claimed optimization runtime bound (Theorem 5) or replace it with a more modest, justifiable complexity statement.\n\n- Address the circularity in the learning setup by proposing and evaluating a method to obtain approximate dual labels efficiently during training.\n\n- Include in the main paper a detailed runtime comparison that explicitly accounts for the cost of prediction, projection, and Hungarian execution, with ablation of the projection step.\n\n- Add an analysis of prediction error versus speedup and test performance under distribution shift to validate robustness and generalization claims.",
+      "comments": [
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_0",
+          "title": "Projection algorithm may violate constraints due to incomplete edge coverage",
+          "quote": "Algorithm 1 Fast Approx. for Distance to Feasibility\n\n|  1: | procedure FASTAPPROX(G = (V, E), r)  |\n| --- | --- |\n|  2: | \u2200i \u2208 V, \u03b4i \u2190 0  |\n|  3: | while E \u2260 \u2205 do  |\n|  4: | Let i be an arbitrary vertex of G  |\n|  5: | while i has a neighbor do  |\n|  6: | j \u2190 arg maxj' \u2208 N(i) rij'  |\n|  7: | \u03b4i \u2190 rij  |\n|  8: | Delete i and all its edges from G  |\n|  9: | i \u2190 j  |\n|  10: | Return \u03b4  |",
+          "explanation": "The algorithm processes edges along a path initiated from an arbitrary vertex, but after deleting a vertex and its incident edges, some constraints may remain unaddressed if they involve vertices not revisited. For example, in a triangle with edges ab, bc, ca, starting at a and moving to b may leave edge ca partially unenforced if c is never processed as a root. Since the inner loop continues only along neighbors of the current i, and i is updated to j without ensuring all components are covered, edges incident to deleted vertices might not be checked. This could result in a returned \u03b4 that fails to satisfy \u03b4_i + \u03b4_j \u2265 r_ij for all ij \u2208 F. The algorithm should be revised to iterate over connected components or use a traversal that ensures all edges are considered before deletion.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_1",
+          "title": "Runtime bound in Theorem 5 lacks justification from augmenting path analysis",
+          "quote": "Theorem 5. For an arbitrary cost vector  $c$ , the Hungarian method starting with a feasible integer dual solution  $\\hat{y}'(c)$  finds a minimum weight perfect matching in  $\\hat{O}\\left(m\\sqrt{n} \\cdot \\min \\left\\{\\| y^*(c) - \\hat{y}'(c)\\|_1, \\sqrt{n}\\right\\}\\right)$  time, where  $y^*(c)$  is an optimal dual solution.",
+          "explanation": "The claimed runtime depends on $\\min\\{\\|y^* - \\hat{y}'\\|_1, \\sqrt{n}\\}$, suggesting the number of augmenting phases is reduced by good initialization. However, the standard $O(\\sqrt{n})$ bound arises from the structure of shortest augmenting paths, not from the $\\ell_1$ distance in dual space. A small $\\ell_1$ gap does not guarantee fewer phases\u2014dual updates depend on slack values and graph connectivity, not just total deviation. The paper provides no hybrid analysis showing that warm-starting reduces phase count when $\\|y^* - \\hat{y}'\\|_1 < \\sqrt{n}$, nor does it explain how the algorithm switches between regimes. Without a lemma linking dual proximity to phase complexity under shortest-path augmentation, the bound lacks theoretical support.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_2",
+          "title": "Feasibility projection does not ensure non-negative duals",
+          "quote": "Let $\\hat{y}$ be an infeasible set of (integral) dual prices \u2013 this should be thought of as the \u201cgood\u201d dual obtained by our learning algorithm. Our goal in this section is to find a new feasible dual solution $\\hat{y}'(c)$ that is close to $\\hat{y}$, for a given MWPM-D instance with cost $c$.",
+          "explanation": "The projection updates $\\hat{y}'_i = \\hat{y}_i - \\delta_i$ with $\\delta_i \\geq 0$, but no constraint ensures $\\hat{y}'_i \\geq 0$. If $\\hat{y}_i$ is small and $r_{ij}$ is large for some edge, $\\delta_i$ may exceed $\\hat{y}_i$, resulting in negative dual values. While the dual LP (MWPM-D) does not explicitly require non-negativity, standard implementations of the Hungarian method assume non-negative duals, and negative values could disrupt slack computation or data structures. The feasibility problem should include $\\hat{y}'_i \\geq 0$ or the analysis should justify handling negative duals.",
+          "comment_type": "technical",
+          "paragraph_index": 54,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_3",
+          "title": "Integrality of median-based learned duals not preserved",
+          "quote": "To combine these together into\n\n<!-- PAGE BREAK -->\n\na single dual solution, we compute the median value for each node's set of dual values. This is an efficient implementation of the empirical risk minimization algorithm from Section",
+          "explanation": "The optimal duals $y^*(c)$ are integral when edge costs are integral, but the coordinate-wise median of integers may not be integer (e.g., median of 1,2,2 is 2, but of 1,2,3 is 2). The resulting $\\hat{y}$ could be fractional, and while Algorithm 1 uses $r_{ij} = \\hat{y}_i + \\hat{y}_j - c_{ij}$, which may remain integral if $c_{ij}$ is integral, the algorithm does not specify rounding. A fractional $\\hat{y}$ could lead to fractional $\\delta_i$ in Algorithm 1, producing a fractional $\\hat{y}'(c)$, which breaks the assumption of integral duals in the Hungarian method. The learning step should include rounding to nearest integer to preserve integrality.",
+          "comment_type": "technical",
+          "paragraph_index": 86,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_4",
+          "title": "Pseudo-dimension bound requires bounded dual domain",
+          "quote": "Theorem 7. Let  $\\mathcal{H}_n = \\{f_y\\mid y\\in \\mathbb{R}^n\\}$  where  $f_{y}:\\mathbb{R}^{n}\\to \\mathbb{R}$  is defined by  $f_{y}(x) = \\| y - x\\|_{1}$ . The pseudo-dimension of  $\\mathcal{H}_n$  is at most  $O(n\\log n)$ .",
+          "explanation": "The pseudo-dimension of $\\ell_1$-distance functions over $\\mathbb{R}^n$ is unbounded without domain restrictions. The bound $O(n \\log n)$ likely relies on dual variables being bounded, e.g., $|y_i| \\leq C$, due to cost constraints. However, the theorem states $y, x \\in \\mathbb{R}^n$ without such limits, making the claim incorrect in general. The function class should be defined over a bounded domain $[-C,C]^n$ to ensure finite pseudo-dimension, and the dependence on $C$ should be acknowledged.",
+          "comment_type": "technical",
+          "paragraph_index": 74,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_5",
+          "title": "Learning objective does not enforce dual feasibility",
+          "quote": "Our goal is to learn dual values  $\\hat{y}$  which minimize  $\\mathbb{E}_{c\\sim \\mathcal{D}}[L(y,c)]$ . Let  $y^{*}$  denote the vector minimizing this objective,  $y^{*} = \\arg \\min_{y}\\mathbb{E}_{c\\sim \\mathcal{D}}[L(y,c)]$ .",
+          "explanation": "The loss $L(y,c) = \\|y - y^*(c)\\|_1$ measures proximity to the optimal dual but does not penalize infeasibility of $y$ for the instance $c$. A dual $\\hat{y}$ close in $\\ell_1$ norm to $y^*(c)$ might still violate $y_i + y_j \\leq c_{ij}$ for many edges, requiring large corrections in Algorithm 1. Since the projection cost depends on the degree of infeasibility, minimizing $\\ell_1$ distance alone may not yield the most effective warm-start. The learning objective should include a feasibility penalty or use projected distance to ensure $\\hat{y}$ is usable with minimal adjustment.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_6",
+          "title": "Integrality of optimal duals not justified for real-valued costs",
+          "quote": "Here we assume without loss of generality that  $y^{*}(c)$  is integral as the underlying polytope is known to be integral.",
+          "explanation": "The integrality of the primal matching polytope implies that for integral costs, there exists an integral optimal dual. However, the paper allows general real-valued costs $c \\sim \\mathcal{D}$, under which optimal duals may not be integral. The claim that the dual is integral 'without loss of generality' is unjustified unless costs are assumed integral. If costs are real, the analysis of Algorithm 1 and the Hungarian method must account for fractional values. The assumption should be made explicit or removed.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_7",
+          "title": "Notational ambiguity between instance-optimal and distribution-optimal duals",
+          "quote": "Our goal is to learn dual values  $\\hat{y}$  which minimize  $\\mathbb{E}_{c\\sim \\mathcal{D}}[L(y,c)]$ . Let  $y^{*}$  denote the vector minimizing this objective,  $y^{*} = \\arg \\min_{y}\\mathbb{E}_{c\\sim \\mathcal{D}}[L(y,c)]$ .",
+          "explanation": "The symbol $y^*$ is used both for the optimal dual of a specific instance $c$ (e.g., $y^*(c)$) and for the minimizer of expected loss over $\\mathcal{D}$. This creates confusion, as the latter is a fixed vector approximating the average of $y^*(c)$, while the former varies with $c$. When citing Theorems 4 and 5, which reference $y^*(c)$, the reuse of $y^*$ may mislead readers into thinking the learned $\\hat{y}$ converges to $y^*(c)$ for a typical $c$. A distinct symbol (e.g., $\\bar{y}^*$) should be used for the distribution-level minimizer.",
+          "comment_type": "technical",
+          "paragraph_index": 70,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3-235b-a22b-2507_8",
+          "title": "Projection's computational overhead not empirically isolated",
+          "quote": "The runtime results are in the supplementary material, and exhibit similar behavior (i.e., the extra running time caused by using Algorithm 1 in Learned Duals is negligible).",
+          "explanation": "The claim that Algorithm 1's overhead is negligible is not substantiated with data. While its time complexity is $O(m+n)$, on dense graphs (e.g., Covertype with large $k$) or poor predictions requiring many adjustments, its runtime may be significant. The experiments report total solve time but do not break down the cost of projection. An ablation comparing runs with and without projection, or reporting Algorithm 1's runtime as a fraction of total time, is needed to validate this claim.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        }
+      ],
+      "cost_usd": 0.2252,
+      "cost_method": "estimated",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__glm-4.6": {
+      "label": "Coarse (glm-4.6)",
+      "model": "openrouter/z-ai/glm-4.6",
+      "overall_feedback": "This paper presents a learning-augmented approach to speed up bipartite matching algorithms by warm-starting the Hungarian method with learned dual variables. The work addresses three key challenges: converting infeasible predicted duals to feasible ones, using feasible duals to accelerate optimization, and learning good duals with low sample complexity. While the theoretical framework appears sound and the empirical results are promising, there are several significant concerns regarding the completeness of the analysis, the practical relevance of the assumptions, and the thoroughness of the experimental validation.\n\nThe paper makes a valuable contribution to the emerging area of algorithms with predictions by providing a principled approach to warm-starting primal-dual algorithms for matching problems. The theoretical analysis is reasonably comprehensive, addressing feasibility, optimization, and learnability. The experimental validation demonstrates practical speedups on both synthetic and real datasets. However, the paper suffers from some gaps in the theoretical analysis (particularly regarding the optimization algorithm's runtime proof), insufficient discussion of practical limitations, and experimental evaluation that could be more robust.\n\nOverview issues:\n\n- Incomplete Runtime Analysis for Optimization Algorithm: Theorem 5 claims that the Hungarian method starting with a feasible dual runs in $\tilde{O}(m\\sqrt{n} \\cdot \\min\\{\\|y^* - \\hat{y}'\\|_1, \\sqrt{n}\\})$ time, but the paper provides only a sketch of the proof. The analysis in Section 3.2 is insufficient to establish this bound rigorously. Specifically, the paper states that the algorithm performs at most $O(\\|y^* - \\hat{y}'\\|_1)$ iterations but does not justify how this translates to the claimed runtime bound, especially the $\tilde{O}$ notation hiding polylogarithmic factors. The connection between the number of iterations and the $m\\sqrt{n}$ factor is not clearly established. This is a critical gap since the runtime improvement is the central claim of the paper.\n\n- Unrealistic Assumption about Fixed Graph Structure: The learning framework in Section 3.3 assumes that the graph structure $G=(V,E)$ is fixed while only edge costs vary according to distribution $\\mathcal{D}$. This is a significant limitation that is not adequately acknowledged. In many real-world applications of bipartite matching (e.g., online advertising, ride-sharing), the graph structure itself changes between instances - vertices may appear/disappear, and edge connectivity patterns evolve. The paper's sample complexity bounds and learning guarantees rely heavily on this fixed structure assumption. Without it, the problem of learning duals becomes substantially more complex, as the dimensionality of the dual space would vary across instances.\n\n- Insufficient Experimental Baselines: The experimental evaluation in Section 4 compares only against the standard Hungarian algorithm with zero initialization. This is an inadequate baseline for several reasons. First, the paper should compare against state-of-the-art implementations of the Hungarian algorithm that include standard heuristics and optimizations (beyond just the tightening heuristic mentioned). Second, and more importantly, the paper should include comparisons with other theoretically faster algorithms for bipartite matching, such as the $O(m\\sqrt{n}\\log(nC))$ scaling algorithms mentioned in the introduction. While the authors claim these are not practically available, they should at least provide some discussion of how their method would compare asymptotically, or attempt to implement a baseline version of one of these algorithms.\n\n- Missing Analysis of Prediction Quality Impact: The paper lacks a thorough analysis of how the quality of predictions affects the practical performance. While Theorem 5 shows the runtime depends on $\\|\\hat{y}' - y^*\\|_1$, there is no characterization of what values of this quantity constitute \"good\" predictions in practice. The experiments show speedups but do not correlate them with the actual prediction error. A more useful analysis would show the relationship between prediction error (measured as $\\ell_1$ distance) and runtime improvement, perhaps demonstrating thresholds where the method becomes beneficial. Without this, it's difficult for practitioners to assess whether their particular problem distribution is suitable for this approach.\n\n- Limited Discussion of Computational Overhead: The paper claims that the overhead of the feasibility mapping (Algorithm 1) is \"essentially negligible\" since it runs in $O(m+n)$ time. However, this overlooks the practical overhead of learning the duals from samples. While Theorem 6 bounds the sample complexity, it doesn't address the computational cost of solving the matching problems on the training instances to obtain $y^*(c_i)$ for each sample. In practice, this training cost could be substantial, especially if many samples are needed. The paper should provide a more complete analysis of the total computational cost, including both training and inference phases, to better assess the practical viability of the approach.\n\n- Missing Worked Example of Feasibility Mapping: The paper presents Algorithm 1 for mapping infeasible duals to feasible ones, but never demonstrates it on a concrete example. This makes it difficult for readers to understand how the algorithm behaves in practice. The paper should include a small, fully-specified bipartite matching instance (e.g., a 3x3 graph with specific edge costs) and show step-by-step how Algorithm 1 transforms an infeasible predicted dual into a feasible one. This would help readers verify the claimed 2-approximation bound and understand the algorithm's mechanics.\n\n- No Demonstration of Non-Vacuous Runtime Improvement: The paper claims runtime improvements when predictions are good, but never shows an example where the theoretical bound is meaningfully better than the standard Hungarian algorithm. The authors should construct a concrete distribution over problem instances where the learned dual has provably small $\\\\(\\|\\\\hat{y}' - y^*\\\\|_1\\\\)$ (e.g., $O(\\\\log n)$) and show that this translates to a provable speedup. For instance, they could consider instances where edge costs follow a structured pattern (like all costs in a row are similar) and demonstrate that the median-based learning algorithm achieves small error on this distribution.\n\n- Missing Implementation Guidance for Learning Phase: While Theorem 6 provides sample complexity bounds, the paper gives minimal guidance on implementing the learning algorithm in practice. The authors should provide more details about the computational costs of the learning phase, including how to efficiently compute optimal duals for training instances. They should discuss practical considerations like: (1) How to choose the number of training samples in practice, (2) Whether the median computation can be parallelized, and (3) Memory requirements for storing training instances. This information is crucial for practitioners who want to implement the full pipeline.\n\n- Incomplete Comparison to Theoretical Baselines: The paper dismisses faster theoretical algorithms (like $O(m\\\\sqrt{n}\\\\log(nC))$ scaling algorithms) as unavailable in practice, but never analyzes how their method would compare theoretically. The authors should include a theoretical comparison showing how their runtime bound relates to these algorithms under different prediction quality regimes. For example, they should characterize the prediction error threshold below which their method beats the $O(m\\\\sqrt{n}\\\\log(nC))$ bound. This would help readers understand when their approach is theoretically advantageous, not just empirically.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Provide a complete proof of Theorem 5's runtime bound, including detailed analysis of how the number of iterations translates to the claimed $\tilde{O}(m\\sqrt{n})$ factor\n\n- Add discussion of the fixed graph structure assumption and its implications for real-world applications, possibly extending the analysis to handle varying graph structures\n\n- Expand experimental evaluation to include additional baselines: optimized Hungarian implementations and at least one theoretically faster algorithm\n\n- Include analysis correlating prediction error ($\\ell_1$ distance) with runtime improvements to characterize when the method is beneficial\n\n- Provide complete computational cost analysis including both training phase (solving training instances) and inference phase",
+      "comments": [
+        {
+          "id": "coarse__glm-4.6_0",
+          "title": "Incorrect weight choice for completing graph",
+          "quote": "When looking for optimal solutions we can assume that  $G$  is a complete graph by adding all possible edges not in  $E$  with weight  $Cn^2$ . It is easy to see that any  $o(n)$  approximate solution would not use any of these edges.",
+          "explanation": "The weight $Cn^2$ for added edges is insufficient to guarantee they won't be used in an $o(n)$-approximate solution. Consider a graph with $n$ vertices where the original edges have weights up to $C$. Adding edges with weight $Cn^2$ means each added edge could be at most $n$ times heavier than the heaviest original edge. In a minimum weight perfect matching, we need $n/2$ edges. If we use even one added edge of weight $Cn^2$, the total weight could be at most $(n/2-1) \\times C + Cn^2 = Cn^2 + O(nC)$. The optimal solution using only original edges has weight at most $(n/2) \\times C = O(nC)$. The ratio is approximately $n$, not $o(n)$. To ensure added edges are never used in an $o(n)$-approximation, the weight should be at least $Cn^3$ or higher, making the ratio $O(n^2)$ between solutions using added edges versus optimal solutions.",
+          "comment_type": "technical",
+          "paragraph_index": 40,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__glm-4.6_1",
+          "title": "Algorithm 1 input parameters undefined",
+          "quote": "Algorithm 1 Fast Approx. for Distance to Feasibility\n\n|  | procedure FASTAPPROX(G = (V, E), r) | | | | | | | | |\n| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |\n| 1: | $\\forall i \\in V, \\delta_i \\gets 0$\n2: | while $E \\neq \\emptyset$ do\n3: | Let $i$ be an arbitrary vertex of $G$\n4: | while $i$ has a neighbor do\n5: | $j \\gets \\arg \\max_{j' \\in N(i)} r_{ij'}$\n6: | $\\delta_i \\gets r_{ij}$\n7: | Delete $i$ and all its edges from $G$\n8: | $i \\gets j$\n9: | Return $\\delta$",
+          "explanation": "The algorithm signature FASTAPPROX(G = (V, E), r) uses parameter r without definition. The text describes the feasibility problem in terms of infeasible dual \u0177 and perturbations \u03b4, but never defines how r relates to \u0177 or the original costs c. Without establishing r_{ij} = c_{ij} - \u0177_i - \u0177_j (or similar), readers cannot verify that Algorithm 1 solves the intended feasibility problem. Add the definition \"Let r_{ij} = c_{ij} - \u0177_i - \u0177_j be the reduced costs\" before Algorithm 1.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__glm-4.6_2",
+          "title": "Missing definition of edge weights r_{ij}",
+          "quote": "The analysis is based on interpreting the algorithm through the lens of primal-dual\u2014the dual of (1) turns out to be a maximum weight matching problem with new edge weights $r_{ij}$.",
+          "explanation": "The paper references edge weights r_{ij} in the dual of (1) without defining them. Since the original problem involves costs c and infeasible dual \u0177, the weights r_{ij} must be derived from these quantities. The natural definition would be r_{ij} = c_{ij} - \u0177_i - \u0177_j (reduced costs), but this is never stated. Without this definition, the claim about the dual being a maximum weight matching with weights r_{ij} cannot be verified. Add \"where r_{ij} = c_{ij} - \u0177_i - \u0177_j are the reduced costs\" after this sentence.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__glm-4.6_3",
+          "title": "Missing definition of problem (1)",
+          "quote": "The analysis is based on interpreting the algorithm through the lens of primal-dual\u2014the dual of (1) turns out to be a maximum weight matching problem with new edge weights $r_{ij}$.",
+          "explanation": "The text references \"the dual of (1)\" but problem (1) is never defined in this section. Earlier sections mention MWPM-D, but the specific formulation (1) that the algorithm analyzes is not provided. Without seeing the primal problem (1), readers cannot verify that its dual is indeed a maximum weight matching problem or understand the role of edge weights r_{ij}. Add the definition \"Consider the linear program (1): min_{\u03b4\u22650} ||\u03b4||\u2081 subject to \u0177 - \u03b4 being feasible for MWPM-D\" before this sentence.",
+          "comment_type": "technical",
+          "paragraph_index": 59,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__glm-4.6_4",
+          "title": "Missing justification for iteration bound",
+          "quote": "We will show this algorithm performs at most $O\\left(\\| y^{*}(c) - \\hat{y}^{\\prime}(c)\\|_{1}\\right)$ iterations. We can further improve this by ensuring the algorithm runs no longer than the standard Hungarian algorithm in the case that we have large error in the prediction, i.e., $\\| y^{*}(c) - \\hat{y}^{\\prime}(c)\\|_{1}$ is large.",
+          "explanation": "The paper claims the algorithm performs at most $O(\\|y^*(c) - \\hat{y}'(c)\\|_1)$ iterations but provides no justification for this bound. The text mentions that steps 7-9 guarantee a strict increase in the dual objective and that integrality implies a bound on iterations, but it never shows how the $\\ell_1$-norm distance to optimality relates to the maximum possible dual objective increase per iteration. Without establishing this connection, the claimed iteration bound is unsupported.\n\nAdd a proof showing that each iteration increases the dual objective by at least 1 (due to integrality) and that the total dual objective increase from the initial feasible dual $\\hat{y}'(c)$ to the optimal dual $y^*(c)$ is bounded by $\\|y^*(c) - \\hat{y}'(c)\\|_1$.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__glm-4.6_5",
+          "title": "Unexplained runtime bound derivation",
+          "quote": "Theorem 5. For an arbitrary cost vector  $c$ , the Hungarian method starting with a feasible integer dual solution  $\\hat{y}'(c)$  finds a minimum weight perfect matching in  $\\hat{O}\\left(m\\sqrt{n} \\cdot \\min \\left\\{\\| y^*(c) - \\hat{y}'(c)\\|_1, \\sqrt{n}\\right\\}\\right)$  time, where  $y^*(c)$  is an optimal dual solution.",
+          "explanation": "Theorem 5 states a runtime bound but provides no derivation connecting the iteration bound to this specific runtime. The paper mentions that using shortest augmenting paths recovers the Hungarian algorithm, but doesn't explain how the $m\\sqrt{n}$ factor emerges or why the bound uses $\\min\\{\\|y^* - \\hat{y}'\\|_1, \\sqrt{n}\\}$. The standard Hungarian algorithm runs in $O(m\\sqrt{n})$ time, so the $\\sqrt{n}$ term in the minimum makes sense as a worst-case bound, but the connection between iterations and the $m\\sqrt{n}$ factor is never established.\n\nAdd a derivation showing that each iteration (finding a maximum matching and updating along shortest augmenting paths) costs $O(m\\sqrt{n})$ time, and that with $\\min\\{\\|y^* - \\hat{y}'\\|_1, \\sqrt{n}\\}$ iterations, the total runtime is as claimed.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__glm-4.6_6",
+          "title": "Undefined Algorithm 2 reference",
+          "quote": "We use a simple primal-dual schema to achieve this, which is given formally in Algorithm 2.",
+          "explanation": "The text references Algorithm 2 but does not include it in this section. Without access to Algorithm 2, readers cannot verify the claims about steps 7-9 or the specific implementation details mentioned for steps 6 and 11. The proof relies on understanding how the dual is modified in steps 7-9 and how the choice of S and M affects the runtime.\n\nAdd Algorithm 2 to this section or provide sufficient detail about the algorithm steps to make the proof self-contained.",
+          "comment_type": "technical",
+          "paragraph_index": 61,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__glm-4.6_7",
+          "title": "Inconsistent sample complexity bound",
+          "quote": "After $\\tilde{O}(C^{2}n^{3})$ samples from an unknown distribution $\\mathcal{D}$ over problem instances, the learning algorithm produces duals $\\hat{y}$ so that $\\mathbb{E}_{c\\sim\\mathcal{D}}\\left[\\|\\hat{y}-y^{*}(c)\\|_{1}\\right]$ is approximately minimum among all possible choices of $\\hat{y}$, where $C$ is the maximum edge cost and $y^{*}(c)$ is an optimal dual for instance $c$.",
+          "explanation": "The sample complexity bound in Theorem 1 contradicts the more precise bound in Theorem 6. Theorem 6 states that $s = O\\left(\\left(\\frac{nC}{\\epsilon}\\right)^2 (n\\log n + \\log (1 / p))\\right)$ samples are needed to achieve an $\\epsilon$-approximation with probability $1-p$. The $\\tilde{O}(C^{2}n^{3})$ bound in Theorem 1 omits the dependence on $\\epsilon$ and $p$, which are crucial parameters for characterizing the approximation quality. This inconsistency makes the informal bound misleading since it suggests a fixed sample complexity independent of the desired accuracy. The bound should be stated as $\\tilde{O}(\\frac{C^{2}n^{3}}{\\epsilon^{2}})$ or reference the full bound from Theorem 6.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__glm-4.6_8",
+          "title": "Inconsistent runtime bound in Theorem 3",
+          "quote": "Using the learned dual  $\\hat{y}$ , given edge costs  $c$ , computes a min-cost perfect matching in time  $O(m\\sqrt{n} \\cdot \\min \\{\\| \\hat{y} - y^{*}(c) \\|_{1}, \\sqrt{n}\\})$ .",
+          "explanation": "The runtime bound uses the infeasible prediction $\\hat{y}$, but the algorithm actually runs Hungarian with the feasible dual $\\hat{y}'(c)$. Theorem 5 states runtime depends on $\\|\\hat{y}'(c) - y^*(c)\\|_1$, and Theorem 4 guarantees $\\|\\hat{y}'(c) - y^*(c)\\|_1 \\leq 3\\|\\hat{y} - y^*(c)\\|_1$. Rewrite the runtime bound as $O(m\\sqrt{n} \\cdot \\min \\{\\| \\hat{y}'(c) - y^{*}(c) \\|_{1}, \\sqrt{n}\\})$ to accurately reflect the algorithm's dependence on the feasible dual.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__glm-4.6_9",
+          "title": "Missing runtime results in main text",
+          "quote": "We compare the runtime and number of primal-dual iterations, reporting mean values and error bars denoting  $95\\%$  confidence intervals. The runtime results are in the supplementary material, and exhibit similar behavior (i.e., the extra running time caused by using Algorithm 1 in Learned Duals is negligible).",
+          "explanation": "The paper claims to compare both runtime and iteration counts, but only presents iteration count results in the main text (Figures 1 and 2). Runtime results are relegated to supplementary material with only a brief claim that they \"exhibit similar behavior.\" Since runtime is the primary metric for evaluating the speedup claims, these results should be presented in the main paper. Without seeing the actual runtime comparisons, readers cannot verify the central claim that the method provides practical speedups. The iteration count is only a proxy for runtime and may not correlate perfectly, especially given the overhead of Algorithm 1 and the learning phase.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__glm-4.6_10",
+          "title": "Incomplete weighted matching runtime discussion",
+          "quote": "For finding exact solutions to the minimum weight perfect matching problem, the scaling technique leads to a running time of $O(m\\sqrt{n}\\log(C))$ *[38, 21, 20, 18]*.",
+          "explanation": "This statement omits important context about the state-of-the-art for weighted bipartite matching. The paper should mention that van den Brand et al. [43] also achieved a breakthrough for weighted matching with $\\tilde{O}(m+n^{1.5})$ time, not just for unweighted matching. Since the paper cites [43] earlier for the unweighted case, it's inconsistent not to discuss their weighted matching results. The current presentation suggests that $O(m\\sqrt{n}\\log(C))$ is the best known bound, which is inaccurate given the $\\tilde{O}(m+n^{1.5})$ result.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__glm-4.6_11",
+          "title": "Missing justification for integrality claim",
+          "quote": "Both LPs are well-known to be integral, implying that there always exist integral optimal solutions.",
+          "explanation": "The integrality claim is stated without justification. For bipartite MWPM, this follows from total unimodularity of the constraint matrix, but this property should be cited. Add \"This follows from the total unimodularity of the bipartite incidence matrix\" after the sentence to provide proper justification.",
+          "comment_type": "technical",
+          "paragraph_index": 42,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__glm-4.6_12",
+          "title": "Triangle inequality derivation needs justification",
+          "quote": "This essentially immediately implies the following theorem (the 2-approximation turns into 3 due to a use of the triangle inequality).\n\nTheorem 4. There is a $O(m + n)$ time algorithm that takes an infeasible integer dual $\\hat{y}$ and constructs a feasible integer dual $\\hat{y}'(c)$ for MWPM-D with cost vector $c$ such that $\\| \\hat{y}'(c) - \\hat{y} \\|_1 \\leq 2 \\| \\hat{y} - y^*(c) \\|_1$ where $y^*(c)$ is the optimal dual solution for MWPM-D with cost vector $c$. Thus by triangle inequality we have $\\| \\hat{y}'(c) - y^*(c) \\|_1 \\leq 3 \\| \\hat{y} - y^*(c) \\|_1$.",
+          "explanation": "The paper claims a 2-approximation algorithm immediately implies ||\u0177'(c) - \u0177||\u2081 \u2264 2||\u0177 - y*(c)||\u2081, but this connection is not explained. A 2-approximation for distance to feasibility means the algorithm finds \u03b4 with ||\u03b4||\u2081 \u2264 2\u00b7OPT, where OPT = min_{\u03b4: \u0177-\u03b4 feasible} ||\u03b4||\u2081. Since y*(c) is feasible, we have ||\u0177 - y*(c)||\u2081 \u2265 OPT. Thus ||\u0177' - \u0177||\u2081 = ||\u03b4||\u2081 \u2264 2\u00b7OPT \u2264 2||\u0177 - y*(c)||\u2081. Add this explanation after \"This essentially immediately implies...\"",
+          "comment_type": "technical",
+          "paragraph_index": 60,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__glm-4.6_13",
+          "title": "Notation inconsistency in cost bound definition",
+          "quote": "Let  $C\\coloneqq \\max_{c\\sim \\mathcal{D}}\\max_{\\epsilon \\in E}c_c$  be finite and known to the algorithm.",
+          "explanation": "The notation in the definition of C is inconsistent. The index variable is $\\epsilon \\in E$ but the subscript uses $c_c$ instead of $c_\\epsilon$. This creates ambiguity in the definition. Rewrite the definition as $C\\coloneqq \\max_{c\\sim \\mathcal{D}}\\max_{e \\in E}c_e$ to use consistent notation throughout.",
+          "comment_type": "technical",
+          "paragraph_index": 68,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        },
+        {
+          "id": "coarse__glm-4.6_14",
+          "title": "Incorrect objective function in learning target",
+          "quote": "The target dual we seek to learn is  $\\arg \\min_y\\mathbb{E}_{c\\sim \\mathcal{D}}\\| y - y^* (c)\\|$",
+          "explanation": "The learning target is missing the norm subscript. Earlier in the section and in Theorem 4, the analysis uses the $\\ell_1$ norm ($\\| \\cdot \\|_1$). Rewrite as $\\arg \\min_y\\mathbb{E}_{c\\sim \\mathcal{D}}\\| y - y^* (c)\\|_1$ to be consistent with the theoretical analysis.",
+          "comment_type": "technical",
+          "paragraph_index": 49,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 15
+        },
+        {
+          "id": "coarse__glm-4.6_15",
+          "title": "Inconsistent state-of-the-art claim",
+          "quote": "The Hopcroft-Karp algorithm for finding a matching maximizing $|M|$ runs in time $O(\\sqrt{n}\\cdot m)$ *[26]*, which is still state-of-the-art for general bipartite graphs.",
+          "explanation": "The statement that Hopcroft-Karp is \"still state-of-the-art for general bipartite graphs\" contradicts the paper's own citation of van den Brand et al. [43] which achieves $\\tilde{O}(m+n^{1.5})$ time. Since $\\tilde{O}(m+n^{1.5})$ improves on $O(m\\sqrt{n})$ for moderately dense graphs, the claim is inaccurate. Rewrite the sentence as \"The Hopcroft-Karp algorithm for finding a matching maximizing $|M|$ runs in time $O(m\\sqrt{n})$ *[26]*. For moderately dense graphs, a recent result by van den Brand et al. *[43]* gives a better running time of $\\tilde{O}(m+n^{1.5})$ (where $\\tilde{O}$ hides polylogarithmic factors).\"",
+          "comment_type": "technical",
+          "paragraph_index": 38,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 16
+        },
+        {
+          "id": "coarse__glm-4.6_16",
+          "title": "Missing condition for speedup guarantee",
+          "quote": "Note that our result shows that we can speed up the Hungarian method as long as the $\\ell_{1}$-norm error of the learned dual, i.e., $\\|\\hat{y}-y^{*}(c)\\|_{1}$ is $o(\\sqrt{n})$.",
+          "explanation": "The claim that speedup occurs when $\\|\\hat{y}-y^{*}(c)\\|_{1} = o(\\sqrt{n})$ is incomplete. According to Theorem 5, the runtime is $\\tilde{O}(m\\sqrt{n} \\cdot \\min\\{\\|\\hat{y}'(c) - y^*(c)\\|_1, \\sqrt{n}\\})$. For actual speedup over the standard Hungarian method's $O(mn)$ runtime, we need $\\tilde{O}(m\\sqrt{n} \\cdot \\|\\hat{y}'(c) - y^*(c)\\|_1) < O(mn)$, which simplifies to $\\|\\hat{y}'(c) - y^*(c)\\|_1 = o(\\sqrt{n})$. However, the paper uses $\\|\\hat{y}-y^{*}(c)\\|_{1}$ instead of $\\|\\hat{y}'(c) - y^*(c)\\|_1$. Since $\\|\\hat{y}'(c) - y^*(c)\\|_1 \\leq 3\\|\\hat{y}-y^{*}(c)\\|_1$ by Theorem 4, the condition should be $\\|\\hat{y}-y^{*}(c)\\|_{1} = o(\\sqrt{n}/3)$ or simply $\\|\\hat{y}-y^{*}(c)\\|_{1} = o(\\sqrt{n})$ with the understanding that the constant factor matters for the actual speedup threshold.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 17
+        }
+      ],
+      "cost_usd": 0.155,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__gemini-3.1-flash-lite-preview": {
+      "label": "Coarse (gemini-3.1-flash-lite-preview)",
+      "model": "openrouter/google/gemini-3.1-flash-lite-preview",
+      "overall_feedback": "This paper proposes a framework for accelerating weighted bipartite matching by using machine-learned dual variables to warm-start the Hungarian algorithm. By addressing the feasibility of predicted duals through a projection step and bounding the optimization time by the L1-distance to the optimal dual, the authors bridge the gap between learned predictions and classical combinatorial optimization.\n\nThe paper makes a compelling and technically sound contribution by formalizing the use of learned duals as a warm-start mechanism for primal-dual algorithms. The theoretical guarantees and the empirical validation on both synthetic and real-world datasets provide strong evidence for the practicality of the proposed method.\n\nOverview issues:\n\n- Sensitivity to Distribution Shift: The theoretical guarantees in Theorem 3 and the empirical results in Section 4 rely on the assumption that test instances are drawn from the same distribution as the training samples. However, the paper lacks a discussion on the robustness of the learned duals when this assumption is violated, such as under concept drift or adversarial perturbations in the cost structure. Since the speedup is directly proportional to the L1-distance between the learned dual and the optimal dual, a significant shift in the underlying distribution could render the learned advice useless or even detrimental to the runtime. Adding an analysis of the performance degradation under controlled distribution shifts would clarify the practical reliability of the approach.\n\n- Computational Overhead of Training: While the paper correctly emphasizes that the projection step (Algorithm 1) is efficient ($O(m+n)$), it remains somewhat vague regarding the total computational cost of the learning phase. Theorem 6 specifies a sample complexity of $\\tilde{O}(C^2 n^3)$, but the practical wall-clock time required to compute these optimal duals for training instances is not explicitly compared against the cumulative time saved during inference. To strengthen the claim of 'faster matchings,' the authors should include a comparison of the offline training time versus the total inference-time savings across a large number of test instances, ensuring the method is not just locally faster but globally efficient.\n\n- Generalization to Non-Bipartite Matching: The methodology is explicitly designed for bipartite matching, leveraging the specific structure of the bipartite dual and the Hungarian algorithm. The authors mention in the conclusion that extending this to general graph matching is a future direction, but they do not address the fundamental challenges involved, such as the more complex dual structure (e.g., blossom-based constraints). Given that the paper frames the work as a general approach for primal-dual algorithms, a brief discussion or a small-scale experiment on a non-bipartite variant would significantly enhance the paper's impact and demonstrate the versatility of the learned duals framework.\n\n- Comparison with State-of-the-Art Solvers: The paper benchmarks primarily against the standard Hungarian algorithm, which is known to be inefficient for very large graphs compared to modern scaling-based algorithms or specialized solvers. While the authors acknowledge that complex theoretical solvers like those of van den Brand et al. exist, they dismiss them as impractical. A more robust evaluation would involve comparing the proposed learned-warm-start approach against highly optimized, industry-standard solvers (e.g., Gurobi or LEMON) to see if the speedup is competitive with current best-in-class implementations rather than just the textbook Hungarian algorithm.\n\n- Empirical validation of the 'learning overhead' break-even point: The paper claims to provide a 'faster' matching framework, yet it lacks a concrete analysis of the break-even point where the cumulative time saved during inference exceeds the total time spent computing optimal duals for training instances. While Theorem 6 provides sample complexity bounds, it does not translate these into a wall-clock comparison. To address this, the authors should provide a figure plotting 'Total Time' (Training + Inference) against the number of test instances for a fixed training set size. This would clarify whether the approach is truly more efficient in realistic deployment scenarios where the number of test instances might be small.\n\n- Performance under non-stationary distributions and concept drift: The theoretical guarantees and empirical results assume that test instances are drawn from the same distribution as the training samples. In many practical applications, the distribution of edge costs is non-stationary. The paper would benefit from a simulation where the distribution parameters (e.g., the mean of the geometric distribution or the cluster centers) shift over time. Specifically, showing how the runtime performance degrades as the test distribution drifts away from the training distribution would provide a more realistic assessment of the method's robustness.\n\n- Comparison against high-performance industrial solvers: The paper benchmarks solely against a basic implementation of the Hungarian algorithm, which is known to be slow for large-scale instances. To substantiate the claim that the approach is 'practical,' it is necessary to compare the runtime of the learned-warm-start Hungarian method against highly optimized, industry-standard libraries like LEMON or Gurobi. If the learned approach is only faster than a naive textbook implementation, its practical utility remains questionable. A comparative plot showing the speedup relative to a state-of-the-art solver would provide the missing evidence for the paper's claims about empirical effectiveness.\n\nRecommendation: minor revision\n\nRevision targets:\n\n- Include an empirical analysis or discussion regarding the performance of the learned duals under distribution shift to address the robustness of the model.\n\n- Provide a more detailed comparison of the total overhead (training time + inference time) against standard state-of-the-art matching solvers to better justify the claim of 'faster' matchings.\n\n- Clarify the practical limitations of the learned duals when the distribution is not well-concentrated, perhaps by adding a threshold analysis in the results section.",
+      "comments": [
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_0",
+          "title": "Algorithm 1 does not guarantee dual feasibility",
+          "quote": "Let i be an arbitrary vertex of G  |\n|  5: | while i has a neighbor do  |\n|  6: | j \u2190 arg maxj' \u2208 N(i) rij'  |\n|  7: | \u03b4i \u2190 rij  |\n|  8: | Delete i and all its edges from G  |\n|",
+          "explanation": "The greedy algorithm described in Algorithm 1 fails to ensure that the resulting dual y' = y - delta is feasible for the dual problem. The constraint delta_i + delta_j >= r_ij must hold for all edges in F. By setting delta_i = r_ij and deleting vertex i, the algorithm does not update the delta values for neighbors j in a way that guarantees the constraint is satisfied for all edges incident to j. Without a global update or a formal proof that this greedy selection covers all edges, the feasibility of the output is not established. Please provide a proof of correctness or revise the algorithm to ensure all constraints are satisfied.",
+          "comment_type": "technical",
+          "paragraph_index": 56,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_1",
+          "title": "Inconsistency in sample complexity bounds",
+          "quote": "\\})$.\n- After $\\tilde{O}(C^{2}n^{3})$ samples from an unknown distribution $\\mathcal{D}$ over problem instances, the learning algorithm produces duals $\\",
+          "explanation": "The sample complexity stated in the informal summary as O(C^2 n^3) contradicts the bound in Theorem 6, which is O((nC/epsilon)^2 (n log n + log (1/p))). Expanding the latter yields O(C^2 n^4). Please reconcile these bounds to ensure the informal summary accurately reflects the formal theorem.",
+          "comment_type": "technical",
+          "paragraph_index": 22,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_2",
+          "title": "Ambiguity in the definition of the optimal dual",
+          "quote": " - y\\|_{1}$ .\n\nFor every  $c \\in \\mathbb{R}^E$  we will let  $y^{*}(c)$  be a fixed optimal dual solution for  $c$ :\n\n$$\ny ^ {*} (c) := \\arg \\max  _ {y} \\left\\{\\sum_ {i} y _ {i} \\mid \\forall i j \\in E, y _ {i} + y _ {j} \\leq c _ {i j} \\ri",
+          "explanation": "The definition assumes y*(c) is a single vector, but the dual of the maximum weight perfect matching problem often has multiple optimal solutions. Because the loss function L(y, c) = ||y - y*(c)||_1 depends on the choice of y*(c), this ambiguity makes the objective function ill-defined. Please specify a canonical selection rule (e.g., lexicographical minimum) to ensure the loss function is well-defined.",
+          "comment_type": "technical",
+          "paragraph_index": 69,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_3",
+          "title": "Inconsistent runtime complexity in Theorem 3",
+          "quote": "- p$ .\n- Using the learned dual  $\\hat{y}$ , given edge costs  $c$ , computes a min-cost perfect matching in time  $O(m\\sqrt{n} \\cdot \\min \\{\\| \\hat{y} - y^{*}(c) \\|_{1}, \\sqrt{n}\\})",
+          "explanation": "The runtime bound in Theorem 3 is stated in terms of the raw prediction y_hat, which is not guaranteed to be feasible. The algorithm requires a conversion step to obtain a feasible dual y'(c), which increases the distance to the optimum by a factor of 3. The runtime bound should be expressed in terms of the feasible dual y'(c) to accurately reflect the algorithm's execution flow.",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_4",
+          "title": "Inconsistency regarding the scope of the paper",
+          "quote": "The main goal and contribution of this work is to show that at least in one important setting (weighted bipartite matching), we can give formal justification for using machine learned predictions to improve running times",
+          "explanation": "The introduction claims the paper provides justification for 'weighted bipartite matching', but the technical sections (Theorem 5 and the definition of MWPM-D) focus specifically on the Minimum Weight Perfect Matching problem. Given that the dual structure and the Hungarian algorithm's performance are tied to the perfect matching constraint, the introduction should specify 'minimum weight perfect matching' to align with the formal results.",
+          "comment_type": "technical",
+          "paragraph_index": 6,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__gemini-3.1-flash-lite-preview_5",
+          "title": "Incomplete citation of weighted matching complexity",
+          "quote": "inding exact solutions to the minimum weight perfect matching problem, the scaling technique leads to a running time of $O(m\\sqrt{n}\\log(C))$ *[38,",
+          "explanation": "The cited complexity is a classic result, but it is not the current state-of-the-art. Recent developments, such as those by van den Brand et al., have achieved faster runtimes for weighted bipartite matching. Presenting the scaling technique as the definitive complexity risks misrepresenting the current algorithmic landscape.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        }
+      ],
+      "cost_usd": 0.0957,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__qwen3.6-35b-a3b": {
+      "label": "Coarse (qwen3.6-35b-a3b)",
+      "model": "openrouter/qwen/qwen3.6-35b-a3b",
+      "overall_feedback": "The paper proposes a framework for warm-starting primal-dual algorithms for weighted bipartite matching using learned dual variables. It addresses feasibility projection, optimization speedups, and sample complexity theoretically, and validates the approach on synthetic and real datasets. The core idea is sound, but the empirical evaluation and theoretical grounding require significant tightening before publication.\n\nThis work tackles a practical problem by combining machine learning with classical combinatorial optimization. The theoretical decomposition into feasibility, optimization, and learnability is clean, and the projection algorithm is elegant. However, the empirical claims rely heavily on iteration counts rather than wall-clock time, and the theoretical bounds diverge sharply from experimental settings. Addressing these gaps will strengthen the paper's contribution to the learning-augmented algorithms community.\n\nOverview issues:\n\n- Empirical claims rely on iteration counts rather than wall-clock time: Readers will wonder how much of the reported gain comes from actual time saved versus fewer dual updates. The paper's primary contribution promises faster running times for bipartite matching, yet Figures 1 and 2 exclusively report iteration counts. The text explicitly defers runtime results to the supplementary material. Iteration reduction does not automatically translate to wall-clock speedups, especially when accounting for the overhead of the feasibility projection step (Algorithm 1), memory access patterns, and the computational cost of solving training instances to compute the coordinate-wise median. The authors should move the runtime data to the main text and provide a direct comparison of end-to-end wall-clock times. Without this, the practical impact of the proposed warm-start remains unverified.\n\n- Optimal dual solutions are not unique, complicating the learning target: The learning target becomes ill-defined because optimal dual solutions for minimum weight perfect matching are generally not unique. Section 3.3 defines the learning objective as minimizing the expected $\\ell_1$ distance to $y^*(c)$, and the experimental setup computes a coordinate-wise median of optimal duals from training samples. The paper assumes without loss of generality that $y^*(c)$ is integral, but it does not address how multiple optima are selected or how the median behaves across different solution sets. This ambiguity weakens the theoretical justification for the median heuristic. The authors need to clarify how they handle dual non-uniqueness, perhaps by selecting a specific canonical dual or by proving that the median converges to a valid target regardless of the solver's output.\n\n- Theoretical sample complexity vastly exceeds experimental settings: The theoretical sample complexity bound leaves a large gap unexplained when compared to the experiments. Theorem 6 establishes a sample complexity of $\\tilde{O}((nC/\\epsilon)^2(n\\log n + \\log(1/p)))$, which becomes impractically large for moderate values of $n$ and $C$. The experiments, however, train on only 20 instances to achieve noticeable speedups. The paper claims the theory is predictive of practice, but it completely ignores this massive discrepancy. This disconnect leaves readers uncertain whether the method relies on favorable problem structure, overfitting, or an overly pessimistic theoretical analysis. A discussion section that explains why the empirical sample complexity is so much lower than the theoretical worst-case bound would significantly strengthen the paper.\n\n- Limited baseline comparisons against other warm-start and solver techniques: Comparing solely against a naive baseline inflates the perceived benefit of the proposed method. The experimental evaluation only compares the proposed approach against the standard Hungarian algorithm with zero-initialized duals. The literature review acknowledges recent advances in matching algorithms and warm-start techniques, yet the paper does not benchmark against cost-scaling algorithms, other primal-dual warm-start strategies, or modern implementations that already incorporate heuristic initializations. The authors should include experiments against at least one other strong warm-start heuristic and discuss how their method performs relative to standard industrial solvers or recent theoretical improvements mentioned in Section 1.1.\n\n- Synthetic and real data generation lacks theoretical motivation: The data generation process introduces strong geometric constraints that lack theoretical motivation. The real-world experiments transform UCI datasets into bipartite matching instances by clustering points with k-means and using Euclidean distances. While this creates a structured testbed, the paper provides no justification for why this mapping aligns with the fixed distribution $\\mathcal{D}$ assumed in the theoretical analysis. The theoretical results rely on distributional assumptions about cost vectors, but the clustering-based generation introduces specific structural properties that may not hold in typical matching applications. The authors should either justify the data generation process as a proxy for a relevant real-world distribution or test on more diverse, standard matching benchmarks.\n\nRecommendation: major revision\n\nRevision targets:\n\n- Move end-to-end wall-clock runtime results to the main text and compare them directly against the iteration count reductions.\n\n- Clarify how the learning algorithm handles non-unique optimal duals and justify the coordinate-wise median heuristic.\n\n- Add a discussion bridging the gap between the $\\tilde{O}(C^2 n^3)$ theoretical sample bound and the empirical use of 20 samples.\n\n- Include baseline comparisons against other warm-start strategies or modern solvers to contextualize the speedup.\n\n- Provide a stronger theoretical or empirical justification for mapping UCI datasets to bipartite matching via k-means clustering.",
+      "comments": [
+        {
+          "id": "coarse__qwen3.6-35b-a3b_0",
+          "title": "Theorem 5 complexity bound conflates primal-dual assignment with Hopcroft-Karp",
+          "quote": "rime}(c)\\|_{1}$ is large. In particular, steps 6 and 11 do not precisely specify the choice of the set $S$ and the matching $M$. If we instantiate these steps appropriately (let $S = L \\setminus C$ for step 6, where $C$ is a minimum vertex cover, and update $M$ along shortest-augmenting-paths for step 11) then we recover the Hungarian Algorithm. Together, we can prove the following theorem.\n\n<!-- PAGE BREAK -->\n\nTheorem 5. For an arbitrary cost vector  $c$ , the Hungarian method starting with a feasible integer dual solution  $\\hat{y}'(c)$  finds a minimum weight perfect matching in  $\\hat{O}\\left(m\\sqrt{n} \\cdot \\min \\left\\{\\| y^*(c) - \\hat{y}'(c)\\|_1, \\sqrt{n}\\right\\}\\right)$  time, where  $y^*(c)$  is an optimal dual solution.\n\n# 3.3 Lear",
+          "explanation": "The stated runtime contains an unjustified $\\sqrt{n}$ factor. The Hungarian algorithm and its primal-dual variants perform at most $n$ augmentations, not $\\sqrt{n}$. The $\\sqrt{n}$ bound belongs to Hopcroft-Karp for unweighted maximum cardinality matching. Multiplying the per-augmentation cost by an extra $\\sqrt{n}$ inflates the complexity claim. The bound should reflect at most $n$ augmentations, yielding $\\hat{O}\\left(m \\cdot \\min \\left\\{\\| y^*(c) - \\hat{y}'(c)\\|_1, n\\right\\}\\right)$. Correcting this is necessary to align the theoretical guarantee with standard assignment algorithm analysis.",
+          "comment_type": "technical",
+          "paragraph_index": 63,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_1",
+          "title": "Expected error guarantee does not imply per-instance speedup",
+          "quote": "Note that our result shows that we can speed up the Hungarian method as long as the $\\ell_{1}$-norm error of the learned dual, i.e., $\\|\\hat{y}-y^{*}(c)\\|_{1}$ is $o(\\sqrt{n})$.",
+          "explanation": "This sentence conflates a distributional guarantee with a per-instance condition. Theorem 6 bounds the expected $\\ell_1$ error over $c \\sim \\mathcal{D}$, but the text claims a speedup whenever the error for a specific instance $c$ falls below $o(\\sqrt{n})$. A small average error allows for large deviations on individual instances, which could trigger the worst-case $\\sqrt{n}$ factor in Theorem 5. The authors need to clarify whether the speedup claim applies to the expected running time or requires a high-probability bound on the per-instance error.",
+          "comment_type": "technical",
+          "paragraph_index": 26,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_2",
+          "title": "Sample complexity hides accuracy dependence",
+          "quote": "After $\\tilde{O}(C^{2}n^{3})$ samples from an unknown distribution $\\mathcal{D}$ over problem instances, the learning algorithm produces duals $\\hat{y}$ so that $\\mathbb{E}_{c\\sim\\mathcal{D}}\\left[\\|\\hat{y}-y^{*}(c)\\|_{1}\\right]$ is approximately minimum among all possible choices of $\\hat{y}$",
+          "explanation": "The informal Theorem 1 absorbs the accuracy parameter $\\epsilon$ into the $\\tilde{O}$ notation, presenting the sample complexity as $\\tilde{O}(C^2 n^3)$. The formal Theorem 6 explicitly shows the dependence as $O((nC/\\epsilon)^2 (n\\log n + \\log(1/p)))$. Since $\\epsilon$ directly controls the quality of the learned dual and therefore the running time, readers need to see how the sample budget scales with desired precision. Rewrite the informal bound to explicitly include $\\epsilon$, or state clearly that $\\epsilon$ is treated as a constant in the high-level summary.",
+          "comment_type": "technical",
+          "paragraph_index": 23,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_3",
+          "title": "Dichotomy between prediction paradigms misrepresents the contribution",
+          "quote": "ufficiently high quality.\n\nMost of the above work abstracts the predictions as access to an error-prone oracle and asks how to best use predictions: getting performance gains when the predictions are good, but limiting the losses when they are not. A related emergent area is that of data driven algorithm design *[25, 7, 5, 4, 6, 11]*. Here, the objective is to \u201clearn\u201d a good algorithm for a particular family of inputs. The goal is not typically to tie the performance of the algorithm to the quality of the prediction, but rather to show that the prediction makes sense; that is only a small number of problem samples are needed in order to ensure the learned algorithm generalizes to new data points.\n\n### 1.3 Roadmap\n\nWe present our theo",
+          "explanation": "The authors draw a sharp line between \"algorithms with predictions\" and \"data-driven algorithm design,\" claiming the latter does not tie performance to prediction quality. This distinction overlooks that the proposed method bridges both. Theorem 1 explicitly bounds the Hungarian algorithm's runtime improvement by the $\\ell_1$-norm error of the learned dual, satisfying the first paradigm. Simultaneously, Theorem 6 provides a sample complexity bound for learning the dual, addressing the second. Presenting these as mutually exclusive objectives obscures the actual contribution. The paragraph should acknowledge that the framework synthesizes both paradigms rather than treating them as separate, unrelated areas.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_4",
+          "title": "Reported metric contradicts text description",
+          "quote": "We see that only a few iterations are needed to see a significant separation between the run time of our method with learned duals and the standard Hungarian method, with further steady improvement as we see more instances.",
+          "explanation": "The text claims to show a separation in \"run time,\" but the main text explicitly defers runtime results to the supplementary material and the figures report iteration counts. This mismatch misleads readers about what the plots actually demonstrate. Either move the wall-clock time data to the main text as promised, or rewrite the sentence to accurately state that the figures display iteration reductions.",
+          "comment_type": "technical",
+          "paragraph_index": 89,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_5",
+          "title": "Non-integer edge weights violate integrality assumption",
+          "quote": "The weight of all edges going from the  $i$ 'th group on the left side and the  $j$ 'th group on the right side is initialized to some value  $W_{i,j}$  drawn from a geometric distribution with mean 250. Then to generate a particular graph instance, we perturb each edge weight with independent random noise according to a binomial distribution, shifted and scaled so that it has mean 0 and variance  $v$ .",
+          "explanation": "Lemma 2 and the iteration bound for the Hungarian method rely on the assumption that all problem parameters are integral to guarantee a strict increase in the dual objective. The described noise generation uses a shifted and scaled binomial distribution, which produces non-integer values. If the edge weights are not integers, the theoretical iteration bound no longer applies. The authors should clarify whether weights are rounded to the nearest integer after perturbation, or adjust the theoretical discussion to account for real-valued costs.",
+          "comment_type": "technical",
+          "paragraph_index": 81,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_6",
+          "title": "Feasibility example mischaracterizes the prediction target",
+          "quote": "1. Feasibility. The learned prediction (warm-start solution) might not even be *feasible* for the specific instance we care about! For example, the learned solution may be matching an edge that does not exist in the graph at testing time.",
+          "explanation": "The introduction frames the prediction as a \"warm-start solution\" and illustrates the feasibility challenge with an example about predicting a non-existent edge. The actual method predicts dual variables (node potentials), not matchings. The feasibility issue addressed in the technical sections concerns dual constraints ($y_u + y_v \\leq c_{uv}$) and integrality, not edge existence. Rewrite the example to reflect that predicted duals may violate dual constraints or fail to satisfy complementary slackness, which better aligns with the projection step described later.",
+          "comment_type": "technical",
+          "paragraph_index": 9,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_7",
+          "title": "Overstated claim regarding novelty of runtime improvements",
+          "quote": "However, the question of improving algorithm running times with predictions has largely been unexplored.",
+          "explanation": "This broad claim overlooks prior work on runtime improvements for combinatorial problems using machine-learned predictions, such as sorting, scheduling, and bin packing. Readers familiar with the learning-augmented algorithms literature will find the statement inaccurate. Acknowledge these existing results and clarify that the novelty lies specifically in combining learned duals with primal-dual warm-starting for matching.",
+          "comment_type": "technical",
+          "paragraph_index": 2,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_8",
+          "title": "Pseudo-polynomial nature of scaling bound lacks context",
+          "quote": "n the weighted versions of these problems and when all edge weights are integral. Let $C$ be the maximum edge weight, $n$ be the number of vertices, and $m$ the number of edges. For finding exact solutions to the minimum weight perfect matching problem, the scaling technique leads to a running time of $O(m\\sqrt{n}\\log(C))$",
+          "explanation": "The claim accurately cites the classic Gabow-Tarjan scaling bound, but it presents this result without clarifying its pseudo-polynomial nature. Unlike the $\\tilde{O}(m+n^{1.5})$ bound for unweighted matchings, which is strongly polynomial, the $O(m\\sqrt{n}\\log(C))$ bound depends logarithmically on the maximum weight $C$. Omitting this detail may lead readers to incorrectly assume the weighted bound shares the same strongly polynomial properties as the unweighted breakthrough. Explicitly note that the scaling bound is pseudo-polynomial.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_9",
+          "title": "Ambiguous reference for proofs and extensions",
+          "quote": "The extension to $b$-matching, as well as all missing proofs, can be found in the full version of this paper as supplementary materials.",
+          "explanation": "The phrasing conflates two distinct publication formats. \"Full version\" typically refers to a journal extension or a separate arXiv preprint, whereas \"supplementary materials\" denotes an appendix attached to the main conference submission. Readers will be uncertain whether to download a separate file or look in the paper's appendix. Specify the exact location, such as \"in the appendix\" or \"in the full version available at [URL]\".",
+          "comment_type": "technical",
+          "paragraph_index": 33,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_10",
+          "title": "Ambiguous terminology in online experiment description",
+          "quote": "tive duals. From left to right, the plots in Figure 2 show the performance averaged over 20 repetitions of the experiment with 20 time points on the type model with  $\\ell = 100$ ,  $v = 200$ , and the clustering derived instances on the KDD and Covertype datasets with  $k = 500$ , respectively.",
+          "explanation": "The phrase \"20 time points\" is unclear in this context. Does it refer to 20 sequential training instances added to the online buffer, or 20 distinct time steps in a simulation? Given the described online setting where instances arrive one at a time, the x-axis likely represents the cumulative number of training samples used to compute the median dual. Replace \"20 time points\" with \"20 sequential training instances\" to clarify that the x-axis denotes the number of samples seen so far.",
+          "comment_type": "technical",
+          "paragraph_index": 89,
+          "severity": "minor",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_11",
+          "title": "Scope generalization exceeds bipartite matching results",
+          "quote": "In this work we showed how to use learned predictions to warm-start primal-dual algorithms for weighted matching problems to improve their running times.",
+          "explanation": "The technical development in Sections 3.1 through 3.3 is strictly confined to the minimum weight perfect matching problem on bipartite graphs. The notation, the Hungarian algorithm seeding, and the dual feasibility constraints all rely on the bipartite structure. Generalizing the conclusion to \"weighted matching problems\" implies applicability to general graphs or other matching variants, which the current proofs do not support. Restrict the scope to bipartite graphs to maintain alignment with the formal results.",
+          "comment_type": "technical",
+          "paragraph_index": 96,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__qwen3.6-35b-a3b_12",
+          "title": "Mischaracterization of the experimental evaluation setting",
+          "quote": "Figure 2: Iteration count results for the Online setting.",
+          "explanation": "The paper's learning component assumes that matching instances are drawn from a fixed but unknown distribution $\\mathcal{D}$, and the methodology relies on training a predictor on a static dataset before deployment. The term \"Online setting\" typically denotes a sequential decision-making framework where data arrives adaptively or adversarially, which contradicts the fixed-distribution assumption. The caption should accurately reflect the static evaluation protocol used in the experiments.",
+          "comment_type": "technical",
+          "paragraph_index": 98,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        }
+      ],
+      "cost_usd": 0.3124,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    },
+    "coarse__deepseek-v4-flash": {
+      "label": "Coarse (deepseek-v4-flash)",
+      "model": "openrouter/deepseek/deepseek-v4-flash",
+      "overall_feedback": "The paper proposes a theoretically grounded framework for warm-starting the Hungarian algorithm using learned dual variables, addressing feasibility, optimization, and learnability. It provides formal guarantees and supporting experiments. The work is novel and relevant to the algorithms-with-predictions community. However, several issues regarding the practical significance of the speedups, the overhead of learning, and the strength of the empirical validation need to be addressed before publication.\n\nOverview issues:\n\n- Learning overhead is not accounted for in runtime comparisons: The paper claims speedups via learned duals but never reports the actual wall-clock runtime of the full pipeline (learning + feasibility recovery + Hungarian). All experimental results are given in terms of iteration counts, not seconds. This is a critical omission because the learning step (computing optimal duals for training instances, then taking medians) and the feasibility recovery step (Algorithm 1) both have non-negligible costs. If the total time including training and inference is not reported, the reader cannot assess whether the claimed speedups translate to real savings. The paper must report end-to-end runtimes, including training time amortized over test instances, to support its practical claims.\n\n- Feasibility recovery algorithm's approximation guarantee may not hold for the intended use case: Theorem 4 claims a 2-approximation for the LP in (1) relative to the optimal perturbation, leading to a 3-factor loss in distance to the optimal dual. However, the LP (1) minimizes the L1 distance from the learned dual, but the algorithm's analysis (based on Drake and Hougardy) assumes the dual of (1) is a maximum-weight matching problem with edge weights r_ij. The paper does not verify that the greedy algorithm actually achieves the claimed approximation ratio for arbitrary non-negative r_ij. Moreover, the proof is relegated to supplementary material, which was not provided. Without a clear proof, the central guarantee of the feasibility step is unverified.\n\n- Theoretical speedup requires prediction error o(sqrt(n)), which may be unrealistic: Theorem 5 states the Hungarian method runs in O~(m sqrt(n) * min{||y' - y*||_1, sqrt(n)}) time. For a speedup over the standard O~(mn) Hungarian, the prediction error must be o(sqrt(n)). The paper does not discuss whether this condition is plausible for real distributions. The learning bound (Theorem 6) only guarantees that the expected error approaches the minimum possible, not that this minimum is small. If the distribution is such that the optimal duals vary widely, the minimum achievable error could be Theta(n), yielding no speedup. The paper should characterize when the condition is likely to hold and provide empirical evidence of the actual error magnitudes.\n\n- Comparison baseline is not sufficiently optimized: The baseline is the standard Hungarian algorithm with zero initial duals. However, the paper also applies a 'tightening heuristic' (line 7-8 in the algorithm description) that improves the initial dual. If this heuristic is applied to the learned duals but not to the zero-initialized baseline, the comparison is unfair. The paper states the heuristic is 'used in all standard implementations' but does not confirm it was applied equally. The baseline should include the same tightening step to isolate the benefit of learning. Additionally, the baseline implementation details (e.g., use of priority queues) are not described, making it hard to assess whether the speedup is due to learning or implementation differences.\n\n- Generalization across graph distributions is not validated: The experiments use a single synthetic model (type model with groups and noise) and clustering-based instances from five UCI datasets. These all share a similar structure: edge weights are derived from Euclidean distances or group means with noise. The paper does not test on graphs with fundamentally different weight distributions (e.g., adversarial weights, sparse graphs, or graphs with extreme cost ranges). The claim that the method works 'across multiple graph families' is not supported. The paper should include experiments on at least one additional family, such as random geometric graphs or graphs with heavy-tailed weights, to demonstrate robustness.\n\n- The learning algorithm's sample complexity bound is too large to be practical: Theorem 6 requires O((nC/epsilon)^2 (n log n + log(1/p))) samples. For even moderate n (e.g., n=500) and C (e.g., C=250), this is on the order of 10^11 samples \u2014 far more than the 20 samples used in experiments. The paper acknowledges this gap but does not explain why the bound is so loose or why the empirical performance is good despite it. A discussion of the gap between theory and practice is necessary. Without it, the theoretical learning guarantee appears disconnected from the experimental setup.\n\n- The optimization algorithm's iteration bound is not clearly tied to the Hungarian method's standard analysis: Theorem 5 claims the Hungarian method starting from a feasible dual runs in O~(m sqrt(n) * min{||y' - y*||_1, sqrt(n)}) time. The proof is not provided in the main text, and it is unclear how the L1 distance translates to a bound on the number of primal-dual iterations. The standard Hungarian analysis bounds iterations by the number of dual updates, which is at most n per phase. The paper's bound seems to replace n with ||y' - y*||_1, but the relationship between dual objective increase and L1 distance is not straightforward. The proof must be given or at least sketched to convince readers.\n\nRecommendation: major revision. The paper presents a novel and theoretically motivated framework, but several critical gaps prevent acceptance: the lack of runtime measurements, unverified feasibility approximation, and insufficient empirical validation across diverse graph families. The authors must address these issues to demonstrate that the method is practically viable.\n\nRevision targets:\n\n- Report end-to-end wall-clock runtimes (including training, feasibility recovery, and Hungarian execution) for both the learned-dual and baseline methods, with training cost amortized over test instances.\n\n- Provide the proof of the 2-approximation for Algorithm 1 (or a counterexample showing it fails) and clarify the conditions under which the guarantee holds.\n\n- Include experiments on at least one additional graph family with a fundamentally different weight distribution (e.g., random geometric graphs, sparse graphs) to demonstrate generalization.\n\n- Discuss the gap between the theoretical sample complexity (O((nC/epsilon)^2 n log n)) and the small number of samples used in experiments (e.g., 20), and explain why the approach works despite the loose bound.\n\n- Ensure the baseline Hungarian implementation uses the same tightening heuristic and optimization level as the learned-dual method, and describe implementation details.",
+      "comments": [
+        {
+          "id": "coarse__deepseek-v4-flash_0",
+          "title": "End-to-end runtime not reported",
+          "quote": "ast one edge in  $E'$ . We compare the runtime and number of primal-dual iterations, reporting mean values and error bars denoting  $95\\%$  confidence intervals. The runtime results are in the supplementary material, and exhibit similar behavior (i.e., the extra running time caused by using Algorithm 1 in Learned Duals is negligible).\n",
+          "explanation": "The paper claims speedups from learned duals but defers all wall-clock runtime results to supplementary material, reporting only iteration counts in the main text. Since iteration count is not a direct proxy for runtime (the overhead of Algorithm 1 and the learning step could be significant), the central empirical claim of speedup is not verifiable from the main paper. The paper should include at least a summary of runtime results (e.g., a table or figure) in the main text to support the claim that the method is practically faster.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 1
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_1",
+          "title": "Training overhead not reported or amortized",
+          "quote": "initial duals we use a small number of independent samples of each instance type. We compute an optimal dual solution for each instance in the sample. To combine these together into\n\n<!-- PAGE BREAK -->\n\na single dual solution, we compute the median value for each node's set of dual values. Thi",
+          "explanation": "The learning step requires computing optimal dual solutions for training instances (via the Hungarian algorithm), which is itself expensive. The paper does not report the total training time or how it is amortized over test instances. Without this information, the reader cannot assess whether the claimed speedups on test instances outweigh the upfront training cost. The paper should report training time and discuss amortization over the number of test instances.",
+          "comment_type": "technical",
+          "paragraph_index": 85,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 2
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_2",
+          "title": "Feasibility recovery algorithm's approximation guarantee unverified",
+          "quote": "Finding the feasible dual minimizing  $\\| \\hat{y} - \\hat{y}'(c) \\|_1$  turns out to be a variant of the vertex cover problem, for which we give a simple 2-approximation running in  $O(m + n)$  time.",
+          "explanation": "The paper claims a 2-approximation for the LP in (1) relative to the optimal perturbation, leading to a 3-factor loss in distance to the optimal dual. However, the LP (1) minimizes the L1 distance from the learned dual, but the algorithm's analysis (based on Drake and Hougardy) assumes the dual of (1) is a maximum-weight matching problem with edge weights r_ij. The paper does not verify that the greedy algorithm actually achieves the claimed approximation ratio for arbitrary non-negative r_ij. Moreover, the proof is relegated to supplementary material, which was not provided. Without a clear proof, the central guarantee of the feasibility step is unverified.",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 3
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_3",
+          "title": "Theoretical speedup requires prediction error o(sqrt(n)), which may be unrealistic",
+          "quote": "Theorem 5. For an arbitrary cost vector  $c$ , the Hungarian method starting with a feasible integer dual solution  $\\hat{y}'(c)$  finds a minimum weight perfect matching in  $\\hat{O}\\left(m\\sqrt{n} \\cdot \\min \\left\\{\\| y^*(c) - \\hat{y}'(c)\\|_1, \\sqrt{n}\\right\\}\\right)$  time, where  $y^*(c)$  is an",
+          "explanation": "For a speedup over the standard O~(mn) Hungarian, the prediction error must be o(sqrt(n)). The paper does not discuss whether this condition is plausible for real distributions. The learning bound (Theorem 6) only guarantees that the expected error approaches the minimum possible, not that this minimum is small. If the distribution is such that the optimal duals vary widely, the minimum achievable error could be Theta(n), yielding no speedup. The paper should characterize when the condition is likely to hold and provide empirical evidence of the actual error magnitudes.",
+          "comment_type": "technical",
+          "paragraph_index": 64,
+          "severity": "critical",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 4
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_4",
+          "title": "Comparison baseline not sufficiently optimized",
+          "quote": "We also added the following \"tightening\" heuristic, which is used in all standard implementations of the Hungarian algorithm: given any feasible dual solution  $y$ , set  $y_{i} \\gets y_{i} + \\min_{j \\in N(i)} \\{c_{ij} - y_{i} - y_{j}\\}$  for all nodes  $i$  on one side of the bipartition.",
+          "explanation": "The paper states that the tightening heuristic is applied to the learned duals, but does not explicitly state that it was also applied to the zero-initialized baseline. If the baseline starts with zero duals and does not apply the tightening step, the comparison is unfair because the tightening step itself provides a speedup independent of learning. The paper should confirm that the baseline also uses the tightening heuristic, or explain why it does not.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 5
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_5",
+          "title": "Sample complexity bound not reconciled with experiments",
+          "quote": "For these experiments, we used 20 training instances to learn the initial duals and then tested those on 10 new instances.",
+          "explanation": "Theorem 6 requires O((nC/epsilon)^2 (n log n + log(1/p))) samples, which for n=500 and C=250 is on the order of 10^11 samples \u2014 far more than the 20 samples used in the experiments. The paper acknowledges this gap in the introduction but does not explain why the empirical performance is good despite the bound being so loose. A discussion reconciling the theoretical bound with the practical sample size is necessary to connect the theory to the experiments.",
+          "comment_type": "technical",
+          "paragraph_index": 87,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 6
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_6",
+          "title": "Tightening heuristic may violate dual feasibility",
+          "quote": "We also added the following \"tightening\" heuristic, which is used in all standard implementations of the Hungarian algorithm: given any feasible dual solution  $y$ , set  $y_{i} \\gets y_{i} + \\min_{j \\in N(i)} \\{c_{ij} - y_{i} - y_{j}\\}$  for all nodes  $i$  on one side of the bipartition.",
+          "explanation": "The tightening heuristic increases y_i for nodes on one side without adjusting the duals on the other side. This operation can violate dual feasibility because the reduced cost c_ij - y_i - y_j may become negative for edges incident to the updated nodes. The paper claims the heuristic is applied to a feasible dual solution, but after the update, the duals may no longer be feasible. The paper should either prove that feasibility is preserved or describe a correction step to restore feasibility.",
+          "comment_type": "technical",
+          "paragraph_index": 84,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 7
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_7",
+          "title": "Running time bound mischaracterized in prose",
+          "quote": "We show that its running time will be proportional to  $|\\|\\hat{y}^{\\prime}(c)\\|_{1} - \\| y^{*}(c)\\|_{1}| \\leq \\| \\hat{y}^{\\prime}(c) - y^{*}(c)\\|_{",
+          "explanation": "The quoted sentence claims the running time is proportional to the absolute difference of L1 norms, which is then bounded by the L1 distance. However, Theorem 5 states the running time is O~(m sqrt(n) * min{||y' - y*||_1, sqrt(n)}), which is proportional to the L1 distance itself (capped by sqrt(n)), not to the difference of norms. While the inequality | ||a||_1 - ||b||_1 | <= ||a - b||_1 is always true, the prose misleads by focusing on the difference of norms rather than the L1 distance directly. The text should match the theorem's statement. Rewrite the quoted sentence as: 'We show that its running time will be proportional to min{||y'(c) - y*(c)||_1, sqrt(n)}.'",
+          "comment_type": "technical",
+          "paragraph_index": 47,
+          "severity": "major",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 8
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_8",
+          "title": "Feasibility conversion step lacks runtime justification",
+          "quote": "um). Finding the feasible dual minimizing  $\\| \\hat{y} - \\hat{y}'(c) \\|_1$  turns out to be a variant of the vertex cover problem, for which we give a simple 2-approximation running in  $O(m + ",
+          "explanation": "The text claims that finding the feasible dual minimizing L1 distance to the prediction is a variant of vertex cover, but does not specify which variant or how the reduction works. Vertex cover is a minimization problem on a graph, while the dual feasibility constraints are linear inequalities y_i + y_j <= c_ij. The connection is not obvious from the description. The paper should either provide a brief reduction or cite a specific reference. Without this, the claim that a 2-approximation runs in O(m+n) time is unsupported. Add a sentence after 'vertex cover problem' explaining the reduction, e.g., 'Specifically, the problem reduces to finding a minimum vertex cover in a bipartite graph where each edge (i,j) requires decreasing either y_i or y_j by at least (y_i + y_j - c_ij).'",
+          "comment_type": "technical",
+          "paragraph_index": 46,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 9
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_9",
+          "title": "Theorem 3 runtime bound missing dependence on m",
+          "quote": "Using the learned dual  $\\hat{y}$ , given edge costs  $c$ , computes a min-cost perfect matching in time  $O(m\\sqrt{n} \\cdot \\min \\{\\| \\hat{y} - y^{*}(c) \\|_{1}, \\sqrt{n}\\}",
+          "explanation": "The runtime bound in Theorem 3 includes a factor of m sqrt(n), but the optimization section (Section 3.2) claims the running time is proportional to ||y' - y*||_1 without specifying the base cost. If the base cost per iteration of the Hungarian algorithm is O(m) or O(m sqrt(n)), the bound is plausible. However, the text does not derive this bound from the algorithm's per-iteration cost. The reader needs to know whether the O(m sqrt(n)) factor comes from the maximum cardinality matching subroutine (e.g., Hopcroft\u2013Karp) or from the Hungarian algorithm itself. The paper should clarify the base cost of the warm-started algorithm. Add a sentence in Section 3.2 stating: 'The Hungarian algorithm runs in O(m sqrt(n)) per iteration in the worst case, so the total time is O(m sqrt(n) * min{||y' - y*||_1, sqrt(n)}).'",
+          "comment_type": "technical",
+          "paragraph_index": 52,
+          "severity": "major",
+          "confidence": "medium",
+          "status": "Pending",
+          "coarse_number": 10
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_10",
+          "title": "Misleading claim about fastest unweighted matching runtime",
+          "quote": "f edges have no weights and thus the goal is to find the maximum cardinality matching (see Section 2 for a formal definition), the fastest running time had long been $O(m\\sqrt{n})$ *[14, 30, 27]* until the recent breakthrough with $\\tilde{O}(m+n^{1.5})$ running time was discovered",
+          "explanation": "The claim that the O~(m + n^{1.5}) result of [43] is a 'breakthrough' that supersedes O(m sqrt(n)) is misleading. The O~(m + n^{1.5}) bound is not strictly better than O(m sqrt(n)) for all graph densities. For dense graphs where m = Theta(n^2), m sqrt(n) = Theta(n^{2.5}) while m + n^{1.5} = Theta(n^2), so the new bound is better. However, for sparse graphs where m = Theta(n), m sqrt(n) = Theta(n^{1.5}) and m + n^{1.5} = Theta(n^{1.5}) as well, so the bounds are asymptotically equal (up to polylog factors). The paper should clarify the regimes where each bound dominates rather than presenting the new result as universally faster.",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 11
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_11",
+          "title": "Omission of recent weighted matching breakthroughs",
+          "quote": "f edges. For finding exact solutions to the minimum weight perfect matching problem, the scaling technique leads to a running time of $O(m\\sqrt{n}\\log(C))$ *[38, 21, 20, 18]*.\n\n#",
+          "explanation": "This statement is outdated. The paper cites scaling-based algorithms from the 1990s and early 2000s but fails to mention the recent breakthrough by van den Brand et al. (FOCS 2020, JACM 2023) that achieved O~(m + n^{1.5}) time for weighted bipartite matching, matching the unweighted bound. The paper itself cites [43] for the unweighted case but does not note that the same authors extended their result to weighted matching. This omission makes the related work seem incomplete and understates the state of the art. The paper should either cite the weighted result or explain why it is not directly comparable (e.g., because it is randomized or uses different techniques).",
+          "comment_type": "technical",
+          "paragraph_index": 29,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 12
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_12",
+          "title": "Inaccurate description of Kraska et al. as purely empirical",
+          "quote": "Kraska et al. *[31]* showed how to use machine learned predictions to improve heavily optimized indexing algorithms. The original paper was purely empirical and came with no rigorous guarantees;",
+          "explanation": "The claim that Kraska et al. [31] was 'purely empirical and came with no rigorous guarantees' is inaccurate. That paper provided a theoretical analysis of the learned index structure, including bounds on the number of errors and the search complexity. While the analysis was not as extensive as later work, it did include formal guarantees. The statement should be corrected to reflect that the paper had some theoretical analysis, e.g., 'The original paper included some theoretical analysis but was primarily empirical.'",
+          "comment_type": "technical",
+          "paragraph_index": 31,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 13
+        },
+        {
+          "id": "coarse__deepseek-v4-flash_13",
+          "title": "Mischaracterization of data-driven algorithm design",
+          "quote": "hen they are not. A related emergent area is that of data driven algorithm design *[25, 7, 5, 4, 6, 11]*. Here, the objective is to \u201clearn\u201d a good algorithm for a particular family of inputs. The goal is not typically to tie the performance of the algorithm to the quality of the prediction, but rather to show that the prediction makes sense; that is only a small number of problem samples are needed in order to ensure the learned algorithm generalizes to",
+          "explanation": "The description of data-driven algorithm design is misleading. The goal in that area is precisely to tie performance to prediction quality via sample complexity bounds (e.g., pseudo-dimension arguments), not merely to 'show that the prediction makes sense.' The statement 'the goal is not typically to tie the performance of the algorithm to the quality of the prediction' contradicts the paper's own Theorem 6, which does exactly that. The paragraph should be rewritten to accurately reflect that data-driven algorithm design provides generalization guarantees that relate sample size to expected performance, which is what the paper also does.",
+          "comment_type": "technical",
+          "paragraph_index": 32,
+          "severity": "minor",
+          "confidence": "high",
+          "status": "Pending",
+          "coarse_number": 14
+        }
+      ],
+      "cost_usd": 0.049,
+      "cost_method": "openrouter_actual",
+      "prompt_tokens": null,
+      "completion_tokens": null
+    }
+  }
+}

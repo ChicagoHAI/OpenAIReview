@@ -54,6 +54,7 @@ MAX_PAGES: int = DEFAULT_MAX_PAGES
 MAX_TOKENS: int = DEFAULT_MAX_TOKENS
 TIMEOUT_SEC: int = DEFAULT_TIMEOUT_SEC
 MAX_PER_MODEL: int = DEFAULT_MAX_PER_MODEL
+METHOD: str = "progressive"
 
 # Lock printing + log writes so concurrent workers don't interleave bytes.
 _print_lock = threading.Lock()
@@ -70,7 +71,11 @@ def model_short(model: str) -> str:
 
 
 def already_done(slug: str, model: str) -> bool:
-    """Return True if results/<slug>.json already has both method keys for this model."""
+    """Return True if results/<slug>.json already has the expected method keys.
+
+    progressive runs also emit `progressive_original__<short>` (pre-consolidation
+    comments, see cli.py:cmd_review); zero_shot only emits `zero_shot__<short>`.
+    """
     out = RESULTS_DIR / f"{slug}.json"
     if not out.exists():
         return False
@@ -80,7 +85,10 @@ def already_done(slug: str, model: str) -> bool:
         return False
     methods = data.get("methods", {})
     short = model_short(model)
-    needed = {f"progressive__{short}", f"progressive_original__{short}"}
+    if METHOD == "progressive":
+        needed = {f"progressive__{short}", f"progressive_original__{short}"}
+    else:
+        needed = {f"{METHOD}__{short}"}
     return needed.issubset(methods.keys())
 
 
@@ -95,15 +103,26 @@ def safe_print(msg: str) -> None:
         print(msg, flush=True)
 
 
+def resolve_pdf_path(paper: dict) -> Path:
+    """Locate the paper's PDF on disk.
+
+    New-style manifests set `pdf_path` explicitly (relative to HERE).
+    Old-style (manifest.json) used `papers/<group>/<slug>.pdf`.
+    """
+    if paper.get("pdf_path"):
+        return HERE / paper["pdf_path"]
+    return HERE / "papers" / paper.get("group", "") / f"{paper['slug']}.pdf"
+
+
 def run_one(paper: dict, model: str, dry_run: bool = False) -> dict:
-    pdf = HERE / "papers" / paper["group"] / f"{paper['slug']}.pdf"
+    pdf = resolve_pdf_path(paper)
     if not pdf.exists():
         return {"slug": paper["slug"], "model": model, "ok": False,
                 "error": f"pdf not found: {pdf}"}
 
     cmd = [
         OPENAIREVIEW_BIN, "review", str(pdf),
-        "--method", "progressive",
+        "--method", METHOD,
         "--model", model,
         "--provider", "openrouter",
         "--output-dir", str(RESULTS_DIR),
@@ -129,7 +148,7 @@ def run_one(paper: dict, model: str, dry_run: bool = False) -> dict:
         ok = proc.returncode == 0 and already_done(paper["slug"], model)
         entry = {
             "slug": paper["slug"],
-            "group": paper["group"],
+            "group": paper.get("group"),
             "model": model,
             "started": started,
             "duration_sec": round(time.time() - t0, 1),
@@ -141,7 +160,7 @@ def run_one(paper: dict, model: str, dry_run: bool = False) -> dict:
     except subprocess.TimeoutExpired as e:
         entry = {
             "slug": paper["slug"],
-            "group": paper["group"],
+            "group": paper.get("group"),
             "model": model,
             "started": started,
             "duration_sec": round(time.time() - t0, 1),
@@ -168,12 +187,18 @@ def load_config(path: str) -> dict:
 
 
 def main() -> None:
-    global RESULTS_DIR, LOG_FILE, MAX_PAGES, MAX_TOKENS, TIMEOUT_SEC, MAX_PER_MODEL
+    global RESULTS_DIR, LOG_FILE, MAX_PAGES, MAX_TOKENS, TIMEOUT_SEC, MAX_PER_MODEL, METHOD
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", help="YAML config file with run parameters.")
     ap.add_argument("--name", help="Experiment name. Results -> <results>/<name>/. "
                                    "Overrides config's 'name'.")
+    ap.add_argument("--manifest", type=Path,
+                    help="Path to manifest JSON. Overrides config's 'manifest' "
+                         "and the default manifest.json.")
+    ap.add_argument("--method", choices=["progressive", "zero_shot"], default=None,
+                    help="Review method. Overrides config's 'method' "
+                         "(default: progressive).")
     ap.add_argument("--max-pages", type=int, default=None,
                     help=f"Max pages passed to CLI (default: {DEFAULT_MAX_PAGES}).")
     ap.add_argument("--max-tokens", type=int, default=None,
@@ -188,6 +213,8 @@ def main() -> None:
                     help="Print what would run, do not call the API.")
     ap.add_argument("--paper", help="Run only this paper slug.")
     ap.add_argument("--model", help="Run only this model.")
+    ap.add_argument("--limit", type=int,
+                    help="Run only the first N papers in the manifest.")
     ap.add_argument("--force", action="store_true",
                     help="Re-run even if already complete.")
     args = ap.parse_args()
@@ -195,6 +222,7 @@ def main() -> None:
     # Resolve run knobs: CLI flag > YAML config > built-in default.
     cfg = load_config(args.config)
     name = args.name or cfg.get("name")
+    METHOD = args.method or cfg.get("method", "progressive")
     MAX_PAGES = args.max_pages if args.max_pages is not None \
         else cfg.get("max_pages", DEFAULT_MAX_PAGES)
     MAX_TOKENS = args.max_tokens if args.max_tokens is not None \
@@ -207,9 +235,18 @@ def main() -> None:
     RESULTS_DIR = DEFAULT_RESULTS_BASE / name if name else DEFAULT_RESULTS_BASE
     LOG_FILE = RESULTS_DIR / "run_log.jsonl"
 
-    manifest = json.loads((HERE / "manifest.json").read_text())
+    manifest_path = args.manifest or Path(cfg.get("manifest", "manifest.json"))
+    if not manifest_path.is_absolute():
+        manifest_path = HERE / manifest_path
+    manifest = json.loads(manifest_path.read_text())
     papers = manifest["papers"]
-    models = manifest["models"]
+    models = cfg.get("models") or manifest.get("models", [])
+
+    # Skip papers that have no PDF on disk (e.g. download failures).
+    papers = [
+        p for p in papers
+        if resolve_pdf_path(p).exists()
+    ]
 
     if args.paper:
         papers = [p for p in papers if p["slug"] == args.paper]
@@ -219,6 +256,8 @@ def main() -> None:
         if args.model not in models:
             sys.exit(f"unknown model: {args.model}  (manifest: {models})")
         models = [args.model]
+    if args.limit:
+        papers = papers[:args.limit]
 
     if not args.dry_run and not os.environ.get("OPENROUTER_API_KEY"):
         sys.exit("OPENROUTER_API_KEY is not set in env. Set it before running.")
@@ -237,6 +276,8 @@ def main() -> None:
         print(f"Config:       {args.config}")
     if name:
         print(f"Experiment:   {name}")
+    print(f"Manifest:     {manifest_path}")
+    print(f"Method:       {METHOD}")
     print(f"Results dir:  {RESULTS_DIR}")
     print(f"Caps:         {MAX_PAGES} pages, {MAX_TOKENS} tokens, "
           f"{TIMEOUT_SEC}s timeout")

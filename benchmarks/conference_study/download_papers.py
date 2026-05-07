@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 """Download papers for the accepted-vs-rejected study.
 
-Two data sources:
+Three data sources:
   --source papercopilot  (default) ICLR only, has explicit accept/reject decisions.
   --source hf            AlgorithmicResearchGroup/openreview-papers-with-reviews
                          on HuggingFace. Multi-venue (ICLR, NeurIPS, CoRL, etc.),
                          uses review score thresholds instead of decisions.
+  --source snor          Scale-up 4-pair signal matrix. Reads
+                         manifests/combined.json (produced by select_papers.py).
+                         Downloads PDFs to papers/scaleup/<slug>.pdf and
+                         updates the manifest with pdf_path + pages.
 
 Three modes:
 
@@ -25,6 +29,8 @@ Usage:
     python download_papers.py --source hf --venue ICLR --year 2023 -n 10
     python download_papers.py --source hf --venue NeurIPS --year 2022 -n 10
     python download_papers.py --source hf --add -n 5 --group rejected
+    python download_papers.py --source snor                      # scale-up matrix
+    python download_papers.py --source snor --limit 5            # smoke test
 
 Score thresholds:
     Accepted: avg rating >= --accepted-threshold (default 7.0).
@@ -312,18 +318,38 @@ def select_and_download_hf(
 # Shared utilities
 # ---------------------------------------------------------------------------
 
-def download_pdf(forum_id: str, dest: Path) -> bool:
-    """Download a PDF from OpenReview. Returns True on success."""
+def download_pdf(forum_id: str, dest: Path, max_retries: int = 5) -> bool:
+    """Download a PDF from OpenReview. Returns True on success.
+
+    Retries on HTTP 429 (rate limit) with exponential backoff. On rate
+    limit or other failure, cleans up the partial/error file so a later
+    call can retry cleanly.
+    """
     if dest.exists() and dest.stat().st_size > 10_000:
         return True
     url = f"https://openreview.net/pdf?id={forum_id}"
-    result = subprocess.run(
-        ["curl", "-sL", "-A", UA, "-o", str(dest), "-w", "%{http_code}", url],
-        capture_output=True, text=True,
-    )
-    code = result.stdout.strip()
-    size = dest.stat().st_size if dest.exists() else 0
-    return code == "200" and size > 10_000
+    for attempt in range(max_retries):
+        result = subprocess.run(
+            ["curl", "-sL", "-A", UA, "-o", str(dest), "-w", "%{http_code}", url],
+            capture_output=True, text=True,
+        )
+        code = result.stdout.strip()
+        size = dest.stat().st_size if dest.exists() else 0
+        if code == "200" and size > 10_000:
+            return True
+        # Discard junk (rate-limit JSON or empty response).
+        if dest.exists() and size < 10_000:
+            dest.unlink(missing_ok=True)
+        if code == "429":
+            # Backoff: 30, 45, 60, 90, 120 seconds.
+            backoff = min(30 + attempt * 15, 120)
+            print(f"    rate limited (attempt {attempt+1}/{max_retries}), "
+                  f"sleeping {backoff}s...")
+            time.sleep(backoff)
+            continue
+        # Other non-200 code: fail fast, don't retry.
+        return False
+    return False
 
 
 def get_page_count(pdf_path: Path) -> int:
@@ -481,6 +507,75 @@ def select_and_download(
     return new_entries
 
 
+def download_from_snor(manifest_path: Path, out_dir: Path,
+                       limit: int | None = None,
+                       min_pages: int = 6) -> None:
+    """Download PDFs for each paper in a SNOR-produced combined manifest.
+
+    PDFs are stored flat under `papers/scaleup/<slug>.pdf` (one copy per
+    unique paper, even when a paper appears in multiple pair tails).
+    Each entry is updated in place with `pdf_path` and `pages` once the
+    download succeeds.
+    """
+    if not manifest_path.exists():
+        sys.exit(f"manifest not found: {manifest_path}\n"
+                 "Run select_papers.py first.")
+    manifest = json.loads(manifest_path.read_text())
+    papers = manifest["papers"]
+    dest_dir = out_dir / "papers" / "scaleup"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    total = len(papers) if limit is None else min(limit, len(papers))
+    downloaded = skipped = failed = skipped_pages = 0
+
+    for i, p in enumerate(papers[:total]):
+        slug = p["slug"]
+        forum_id = p["forum_id"]
+        pdf_path = dest_dir / f"{slug}.pdf"
+        rel_path = f"papers/scaleup/{slug}.pdf"
+
+        if pdf_path.exists() and pdf_path.stat().st_size > 10_000:
+            skipped += 1
+            p["pdf_path"] = rel_path
+            if not p.get("pages"):
+                p["pages"] = get_page_count(pdf_path)
+            print(f"  [{i+1}/{total}] SKIP  {slug}  (already on disk, "
+                  f"{p.get('pages','?')} pages)")
+            continue
+
+        ok = download_pdf(forum_id, pdf_path)
+        if not ok:
+            failed += 1
+            print(f"  [{i+1}/{total}] FAIL  {slug}  (download error)")
+            continue
+
+        pages = get_page_count(pdf_path)
+        if pages < min_pages:
+            skipped_pages += 1
+            print(f"  [{i+1}/{total}] SKIP  {slug}  ({pages} pages < "
+                  f"{min_pages} min; keeping record but NOT setting pdf_path)")
+            # Keep the PDF on disk but don't advertise it to the runner.
+            continue
+
+        downloaded += 1
+        p["pdf_path"] = rel_path
+        p["pages"] = pages
+        size_kb = pdf_path.stat().st_size // 1024
+        print(f"  [{i+1}/{total}] OK    {slug}  ({pages} pages, {size_kb}kb)")
+        # OpenReview rate-limits around 100 req/min; 1 s/req keeps us under.
+        time.sleep(1.0)
+
+        # Flush manifest every 20 papers so a mid-run interruption doesn't
+        # lose progress.
+        if (i + 1) % 20 == 0:
+            manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+    print(f"\nDone: {downloaded} downloaded, {skipped} already present, "
+          f"{failed} failed, {skipped_pages} too short "
+          f"(out of {total})")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -491,8 +586,14 @@ def main() -> None:
                     help="Add N more papers per group to an existing manifest.")
     ap.add_argument("--group", choices=["accepted", "rejected"],
                     help="With --add: only add papers to this group.")
-    ap.add_argument("--source", choices=["papercopilot", "hf"], default="papercopilot",
+    ap.add_argument("--source", choices=["papercopilot", "hf", "snor"],
+                    default="papercopilot",
                     help="Data source (default: papercopilot).")
+    ap.add_argument("--manifest", type=Path,
+                    help="[snor] Path to combined.json (default: manifests/combined.json).")
+    ap.add_argument("--limit", type=int,
+                    help="[snor] Only download the first N manifest entries "
+                         "(for smoke tests).")
     ap.add_argument("--year", type=int, default=2024,
                     help="Conference year (default: 2024)")
     ap.add_argument("--min-pages", type=int, default=15,
@@ -513,6 +614,20 @@ def main() -> None:
     out_dir = HERE
     manifest_path = out_dir / "manifest.json"
     cache_dir = out_dir / ".cache"
+
+    # snor source has its own flow: read combined.json, download flat.
+    if args.source == "snor":
+        snor_manifest = (args.manifest
+                         if args.manifest
+                         else out_dir / "manifests" / "v1" / "combined.json")
+        # The papercopilot/hf default of 15 pages filters accidentally
+        # tiny papers. SNOR already selects from real conference decisions,
+        # so accept anything at least 6 pages. User can override explicitly.
+        snor_min_pages = args.min_pages if args.min_pages != 15 else 6
+        print(f"SNOR source: reading {snor_manifest}")
+        download_from_snor(snor_manifest, out_dir,
+                           limit=args.limit, min_pages=snor_min_pages)
+        return
 
     # Mode 1: manifest exists, no --add → just download what's listed.
     if manifest_path.exists() and not args.add:

@@ -16,10 +16,12 @@ results/           # Output JSONs + run_log.jsonl (gitignored)
 papers/            # Downloaded PDFs (gitignored; regenerate via download_papers.py)
   accepted/        # 5 ICLR 2024 Outstanding Paper Award winners
   rejected/        # 5 substantive rejections (ratings 2.5–3.5, ≥3 reviewers)
+competitors/       # Adapters for external review systems (coarse, etc.)
 download_papers.py  # Fetches PDFs + writes manifest.json
 estimate_cost.py    # Pre-run USD cost estimate (progressive method)
-run_study.py        # Batch runner (multi-model, multi-paper)
-generate_report.py  # Computes summary tables from result JSONs
+run_study.py        # Batch runner for OpenAIReview progressive (multi-model, multi-paper)
+run_competitors.py  # Batch runner for competitor systems (same paper/model grid)
+generate_report.py  # Auto-detects systems and emits per-system summary tables
 manifest.json       # Curated paper list (forum IDs, titles, groups)
 ```
 
@@ -91,17 +93,42 @@ combos already complete.
 - `--max-pages` / `--max-tokens` / `--timeout-sec` / `--max-per-model` — ad-hoc
 overrides of any YAML value.
 
-### 4. Generate report tables
+### 4. Run a competitor system (optional)
+
+Competitors are external review systems wrapped via adapters in
+`competitors/`. They run on the same paper × model grid as `run_study.py`
+and their outputs merge into the same result-JSON schema, so the report
+tooling handles them alongside OpenAIReview's progressive.
+
+```bash
+python run_competitors.py --config configs/coarse.yaml
+```
+
+Each competitor has its own config (e.g. `configs/coarse.yaml`) with a
+`competitor:` field naming the adapter. Adapters live in
+`competitors/<name>_adapter.py` and are registered in
+`competitors/registry.py`. See that file's docstring for how to add a new
+one.
+
+Competitor outputs get their own `results/<competitor-name>/` directory,
+parallel to `results/<experiment-name>/`. To report on both, point
+`generate_report.py` at the combined results directory or at each
+separately.
+
+### 5. Generate report tables
 
 ```bash
 python generate_report.py --config configs/baseline.yaml
 python generate_report.py --config configs/baseline.yaml --papers  # include papers table (parses PDFs, slow)
 ```
 
-Prints markdown tables (overall, per-model, consolidation, cost, runtime)
-to stdout. Pipe to a file or paste into `reports/<name>.md`.
+Auto-detects every system present in the result JSONs (e.g. `progressive`,
+`coarse`) by scanning method prefixes, and emits a per-system block of
+tables (overall, per-model, consolidation if applicable, cost) plus a
+runtime table spanning all systems. Pipe to a file or paste into
+`reports/<name>.md`.
 
-### 5. Add a new experiment
+### 6. Add a new experiment
 
 ```bash
 cp configs/baseline.yaml configs/my_experiment.yaml
@@ -134,10 +161,17 @@ read-modify-write merge. Total in-flight = `max_per_model × num_models`
 
 ## Results format
 
-Each `results/<name>/<slug>.json` contains:
+Each `results/<name>/<slug>.json` contains a `methods` dict keyed by
+`<system>__<model_short>`. OpenAIReview's progressive writes two keys:
 
 - `progressive__<model_short>` — comments after the consolidation pass.
 - `progressive_original__<model_short>` — raw comments before consolidation.
 
 Both are written in a single CLI invocation. `run_study.py` considers a
 (paper, model) combo "done" only when both keys exist.
+
+Competitor systems typically write a single post-editorial key
+`<competitor>__<model_short>` (no raw/consolidated pair). The report
+generator scans the method keys to decide which tables apply to which
+system — systems without a `_original` partner skip the consolidation
+table.

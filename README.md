@@ -205,7 +205,66 @@ Integration tests that call the API require `OPENROUTER_API_KEY` and are skipped
 
 ## Benchmarks
 
-Benchmark data and experiment scripts are in `benchmarks/`. See `benchmarks/REPORT.md` for results.
+Two end-to-end studies live in `benchmarks/`. Both expect the `[benchmarks]` extras and an OpenRouter key:
+
+```bash
+uv pip install -e ".[benchmarks]"
+export OPENROUTER_API_KEY=...
+```
+
+Run scripts from inside each benchmark's directory unless noted.
+
+### Outcomes study (`benchmarks/conference_study/`)
+
+Compares OpenAIReview output on accepted vs. rejected conference submissions. Papers are sampled via the 4-pair SNOR signal matrix (top-cited vs. never-published, awarded vs. rejected, top vs. bottom scores, and a composed pair).
+
+```bash
+cd benchmarks/conference_study
+
+# 1. Build manifests (manifests/v1/{pair_1..4,combined}.json)
+python select_papers.py --venues iclr neurips --years 2021 2022
+
+# 2. Download PDFs flat under papers/scaleup/, write pages back into the manifest
+python download_papers.py --source snor
+
+# 3. Optional cost preview (drops PDF parsing; estimate = pages × tokens_per_page × multipliers)
+python estimate_cost.py --config configs/scaleup_progressive.yaml
+
+# 4. Run OpenAIReview and/or competitor systems on the same paper × model grid
+python run_study.py       --config configs/scaleup_progressive.yaml
+python run_competitors.py --config configs/coarse_v2.yaml
+
+# 5. Aggregate
+python analyses/report_scaleup.py results/scaleup_progressive
+```
+
+`run_study.py` and `run_competitors.py` are idempotent — rerunning skips paper × model combos already complete. Per-paper locks let multiple models share the same result JSON. See `benchmarks/conference_study/README.md` for the config schema, concurrency model, and result format.
+
+### Perturbation benchmark (`benchmarks/perturbation/`)
+
+Injects controlled errors (math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures per-comment recall by error type and domain.
+
+Pipeline: `extract → generate → validate → verify → inject → review → score`. `run_benchmark.py` drives all stages from a single YAML.
+
+```bash
+cd benchmarks/perturbation
+
+# One-shot: prepare papers, run reviews, score against the perturbation manifest
+python run_benchmark.py configs/default.yaml
+
+# Or run a subset of stages
+python run_benchmark.py configs/default.yaml --stages prepare,review
+python run_benchmark.py configs/default.yaml --stages score
+
+# Multi-config sweep with parallel workers reused across configs
+python run_benchmark.py --configs configs/full_*.yaml \
+    --parallel-openaireview 2 --parallel-coarse 8
+
+# Aggregate recall tables across all (paper, model, method) cells
+python generate_report.py results/
+```
+
+The config picks the review system per run via `system: openaireview | coarse | reviewer3`; adapter setup for third-party systems is in `systems/README.md`. Scoring uses a two-stage filter: a fuzzy substring match on the perturbed text against the comment quote, then an LLM judge rating (≥3/5) on whether the explanation identifies the same error. See `benchmarks/perturbation/README.md` for error-type taxonomy, results layout, and known limitations.
 
 ## Related Resources
 

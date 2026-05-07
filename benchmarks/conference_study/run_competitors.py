@@ -83,8 +83,19 @@ def already_done(slug: str, method_key: str) -> bool:
     return method_key in data.get("methods", {})
 
 
+def resolve_pdf_path(paper: dict) -> Path:
+    """Locate the paper's PDF on disk.
+
+    New-style manifests set `pdf_path` (relative to HERE).
+    Old-style used `papers/<group>/<slug>.pdf`.
+    """
+    if paper.get("pdf_path"):
+        return HERE / paper["pdf_path"]
+    return HERE / "papers" / paper.get("group", "") / f"{paper['slug']}.pdf"
+
+
 def run_one(paper: dict, model: str, adapter, cfg: dict, dry_run: bool = False) -> dict:
-    pdf = HERE / "papers" / paper["group"] / f"{paper['slug']}.pdf"
+    pdf = resolve_pdf_path(paper)
     method_key = adapter.method_key(model)
     if not pdf.exists():
         return {
@@ -102,7 +113,7 @@ def run_one(paper: dict, model: str, adapter, cfg: dict, dry_run: bool = False) 
     t0 = time.time()
     entry: dict = {
         "slug": paper["slug"],
-        "group": paper["group"],
+        "group": paper.get("group", ""),
         "model": model,
         "competitor": adapter.name,
         "method_key": method_key,
@@ -168,6 +179,9 @@ def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="YAML config file (required).")
+    ap.add_argument("--manifest", type=Path,
+                    help="Path to manifest JSON. Overrides config's 'manifest' "
+                         "and the default manifest.json.")
     ap.add_argument("--name", help="Experiment name. Overrides config's 'name'. "
                                    "Results -> results/<name>/.")
     ap.add_argument("--competitor", help="Override the competitor name from config.")
@@ -201,9 +215,12 @@ def main() -> None:
 
     adapter = get_adapter(competitor_name)
 
-    manifest = json.loads((HERE / "manifest.json").read_text())
+    manifest_path = args.manifest or Path(cfg.get("manifest", "manifest.json"))
+    if not manifest_path.is_absolute():
+        manifest_path = HERE / manifest_path
+    manifest = json.loads(manifest_path.read_text())
     papers = manifest["papers"]
-    models = manifest["models"]
+    models = cfg.get("models") or manifest["models"]
 
     if args.paper:
         papers = [p for p in papers if p["slug"] == args.paper]

@@ -78,6 +78,7 @@ class CoarseAdapter(CompetitorAdapter):
         coarse_opts = cfg.get("coarse_options", {}) or {}
         resolved_model = _to_openrouter_model(model)
         timeout_sec = int(cfg.get("timeout_sec", 1800))
+        max_pages = cfg.get("max_pages")
 
         # Temp file shuttles the structured payload back from the subprocess
         # so coarse's own stdout logging doesn't have to be parsed.
@@ -86,11 +87,35 @@ class CoarseAdapter(CompetitorAdapter):
             prefix=f"coarse_{pdf.stem}_",
         ) as f:
             out_path = Path(f.name)
+        # If max_pages is set, hand coarse a truncated copy of the PDF so
+        # its review only covers the first N pages (matches the metric used
+        # by openaireview's runs).
+        truncated_pdf: Path | None = None
+        pdf_for_coarse = pdf
+        if max_pages:
+            import fitz
+            src = fitz.open(pdf)
+            n_keep = min(int(max_pages), len(src))
+            if n_keep < len(src):
+                dst = fitz.open()
+                dst.insert_pdf(src, from_page=0, to_page=n_keep - 1)
+                with tempfile.NamedTemporaryFile(
+                    suffix=".pdf", delete=False,
+                    prefix=f"coarse_{pdf.stem}_first{n_keep}p_",
+                ) as f:
+                    truncated_pdf = Path(f.name)
+                dst.save(truncated_pdf)
+                dst.close()
+                pdf_for_coarse = truncated_pdf
+            src.close()
         try:
             cmd = [
                 venv_python, str(_RUNNER),
-                str(pdf), resolved_model,
-                json.dumps({"skip_cost_gate": coarse_opts.get("skip_cost_gate", True)}),
+                str(pdf_for_coarse), resolved_model,
+                json.dumps({
+                    "skip_cost_gate": coarse_opts.get("skip_cost_gate", True),
+                    "gemini_internal_model": coarse_opts.get("gemini_internal_model"),
+                }),
                 str(out_path),
             ]
             # Inherit env (OPENROUTER_API_KEY etc.); stream subprocess output
@@ -114,6 +139,8 @@ class CoarseAdapter(CompetitorAdapter):
             payload = json.loads(out_path.read_text())
         finally:
             out_path.unlink(missing_ok=True)
+            if truncated_pdf is not None:
+                truncated_pdf.unlink(missing_ok=True)
 
         comments: list[NormalizedComment] = []
         for c in payload.get("comments", []):

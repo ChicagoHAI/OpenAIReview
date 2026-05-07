@@ -1,13 +1,15 @@
-import reviewer.prompts as p               
-import json 
+import reviewer.prompts as p
+import reviewer.method_progressive as mp
+import reviewer.method_zero_shot as mzs
+import json
 from pathlib import Path
 
-from reviewer.parsers import parse_document                                                                                                                                          
-from reviewer.method_progressive import review_progressive, review_zero_shot
+from reviewer.method_progressive import review_progressive
+from reviewer.method_zero_shot import review_zero_shot
 
 # ── Zero-shot prompts (EDITED) ───────────────────────────────────────────────────────
 
-p.ZERO_SHOT_PROMPT = f"""{p.REVIEWER_PREAMBLE}
+mzs.ZERO_SHOT_PROMPT = f"""{p.REVIEWER_PREAMBLE}
 
 {{ocr_caveat}}
 
@@ -42,7 +44,7 @@ Return a JSON object with this structure:
 
 Return ONLY the JSON object. No other text."""
 
-p.ZERO_SHOT_CHUNK_PROMPT = f"""{p.REVIEWER_PREAMBLE}
+mzs.ZERO_SHOT_CHUNK_PROMPT = f"""{p.REVIEWER_PREAMBLE}
 
 {{ocr_caveat}}
 
@@ -79,7 +81,7 @@ Return ONLY the JSON object. No other text."""
 
 # ── Progressive prompt (EDITED) ───────────────────────────────────────────────────────
 
-p.DEEP_CHECK_PROMPT = f"""{p.REVIEWER_PREAMBLE}                                                                                                                                      
+mp.DEEP_CHECK_PROMPT = f"""{p.REVIEWER_PREAMBLE}                                                                                                                                      
                                                                                                                                                                                        
 {{ocr_caveat}}
                                                                                                                                                                                        
@@ -111,47 +113,49 @@ def review_experimental(perturbations_dir, output_dir, method):
         if not category_dir.is_dir() or category_dir.name.startswith("."):                                                                                                           
             continue                                                                                                                                                                 
 
-        for paper_dir in (category_dir / "all").iterdir():                                                                                                                           
-            if not paper_dir.is_dir():
-                continue
+        paper_dir = next((p for p in (category_dir / "all").iterdir() if p.is_dir()), None)
+        if paper_dir is None:
+            continue
 
-            md_files = list((paper_dir / "experimental").glob("*recorrupted.md"))                                                                                                    
-            if not md_files:
-                continue                                                                                                                                                             
-            md_file = md_files[0]
+        md_files = list((paper_dir / "experimental").glob("*recorrupted.md"))                                                                                                    
+        if not md_files:
+            continue                                                                                                                                                             
+        md_file = md_files[0]
 
-            slug = paper_dir.name
-            output_path = output_dir / method / f"{slug}.json"
-            if output_path.exists():                                                                                                                                                 
-                print(f"  Skipping {slug} (already done)")
-                continue                                                                                                                                                             
-                
-            print(f"Reviewing {slug}...")
-            text = md_file.read_text()
+        slug = paper_dir.name
+        output_path = output_dir / method / f"{slug}.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if output_path.exists():                                                                                                                                                 
+            print(f"  Skipping {slug} (already done)")
+            continue                                                                                                                                                             
+            
+        print(f"Reviewing {slug}...")
+        text = md_file.read_text()
 
-            if method == "progressive":
-                consolidated, _ = review_progressive(                                                                                                                                    
-                    paper_slug=slug,
-                    document_content=text,                                                                                                                                               
-                    model="anthropic/claude-opus-4-6",
-                    reasoning_effort=None,
-                    skip_nonsubstantial=False,
-                    window_size=3,
-                    ocr=False,
-                )
-                with open(output_path, "w") as f:                                                                                                                                        
-                    json.dump(consolidated.to_dict(), f, indent=2)
-            elif method == "zero_shot":
-                result = review_zero_shot(
-                    paper_slug=slug,
-                    document_content=text,                                                                                                                                               
-                    model="anthropic/claude-opus-4-6",
-                    reasoning_effort=None,
-                    ocr= False
-                )
+        if method == "progressive":
+            consolidated, _ = review_progressive(
+                paper_slug=slug,
+                document_content=text,
+                model="anthropic/claude-opus-4-6",
+                reasoning_effort=None,
+                window_size=3,
+                ocr=False,
+            )
+            with open(output_path, "w") as f:                                                                                                                                        
+                json.dump(consolidated.to_dict(), f, indent=2)
+        elif method == "zero_shot":
+            result = review_zero_shot(
+                paper_slug=slug,
+                document_content=text,
+                model="anthropic/claude-opus-4-6",
+                reasoning_effort=None,
+                ocr=False,
+            )
+            with open(output_path, "w") as f:
+                json.dump(result.to_dict(), f, indent=2)
 
 if __name__ == "__main__":
     perturbations_dir = Path("./perturbation_results")                                                                                                       
     output_dir = Path("./experimental_comments")
-    method = "zero_shot"                                                                                                                                     
+    method = "progressive"                                                                                                                                     
     review_experimental(perturbations_dir, output_dir, method)

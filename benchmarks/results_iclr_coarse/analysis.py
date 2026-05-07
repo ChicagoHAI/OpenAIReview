@@ -182,7 +182,7 @@ def plot_overlap_cp(overlap_avg):
                                                                                                                                                                                         
         v = venn2(                                                                                                                                                                       
             subsets=(only_c, only_p, both),
-            set_labels=("Coarse", "Progressive"),                                                                                                                                        
+            set_labels=("Coarse", "OpenAIReview"),                                                                                                                                        
             ax=axes[i],  
             set_colors=COLORS,
             alpha=0.15,                                                                                                                                                                  
@@ -344,7 +344,7 @@ def plot_overlap_all(overlap_avg):
 
         v = venn3(
             subsets=(only_c, only_p, only_cp, only_z, only_cz, only_pz, all_three),
-            set_labels=("Coarse", "Progressive", "Zero Shot"),
+            set_labels=("'coarse", "OpenAIReview", "zero-shot"),
             ax=axes[i],
             set_colors=COLORS,
             alpha=0.15,
@@ -521,7 +521,11 @@ if __name__ == "__main__":
         "progressive": "./scaleup_v2_progressive/",
         "zero_shot":   "./scaleup_v2_zero_shot/",
     }
-    MODELS = ["deepseek-v4-flash", "gemini-3.1-flash-lite-preview", "glm-4.7-flash", "qwen3.6-35b-a3b"]
+    MODELS = ["deepseek-v4-flash", 
+              "gemini-3.1-flash-lite-preview", 
+              "glm-4.7-flash", 
+              "qwen3.6-35b-a3b"
+              ]
     TOTAL_PAPERS = len(list(Path(FOLDERS["coarse"]).glob("*.json")))
 
     print("=" * 90)

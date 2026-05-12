@@ -41,12 +41,19 @@ Do NOT flag:
 DO_NOT_FLAG_CHUNKED = DO_NOT_FLAG_BASE.rstrip() + """
 - Incomplete text at passage boundaries"""
 
+SEVERITY_RUBRIC = """\
+For each issue, assign a "severity" tier:
+- "major": undermines a key claim, methodology, or comparison; affects conclusions
+- "moderate": real error or gap, but localized and fixable
+- "minor": framing concern, mild overclaim, or ambiguity resolvable from context"""
+
 JSON_ARRAY_OUTPUT = """\
 Return ONLY a JSON array (can be []). Each item:
 - "title": concise title of the issue
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
 - "type": "technical" or "logical"
+- "severity": "minor", "moderate", or "major"
 """
 
 # ── Deep-check prompt (used by local and progressive methods) ───────────────
@@ -73,6 +80,8 @@ PASSAGE TO CHECK:
 
 {DO_NOT_FLAG_CHUNKED}
 
+{SEVERITY_RUBRIC}
+
 {JSON_ARRAY_OUTPUT}"""
 
 
@@ -98,6 +107,8 @@ PAPER:
 
 {DO_NOT_FLAG_BASE}
 
+{SEVERITY_RUBRIC}
+
 Return a JSON object with this structure:
 {{{{
   "overall_feedback": "one paragraph high-level assessment of the paper's quality and main issues",
@@ -106,7 +117,8 @@ Return a JSON object with this structure:
       "title": "concise title of the issue",
       "quote": "exact verbatim text from the paper (preserving LaTeX)",
       "explanation": "precise explanation of what is wrong and why",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
     }}}}
   ]
 }}}}
@@ -133,6 +145,8 @@ PASSAGE TO CHECK:
 
 {DO_NOT_FLAG_CHUNKED}
 
+{SEVERITY_RUBRIC}
+
 Return a JSON object with this structure:
 {{{{
   "overall_feedback": "brief assessment of this section",
@@ -141,7 +155,8 @@ Return a JSON object with this structure:
       "title": "concise title of the issue",
       "quote": "exact verbatim text from the paper (preserving LaTeX)",
       "explanation": "precise explanation of what is wrong and why",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
     }}}}
   ]
 }}}}

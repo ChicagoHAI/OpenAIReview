@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass, field
 
+SEVERITY_VALUES = ("minor", "moderate", "major")
+
 
 @dataclass
 class Comment:
@@ -11,6 +13,7 @@ class Comment:
     explanation: str    # reviewer's explanation
     comment_type: str   # "technical" or "logical"
     paragraph_index: int | None = None  # 0-based index in split paragraphs
+    severity: str | None = None         # one of SEVERITY_VALUES, or None when unknown
 
     def to_dict(self) -> dict:
         d = {
@@ -21,6 +24,8 @@ class Comment:
         }
         if self.paragraph_index is not None:
             d["paragraph_index"] = self.paragraph_index
+        if self.severity:
+            d["severity"] = self.severity
         return d
 
 

@@ -104,8 +104,7 @@ def update_running_summary(
         max_tokens=3000,
         reasoning_effort=reasoning_effort,
     )
-    result.total_prompt_tokens += usage["prompt_tokens"]
-    result.total_completion_tokens += usage["completion_tokens"]
+    result.add_usage(usage)
 
     updated = response.strip()
     if count_tokens(updated) > max_summary_tokens:
@@ -128,8 +127,7 @@ def is_substantial_passage(
         max_tokens=8,
         reasoning_effort=reasoning_effort,
     )
-    result.total_prompt_tokens += usage["prompt_tokens"]
-    result.total_completion_tokens += usage["completion_tokens"]
+    result.add_usage(usage)
     return response.strip().lower().startswith("yes")
 
 
@@ -154,8 +152,7 @@ def consolidate_comments(
         max_tokens=output_cap,
         reasoning_effort=reasoning_effort,
     )
-    result.total_prompt_tokens += usage["prompt_tokens"]
-    result.total_completion_tokens += usage["completion_tokens"]
+    result.add_usage(usage)
 
     arr_match = re.search(r"\[.*\]", response, re.DOTALL)
     if arr_match:
@@ -259,8 +256,7 @@ def review_progressive(
             reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
-        result.total_prompt_tokens += usage["prompt_tokens"]
-        result.total_completion_tokens += usage["completion_tokens"]
+        result.add_usage(usage)
 
         # Parse comments
         new_comments = []
@@ -308,8 +304,7 @@ def review_progressive(
         reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()
-    result.total_prompt_tokens += usage["prompt_tokens"]
-    result.total_completion_tokens += usage["completion_tokens"]
+    result.add_usage(usage)
 
     # Step 3: Consolidation pass
     print(f"  Consolidating {len(all_comments)} comments...")

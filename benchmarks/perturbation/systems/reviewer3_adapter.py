@@ -90,10 +90,17 @@ def config_from_env() -> Reviewer3Config:
 
 @dataclass
 class Reviewer3Job:
-    paper: Path           # path to *_corrupted.md
-    out_json: Path        # where to write the pipeline-shaped JSON
-    paper_label: str      # e.g. "<error_type>/<paper_label>"
+    paper: Path                 # path to *_corrupted.md (staged, possibly token-truncated)
+    out_json: Path              # where to write the pipeline-shaped JSON
+    paper_label: str            # e.g. "<error_type>/<paper_label>"
     title: str | None = None
+    # Optional: full pre-truncation source. When provided, _ensure_pdf
+    # compiles THIS instead of `paper` — the staged file is often invalid
+    # LaTeX because token truncation can chop mid-environment.
+    source: Path | None = None
+    # Optional: trim the rendered PDF to its first N pages so R3 still sees
+    # roughly the same window other systems do (coarse uses max_pages: 20).
+    max_pages: int | None = None
 
 
 @dataclass
@@ -114,48 +121,188 @@ def _headers(cfg: Reviewer3Config) -> dict[str, str]:
     return {"x-api-key": cfg.api_key}
 
 
-def _ensure_pdf(paper: Path) -> Path:
-    """Reviewer 3 only accepts PDF. If `paper` is already PDF, return it.
-    If it's a LaTeX source (starts with `\\documentclass`) — true for the
-    `cs_CC` corpus where `.md` files are really `.tex` — compile via pdflatex
-    and cache the result next to the source. Otherwise raise."""
+def _ensure_pdf(paper: Path, *, source: Path | None = None,
+                max_pages: int | None = None) -> Path:
+    """Reviewer 3 only accepts PDF. Return a compiled+possibly-trimmed PDF.
+
+    Resolution order for the source bytes:
+      1. If `paper` is already a `.pdf`, return it as-is (page trim still applies).
+      2. If `source` was provided, compile that — preferred for LaTeX-as-md
+         since the staged `paper` is often invalid LaTeX (token truncation
+         chops mid-environment).
+      3. Else compile `paper` directly. If it lacks `\\end{document}`, append
+         one as a best-effort close.
+
+    When `max_pages` is set, the resulting PDF is trimmed to its first N
+    pages via pymupdf. This matches what coarse does (max_pages: 20) so R3
+    sees roughly the same window other systems see.
+    """
     if paper.suffix.lower() == ".pdf":
-        return paper
-    head = paper.read_text(errors="replace")[:2000]
+        return _maybe_trim_pages(paper, max_pages)
+
+    src_for_compile = source if (source is not None and source.exists()) else paper
+    cached_suffix = ".trim.pdf" if max_pages else ".pdf"
+    cached = src_for_compile.with_suffix(cached_suffix)
+    src_mtime = src_for_compile.stat().st_mtime
+    if cached.exists() and cached.stat().st_mtime > src_mtime:
+        return cached
+
+    head = src_for_compile.read_text(errors="replace")[:2000]
     if "\\documentclass" not in head:
         raise RuntimeError(
-            f"don't know how to convert {paper.name} to PDF "
+            f"don't know how to convert {src_for_compile.name} to PDF "
             "(no \\documentclass found; expected LaTeX-as-md or PDF)"
         )
-    cached = paper.with_suffix(".pdf")
-    if cached.exists() and cached.stat().st_mtime > paper.stat().st_mtime:
-        return cached
-    import shutil, subprocess, tempfile
-    text = paper.read_text(errors="replace")
-    # Staging truncates by tokens, which can leave the LaTeX source missing
-    # \end{document} (or mid-environment). Best-effort: ensure document closes.
+    text = src_for_compile.read_text(errors="replace")
     if "\\end{document}" not in text:
+        # `source` should always close cleanly; this only fires if we fell back
+        # to compiling the token-truncated `paper`.
         text = text.rstrip() + "\n\n\\end{document}\n"
+    # Strip orphan \input / \include — the perturbation corpus dumps each paper
+    # into a single .md but a few preserve `\input{mypreamble.tex}`-style
+    # directives that pdflatex can't resolve (fatal error, no PDF produced).
+    text = _strip_orphan_includes(text, src_for_compile.parent)
+    # Stripped-include papers (and some others) rely on author-defined shortcuts
+    # like \bbC, \calA, \vvirg, \ootimes from the missing preamble. Inject
+    # \providecommand fallbacks so the body compiles.
+    text = _inject_rescue_preamble(text)
+
+    import shutil, subprocess, tempfile
     with tempfile.TemporaryDirectory() as td:
         tex = Path(td) / "source.tex"
         tex.write_text(text)
         # Run twice to resolve cross-refs; ignore exit code, accept partial PDF.
+        # Capture output as bytes — pdflatex's own log can contain non-UTF-8
+        # accent bytes and we don't read this output anyway (the .log file is
+        # the source of truth on failure).
         for _ in range(2):
             subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", "source.tex"],
-                cwd=td, capture_output=True, text=True, timeout=180,
+                cwd=td, capture_output=True, timeout=300,
             )
         out_pdf = Path(td) / "source.pdf"
         if not out_pdf.exists() or out_pdf.stat().st_size < 1000:
-            log = (Path(td) / "source.log").read_text(errors="replace") if (Path(td) / "source.log").exists() else ""
-            raise RuntimeError(f"pdflatex produced no usable PDF for {paper}: {log[-1500:]}")
+            log_path = Path(td) / "source.log"
+            log = log_path.read_text(errors="replace") if log_path.exists() else ""
+            raise RuntimeError(
+                f"pdflatex produced no usable PDF for {src_for_compile}: {log[-1500:]}"
+            )
+        if max_pages:
+            _trim_pages_to(out_pdf, max_pages)
         shutil.copy(out_pdf, cached)
     return cached
 
 
-def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None) -> str:
-    """POST /api/internal/review (multipart). Returns sessionId."""
-    paper = _ensure_pdf(paper)
+_INPUT_RE = __import__("re").compile(
+    r"\\(?:input|include)\s*\{([^}]+)\}", flags=__import__("re").IGNORECASE,
+)
+
+
+def _strip_orphan_includes(text: str, base_dir: Path) -> str:
+    """Comment out `\\input{path}` / `\\include{path}` whose target file isn't
+    next to the source. pdflatex aborts hard on a missing \\input, which kills
+    the compile even when the rest of the document is fine."""
+    def _replace(m):
+        target = m.group(1).strip()
+        # Common LaTeX convention: optional .tex extension.
+        for cand in (target, target + ".tex"):
+            if (base_dir / cand).exists():
+                return m.group(0)
+        return "% [stripped missing include] " + m.group(0)
+    return _INPUT_RE.sub(_replace, text)
+
+
+# Defensive preamble injected after \documentclass to provide fallbacks for
+# common custom-command patterns that authors typically define in private
+# preamble files (e.g. mypreamble.tex). \providecommand is a no-op when the
+# command is already defined, so this is safe to inject blindly.
+_RESCUE_PREAMBLE = r"""
+% --- injected by reviewer3_adapter: providecommand fallbacks ---
+% blackboard / cal / bf shortcuts authors commonly define per-paper
+\providecommand{\bb}[1]{\mathbb{#1}}
+\providecommand{\cal}[1]{\mathcal{#1}}
+\providecommand{\bff}[1]{\mathbf{#1}}
+% common single-letter shortcuts (\bbR, \calA, \bfx, etc.)
+\makeatletter
+\@for\letter:={A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+  \expandafter\providecommand\csname bb\letter\endcsname{\ensuremath{\mathbb{\letter}}}%
+  \expandafter\providecommand\csname cal\letter\endcsname{\ensuremath{\mathcal{\letter}}}%
+}
+\@for\letter:={a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+  \expandafter\providecommand\csname bf\letter\endcsname{\ensuremath{\mathbf{\letter}}}%
+}
+\makeatother
+% other commonly-used shortcuts
+\providecommand{\eps}{\epsilon}
+\providecommand{\veps}{\varepsilon}
+\providecommand{\vvirg}{,\,}
+\providecommand{\ootimes}{\otimes}
+\providecommand{\Bbbk}{\mathbb{k}}
+% --- end injected preamble ---
+"""
+
+
+def _inject_rescue_preamble(text: str) -> str:
+    """Insert _RESCUE_PREAMBLE right after the first \\documentclass{...} line.
+    Idempotent: looks for our marker before injecting."""
+    if "injected by reviewer3_adapter" in text:
+        return text
+    import re
+    m = re.search(r"\\documentclass(\[[^\]]*\])?\{[^}]+\}", text)
+    if not m:
+        return text
+    cut = m.end()
+    return text[:cut] + "\n" + _RESCUE_PREAMBLE + text[cut:]
+
+
+def _maybe_trim_pages(pdf: Path, max_pages: int | None) -> Path:
+    """Return `pdf` (already a PDF). If `max_pages` is set and the PDF has more,
+    return a trimmed sibling cached next to it."""
+    if not max_pages:
+        return pdf
+    import fitz
+    src = fitz.open(pdf)
+    try:
+        if src.page_count <= max_pages:
+            return pdf
+        trimmed = pdf.with_suffix(f".first{max_pages}p.pdf")
+        if trimmed.exists() and trimmed.stat().st_mtime > pdf.stat().st_mtime:
+            return trimmed
+        dst = fitz.open()
+        dst.insert_pdf(src, from_page=0, to_page=max_pages - 1)
+        dst.save(trimmed)
+        dst.close()
+        return trimmed
+    finally:
+        src.close()
+
+
+def _trim_pages_to(pdf: Path, max_pages: int) -> None:
+    """In-place trim of `pdf` to its first `max_pages` pages."""
+    import fitz
+    src = fitz.open(pdf)
+    try:
+        if src.page_count <= max_pages:
+            return
+        dst = fitz.open()
+        dst.insert_pdf(src, from_page=0, to_page=max_pages - 1)
+        tmp = pdf.with_suffix(".pdf.tmp")
+        dst.save(tmp)
+        dst.close()
+    finally:
+        src.close()
+    tmp.replace(pdf)
+
+
+def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None,
+            source: Path | None = None, max_pages: int | None = None) -> str:
+    """POST /api/internal/review (multipart). Returns sessionId.
+
+    `source` and `max_pages` are forwarded to `_ensure_pdf` so callers can opt
+    into compiling the full pre-truncation source and trimming the rendered
+    PDF — see _ensure_pdf docstring.
+    """
+    paper = _ensure_pdf(paper, source=source, max_pages=max_pages)
     url = f"{cfg.base_url}/api/internal/review"
     data: dict[str, str] = {
         "userId": cfg.user_id,
@@ -294,7 +441,8 @@ def _run_one(job: Reviewer3Job, cfg: Reviewer3Config) -> Reviewer3Result:
     start = time.time()
     sid = ""
     try:
-        sid = _submit(cfg, job.paper, title=job.title)
+        sid = _submit(cfg, job.paper, title=job.title,
+                      source=job.source, max_pages=job.max_pages)
         print(f"[{tag}] submitted, sessionId={sid}", file=sys.stderr, flush=True)
         body = _poll_until_done(cfg, sid, tag=tag)
         elapsed = time.time() - start

@@ -114,8 +114,48 @@ def _headers(cfg: Reviewer3Config) -> dict[str, str]:
     return {"x-api-key": cfg.api_key}
 
 
+def _ensure_pdf(paper: Path) -> Path:
+    """Reviewer 3 only accepts PDF. If `paper` is already PDF, return it.
+    If it's a LaTeX source (starts with `\\documentclass`) — true for the
+    `cs_CC` corpus where `.md` files are really `.tex` — compile via pdflatex
+    and cache the result next to the source. Otherwise raise."""
+    if paper.suffix.lower() == ".pdf":
+        return paper
+    head = paper.read_text(errors="replace")[:2000]
+    if "\\documentclass" not in head:
+        raise RuntimeError(
+            f"don't know how to convert {paper.name} to PDF "
+            "(no \\documentclass found; expected LaTeX-as-md or PDF)"
+        )
+    cached = paper.with_suffix(".pdf")
+    if cached.exists() and cached.stat().st_mtime > paper.stat().st_mtime:
+        return cached
+    import shutil, subprocess, tempfile
+    text = paper.read_text(errors="replace")
+    # Staging truncates by tokens, which can leave the LaTeX source missing
+    # \end{document} (or mid-environment). Best-effort: ensure document closes.
+    if "\\end{document}" not in text:
+        text = text.rstrip() + "\n\n\\end{document}\n"
+    with tempfile.TemporaryDirectory() as td:
+        tex = Path(td) / "source.tex"
+        tex.write_text(text)
+        # Run twice to resolve cross-refs; ignore exit code, accept partial PDF.
+        for _ in range(2):
+            subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode", "source.tex"],
+                cwd=td, capture_output=True, text=True, timeout=180,
+            )
+        out_pdf = Path(td) / "source.pdf"
+        if not out_pdf.exists() or out_pdf.stat().st_size < 1000:
+            log = (Path(td) / "source.log").read_text(errors="replace") if (Path(td) / "source.log").exists() else ""
+            raise RuntimeError(f"pdflatex produced no usable PDF for {paper}: {log[-1500:]}")
+        shutil.copy(out_pdf, cached)
+    return cached
+
+
 def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None) -> str:
     """POST /api/internal/review (multipart). Returns sessionId."""
+    paper = _ensure_pdf(paper)
     url = f"{cfg.base_url}/api/internal/review"
     data: dict[str, str] = {
         "userId": cfg.user_id,
@@ -125,7 +165,7 @@ def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None) -> str:
     if title:
         data["title"] = title
     with paper.open("rb") as fh:
-        files = {"file": (paper.name, fh, "text/markdown")}
+        files = {"file": (paper.name, fh, "application/pdf")}
         resp = requests.post(url, headers=_headers(cfg), data=data, files=files,
                              timeout=cfg.request_timeout_s)
     if resp.status_code >= 400:
@@ -180,29 +220,36 @@ def _pick(d: dict, *keys: str, default: str = "") -> str:
     return default
 
 
-def _normalize_comment(raw: dict, idx: int) -> dict:
-    """Best-effort mapping from Reviewer 3 comment shape to pipeline schema.
+# Canonical severity mapping lives in benchmarks/perturbation/_severity.py
+# so every system (coarse, reviewer3, openaireview) and the downstream
+# conference-study analyses share one source of truth.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from _severity import normalize_severity as _normalize_r3_severity  # noqa: E402
 
-    The OpenAPI spec doesn't pin field names. We try common synonyms; anything
-    we don't recognize is preserved on the side as `_raw` for later inspection.
+
+def _normalize_comment(raw: dict, idx: int) -> dict:
+    """Map a Reviewer 3 comment to the pipeline schema.
+
+    Reviewer 3 comments carry: reviewerId, comment, title, citedText, severity, rank.
+    `citedText` is the verbatim excerpt from the paper — what our scorer uses as
+    `quote` for fuzzy/semantic matching.
     """
     cid = _pick(raw, "id", "commentId", "uuid") or f"reviewer3_{idx}"
-    title = _pick(raw, "title", "subject", "heading", "summary")
-    quote = _pick(raw, "quote", "snippet", "excerpt", "passage", "text", "highlight")
-    explanation = _pick(raw, "explanation", "comment", "feedback", "body", "rationale", "message")
+    title = _pick(raw, "title")
+    quote = _pick(raw, "citedText", "quote", "snippet", "excerpt", "passage", "highlight")
+    explanation = _pick(raw, "comment", "explanation", "feedback", "body", "rationale", "message")
+    severity = _normalize_r3_severity("reviewer3", raw.get("severity"))
     if not explanation:
-        # last resort: serialize whatever we have so the comment isn't empty
-        explanation = json.dumps({k: v for k, v in raw.items()
-                                  if k not in ("id", "commentId", "uuid", "title", "subject",
-                                               "heading", "summary", "quote", "snippet",
-                                               "excerpt", "passage", "text", "highlight")},
-                                 ensure_ascii=False)
+        explanation = json.dumps(raw, ensure_ascii=False)
     return {
         "id": cid,
         "title": title,
         "quote": quote,
         "explanation": explanation,
         "comment_type": "technical",
+        "severity": severity,
         "paragraph_index": None,
         "_raw": raw,
     }

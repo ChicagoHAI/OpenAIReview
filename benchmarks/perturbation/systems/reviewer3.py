@@ -30,6 +30,10 @@ class Reviewer3System(System):
 
     def build_jobs(self, units, cfg, results_dir):
         domain = results_dir.name
+        overrides = {
+            k: cfg[k] for k in ("review_mode", "poll_interval_s", "poll_timeout_s")
+            if k in cfg and cfg[k] is not None
+        }
         out: list[tuple[CellKey, ReviewJob]] = []
         for u in units:
             if not u.staged_corrupted.exists():
@@ -45,7 +49,7 @@ class Reviewer3System(System):
             job = ReviewJob(
                 tag=tag, out_json=out_json, review_dir=review_dir,
                 paper_label=f"{u.error_type}/{u.paper_label}",
-                payload={"paper": u.staged_corrupted},
+                payload={"paper": u.staged_corrupted, "overrides": overrides},
             )
             out.append(((REVIEWER3_SLUG,), job))
         return out
@@ -54,7 +58,8 @@ class Reviewer3System(System):
         if not jobs:
             return []
         cfg = reviewer3_adapter.config_from_env()
-        # cfg overrides come from the caller via run_jobs_with_cfg; default cfg is fine here.
+        for k, v in jobs[0].payload.get("overrides", {}).items():
+            setattr(cfg, k, v)
         adapter_jobs = [
             reviewer3_adapter.Reviewer3Job(
                 paper=j.payload["paper"],

@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from .base import CompetitorAdapter
 from .coarse_adapter import CoarseAdapter
+from .reviewer3_adapter import Reviewer3Adapter
 
 _REGISTRY: dict[str, type[CompetitorAdapter]] = {
     "coarse": CoarseAdapter,
+    "reviewer3": Reviewer3Adapter,
 }
 
 

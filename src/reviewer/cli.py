@@ -441,6 +441,17 @@ def cmd_score(args: argparse.Namespace) -> None:
         "n_total_comments": result.n_total_comments,
         "detected": result.detected,
         "missed": result.missed,
+        "first_matching_comment_index": result.first_matching_comment_index,
+        "n_detected_at_1": result.n_detected_at_1,
+        "n_detected_at_3": result.n_detected_at_3,
+        "n_detected_at_5": result.n_detected_at_5,
+        "n_detected_at_10": result.n_detected_at_10,
+        "recall_at_1": result.recall_at_1,
+        "recall_at_3": result.recall_at_3,
+        "recall_at_5": result.recall_at_5,
+        "recall_at_10": result.recall_at_10,
+        "comments_per_detected_error": result.comments_per_detected_error,
+        "detected_per_comment": result.detected_per_comment,
     }
     output_path.write_text(json.dumps(score_data, indent=2))
     print(f"\nResults saved to: {output_path}")

@@ -92,3 +92,14 @@ class PerturbationResult:
     n_total_comments: int
     detected: list[str]                # perturbation_ids where step 1 + step 2 passed
     missed: list[str]                  # perturbation_ids where detection failed
+    first_matching_comment_index: dict[str, int] = field(default_factory=dict)
+    n_detected_at_1: int = 0
+    n_detected_at_3: int = 0
+    n_detected_at_5: int = 0
+    n_detected_at_10: int = 0
+    recall_at_1: float = 0.0
+    recall_at_3: float = 0.0
+    recall_at_5: float = 0.0
+    recall_at_10: float = 0.0
+    comments_per_detected_error: float | None = None
+    detected_per_comment: float = 0.0

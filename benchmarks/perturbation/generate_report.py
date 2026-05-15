@@ -79,6 +79,17 @@ class CellResult:
     detected: list = field(default_factory=list)
     missed: list = field(default_factory=list)
     n_total_comments: int = 0
+    has_comment_efficiency_metrics: bool = False
+    n_detected_at_1: int = 0
+    n_detected_at_3: int = 0
+    n_detected_at_5: int = 0
+    n_detected_at_10: int = 0
+    recall_at_1: float = 0.0
+    recall_at_3: float = 0.0
+    recall_at_5: float = 0.0
+    recall_at_10: float = 0.0
+    comments_per_detected_error: float | None = None
+    detected_per_comment: float = 0.0
     # from review JSON
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -161,6 +172,17 @@ def load_results(results_dir: Path, length: str, gt: dict[str, dict[str, str]]) 
             detected=score_data.get("detected", []),
             missed=score_data.get("missed", []),
             n_total_comments=score_data.get("n_total_comments", 0),
+            has_comment_efficiency_metrics="n_detected_at_1" in score_data,
+            n_detected_at_1=score_data.get("n_detected_at_1", 0),
+            n_detected_at_3=score_data.get("n_detected_at_3", 0),
+            n_detected_at_5=score_data.get("n_detected_at_5", 0),
+            n_detected_at_10=score_data.get("n_detected_at_10", 0),
+            recall_at_1=score_data.get("recall_at_1", 0.0),
+            recall_at_3=score_data.get("recall_at_3", 0.0),
+            recall_at_5=score_data.get("recall_at_5", 0.0),
+            recall_at_10=score_data.get("recall_at_10", 0.0),
+            comments_per_detected_error=score_data.get("comments_per_detected_error"),
+            detected_per_comment=score_data.get("detected_per_comment", 0.0),
         )
 
         # Per-error breakdown from manifest
@@ -268,6 +290,49 @@ def print_recall_by_model_method(cells: list[CellResult]) -> None:
             else:
                 row.append(f"{_pct(g['det'], g['inj'])} ({g['det']}/{g['inj']})")
         print(" | ".join(row) + " |")
+    print()
+
+
+def _ratio(num: int, den: int) -> str:
+    return f"{num / den:.2f}" if den else "—"
+
+
+def print_comment_efficiency_metrics_by_model_method(cells: list[CellResult]) -> None:
+    metric_cells = [c for c in cells if c.has_comment_efficiency_metrics]
+    if not metric_cells:
+        return
+
+    print("## Comment-Efficiency Metrics — per model × method\n")
+    print("| model | method | comments | detected | R@1 | R@3 | R@5 | R@10 | comments/detected | detected/comment |")
+    print("|-------|--------:|---------:|---------:|----:|----:|----:|-----:|------------------:|-----------------:|")
+
+    groups: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {
+        "comments": 0,
+        "inj": 0,
+        "det": 0,
+        "at1": 0,
+        "at3": 0,
+        "at5": 0,
+        "at10": 0,
+    })
+    for c in metric_cells:
+        g = groups[(c.model_slug, c.method)]
+        g["comments"] += c.n_total_comments
+        g["inj"] += c.n_injected
+        g["det"] += c.n_detected
+        g["at1"] += c.n_detected_at_1
+        g["at3"] += c.n_detected_at_3
+        g["at5"] += c.n_detected_at_5
+        g["at10"] += c.n_detected_at_10
+
+    for model, method in sorted(groups):
+        g = groups[(model, method)]
+        print(
+            f"| {model} | {method} | {g['comments']} | {g['det']} | "
+            f"{_pct(g['at1'], g['inj'])} | {_pct(g['at3'], g['inj'])} | "
+            f"{_pct(g['at5'], g['inj'])} | {_pct(g['at10'], g['inj'])} | "
+            f"{_ratio(g['comments'], g['det'])} | {_ratio(g['det'], g['comments'])} |"
+        )
     print()
 
 
@@ -474,6 +539,7 @@ def _render_report(results_dirs: list[Path]) -> None:
     print_overall_by_method(all_cells)
     print_recall_by_length_method(all_cells)
     print_recall_by_model_method(all_cells)
+    print_comment_efficiency_metrics_by_model_method(all_cells)
     print_recall_by_length_model_method(all_cells)
     print_recall_by_error_type_x_method(all_cells)
     print_recall_by_error_type(all_cells)

@@ -9,6 +9,7 @@ from sentence_transformers import SentenceTransformer, util
 # (normalized) comment quote. Same coverage notion used by
 # reviewer.utils.locate_comment_in_document.
 _FUZZY_QUOTE_THRESHOLD = 0.75
+_COMMENT_EFFICIENCY_CUTOFFS = (1, 3, 5, 10)
 
 def score_review(perturbations: list[Perturbation], 
                  review_comments: list[dict], 
@@ -19,9 +20,10 @@ def score_review(perturbations: list[Perturbation],
 
     n_detected = 0
     detected = []
+    first_matching_comment_index: dict[str, int] = {}
 
     for p in perturbations:
-        for comment in review_comments:
+        for comment_idx, comment in enumerate(review_comments):
             if not _substring_match(comment.get('quote', ''), p.perturbed):
                 continue 
 
@@ -35,6 +37,7 @@ def score_review(perturbations: list[Perturbation],
             if explanation_match:
                 n_detected += 1
                 detected.append(p.perturbation_id)
+                first_matching_comment_index[p.perturbation_id] = comment_idx
                 break 
 
     missed = []
@@ -43,8 +46,44 @@ def score_review(perturbations: list[Perturbation],
             missed.append(p.perturbation_id)
 
     recall = n_detected / n_injected if n_injected > 0 else 0.0
+    comment_efficiency_metrics = _comment_efficiency_metrics(
+        first_matching_comment_index,
+        n_injected=n_injected,
+        n_detected=n_detected,
+        n_total_comments=n_total_comments,
+    )
 
-    return PerturbationResult(n_injected=n_injected, n_detected=n_detected, recall=recall, n_total_comments=n_total_comments, detected=detected, missed=missed)
+    return PerturbationResult(
+        n_injected=n_injected,
+        n_detected=n_detected,
+        recall=recall,
+        n_total_comments=n_total_comments,
+        detected=detected,
+        missed=missed,
+        first_matching_comment_index=first_matching_comment_index,
+        **comment_efficiency_metrics,
+    )
+
+
+def _comment_efficiency_metrics(
+    first_matching_comment_index: dict[str, int],
+    n_injected: int,
+    n_detected: int,
+    n_total_comments: int,
+) -> dict:
+    metrics: dict[str, float | int | None] = {}
+    for k in _COMMENT_EFFICIENCY_CUTOFFS:
+        n_at_k = sum(1 for idx in first_matching_comment_index.values() if idx < k)
+        metrics[f"n_detected_at_{k}"] = n_at_k
+        metrics[f"recall_at_{k}"] = n_at_k / n_injected if n_injected > 0 else 0.0
+
+    metrics["comments_per_detected_error"] = (
+        n_total_comments / n_detected if n_detected > 0 else None
+    )
+    metrics["detected_per_comment"] = (
+        n_detected / n_total_comments if n_total_comments > 0 else 0.0
+    )
+    return metrics
 
 
 def _substring_match(quote, perturbed) -> bool:

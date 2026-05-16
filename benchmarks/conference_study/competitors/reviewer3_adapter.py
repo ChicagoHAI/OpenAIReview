@@ -49,7 +49,13 @@ class Reviewer3Adapter(CompetitorAdapter):
             if k in opts and opts[k] is not None:
                 setattr(rcfg, k, opts[k])
 
-        session_id = _r3._submit(rcfg, pdf, title=pdf.stem)
+        # Cap PDF size sent to R3. `max_pages` lives at the top level of the
+        # config (run_competitors.py uses it for parse_document); we honor the
+        # same value here so the bytes shipped to R3 match the paragraph window
+        # we already cap on our side. Untrimmed full PDFs were tripping R3's
+        # HTTP 413 limit and inflating per-paper wall time.
+        max_pages = cfg.get("max_pages") or opts.get("max_pages")
+        session_id = _r3._submit(rcfg, pdf, title=pdf.stem, max_pages=max_pages)
         body = _r3._poll_until_done(rcfg, session_id, tag=f"reviewer3/{pdf.stem}")
 
         comments: list[NormalizedComment] = []

@@ -158,6 +158,14 @@ def _ensure_pdf(paper: Path, *, source: Path | None = None,
         # `source` should always close cleanly; this only fires if we fell back
         # to compiling the token-truncated `paper`.
         text = text.rstrip() + "\n\n\\end{document}\n"
+    # Rewrite \documentclass{<custom>} -> \documentclass{amsart} when the
+    # custom class isn't installed on the local TeX Live. Without this many
+    # journal-class papers (aq-amsart, sn-jnl, atlasdoc, aastex*, cas-sc, ...)
+    # bail at line 1 with "File `X.cls' not found".
+    text = _force_known_documentclass(text)
+    # Same idea for missing \usepackage{X.sty} (e.g. jinstpub on some hep-ex
+    # papers). Comment them out — pdflatex aborts hard on missing packages.
+    text = _strip_missing_packages(text)
     # Strip orphan \input / \include — the perturbation corpus dumps each paper
     # into a single .md but a few preserve `\input{mypreamble.tex}`-style
     # directives that pdflatex can't resolve (fatal error, no PDF produced).
@@ -218,26 +226,28 @@ def _strip_orphan_includes(text: str, base_dir: Path) -> str:
 # command is already defined, so this is safe to inject blindly.
 _RESCUE_PREAMBLE = r"""
 % --- injected by reviewer3_adapter: providecommand fallbacks ---
-% blackboard / cal / bf shortcuts authors commonly define per-paper
-\providecommand{\bb}[1]{\mathbb{#1}}
-\providecommand{\cal}[1]{\mathcal{#1}}
-\providecommand{\bff}[1]{\mathbf{#1}}
-% common single-letter shortcuts (\bbR, \calA, \bfx, etc.)
-\makeatletter
-\@for\letter:={A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
-  \expandafter\providecommand\csname bb\letter\endcsname{\ensuremath{\mathbb{\letter}}}%
-  \expandafter\providecommand\csname cal\letter\endcsname{\ensuremath{\mathcal{\letter}}}%
+% Run at \begin{document} so we don't fight with packages that define the
+% same shortcuts (e.g. amsfonts -> \Bbbk). \providecommand is itself a no-op
+% when the command already exists, but only at the moment it runs; AtBeginDoc
+% defers the check past all \usepackage{...} loads.
+\AtBeginDocument{%
+  \providecommand{\bb}[1]{\mathbb{#1}}%
+  \providecommand{\cal}[1]{\mathcal{#1}}%
+  \providecommand{\bff}[1]{\mathbf{#1}}%
+  \makeatletter
+  \@for\letter:={A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+    \expandafter\providecommand\csname bb\letter\endcsname{\ensuremath{\mathbb{\letter}}}%
+    \expandafter\providecommand\csname cal\letter\endcsname{\ensuremath{\mathcal{\letter}}}%
+  }%
+  \@for\letter:={a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+    \expandafter\providecommand\csname bf\letter\endcsname{\ensuremath{\mathbf{\letter}}}%
+  }%
+  \makeatother
+  \providecommand{\eps}{\epsilon}%
+  \providecommand{\veps}{\varepsilon}%
+  \providecommand{\vvirg}{,\,}%
+  \providecommand{\ootimes}{\otimes}%
 }
-\@for\letter:={a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
-  \expandafter\providecommand\csname bf\letter\endcsname{\ensuremath{\mathbf{\letter}}}%
-}
-\makeatother
-% other commonly-used shortcuts
-\providecommand{\eps}{\epsilon}
-\providecommand{\veps}{\varepsilon}
-\providecommand{\vvirg}{,\,}
-\providecommand{\ootimes}{\otimes}
-\providecommand{\Bbbk}{\mathbb{k}}
 % --- end injected preamble ---
 """
 
@@ -253,6 +263,88 @@ def _inject_rescue_preamble(text: str) -> str:
         return text
     cut = m.end()
     return text[:cut] + "\n" + _RESCUE_PREAMBLE + text[cut:]
+
+
+# Bundled-with-TeX-Live classes are kept as-is. Anything else gets rewritten
+# to `\documentclass{amsart}` so pdflatex doesn't bail at line 1 with
+# "File `<custom>.cls' not found". Class-specific commands in the body then
+# emit undefined-control-sequence warnings, but pdflatex in nonstopmode still
+# produces a usable PDF.
+_KNOWN_CLASSES_CACHE: dict[str, bool] = {}
+
+
+def _class_is_installed(cls: str) -> bool:
+    if cls in _KNOWN_CLASSES_CACHE:
+        return _KNOWN_CLASSES_CACHE[cls]
+    import subprocess
+    try:
+        r = subprocess.run(["kpsewhich", f"{cls}.cls"],
+                           capture_output=True, timeout=5)
+        ok = (r.returncode == 0 and r.stdout.strip() != b"")
+    except Exception:
+        ok = False
+    _KNOWN_CLASSES_CACHE[cls] = ok
+    return ok
+
+
+def _force_known_documentclass(text: str) -> str:
+    """Rewrite `\\documentclass[opts]{<custom>}` to `\\documentclass{amsart}`
+    when <custom> isn't bundled with the local TeX Live. Drops options too —
+    they're class-specific and frequently invalid against amsart. amsart is
+    the math-friendly fallback (preserves theorem/lemma environments).
+
+    Matches only the first **uncommented** \\documentclass — many papers carry
+    example/commented-out variants before the active one.
+    """
+    import re
+    pat = re.compile(r"^(?P<lead>[^%\n]*?)\\documentclass(\[[^\]]*\])?\{([^}]+)\}",
+                     re.MULTILINE)
+    for m in pat.finditer(text):
+        # If there's a `%` before the `\documentclass` on this line, it's commented.
+        if "%" in m.group("lead"):
+            continue
+        cls = m.group(3).strip()
+        if _class_is_installed(cls):
+            return text
+        # Replace just the `\documentclass...{...}` span, keeping any leading content
+        # (it's empty in practice but be safe).
+        start = m.start() + len(m.group("lead"))
+        return text[:start] + r"\documentclass{amsart}" + text[m.end():]
+    return text
+
+
+# Same pattern for missing packages — pdflatex aborts hard on
+# "File `X.sty' not found", so comment out \usepackage{X} (and the bracketed
+# options line) when X isn't installed. Bundled-with-TeX packages stay.
+_KNOWN_PACKAGES_CACHE: dict[str, bool] = {}
+
+
+def _package_is_installed(pkg: str) -> bool:
+    if pkg in _KNOWN_PACKAGES_CACHE:
+        return _KNOWN_PACKAGES_CACHE[pkg]
+    import subprocess
+    try:
+        r = subprocess.run(["kpsewhich", f"{pkg}.sty"],
+                           capture_output=True, timeout=5)
+        ok = (r.returncode == 0 and r.stdout.strip() != b"")
+    except Exception:
+        ok = False
+    _KNOWN_PACKAGES_CACHE[pkg] = ok
+    return ok
+
+
+def _strip_missing_packages(text: str) -> str:
+    """Comment out `\\usepackage[opts]{X}` lines whose .sty isn't installed.
+    Multi-package forms like `\\usepackage{a,b,c}` are split: any missing
+    member causes the whole line to be commented out (rare in practice).
+    """
+    import re
+    def _replace(m):
+        pkgs = [p.strip() for p in m.group(2).split(",")]
+        if all(_package_is_installed(p) for p in pkgs if p):
+            return m.group(0)
+        return "% [stripped missing package] " + m.group(0)
+    return re.sub(r"\\usepackage(\[[^\]]*\])?\{([^}]+)\}", _replace, text)
 
 
 def _maybe_trim_pages(pdf: Path, max_pages: int | None) -> Path:

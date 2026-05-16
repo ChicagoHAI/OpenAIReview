@@ -101,6 +101,12 @@ class Reviewer3Job:
     # Optional: trim the rendered PDF to its first N pages so R3 still sees
     # roughly the same window other systems do (coarse uses max_pages: 20).
     max_pages: int | None = None
+    # Optional: where to persist the R3 sessionId. When set, _run_one writes
+    # the sid here right after submit succeeds and reads it back on subsequent
+    # runs to resume the same R3 session instead of creating a duplicate.
+    # This prevents the duplicate-session credit waste we observed when we
+    # killed runs mid-poll (R3 keeps the session live and we'd submit fresh).
+    sid_file: Path | None = None
 
 
 @dataclass
@@ -529,26 +535,67 @@ def _run_one(job: Reviewer3Job, cfg: Reviewer3Config) -> Reviewer3Result:
     job.out_json.parent.mkdir(parents=True, exist_ok=True)
     raw_path = job.out_json.with_suffix(".raw.json")
     tag = f"reviewer3/{job.paper_label}"
-    print(f"[{tag}] starting: {job.paper.name}", file=sys.stderr, flush=True)
     start = time.time()
     sid = ""
-    try:
-        sid = _submit(cfg, job.paper, title=job.title,
-                      source=job.source, max_pages=job.max_pages)
-        print(f"[{tag}] submitted, sessionId={sid}", file=sys.stderr, flush=True)
-        body = _poll_until_done(cfg, sid, tag=tag)
-        elapsed = time.time() - start
+    sid_file = job.sid_file
+
+    def _write_outputs(body: dict, elapsed: float) -> int:
         raw_path.write_text(json.dumps(body, indent=2, ensure_ascii=False))
         pipeline = build_pipeline_json(job.paper, body, elapsed_s=elapsed)
         job.out_json.write_text(json.dumps(pipeline, indent=2, ensure_ascii=False))
-        n = len(pipeline["methods"][next(iter(pipeline["methods"]))]["comments"])
-        print(f"[{tag}] done in {elapsed:.0f}s ({n} comments)", file=sys.stderr, flush=True)
+        # Successful → sid_file no longer needed for resume, but leave it as
+        # an audit trail (cheap, sometimes useful for tracing back to R3 UI).
+        return len(pipeline["methods"][next(iter(pipeline["methods"]))]["comments"])
+
+    try:
+        # Resume path: if a sid_file exists, try to recover the prior session
+        # instead of submitting fresh. This is the dedup-credit-waste fix.
+        if sid_file and sid_file.exists():
+            sid = sid_file.read_text().strip()
+            print(f"[{tag}] resuming sessionId={sid} (from {sid_file.name})",
+                  file=sys.stderr, flush=True)
+            try:
+                body = _poll_until_done(cfg, sid, tag=tag)
+                elapsed = time.time() - start
+                n = _write_outputs(body, elapsed)
+                print(f"[{tag}] done in {elapsed:.0f}s ({n} comments, resumed)",
+                      file=sys.stderr, flush=True)
+                return Reviewer3Result(job=job, ok=True, elapsed_s=elapsed,
+                                       session_id=sid, raw_response=body)
+            except RuntimeError as e:
+                # Session-fetch hard fail (e.g., 403/404 — sid stale/invalid).
+                # Drop the sid_file and fall through to fresh submit.
+                msg = str(e)
+                if "fetch failed" in msg and ("403" in msg or "404" in msg):
+                    print(f"[{tag}] sid {sid} unrecoverable ({msg[:80]}); "
+                          "submitting fresh", file=sys.stderr, flush=True)
+                    sid_file.unlink(missing_ok=True)
+                    sid = ""
+                else:
+                    raise  # other RuntimeErrors (e.g., status=failed) propagate
+
+        # Submit path: no usable sid_file, send a new submission.
+        print(f"[{tag}] starting: {job.paper.name}", file=sys.stderr, flush=True)
+        sid = _submit(cfg, job.paper, title=job.title,
+                      source=job.source, max_pages=job.max_pages)
+        print(f"[{tag}] submitted, sessionId={sid}", file=sys.stderr, flush=True)
+        if sid_file:
+            sid_file.parent.mkdir(parents=True, exist_ok=True)
+            sid_file.write_text(sid)
+        body = _poll_until_done(cfg, sid, tag=tag)
+        elapsed = time.time() - start
+        n = _write_outputs(body, elapsed)
+        print(f"[{tag}] done in {elapsed:.0f}s ({n} comments)",
+              file=sys.stderr, flush=True)
         return Reviewer3Result(job=job, ok=True, elapsed_s=elapsed,
                                session_id=sid, raw_response=body)
     except Exception as e:
         elapsed = time.time() - start
         msg = f"{type(e).__name__}: {e}"
-        print(f"[{tag}] FAILED in {elapsed:.0f}s: {msg}", file=sys.stderr, flush=True)
+        print(f"[{tag}] FAILED in {elapsed:.0f}s: {msg}",
+              file=sys.stderr, flush=True)
+        # Keep sid_file on failure — next run will retry the same session
+        # rather than incur a duplicate submission cost.
         return Reviewer3Result(job=job, ok=False, elapsed_s=elapsed,
                                session_id=sid, error=msg)
 

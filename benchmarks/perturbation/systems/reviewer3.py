@@ -51,6 +51,11 @@ class Reviewer3System(System):
                     continue
                 out_json.unlink()
             tag = f"{domain}/{u.paper_label}/{u.error_type}/{REVIEWER3_SLUG}"
+            # Persist the R3 sessionId next to the review JSON. If a prior
+            # run was killed mid-poll, the next run resumes that session
+            # instead of creating a duplicate (~34% credit waste observed
+            # without this).
+            sid_file = review_dir / f"{u.staged_corrupted.stem}.sid"
             job = ReviewJob(
                 tag=tag, out_json=out_json, review_dir=review_dir,
                 paper_label=f"{u.error_type}/{u.paper_label}",
@@ -58,6 +63,7 @@ class Reviewer3System(System):
                     "paper": u.staged_corrupted,
                     "source": u.src_corrupted,
                     "max_pages": max_pages,
+                    "sid_file": sid_file,
                     "overrides": overrides,
                 },
             )
@@ -77,6 +83,7 @@ class Reviewer3System(System):
                 paper_label=j.tag,
                 source=j.payload.get("source"),
                 max_pages=j.payload.get("max_pages"),
+                sid_file=j.payload.get("sid_file"),
             )
             for j in jobs
         ]

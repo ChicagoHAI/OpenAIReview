@@ -55,8 +55,37 @@ class Reviewer3Adapter(CompetitorAdapter):
         # we already cap on our side. Untrimmed full PDFs were tripping R3's
         # HTTP 413 limit and inflating per-paper wall time.
         max_pages = cfg.get("max_pages") or opts.get("max_pages")
-        session_id = _r3._submit(rcfg, pdf, title=pdf.stem, max_pages=max_pages)
-        body = _r3._poll_until_done(rcfg, session_id, tag=f"reviewer3/{pdf.stem}")
+
+        # sid_file is injected by run_competitors.py just before invocation:
+        # `cfg["_sid_file"] = out_file.with_suffix(".sid")`. If present and
+        # the file already exists, we resume that R3 session instead of
+        # submitting fresh — avoids duplicate-session credit waste when a
+        # prior run was killed mid-poll. (See PR notes; ~34% of credits
+        # observed wasted on duplicates before this fix.)
+        sid_file = cfg.get("_sid_file")
+        if isinstance(sid_file, str):
+            sid_file = Path(sid_file)
+        session_id = ""
+        body = None
+        if sid_file and sid_file.exists():
+            session_id = sid_file.read_text().strip()
+            try:
+                body = _r3._poll_until_done(rcfg, session_id,
+                                            tag=f"reviewer3/{pdf.stem} (resumed)")
+            except RuntimeError as e:
+                m = str(e)
+                if "fetch failed" in m and ("403" in m or "404" in m):
+                    sid_file.unlink(missing_ok=True)
+                    session_id, body = "", None
+                else:
+                    raise
+
+        if body is None:
+            session_id = _r3._submit(rcfg, pdf, title=pdf.stem, max_pages=max_pages)
+            if sid_file:
+                sid_file.parent.mkdir(parents=True, exist_ok=True)
+                sid_file.write_text(session_id)
+            body = _r3._poll_until_done(rcfg, session_id, tag=f"reviewer3/{pdf.stem}")
 
         comments: list[NormalizedComment] = []
         for i, raw in enumerate(body.get("comments") or []):

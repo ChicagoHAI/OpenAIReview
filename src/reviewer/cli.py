@@ -206,12 +206,14 @@ def _build_paper_json(
     from .evaluate import compute_cost
     cost_usd = compute_cost(result)
 
+    cost_method = "openrouter_actual" if result.cost_source == "openrouter" else "estimated"
     method_data = {
         "label": label,
         "model": result.model,
         "overall_feedback": result.overall_feedback,
         "comments": comments,
         "cost_usd": round(cost_usd, 4),
+        "cost_method": cost_method,
         "prompt_tokens": result.total_prompt_tokens,
         "completion_tokens": result.total_completion_tokens,
     }

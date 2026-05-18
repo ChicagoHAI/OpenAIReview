@@ -47,7 +47,11 @@ Do these refer to the same issue? Reply with exactly one word: YES or NO."""
 
 
 def compute_cost(result: ReviewResult) -> float:
-    """Estimate USD cost of a review."""
+    """USD cost of a review. Prefers the actual value reported by the
+    provider (currently OpenRouter) when available; otherwise falls back
+    to a token-count × hardcoded-price-table estimate."""
+    if getattr(result, "cost_source", None) and getattr(result, "total_cost_usd", 0):
+        return float(result.total_cost_usd)
     pricing = None
     for key in COST_PER_1M:
         if key in result.model:

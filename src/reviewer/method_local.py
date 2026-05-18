@@ -94,8 +94,7 @@ def review_local(
             reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
-        result.total_prompt_tokens += usage["prompt_tokens"]
-        result.total_completion_tokens += usage["completion_tokens"]
+        result.add_usage(usage)
 
         if not response.strip():
             print(f"    WARNING: Empty response for chunk {chunk_idx+1}/{len(chunks)} "
@@ -126,7 +125,6 @@ def review_local(
         reasoning_effort=reasoning_effort,
     )
     result.overall_feedback = feedback_response.strip()
-    result.total_prompt_tokens += usage["prompt_tokens"]
-    result.total_completion_tokens += usage["completion_tokens"]
+    result.add_usage(usage)
 
     return result

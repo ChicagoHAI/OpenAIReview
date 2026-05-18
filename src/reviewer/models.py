@@ -38,6 +38,8 @@ class ReviewResult:
     overall_feedback: str = ""
     total_prompt_tokens: int = 0
     total_completion_tokens: int = 0
+    total_cost_usd: float = 0.0      # actual cost summed from API responses (OpenRouter only)
+    cost_source: str | None = None   # "openrouter" if total_cost_usd is real; else None
     model: str = ""
     reasoning_effort: str | None = None
     raw_responses: list[str] = field(default_factory=list)
@@ -45,6 +47,17 @@ class ReviewResult:
     @property
     def num_comments(self) -> int:
         return len(self.comments)
+
+    def add_usage(self, usage: dict) -> None:
+        """Accumulate one chat() usage dict into this result."""
+        self.total_prompt_tokens += usage.get("prompt_tokens", 0)
+        self.total_completion_tokens += usage.get("completion_tokens", 0)
+        cost = usage.get("cost_usd")
+        if cost:
+            self.total_cost_usd += float(cost)
+        src = usage.get("cost_source")
+        if src and self.cost_source is None:
+            self.cost_source = src
 
     def to_dict(self) -> dict:
         return {

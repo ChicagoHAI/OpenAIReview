@@ -32,8 +32,7 @@ def review_zero_shot(
             reasoning_effort=reasoning_effort,
         )
         result.raw_responses.append(response)
-        result.total_prompt_tokens += usage["prompt_tokens"]
-        result.total_completion_tokens += usage["completion_tokens"]
+        result.add_usage(usage)
         overall, comments = parse_review_response(response)
         result.overall_feedback = overall
         result.comments = comments
@@ -58,8 +57,7 @@ def review_zero_shot(
                 reasoning_effort=reasoning_effort,
             )
             result.raw_responses.append(response)
-            result.total_prompt_tokens += usage["prompt_tokens"]
-            result.total_completion_tokens += usage["completion_tokens"]
+            result.add_usage(usage)
             overall, comments = parse_review_response(response)
             if overall:
                 overall_parts.append(overall)

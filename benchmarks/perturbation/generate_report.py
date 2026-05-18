@@ -135,14 +135,21 @@ def _extract_tokens_from_review(review_dir: Path, method: str, model_slug: str):
     return prompt, comp, cost
 
 
-def load_results(results_dir: Path, length: str, gt: dict[str, dict[str, str]]) -> list[CellResult]:
-    """Walk score directories and build CellResult list."""
+def load_results(results_dir: Path, length: str, gt: dict[str, dict[str, str]],
+                 score_subdir: str = "llm") -> list[CellResult]:
+    """Walk score directories and build CellResult list.
+
+    `score_subdir` filters which scoring-mode subdir to aggregate (e.g. "llm",
+    "llm_t4_grounded"). Defaults to "llm" for backward compatibility.
+    """
     cells: list[CellResult] = []
 
     # Score JSONs live at: <model>/<error_type>/<method>/paper_NNN/score/<score_method>/*.json
     for score_path in sorted(results_dir.glob("*/*/*/paper_*/score/*/*.json")):
         parts = score_path.relative_to(results_dir).parts
         if len(parts) < 7 or parts[4] != "score":
+            continue
+        if parts[5] != score_subdir:
             continue
         model_slug, error_type, method, paper_label = parts[0], parts[1], parts[2], parts[3]
         if model_slug == "perturb":
@@ -431,7 +438,7 @@ def _infer_length(results_dir: Path, cfg: dict) -> str:
     return name
 
 
-def _render_report(results_dirs: list[Path]) -> None:
+def _render_report(results_dirs: list[Path], score_subdir: str = "llm") -> None:
     """Print the report to stdout. Helpers all use `print()`, so callers can
     capture this with `contextlib.redirect_stdout`."""
     all_cells: list[CellResult] = []
@@ -449,7 +456,7 @@ def _render_report(results_dirs: list[Path]) -> None:
                 cfg = yaml.safe_load(f) or {}
         length = _infer_length(rd, cfg)
         gt = load_ground_truth(rd)
-        cells = load_results(rd, length, gt)
+        cells = load_results(rd, length, gt, score_subdir=score_subdir)
         all_cells.extend(cells)
         for paper_label, perts in gt.items():
             all_gt[f"{length}:{paper_label}"] = perts
@@ -480,13 +487,13 @@ def _render_report(results_dirs: list[Path]) -> None:
     print_token_usage(all_cells)
 
 
-def generate_report(results_dirs: list[Path]) -> str:
+def generate_report(results_dirs: list[Path], score_subdir: str = "llm") -> str:
     """Return the markdown report as a string. Importable from `run_benchmark.py`."""
     import contextlib
     import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        _render_report(results_dirs)
+        _render_report(results_dirs, score_subdir=score_subdir)
     return buf.getvalue()
 
 
@@ -498,8 +505,11 @@ def main() -> None:
                         help="One or more results directories.")
     parser.add_argument("--out", type=Path, default=None,
                         help="Write to this path (default: stdout).")
+    parser.add_argument("--score-subdir", default="llm",
+                        help="Which scoring-mode subdir to aggregate "
+                             "(e.g. llm, llm_t4_grounded). Default: llm.")
     args = parser.parse_args()
-    md = generate_report(args.results_dirs)
+    md = generate_report(args.results_dirs, score_subdir=args.score_subdir)
     if args.out is None:
         sys.stdout.write(md)
     else:

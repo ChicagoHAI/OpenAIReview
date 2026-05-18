@@ -204,20 +204,14 @@ def comment_metrics_by_method(
     return out
 
 
-# Coarse uses {minor, major, critical}; openaireview methods use
-# {minor, moderate, major}. Normalize so a single set of tiers compares
-# apples-to-apples (highest=major, mid=moderate, low=minor).
-_COARSE_SEVERITY_MAP = {"critical": "major", "major": "moderate", "minor": "minor"}
-SEVERITY_TIERS = ("major", "moderate", "minor")
-
-
-def normalize_severity(method: str, raw: str | None) -> str | None:
-    if not raw:
-        return None
-    raw = raw.lower()
-    if method == "coarse":
-        return _COARSE_SEVERITY_MAP.get(raw)
-    return raw if raw in SEVERITY_TIERS else None
+# Severity normalization lives in benchmarks/perturbation/_severity.py so the
+# perturbation adapters and these analyses use one source of truth.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "perturbation"))
+from _severity import (  # noqa: E402
+    COARSE_SEVERITY_MAP as _COARSE_SEVERITY_MAP,
+    TIERS as SEVERITY_TIERS,
+    normalize_severity,
+)
 
 
 def severity_counts_by_method(

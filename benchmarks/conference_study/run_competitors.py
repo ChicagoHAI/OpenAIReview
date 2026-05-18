@@ -125,6 +125,14 @@ def run_one(paper: dict, model: str, adapter, cfg: dict, dry_run: bool = False) 
         title, content, _was_ocr = parse_document(pdf, max_pages=MAX_PAGES)
         paragraphs = split_into_paragraphs(content)
 
+        # Inject sid_file location so the adapter can persist/resume the
+        # competitor-side session id (e.g. reviewer3). Adapters that don't
+        # care simply ignore the underscore-prefixed key. The file lives
+        # next to the merged paper JSON so it survives across runs.
+        out_file = RESULTS_DIR / f"{paper['slug']}.json"
+        sid_dir = RESULTS_DIR / ".sids"
+        cfg = {**cfg, "_sid_file": sid_dir / f"{paper['slug']}.{method_key}.sid"}
+
         review = adapter.review(pdf, model, cfg)
 
         method_data = build_method_data(
@@ -134,7 +142,6 @@ def run_one(paper: dict, model: str, adapter, cfg: dict, dry_run: bool = False) 
             paragraphs=paragraphs,
         )
 
-        out_file = RESULTS_DIR / f"{paper['slug']}.json"
         merge_into_paper_json(
             out_file=out_file,
             slug=paper["slug"],

@@ -414,7 +414,12 @@ def cmd_score(args: argparse.Namespace) -> None:
 
     print(f"Scoring {len(comments)} comments against {len(perturbations)} perturbations...")
 
-    result = score_review(perturbations, comments, model=args.model, method=args.method)
+    result = score_review(
+        perturbations, comments,
+        model=args.model, method=args.method,
+        threshold=args.threshold,
+        substring_gate=args.substring_gate,
+    )
 
     print(f"\n{'='*50}")
     print(f"PERTURBATION BENCHMARK RESULTS")
@@ -442,6 +447,9 @@ def cmd_score(args: argparse.Namespace) -> None:
         "n_detected": result.n_detected,
         "recall": result.recall,
         "n_total_comments": result.n_total_comments,
+        "match_mode": args.method,
+        "threshold": args.threshold,
+        "substring_gate": args.substring_gate,
         "detected": result.detected,
         "missed": result.missed,
     }
@@ -703,6 +711,14 @@ def main() -> None:
     score_parser.add_argument(
         "--method", choices=["llm", "fuzzy", "semantic"], default="llm",
         help="Score method (default: llm)",
+    )
+    score_parser.add_argument(
+        "--threshold", type=int, default=3,
+        help="LLM-judge minimum score (1-5) to count as detected (default: 3, llm method only)",
+    )
+    score_parser.add_argument(
+        "--substring-gate", action="store_true",
+        help="Skip LLM judge for (comment, perturbation) pairs whose quote has no meaningful overlap with the perturbed text (llm method only)",
     )
     # install-skill subcommand
     install_parser = subparsers.add_parser(

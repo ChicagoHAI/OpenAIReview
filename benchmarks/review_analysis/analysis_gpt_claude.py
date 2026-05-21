@@ -1,26 +1,23 @@
-import json
 from pathlib import Path
 from collections import defaultdict, Counter
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib_venn import venn2, venn2_circles
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+
+from utils import COLOR_BLUE, COLOR_RED, load, para_set, stems, regions_2, draw_venn2, save_fig
 
 model_dict = {
     'claude-opus-4.7': 'Claude Opus 4.7',
     'gpt-5.5':         'GPT-5.5',
 }
 
-def load(path):
-    return json.loads(Path(path).read_text())
-
 def method_key(model):
     return f"progressive__{model}"
 
 def get_papers(folder):
-    return [p.stem for p in Path(folder).glob("*.json")]
+    return sorted(stems(folder))
 
 
 # VOLUME
@@ -64,10 +61,6 @@ def overlap(folder, models, total_papers):
     temp_jaccard_sim = defaultdict(int)
     temp_count       = defaultdict(int)
 
-    def para_set(d, mk):
-        comments = d.get("methods", {}).get(mk, {}).get("comments", [])
-        return {c["paragraph_index"] for c in comments if "paragraph_index" in c}
-
     claude, gpt = models[0], models[1]
 
     for stem in papers:
@@ -76,10 +69,8 @@ def overlap(folder, models, total_papers):
         claude_paras = para_set(d, method_key(claude))
         gpt_paras    = para_set(d, method_key(gpt))
 
-        both_num    = len(claude_paras & gpt_paras)
-        only_c_num  = len(claude_paras - gpt_paras)
-        only_p_num  = len(gpt_paras - claude_paras)
-        total_num   = both_num + only_c_num + only_p_num
+        r = regions_2(claude_paras, gpt_paras)
+        both_num, only_c_num, only_p_num, total_num = r["both"], r["only_a"], r["only_b"], r["total"]
 
         overlap_ind[stem]["both_idx"]   = claude_paras & gpt_paras
         overlap_ind[stem]["only_c_idx"] = claude_paras - gpt_paras
@@ -87,13 +78,13 @@ def overlap(folder, models, total_papers):
         overlap_ind[stem]["both_num"]   = both_num
         overlap_ind[stem]["only_c_num"] = only_c_num
         overlap_ind[stem]["only_p_num"] = only_p_num
-        overlap_ind[stem]["jaccard_sim"] = both_num / total_num if total_num else None
+        overlap_ind[stem]["jaccard_sim"] = r["jaccard"] if total_num else None
 
         overlap_total["both_total"]   += both_num
         overlap_total["only_c_total"] += only_c_num
         overlap_total["only_p_total"] += only_p_num
 
-        temp_jaccard_sim["all"] += both_num / total_num if total_num else 0
+        temp_jaccard_sim["all"] += r["jaccard"]
         temp_count["all"]       += 1 if total_num else 0
 
     overlap_avg["both_avg"]        = overlap_total["both_total"]   / total_papers
@@ -112,45 +103,20 @@ def overlap(folder, models, total_papers):
 
 
 def plot_overlap(overlap_avg, models):
-    COLORS = ["#2196F3", "#E53935"]  # blue, red
+    sizes = (round(overlap_avg["only_c_avg"], 2),
+             round(overlap_avg["only_p_avg"], 2),
+             round(overlap_avg["both_avg"],   2))
 
     fig, ax = plt.subplots(1, 1, figsize=(7, 6), dpi=400)
-
-    only_c = round(overlap_avg["only_c_avg"], 2)
-    only_p = round(overlap_avg["only_p_avg"], 2)
-    both   = round(overlap_avg["both_avg"],   2)
-
-    v = venn2(
-        subsets=(only_c, only_p, both),
+    draw_venn2(
+        ax, sizes,
         set_labels=(model_dict.get(models[0], models[0]), model_dict.get(models[1], models[1])),
-        ax=ax,
-        set_colors=COLORS,
-        alpha=0.15,
+        colors=(COLOR_BLUE, COLOR_RED),
     )
-
-    c = venn2_circles(subsets=(only_c, only_p, both), ax=ax, linewidth=2.0)
-    for circle, color in zip(c, COLORS):
-        circle.set_edgecolor(color)
-        circle.set_linewidth(2.0)
-
-    for label_id in ["10", "01", "11"]:
-        lbl = v.get_label_by_id(label_id)
-        if lbl:
-            lbl.set_fontsize(15)
-            lbl.set_color("black")
-            lbl.set_fontweight("normal")
-            lbl.set_ha("center")
-
-    for set_label in v.set_labels:
-        if set_label:
-            set_label.set_fontsize(15)
-            set_label.set_color("black")
-
     ax.set_title(f"Claude Opus 4.7 vs. GPT-5.5\nJaccard Similarity: {overlap_avg['jaccard_sim_avg']:.3f}",
                  fontsize=15, fontweight="bold", pad=10)
-
     plt.tight_layout()
-    plt.savefig("./venn_gpt_claude.png", dpi=400, bbox_inches="tight")
+    save_fig("venn_gpt_claude", dpi=400)
 
 
 # CLUSTERING

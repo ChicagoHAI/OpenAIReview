@@ -21,7 +21,7 @@ Usage:
   # single domain
   python run_benchmark.py configs/cs_CC.yaml
   # many domains
-  python run_benchmark.py --configs configs/full_*.yaml \\
+  python run_benchmark.py --configs configs/submission/full_*.yaml \\
       --parallel-openaireview 2 --parallel-coarse 8
   # cost preview (no LLM calls)
   python run_benchmark.py configs/cs_CC_coarse.yaml --estimate-cost
@@ -90,10 +90,14 @@ class Config:
     paper_subset: list[str] = field(default_factory=list)
     score_method: str = field(default="llm", metadata={"choices": ["llm", "fuzzy", "semantic"]})
     score_model: str = "google/gemini-3-flash-preview"
+    score_threshold: int = 3
+    score_substring_gate: bool = False
+    score_subdir: str = ""  # directory name under <paper>/score/; defaults to score_method
     # OAIR + COARSE
     models: list[str] = field(default_factory=list)
     # OAIR
     methods: list[str] = field(default_factory=list)
+    prompt_variant: str = "default"
     # REVIEWER3
     review_mode: str = field(default="author", metadata={"choices": ["author", "journal"]})
     poll_interval_s: float = 5.0
@@ -288,7 +292,8 @@ def score(
                 # Score dir mirrors review dir but ends with `score/<method>/`.
                 review_dir = job.review_dir
                 paper_label_dir = review_dir.parent
-                score_dir = paper_label_dir / "score" / cfg.score_method
+                score_subdir = cfg.score_subdir or cfg.score_method
+                score_dir = paper_label_dir / "score" / score_subdir
                 score_dir.mkdir(parents=True, exist_ok=True)
                 if any(score_dir.glob("*_score.json")):
                     n_skip += 1
@@ -306,13 +311,14 @@ def score(
                     n_skip += 1
                     continue
                 manifest = max(manifests, key=lambda p: p.stat().st_mtime)
-                rc = run_score(
-                    ["openaireview", "score", str(manifest), str(review_json),
-                     "--model", cfg.score_model,
-                     "--method", cfg.score_method,
-                     "--output-dir", str(score_dir)],
-                    tag=job.tag,
-                )
+                score_cmd = ["openaireview", "score", str(manifest), str(review_json),
+                             "--model", cfg.score_model,
+                             "--method", cfg.score_method,
+                             "--threshold", str(cfg.score_threshold),
+                             "--output-dir", str(score_dir)]
+                if cfg.score_substring_gate:
+                    score_cmd.append("--substring-gate")
+                rc = run_score(score_cmd, tag=job.tag)
                 n_total += 1
                 if rc == 0:
                     n_done += 1

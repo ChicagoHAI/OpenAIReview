@@ -17,6 +17,7 @@ from .models import ReviewResult
 from .prompts import (
     CONSOLIDATION_PROMPT,
     DEEP_CHECK_PROMPT,
+    DEEP_CHECK_PROMPT_VARIANTS,
     OCR_CAVEAT,
     OVERALL_FEEDBACK_PROMPT,
     SUMMARY_UPDATE_PROMPT,
@@ -185,6 +186,7 @@ def review_progressive(
     skip_nonsubstantial: bool = False,
     window_size: int = 3,
     ocr: bool = False,
+    prompt_variant: str = "default",
 ) -> tuple[ReviewResult, ReviewResult]:
     """Review a paper using progressive summary approach.
 
@@ -210,6 +212,8 @@ def review_progressive(
     max_summary_tokens = max(4000, doc_tokens // 10)
     print(f"  Progressive: {len(passages)} passages (from {len(paragraphs)} paragraphs), "
           f"doc length: {doc_tokens} tokens, summary budget: {max_summary_tokens} tokens")
+    print(f"  Prompt variant: {prompt_variant}")
+    deep_check_template = DEEP_CHECK_PROMPT_VARIANTS.get(prompt_variant, DEEP_CHECK_PROMPT)
 
     running_summary = ""
     all_comments = []
@@ -248,7 +252,7 @@ def review_progressive(
 
         # Step 1: Deep-check
         ocr_caveat = OCR_CAVEAT if ocr else ""
-        prompt = DEEP_CHECK_PROMPT.format(context=context, passage=passage_text, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
+        prompt = deep_check_template.format(context=context, passage=passage_text, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
         response, usage = chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,

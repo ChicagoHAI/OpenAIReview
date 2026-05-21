@@ -102,9 +102,12 @@ def cmd_review(args: argparse.Namespace) -> None:
 
     reasoning = getattr(args, "reasoning_effort", None)
 
+    prompt_variant = getattr(args, "prompt_variant", "default") or "default"
+
     if method == "zero_shot":
         result = review_zero_shot(slug, content, model=args.model,
-                                  reasoning_effort=reasoning, ocr=was_ocr)
+                                  reasoning_effort=reasoning, ocr=was_ocr,
+                                  prompt_variant=prompt_variant)
     elif method == "local":
         result = review_local(
             slug, content,
@@ -119,6 +122,7 @@ def cmd_review(args: argparse.Namespace) -> None:
             reasoning_effort=reasoning,
             skip_nonsubstantial=skip,
             ocr=was_ocr,
+            prompt_variant=prompt_variant,
         )
         result = full if method == "progressive_full" else consolidated
     else:
@@ -589,6 +593,10 @@ def main() -> None:
     review_parser.add_argument(
         "--max-tokens", type=int, default=None,
         help="Truncate input text to first N tokens before review",
+    )
+    review_parser.add_argument(
+        "--prompt-variant", default="default",
+        help="Deep-check / zero-shot prompt variant: default | math_v1 | math_v2",
     )
 
     # extract subcommand

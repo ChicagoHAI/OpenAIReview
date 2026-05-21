@@ -43,7 +43,7 @@ python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages pr
 python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages score
 
 # Run many domains in one process (workers stay busy across config boundaries)
-python benchmarks/perturbation/run_benchmark.py --configs configs/full_*.yaml \
+python benchmarks/perturbation/run_benchmark.py --configs configs/submission/full_*.yaml \
     --parallel-openaireview 2 --parallel-coarse 8
 ```
 
@@ -53,7 +53,7 @@ of the third-party systems.
 
 ## Configuration
 
-Configs are YAML files in `configs/`. Copy `default.yaml` and edit to create experiment variants. Committed configs serve as the experiment log.
+Configs are YAML files in `configs/` (gitignored — local experiment log only). Copy `default.yaml` and edit to create experiment variants. The canonical paper-submission configs live under `configs/submission/`.
 
 ```yaml
 max_papers: 5

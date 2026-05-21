@@ -57,7 +57,7 @@ python run_benchmark.py configs/default.yaml --stages prepare,review
 python run_benchmark.py configs/default.yaml --stages score
 
 # Multi-config sweep with parallel workers reused across configs
-python run_benchmark.py --configs configs/full_*.yaml \
+python run_benchmark.py --configs configs/submission/full_*.yaml \
     --parallel-openaireview 2 --parallel-coarse 8
 
 # Aggregate the recall-by-{model,method,error-type,domain} tables in the paper

@@ -243,3 +243,250 @@ PAPER (first 8000 characters):
 {paper_start}
 """
 
+
+# ── Math-surface targeted prompt variants ───────────────────────────────────
+# Inserted between CHECK_CRITERIA and EXPLANATION_STYLE. Additive: prose
+# criteria, leniency, severity, and JSON output blocks are unchanged.
+
+MATH_SURFACE_CHECK_V1 = """\
+MATH-SURFACE CHECK (apply IN ADDITION to the general criteria above):
+Mathematical errors most often appear as one of four surface mistakes. For every equation, inline formula, and numeric constant in the passage, verify each of (a)-(d) against the surrounding context (and the running paper summary if one is provided):
+
+  (a) Operator or sign: a flipped sign (+ vs -), a reversed inequality (< vs >, \\leq vs \\geq), or a swapped operator (* vs +, / vs *).
+  (b) Index or subscript: a wrong subscript or index (e.g. x_i vs x_j, \\Theta^{{(\\tau)}} vs \\Theta^{{(0)}}, n-1 vs n+1), an off-by-one bound, or a mismatched superscript.
+  (c) Numeric parameter: a constant or coefficient that does not match what was stated earlier (e.g. a learning rate, batch size, table entry, exponent, number of layers).
+  (d) Computation: an arithmetic or algebraic result that does not follow from the inputs (e.g. a sum, product, derivative, or claimed equality that is numerically wrong).
+
+When you encounter an equation or numeric value, do NOT skim past it. Cross-check it against the definitions of the same symbol earlier in the paper, the form of the same equation when it was first introduced, and any previously stated parameters or table values. If a mismatch is resolved by context or by a standard convention, briefly say so in the explanation rather than silently dropping it."""
+
+MATH_SURFACE_CHECK_V2 = MATH_SURFACE_CHECK_V1 + """
+
+PROCEDURE FOR THIS PASSAGE:
+Before writing your JSON output, internally enumerate every distinct equation, inline formula, and numeric constant in the passage in the order they appear. For each one, in order, ask:
+  (i)   Are the signs and operators consistent with the definition of this object earlier in the paper (or with the standard form if introduced fresh here)?
+  (ii)  Are the subscripts, superscripts, and indices consistent with prior usage (same variable, same iteration index, same bounds)?
+  (iii) Do the numeric constants and parameters match values stated earlier or values implied by the context?
+  (iv)  If the passage asserts an equality, inequality, or numerical outcome, does it actually follow from the stated inputs?
+Flag every mismatch you find in (i)-(iv) as a SEPARATE issue. Do not combine multiple distinct surface errors into one issue. This procedure is in addition to the general criteria above; continue to flag claim-level, reasoning-level, and experimental issues as before."""
+
+
+# Deep-check (progressive) variants ------------------------------------------
+
+DEEP_CHECK_PROMPT_MATH_V1 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+CONTEXT:
+{{context}}
+
+---
+
+PASSAGE TO CHECK:
+{{passage}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V1}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
+
+{JSON_ARRAY_OUTPUT}"""
+
+DEEP_CHECK_PROMPT_MATH_V2 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+CONTEXT:
+{{context}}
+
+---
+
+PASSAGE TO CHECK:
+{{passage}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V2}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
+
+{JSON_ARRAY_OUTPUT}"""
+
+
+# Zero-shot variants ---------------------------------------------------------
+
+_ZERO_SHOT_JSON_TAIL = """\
+Return a JSON object with this structure:
+{{
+  "overall_feedback": "one paragraph high-level assessment of the paper's quality and main issues",
+  "comments": [
+    {{
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
+    }}
+  ]
+}}
+
+Return ONLY the JSON object. No other text."""
+
+ZERO_SHOT_PROMPT_MATH_V1 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PAPER:
+
+{{paper_text}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V1}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_BASE}
+
+{SEVERITY_RUBRIC}
+
+{_ZERO_SHOT_JSON_TAIL}"""
+
+ZERO_SHOT_PROMPT_MATH_V2 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PAPER:
+
+{{paper_text}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V2}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_BASE}
+
+{SEVERITY_RUBRIC}
+
+{_ZERO_SHOT_JSON_TAIL}"""
+
+_ZERO_SHOT_CHUNK_JSON_TAIL = """\
+Return a JSON object with this structure:
+{{
+  "overall_feedback": "brief assessment of this section",
+  "comments": [
+    {{
+      "title": "concise title of the issue",
+      "quote": "exact verbatim text from the paper (preserving LaTeX)",
+      "explanation": "precise explanation of what is wrong and why",
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
+    }}
+  ]
+}}
+
+Return ONLY the JSON object. No other text."""
+
+ZERO_SHOT_CHUNK_PROMPT_MATH_V1 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PASSAGE TO CHECK:
+
+{{chunk_text}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V1}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
+
+{_ZERO_SHOT_CHUNK_JSON_TAIL}"""
+
+ZERO_SHOT_CHUNK_PROMPT_MATH_V2 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+---
+
+PASSAGE TO CHECK:
+
+{{chunk_text}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V2}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
+
+{_ZERO_SHOT_CHUNK_JSON_TAIL}"""
+
+
+# Variant registries ---------------------------------------------------------
+
+DEEP_CHECK_PROMPT_VARIANTS = {
+    "default": DEEP_CHECK_PROMPT,
+    "math_v1": DEEP_CHECK_PROMPT_MATH_V1,
+    "math_v2": DEEP_CHECK_PROMPT_MATH_V2,
+}
+
+ZERO_SHOT_PROMPT_VARIANTS = {
+    "default": ZERO_SHOT_PROMPT,
+    "math_v1": ZERO_SHOT_PROMPT_MATH_V1,
+    "math_v2": ZERO_SHOT_PROMPT_MATH_V2,
+}
+
+ZERO_SHOT_CHUNK_VARIANTS = {
+    "default": ZERO_SHOT_CHUNK_PROMPT,
+    "math_v1": ZERO_SHOT_CHUNK_PROMPT_MATH_V1,
+    "math_v2": ZERO_SHOT_CHUNK_PROMPT_MATH_V2,
+}
+

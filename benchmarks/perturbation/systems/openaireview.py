@@ -72,6 +72,7 @@ class OpenAIReviewSystem(System):
     def build_jobs(self, units, cfg, results_dir):
         models = cfg.get("models") or cfg.get("review_models") or []
         methods = cfg.get("methods") or cfg.get("review_methods") or []
+        variant = cfg.get("prompt_variant") or "default"
         if not models or not methods:
             raise ValueError("openaireview system requires `models` and `methods` in config")
         domain = results_dir.name
@@ -81,25 +82,28 @@ class OpenAIReviewSystem(System):
                 continue
             for model in models:
                 for method in methods:
-                    review_dir = results_dir / _model_slug(model) / u.error_type / method / u.paper_label / "review"
+                    method_dir = method if variant == "default" else f"{method}__{variant}"
+                    review_dir = results_dir / _model_slug(model) / u.error_type / method_dir / u.paper_label / "review"
                     review_dir.mkdir(parents=True, exist_ok=True)
                     if self.is_review_complete(review_dir):
                         continue
-                    tag = f"{domain}/{u.paper_label}/{u.error_type}/{_model_slug(model)}/{method}"
+                    tag = f"{domain}/{u.paper_label}/{u.error_type}/{_model_slug(model)}/{method_dir}"
                     cmd = [
                         "openaireview", "review", str(u.staged_corrupted),
                         "--method", method,
                         "--output-dir", str(review_dir),
                         "--model", model,
                     ]
+                    if variant != "default":
+                        cmd += ["--prompt-variant", variant]
                     job = ReviewJob(
                         tag=tag,
                         out_json=review_dir / f"{u.staged_corrupted.stem}.json",
                         review_dir=review_dir,
                         paper_label=f"{u.error_type}/{u.paper_label}",
-                        payload={"cmd": cmd, "model": model, "method": method},
+                        payload={"cmd": cmd, "model": model, "method": method, "variant": variant},
                     )
-                    out.append(((model, method), job))
+                    out.append(((model, method, variant), job))
         return out
 
     def run_jobs(self, cell_key, jobs, parallel):

@@ -4,7 +4,13 @@ from datetime import date
 
 from .client import chat
 from .models import ReviewResult
-from .prompts import ZERO_SHOT_CHUNK_PROMPT, OCR_CAVEAT, ZERO_SHOT_PROMPT
+from .prompts import (
+    ZERO_SHOT_CHUNK_PROMPT,
+    ZERO_SHOT_CHUNK_VARIANTS,
+    OCR_CAVEAT,
+    ZERO_SHOT_PROMPT,
+    ZERO_SHOT_PROMPT_VARIANTS,
+)
 from .utils import assign_paragraph_indices, chunk_text, count_tokens, parse_review_response
 
 MAX_TOKENS_SINGLE = 100_000  # use single prompt if paper fits
@@ -16,15 +22,19 @@ def review_zero_shot(
     model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
     ocr: bool = False,
+    prompt_variant: str = "default",
 ) -> ReviewResult:
     result = ReviewResult(method="zero_shot", paper_slug=paper_slug, model=model,
                           reasoning_effort=reasoning_effort)
+    print(f"  Prompt variant: {prompt_variant}")
+    single_template = ZERO_SHOT_PROMPT_VARIANTS.get(prompt_variant, ZERO_SHOT_PROMPT)
+    chunk_template = ZERO_SHOT_CHUNK_VARIANTS.get(prompt_variant, ZERO_SHOT_CHUNK_PROMPT)
 
     token_count = count_tokens(document_content)
 
     if token_count <= MAX_TOKENS_SINGLE:
         ocr_caveat = OCR_CAVEAT if ocr else ""
-        prompt = ZERO_SHOT_PROMPT.format(paper_text=document_content, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
+        prompt = single_template.format(paper_text=document_content, current_date=date.today().isoformat(), ocr_caveat=ocr_caveat)
         response, usage = chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
@@ -43,7 +53,7 @@ def review_zero_shot(
         overall_parts = []
         for i, chunk in enumerate(chunks):
             ocr_caveat = OCR_CAVEAT if ocr else ""
-            prompt = ZERO_SHOT_CHUNK_PROMPT.format(
+            prompt = chunk_template.format(
                 chunk_num=i + 1,
                 total_chunks=len(chunks),
                 chunk_text=chunk,

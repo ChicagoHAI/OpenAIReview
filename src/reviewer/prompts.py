@@ -270,6 +270,10 @@ Before writing your JSON output, internally enumerate every distinct equation, i
 Flag every mismatch you find in (i)-(iv) as a SEPARATE issue. Do not combine multiple distinct surface errors into one issue. This procedure is in addition to the general criteria above; continue to flag claim-level, reasoning-level, and experimental issues as before."""
 
 
+MATH_SURFACE_CHECK_V3 = """\
+When you encounter equations, inline formulas, or numeric constants, pay particular attention to a few common surface-level mistakes that are easy to miss: flipped signs or operators, off-by-one or otherwise wrong indices/subscripts, numeric constants that disagree with earlier values, and computed results that do not follow from their inputs. Treat these as patterns to watch for, not a checklist to grade against — continue to flag claim-level, reasoning-level, and experimental issues with the same depth as before, and report anything else worth noting."""
+
+
 # Deep-check (progressive) variants ------------------------------------------
 
 DEEP_CHECK_PROMPT_MATH_V1 = f"""{REVIEWER_PREAMBLE}
@@ -317,6 +321,34 @@ PASSAGE TO CHECK:
 {CHECK_CRITERIA}
 
 {MATH_SURFACE_CHECK_V2}
+
+{EXPLANATION_STYLE}
+
+{LENIENCY_RULES}
+
+{DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
+
+{JSON_ARRAY_OUTPUT}"""
+
+DEEP_CHECK_PROMPT_MATH_V3 = f"""{REVIEWER_PREAMBLE}
+
+{{ocr_caveat}}
+
+CONTEXT:
+{{context}}
+
+---
+
+PASSAGE TO CHECK:
+{{passage}}
+
+---
+
+{CHECK_CRITERIA}
+
+{MATH_SURFACE_CHECK_V3}
 
 {EXPLANATION_STYLE}
 
@@ -476,6 +508,7 @@ DEEP_CHECK_PROMPT_VARIANTS = {
     "default": DEEP_CHECK_PROMPT,
     "math_v1": DEEP_CHECK_PROMPT_MATH_V1,
     "math_v2": DEEP_CHECK_PROMPT_MATH_V2,
+    "math_v3": DEEP_CHECK_PROMPT_MATH_V3,
 }
 
 ZERO_SHOT_PROMPT_VARIANTS = {

@@ -16,6 +16,21 @@ def test_comment_to_dict_no_paragraph():
     assert "paragraph_index" not in d
 
 
+def test_comment_to_dict_omits_empty_suggested_fix():
+    c = Comment(title="Bug", quote="x", explanation="y", comment_type="logical")
+    d = c.to_dict()
+    assert "suggested_fix" not in d
+
+
+def test_comment_to_dict_includes_suggested_fix():
+    c = Comment(
+        title="Bug", quote="x", explanation="y", comment_type="technical",
+        suggested_fix="Use x = y instead.",
+    )
+    d = c.to_dict()
+    assert d["suggested_fix"] == "Use x = y instead."
+
+
 def test_review_result_num_comments():
     r = ReviewResult(method="test", paper_slug="slug")
     assert r.num_comments == 0

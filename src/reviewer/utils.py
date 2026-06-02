@@ -205,12 +205,14 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
         paragraph_index = item.get("paragraph_index", None)
         if paragraph_index is not None:
             paragraph_index = int(paragraph_index)
+        suggested_fix = item.get("suggested_fix", "") or ""
         comments.append(Comment(
             title=title,
             quote=quote,
             explanation=explanation,
             comment_type=comment_type,
             paragraph_index=paragraph_index,
+            suggested_fix=suggested_fix,
         ))
     return comments
 

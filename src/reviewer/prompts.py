@@ -47,6 +47,7 @@ Return ONLY a JSON array (can be []). Each item:
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
 - "type": "technical" or "logical"
+- "suggested_fix": a single concrete, grounded correction the authors could apply, such as the corrected formula, the specific missing assumption to state, or the exact comparison to add. Leave as an empty string "" if you cannot propose a specific, actionable fix. Do not write vague advice like "clarify this," "add more detail," "improve the explanation," or "run more experiments."
 """
 
 # ── Deep-check prompt (used by local and progressive methods) ───────────────
@@ -106,7 +107,8 @@ Return a JSON object with this structure:
       "title": "concise title of the issue",
       "quote": "exact verbatim text from the paper (preserving LaTeX)",
       "explanation": "precise explanation of what is wrong and why",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "suggested_fix": "a single concrete, grounded correction the authors could apply, such as the corrected formula, the specific missing assumption to state, or the exact comparison to add. Leave as an empty string \\"\\" if you cannot propose a specific, actionable fix. Do not write vague advice like 'clarify this,' 'add more detail,' 'improve the explanation,' or 'run more experiments.'"
     }}}}
   ]
 }}}}
@@ -141,7 +143,8 @@ Return a JSON object with this structure:
       "title": "concise title of the issue",
       "quote": "exact verbatim text from the paper (preserving LaTeX)",
       "explanation": "precise explanation of what is wrong and why",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "suggested_fix": "a single concrete, grounded correction the authors could apply, such as the corrected formula, the specific missing assumption to state, or the exact comparison to add. Leave as an empty string \\"\\" if you cannot propose a specific, actionable fix. Do not write vague advice like 'clarify this,' 'add more detail,' 'improve the explanation,' or 'run more experiments.'"
     }}}}
   ]
 }}}}
@@ -197,10 +200,12 @@ Answer with ONLY "yes" or "no"."""
 
 CONSOLIDATION_PROMPT = """\
 You are reviewing the complete list of issues found in an academic paper. \
-Your job is to consolidate this list by removing duplicates. If multiple issues flag the SAME underlying problem, keep the most detailed and well-explained one and remove the others. 
+Your job is to consolidate this list by removing duplicates. If multiple issues flag the SAME underlying problem, keep the most detailed and well-explained one and remove the others.
 
 ISSUES FOUND:
 {issues_json}
+
+Preserve each surviving issue's "suggested_fix" field unchanged. When merging duplicates, keep the most concrete suggested_fix among them. Do NOT invent new suggested fixes — if an issue has no suggested_fix, leave it absent or empty.
 
 Return a JSON array containing the consolidated issues (same format as input). \
 Return [] if none survive filtering."""

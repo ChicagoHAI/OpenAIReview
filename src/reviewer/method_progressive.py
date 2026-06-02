@@ -162,13 +162,20 @@ def consolidate_comments(
         try:
             items = json.loads(arr_match.group(0))
             consolidated = parse_comments_from_list(items)
-            # Preserve paragraph_index from original comments by matching quotes
+            # Preserve paragraph_index and suggested_fix from original comments
+            # by matching quotes (safety net if consolidation drops either field)
             orig_by_quote = {}
             for c in comments:
-                orig_by_quote[c.quote[:200]] = c.paragraph_index
+                orig_by_quote[c.quote[:200]] = (c.paragraph_index, c.suggested_fix)
             for c in consolidated:
+                orig = orig_by_quote.get(c.quote[:200])
+                if orig is None:
+                    continue
+                orig_paragraph_index, orig_suggested_fix = orig
                 if c.paragraph_index is None:
-                    c.paragraph_index = orig_by_quote.get(c.quote[:200])
+                    c.paragraph_index = orig_paragraph_index
+                if not c.suggested_fix and orig_suggested_fix:
+                    c.suggested_fix = orig_suggested_fix
             return consolidated
         except json.JSONDecodeError:
             pass

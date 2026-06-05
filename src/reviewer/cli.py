@@ -95,11 +95,6 @@ def cmd_review(args: argparse.Namespace) -> None:
     method = args.method
     print(f"Running method: {method}...")
 
-    if args.skip_nonsubstantial == "true":
-        skip = True
-    else:
-        skip = False
-
     reasoning = getattr(args, "reasoning_effort", None)
 
     if method == "zero_shot":
@@ -117,7 +112,6 @@ def cmd_review(args: argparse.Namespace) -> None:
             slug, content,
             model=args.model,
             reasoning_effort=reasoning,
-            skip_nonsubstantial=skip,
             ocr=was_ocr,
         )
         result = full if method == "progressive_full" else consolidated
@@ -558,12 +552,6 @@ def main() -> None:
         choices=["none", "low", "medium", "high"],
         default=None,
         help="Reasoning effort level (default: adaptive/auto)",
-    )
-    review_parser.add_argument(
-        "--skip-nonsubstantial",
-        choices=["true", "false"],
-        default="false",
-        help="Skip non-substantial passages (default: false)",
     )
     review_parser.add_argument(
         "--ocr",

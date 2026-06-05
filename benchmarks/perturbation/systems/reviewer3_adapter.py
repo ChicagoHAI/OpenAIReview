@@ -90,10 +90,23 @@ def config_from_env() -> Reviewer3Config:
 
 @dataclass
 class Reviewer3Job:
-    paper: Path           # path to *_corrupted.md
-    out_json: Path        # where to write the pipeline-shaped JSON
-    paper_label: str      # e.g. "<error_type>/<paper_label>"
+    paper: Path                 # path to *_corrupted.md (staged, possibly token-truncated)
+    out_json: Path              # where to write the pipeline-shaped JSON
+    paper_label: str            # e.g. "<error_type>/<paper_label>"
     title: str | None = None
+    # Optional: full pre-truncation source. When provided, _ensure_pdf
+    # compiles THIS instead of `paper` — the staged file is often invalid
+    # LaTeX because token truncation can chop mid-environment.
+    source: Path | None = None
+    # Optional: trim the rendered PDF to its first N pages so R3 still sees
+    # roughly the same window other systems do (coarse uses max_pages: 20).
+    max_pages: int | None = None
+    # Optional: where to persist the R3 sessionId. When set, _run_one writes
+    # the sid here right after submit succeeds and reads it back on subsequent
+    # runs to resume the same R3 session instead of creating a duplicate.
+    # This prevents the duplicate-session credit waste we observed when we
+    # killed runs mid-poll (R3 keeps the session live and we'd submit fresh).
+    sid_file: Path | None = None
 
 
 @dataclass
@@ -114,8 +127,280 @@ def _headers(cfg: Reviewer3Config) -> dict[str, str]:
     return {"x-api-key": cfg.api_key}
 
 
-def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None) -> str:
-    """POST /api/internal/review (multipart). Returns sessionId."""
+def _ensure_pdf(paper: Path, *, source: Path | None = None,
+                max_pages: int | None = None) -> Path:
+    """Reviewer 3 only accepts PDF. Return a compiled+possibly-trimmed PDF.
+
+    Resolution order for the source bytes:
+      1. If `paper` is already a `.pdf`, return it as-is (page trim still applies).
+      2. If `source` was provided, compile that — preferred for LaTeX-as-md
+         since the staged `paper` is often invalid LaTeX (token truncation
+         chops mid-environment).
+      3. Else compile `paper` directly. If it lacks `\\end{document}`, append
+         one as a best-effort close.
+
+    When `max_pages` is set, the resulting PDF is trimmed to its first N
+    pages via pymupdf. This matches what coarse does (max_pages: 20) so R3
+    sees roughly the same window other systems see.
+    """
+    if paper.suffix.lower() == ".pdf":
+        return _maybe_trim_pages(paper, max_pages)
+
+    src_for_compile = source if (source is not None and source.exists()) else paper
+    cached_suffix = ".trim.pdf" if max_pages else ".pdf"
+    cached = src_for_compile.with_suffix(cached_suffix)
+    src_mtime = src_for_compile.stat().st_mtime
+    if cached.exists() and cached.stat().st_mtime > src_mtime:
+        return cached
+
+    head = src_for_compile.read_text(errors="replace")[:2000]
+    if "\\documentclass" not in head:
+        raise RuntimeError(
+            f"don't know how to convert {src_for_compile.name} to PDF "
+            "(no \\documentclass found; expected LaTeX-as-md or PDF)"
+        )
+    text = src_for_compile.read_text(errors="replace")
+    if "\\end{document}" not in text:
+        # `source` should always close cleanly; this only fires if we fell back
+        # to compiling the token-truncated `paper`.
+        text = text.rstrip() + "\n\n\\end{document}\n"
+    # Rewrite \documentclass{<custom>} -> \documentclass{amsart} when the
+    # custom class isn't installed on the local TeX Live. Without this many
+    # journal-class papers (aq-amsart, sn-jnl, atlasdoc, aastex*, cas-sc, ...)
+    # bail at line 1 with "File `X.cls' not found".
+    text = _force_known_documentclass(text)
+    # Same idea for missing \usepackage{X.sty} (e.g. jinstpub on some hep-ex
+    # papers). Comment them out — pdflatex aborts hard on missing packages.
+    text = _strip_missing_packages(text)
+    # Strip orphan \input / \include — the perturbation corpus dumps each paper
+    # into a single .md but a few preserve `\input{mypreamble.tex}`-style
+    # directives that pdflatex can't resolve (fatal error, no PDF produced).
+    text = _strip_orphan_includes(text, src_for_compile.parent)
+    # Stripped-include papers (and some others) rely on author-defined shortcuts
+    # like \bbC, \calA, \vvirg, \ootimes from the missing preamble. Inject
+    # \providecommand fallbacks so the body compiles.
+    text = _inject_rescue_preamble(text)
+
+    import shutil, subprocess, tempfile
+    with tempfile.TemporaryDirectory() as td:
+        tex = Path(td) / "source.tex"
+        tex.write_text(text)
+        # Run twice to resolve cross-refs; ignore exit code, accept partial PDF.
+        # Capture output as bytes — pdflatex's own log can contain non-UTF-8
+        # accent bytes and we don't read this output anyway (the .log file is
+        # the source of truth on failure).
+        for _ in range(2):
+            subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode", "source.tex"],
+                cwd=td, capture_output=True, timeout=300,
+            )
+        out_pdf = Path(td) / "source.pdf"
+        if not out_pdf.exists() or out_pdf.stat().st_size < 1000:
+            log_path = Path(td) / "source.log"
+            log = log_path.read_text(errors="replace") if log_path.exists() else ""
+            raise RuntimeError(
+                f"pdflatex produced no usable PDF for {src_for_compile}: {log[-1500:]}"
+            )
+        if max_pages:
+            _trim_pages_to(out_pdf, max_pages)
+        shutil.copy(out_pdf, cached)
+    return cached
+
+
+_INPUT_RE = __import__("re").compile(
+    r"\\(?:input|include)\s*\{([^}]+)\}", flags=__import__("re").IGNORECASE,
+)
+
+
+def _strip_orphan_includes(text: str, base_dir: Path) -> str:
+    """Comment out `\\input{path}` / `\\include{path}` whose target file isn't
+    next to the source. pdflatex aborts hard on a missing \\input, which kills
+    the compile even when the rest of the document is fine."""
+    def _replace(m):
+        target = m.group(1).strip()
+        # Common LaTeX convention: optional .tex extension.
+        for cand in (target, target + ".tex"):
+            if (base_dir / cand).exists():
+                return m.group(0)
+        return "% [stripped missing include] " + m.group(0)
+    return _INPUT_RE.sub(_replace, text)
+
+
+# Defensive preamble injected after \documentclass to provide fallbacks for
+# common custom-command patterns that authors typically define in private
+# preamble files (e.g. mypreamble.tex). \providecommand is a no-op when the
+# command is already defined, so this is safe to inject blindly.
+_RESCUE_PREAMBLE = r"""
+% --- injected by reviewer3_adapter: providecommand fallbacks ---
+% Run at \begin{document} so we don't fight with packages that define the
+% same shortcuts (e.g. amsfonts -> \Bbbk). \providecommand is itself a no-op
+% when the command already exists, but only at the moment it runs; AtBeginDoc
+% defers the check past all \usepackage{...} loads.
+\AtBeginDocument{%
+  \providecommand{\bb}[1]{\mathbb{#1}}%
+  \providecommand{\cal}[1]{\mathcal{#1}}%
+  \providecommand{\bff}[1]{\mathbf{#1}}%
+  \makeatletter
+  \@for\letter:={A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+    \expandafter\providecommand\csname bb\letter\endcsname{\ensuremath{\mathbb{\letter}}}%
+    \expandafter\providecommand\csname cal\letter\endcsname{\ensuremath{\mathcal{\letter}}}%
+  }%
+  \@for\letter:={a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V,W,X,Y,Z}\do{%
+    \expandafter\providecommand\csname bf\letter\endcsname{\ensuremath{\mathbf{\letter}}}%
+  }%
+  \makeatother
+  \providecommand{\eps}{\epsilon}%
+  \providecommand{\veps}{\varepsilon}%
+  \providecommand{\vvirg}{,\,}%
+  \providecommand{\ootimes}{\otimes}%
+}
+% --- end injected preamble ---
+"""
+
+
+def _inject_rescue_preamble(text: str) -> str:
+    """Insert _RESCUE_PREAMBLE right after the first \\documentclass{...} line.
+    Idempotent: looks for our marker before injecting."""
+    if "injected by reviewer3_adapter" in text:
+        return text
+    import re
+    m = re.search(r"\\documentclass(\[[^\]]*\])?\{[^}]+\}", text)
+    if not m:
+        return text
+    cut = m.end()
+    return text[:cut] + "\n" + _RESCUE_PREAMBLE + text[cut:]
+
+
+# Bundled-with-TeX-Live classes are kept as-is. Anything else gets rewritten
+# to `\documentclass{amsart}` so pdflatex doesn't bail at line 1 with
+# "File `<custom>.cls' not found". Class-specific commands in the body then
+# emit undefined-control-sequence warnings, but pdflatex in nonstopmode still
+# produces a usable PDF.
+_KNOWN_CLASSES_CACHE: dict[str, bool] = {}
+
+
+def _class_is_installed(cls: str) -> bool:
+    if cls in _KNOWN_CLASSES_CACHE:
+        return _KNOWN_CLASSES_CACHE[cls]
+    import subprocess
+    try:
+        r = subprocess.run(["kpsewhich", f"{cls}.cls"],
+                           capture_output=True, timeout=5)
+        ok = (r.returncode == 0 and r.stdout.strip() != b"")
+    except Exception:
+        ok = False
+    _KNOWN_CLASSES_CACHE[cls] = ok
+    return ok
+
+
+def _force_known_documentclass(text: str) -> str:
+    """Rewrite `\\documentclass[opts]{<custom>}` to `\\documentclass{amsart}`
+    when <custom> isn't bundled with the local TeX Live. Drops options too —
+    they're class-specific and frequently invalid against amsart. amsart is
+    the math-friendly fallback (preserves theorem/lemma environments).
+
+    Matches only the first **uncommented** \\documentclass — many papers carry
+    example/commented-out variants before the active one.
+    """
+    import re
+    pat = re.compile(r"^(?P<lead>[^%\n]*?)\\documentclass(\[[^\]]*\])?\{([^}]+)\}",
+                     re.MULTILINE)
+    for m in pat.finditer(text):
+        # If there's a `%` before the `\documentclass` on this line, it's commented.
+        if "%" in m.group("lead"):
+            continue
+        cls = m.group(3).strip()
+        if _class_is_installed(cls):
+            return text
+        # Replace just the `\documentclass...{...}` span, keeping any leading content
+        # (it's empty in practice but be safe).
+        start = m.start() + len(m.group("lead"))
+        return text[:start] + r"\documentclass{amsart}" + text[m.end():]
+    return text
+
+
+# Same pattern for missing packages — pdflatex aborts hard on
+# "File `X.sty' not found", so comment out \usepackage{X} (and the bracketed
+# options line) when X isn't installed. Bundled-with-TeX packages stay.
+_KNOWN_PACKAGES_CACHE: dict[str, bool] = {}
+
+
+def _package_is_installed(pkg: str) -> bool:
+    if pkg in _KNOWN_PACKAGES_CACHE:
+        return _KNOWN_PACKAGES_CACHE[pkg]
+    import subprocess
+    try:
+        r = subprocess.run(["kpsewhich", f"{pkg}.sty"],
+                           capture_output=True, timeout=5)
+        ok = (r.returncode == 0 and r.stdout.strip() != b"")
+    except Exception:
+        ok = False
+    _KNOWN_PACKAGES_CACHE[pkg] = ok
+    return ok
+
+
+def _strip_missing_packages(text: str) -> str:
+    """Comment out `\\usepackage[opts]{X}` lines whose .sty isn't installed.
+    Multi-package forms like `\\usepackage{a,b,c}` are split: any missing
+    member causes the whole line to be commented out (rare in practice).
+    """
+    import re
+    def _replace(m):
+        pkgs = [p.strip() for p in m.group(2).split(",")]
+        if all(_package_is_installed(p) for p in pkgs if p):
+            return m.group(0)
+        return "% [stripped missing package] " + m.group(0)
+    return re.sub(r"\\usepackage(\[[^\]]*\])?\{([^}]+)\}", _replace, text)
+
+
+def _maybe_trim_pages(pdf: Path, max_pages: int | None) -> Path:
+    """Return `pdf` (already a PDF). If `max_pages` is set and the PDF has more,
+    return a trimmed sibling cached next to it."""
+    if not max_pages:
+        return pdf
+    import fitz
+    src = fitz.open(pdf)
+    try:
+        if src.page_count <= max_pages:
+            return pdf
+        trimmed = pdf.with_suffix(f".first{max_pages}p.pdf")
+        if trimmed.exists() and trimmed.stat().st_mtime > pdf.stat().st_mtime:
+            return trimmed
+        dst = fitz.open()
+        dst.insert_pdf(src, from_page=0, to_page=max_pages - 1)
+        dst.save(trimmed)
+        dst.close()
+        return trimmed
+    finally:
+        src.close()
+
+
+def _trim_pages_to(pdf: Path, max_pages: int) -> None:
+    """In-place trim of `pdf` to its first `max_pages` pages."""
+    import fitz
+    src = fitz.open(pdf)
+    try:
+        if src.page_count <= max_pages:
+            return
+        dst = fitz.open()
+        dst.insert_pdf(src, from_page=0, to_page=max_pages - 1)
+        tmp = pdf.with_suffix(".pdf.tmp")
+        dst.save(tmp)
+        dst.close()
+    finally:
+        src.close()
+    tmp.replace(pdf)
+
+
+def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None,
+            source: Path | None = None, max_pages: int | None = None) -> str:
+    """POST /api/internal/review (multipart). Returns sessionId.
+
+    `source` and `max_pages` are forwarded to `_ensure_pdf` so callers can opt
+    into compiling the full pre-truncation source and trimming the rendered
+    PDF — see _ensure_pdf docstring.
+    """
+    paper = _ensure_pdf(paper, source=source, max_pages=max_pages)
     url = f"{cfg.base_url}/api/internal/review"
     data: dict[str, str] = {
         "userId": cfg.user_id,
@@ -125,7 +410,7 @@ def _submit(cfg: Reviewer3Config, paper: Path, *, title: str | None) -> str:
     if title:
         data["title"] = title
     with paper.open("rb") as fh:
-        files = {"file": (paper.name, fh, "text/markdown")}
+        files = {"file": (paper.name, fh, "application/pdf")}
         resp = requests.post(url, headers=_headers(cfg), data=data, files=files,
                              timeout=cfg.request_timeout_s)
     if resp.status_code >= 400:
@@ -180,29 +465,36 @@ def _pick(d: dict, *keys: str, default: str = "") -> str:
     return default
 
 
-def _normalize_comment(raw: dict, idx: int) -> dict:
-    """Best-effort mapping from Reviewer 3 comment shape to pipeline schema.
+# Canonical severity mapping lives in benchmarks/perturbation/_severity.py
+# so every system (coarse, reviewer3, openaireview) and the downstream
+# conference-study analyses share one source of truth.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
+from _severity import normalize_severity as _normalize_r3_severity  # noqa: E402
 
-    The OpenAPI spec doesn't pin field names. We try common synonyms; anything
-    we don't recognize is preserved on the side as `_raw` for later inspection.
+
+def _normalize_comment(raw: dict, idx: int) -> dict:
+    """Map a Reviewer 3 comment to the pipeline schema.
+
+    Reviewer 3 comments carry: reviewerId, comment, title, citedText, severity, rank.
+    `citedText` is the verbatim excerpt from the paper — what our scorer uses as
+    `quote` for fuzzy/semantic matching.
     """
     cid = _pick(raw, "id", "commentId", "uuid") or f"reviewer3_{idx}"
-    title = _pick(raw, "title", "subject", "heading", "summary")
-    quote = _pick(raw, "quote", "snippet", "excerpt", "passage", "text", "highlight")
-    explanation = _pick(raw, "explanation", "comment", "feedback", "body", "rationale", "message")
+    title = _pick(raw, "title")
+    quote = _pick(raw, "citedText", "quote", "snippet", "excerpt", "passage", "highlight")
+    explanation = _pick(raw, "comment", "explanation", "feedback", "body", "rationale", "message")
+    severity = _normalize_r3_severity("reviewer3", raw.get("severity"))
     if not explanation:
-        # last resort: serialize whatever we have so the comment isn't empty
-        explanation = json.dumps({k: v for k, v in raw.items()
-                                  if k not in ("id", "commentId", "uuid", "title", "subject",
-                                               "heading", "summary", "quote", "snippet",
-                                               "excerpt", "passage", "text", "highlight")},
-                                 ensure_ascii=False)
+        explanation = json.dumps(raw, ensure_ascii=False)
     return {
         "id": cid,
         "title": title,
         "quote": quote,
         "explanation": explanation,
         "comment_type": "technical",
+        "severity": severity,
         "paragraph_index": None,
         "_raw": raw,
     }
@@ -243,25 +535,67 @@ def _run_one(job: Reviewer3Job, cfg: Reviewer3Config) -> Reviewer3Result:
     job.out_json.parent.mkdir(parents=True, exist_ok=True)
     raw_path = job.out_json.with_suffix(".raw.json")
     tag = f"reviewer3/{job.paper_label}"
-    print(f"[{tag}] starting: {job.paper.name}", file=sys.stderr, flush=True)
     start = time.time()
     sid = ""
-    try:
-        sid = _submit(cfg, job.paper, title=job.title)
-        print(f"[{tag}] submitted, sessionId={sid}", file=sys.stderr, flush=True)
-        body = _poll_until_done(cfg, sid, tag=tag)
-        elapsed = time.time() - start
+    sid_file = job.sid_file
+
+    def _write_outputs(body: dict, elapsed: float) -> int:
         raw_path.write_text(json.dumps(body, indent=2, ensure_ascii=False))
         pipeline = build_pipeline_json(job.paper, body, elapsed_s=elapsed)
         job.out_json.write_text(json.dumps(pipeline, indent=2, ensure_ascii=False))
-        n = len(pipeline["methods"][next(iter(pipeline["methods"]))]["comments"])
-        print(f"[{tag}] done in {elapsed:.0f}s ({n} comments)", file=sys.stderr, flush=True)
+        # Successful → sid_file no longer needed for resume, but leave it as
+        # an audit trail (cheap, sometimes useful for tracing back to R3 UI).
+        return len(pipeline["methods"][next(iter(pipeline["methods"]))]["comments"])
+
+    try:
+        # Resume path: if a sid_file exists, try to recover the prior session
+        # instead of submitting fresh. This is the dedup-credit-waste fix.
+        if sid_file and sid_file.exists():
+            sid = sid_file.read_text().strip()
+            print(f"[{tag}] resuming sessionId={sid} (from {sid_file.name})",
+                  file=sys.stderr, flush=True)
+            try:
+                body = _poll_until_done(cfg, sid, tag=tag)
+                elapsed = time.time() - start
+                n = _write_outputs(body, elapsed)
+                print(f"[{tag}] done in {elapsed:.0f}s ({n} comments, resumed)",
+                      file=sys.stderr, flush=True)
+                return Reviewer3Result(job=job, ok=True, elapsed_s=elapsed,
+                                       session_id=sid, raw_response=body)
+            except RuntimeError as e:
+                # Session-fetch hard fail (e.g., 403/404 — sid stale/invalid).
+                # Drop the sid_file and fall through to fresh submit.
+                msg = str(e)
+                if "fetch failed" in msg and ("403" in msg or "404" in msg):
+                    print(f"[{tag}] sid {sid} unrecoverable ({msg[:80]}); "
+                          "submitting fresh", file=sys.stderr, flush=True)
+                    sid_file.unlink(missing_ok=True)
+                    sid = ""
+                else:
+                    raise  # other RuntimeErrors (e.g., status=failed) propagate
+
+        # Submit path: no usable sid_file, send a new submission.
+        print(f"[{tag}] starting: {job.paper.name}", file=sys.stderr, flush=True)
+        sid = _submit(cfg, job.paper, title=job.title,
+                      source=job.source, max_pages=job.max_pages)
+        print(f"[{tag}] submitted, sessionId={sid}", file=sys.stderr, flush=True)
+        if sid_file:
+            sid_file.parent.mkdir(parents=True, exist_ok=True)
+            sid_file.write_text(sid)
+        body = _poll_until_done(cfg, sid, tag=tag)
+        elapsed = time.time() - start
+        n = _write_outputs(body, elapsed)
+        print(f"[{tag}] done in {elapsed:.0f}s ({n} comments)",
+              file=sys.stderr, flush=True)
         return Reviewer3Result(job=job, ok=True, elapsed_s=elapsed,
                                session_id=sid, raw_response=body)
     except Exception as e:
         elapsed = time.time() - start
         msg = f"{type(e).__name__}: {e}"
-        print(f"[{tag}] FAILED in {elapsed:.0f}s: {msg}", file=sys.stderr, flush=True)
+        print(f"[{tag}] FAILED in {elapsed:.0f}s: {msg}",
+              file=sys.stderr, flush=True)
+        # Keep sid_file on failure — next run will retry the same session
+        # rather than incur a duplicate submission cost.
         return Reviewer3Result(job=job, ok=False, elapsed_s=elapsed,
                                session_id=sid, error=msg)
 

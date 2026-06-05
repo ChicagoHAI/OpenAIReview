@@ -69,6 +69,8 @@ def normalize_severity(system: str, raw: object) -> str | None:
     if sysn == "reviewer3":
         if isinstance(raw, int):
             return REVIEWER3_SEVERITY_MAP.get(raw)
+        if isinstance(raw, str) and raw.lower() in TIERS:
+            return raw.lower()  # JSONs may already store canonical strings
         # tolerate the str-form for hand-written test fixtures
         try:
             return REVIEWER3_SEVERITY_MAP.get(int(raw))

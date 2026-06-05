@@ -1,24 +1,34 @@
-"""Per-perturbation substantive-error verifier (validation test #5).
+"""Substantive-error verifier (validation test #5).
 
-Runs AFTER validate_perturbations has applied its 4 structural checks. For each
-surviving perturbation, a strong-model verifier is asked a narrow question:
+Runs AFTER validate_perturbations has applied its 4 structural checks. A
+strong-model verifier is asked a narrow question:
 
-  Given (original → perturbed), does the cited contradicts_quote — together with
-  the perturbation's related passages — establish that this is a substantive,
-  detectable error by a careful reader with access to the paper alone?
+  Given (original → perturbed) plus the span's surrounding context and related
+  passages, is this a substantive, detectable error for a careful reader with
+  access to the paper alone?
 
 Three verdicts:
   - "substantive"   → keep
   - "typo-shaped"   → reject (surface slip, fixed in the reader's head)
   - "not-an-error"  → reject (no real contradiction)
 
-The generator sees ALL candidates together and picks a subset. Each verifier
-sees ONE perturbation at a time, with only that perturbation's own related
-passages — so its verdicts are independent of any cross-candidate reasoning
-the generator did.
+Two variants:
 
-Verifiers are fanned out via ThreadPoolExecutor. chat() is thread-safe
-(stateless underneath) and already handles retries and reasoning-token budget.
+  - verify_perturbations_batched (PRODUCTION — used by cli.py and
+    analyses/verify_existing.py): a deterministic structural precheck rejects
+    typo-shaped edits without an LLM call, then ONE call judges all surviving
+    perturbations of a (paper, error-family) run. Each perturbation's record
+    carries its own surrounding_context and the FULL verifier_related_passages
+    list. The prompt instructs the model to judge each perturbation
+    independently, but independence is an instruction, not a structural
+    guarantee.
+
+  - verify_perturbations / _verify_one (LEGACY — kept for apples-to-apples
+    evals against older runs): one call per perturbation with a SINGLE quote,
+    preferring the generator's contradicts_quote and otherwise sampling one
+    related passage (_pick_quote). Fanned out via ThreadPoolExecutor; chat()
+    is thread-safe (stateless underneath) and already handles retries and
+    reasoning-token budget.
 """
 
 import hashlib

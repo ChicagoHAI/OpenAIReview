@@ -100,6 +100,14 @@ def style_venn2(v, circles, colors, *, region_fontsize=30, set_fontsize=18):
         if sl:
             sl.set_fontsize(set_fontsize)
             sl.set_color("black")
+    # matplotlib_venn places venn2 set_labels below the circles when alpha
+    # patches overlap heavily; flip them above so the model/system names sit
+    # at the top of the figure (more conventional and matches the venn3 layout).
+    for sl in v.set_labels:
+        if sl:
+            x, y = sl.get_position()
+            sl.set_position((x, abs(y)))
+            sl.set_va("bottom")
 
 
 def style_venn3(v, circles, colors, *, region_fontsize=26, set_fontsize=16):

@@ -502,14 +502,9 @@ def plot_venn(avg: dict, jaccard_avg: float, n_papers: int, base_name: str) -> N
     fig, ax = plt.subplots(figsize=(7, 6), dpi=300)
     draw_venn2(
         ax, sizes,
-        set_labels=("Human reviewers", "AI reviewers (union)"),
+        set_labels=("Human", "AI"),
         colors=(COLOR_RED, COLOR_BLUE),
-        alpha=0.30, region_fontsize=30, set_fontsize=18,
-    )
-    ax.set_title(
-        f"Human vs AI-union comment overlap by paragraph index ({n_papers} papers)\n"
-        f"Avg Jaccard: {jaccard_avg:.3f}",
-        fontsize=13, fontweight="bold", pad=12,
+        alpha=0.15, region_fontsize=32, set_fontsize=30,
     )
     plt.tight_layout()
     paths = save_fig(base_name, dpi=300)

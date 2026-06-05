@@ -10,10 +10,13 @@ from utils import (
 
 
 # Three systems to compare, each pinned to (results folder, method key in that folder).
+# Computed on the PERTURBATION benchmark, best model per system (coarse=DeepSeek,
+# OpenAIReview=GPT-5.5, Reviewer3). The `_fused_for_venn/` dirs are flattened per-cell
+# (one file per domain x paper x error_type) copies of the perturbation review results.
 SYSTEMS = {
-    "coarse / DeepSeek":         ("../conference_study/results/coarse_v2",                 "coarse__deepseek-v4-flash"),
-    "OpenAIReview / GPT-5.5":    ("../conference_study/results/frontier_subset_progressive", "progressive__gpt-5.5"),
-    "Reviewer 3":                ("../conference_study/results/reviewer3_v2",              "reviewer3__reviewer3"),
+    "coarse\nDeepSeek":         ("../perturbation/results/_fused_for_venn/coarse",     "coarse__deepseek-v4-flash"),
+    "OpenAIReview\nGPT-5.5":    ("../perturbation/results/_fused_for_venn/oair_gpt55", "progressive__gpt-5.5"),
+    "Reviewer 3":                ("../perturbation/results/_fused_for_venn/reviewer3",  "reviewer3__reviewer3"),
 }
 
 
@@ -66,12 +69,8 @@ def plot(names, avg, jaccard_avg, n_papers):
     sizes = tuple(round(avg[k], 2) for k in ("only_a", "only_b", "a_b", "only_c", "a_c", "b_c", "all"))
 
     fig, ax = plt.subplots(figsize=(8, 7), dpi=400)
-    draw_venn3(ax, sizes, tuple(names), colors=(COLOR_BLUE, COLOR_RED, COLOR_GREEN))
-    ax.set_title(
-        f"Comment overlap by paragraph index ({n_papers} papers)\n"
-        f"Jaccard Similarity: {jaccard_avg:.3f}",
-        fontsize=14, fontweight="bold", pad=12,
-    )
+    draw_venn3(ax, sizes, tuple(names), colors=(COLOR_BLUE, COLOR_RED, COLOR_GREEN),
+               region_fontsize=18, set_fontsize=20)
     plt.tight_layout()
     paths = save_fig("venn_three_systems", dpi=400)
     print(f"\nWrote {', '.join(str(p) for p in paths)}")

@@ -173,20 +173,23 @@ def overlap_cp(folders, models, total_papers):
 
 
 def plot_overlap_cp(overlap_avg):
-    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=400)
+    # Style matches the single-panel main-paper venns (analysis_three_systems.py):
+    # clean per-panel model-name titles, larger fonts, and no in-figure Jaccard
+    # text (Jaccard is reported in the table columns instead).
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10), dpi=400)
     axes = axes.flatten()
 
     for i, (model, counts) in enumerate(overlap_avg.items()):
         sizes = (round(counts["only_c_avg"], 2),
                  round(counts["only_p_avg"], 2),
                  round(counts["both_avg"],   2))
-        draw_venn2(axes[i], sizes, set_labels=("Coarse", "OpenAIReview"),
-                   colors=(COLOR_BLUE, COLOR_RED))
-        axes[i].set_title(f"{model_dict.get(model, model)}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",
-                          fontsize=15, fontweight="bold", pad=10)
+        draw_venn2(axes[i], sizes, set_labels=("coarse", "OpenAIReview"),
+                   colors=(COLOR_BLUE, COLOR_RED),
+                   region_fontsize=24, set_fontsize=21)
+        axes[i].set_title(model_dict.get(model, model), fontsize=21, pad=12)
 
     plt.tight_layout()
-    plt.subplots_adjust(hspace=0.2, wspace=0.1)
+    plt.subplots_adjust(hspace=0.16, wspace=0.06)
     save_fig("venn_cp", dpi=400)
 
 
@@ -298,7 +301,9 @@ def overlap_all(folders, models, total_papers):
 
 
 def plot_overlap_all(overlap_avg):
-    fig, axes = plt.subplots(2, 2, figsize=(14, 11), dpi=400)
+    # Same clean style as plot_overlap_cp: model-name-only titles, no in-figure
+    # Jaccard, consistent palette/edges via draw_venn3.
+    fig, axes = plt.subplots(2, 2, figsize=(12, 11), dpi=400)
     axes = axes.flatten()
 
     for i, (model, counts) in enumerate(overlap_avg.items()):
@@ -311,13 +316,13 @@ def plot_overlap_all(overlap_avg):
             round(counts["only_p_z_avg"], 2),
             round(counts["all_avg"],      2),
         )
-        draw_venn3(axes[i], sizes, set_labels=("'coarse", "OpenAIReview", "zero-shot"),
-                   colors=(COLOR_BLUE, COLOR_RED, COLOR_GREEN), set_fontsize=13)
-        axes[i].set_title(f"{model_dict.get(model, model)}\nJaccard Similarity: {counts['jaccard_sim_avg']:.3f}",
-                          fontsize=15, fontweight="bold", pad=10)
+        draw_venn3(axes[i], sizes, set_labels=("coarse", "OpenAIReview", "zero-shot"),
+                   colors=(COLOR_BLUE, COLOR_RED, COLOR_GREEN),
+                   region_fontsize=17, set_fontsize=18)
+        axes[i].set_title(model_dict.get(model, model), fontsize=21, pad=12)
 
     plt.tight_layout()
-    plt.subplots_adjust(hspace=0.2, wspace=0.1)
+    plt.subplots_adjust(hspace=0.16, wspace=0.06)
     save_fig("venn_all", dpi=400)
 
 

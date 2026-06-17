@@ -56,6 +56,7 @@ Return ONLY a JSON array (can be []). Each item:
 - "title": concise title of the issue
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
+- "suggestion": concrete, actionable revision the authors could make to address the issue
 - "type": "technical" or "logical"
 """
 
@@ -68,6 +69,7 @@ Return a JSON object with this structure:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "suggestion": "concrete, actionable revision the authors could make to address the issue",
       "type": "technical" or "logical"
     }}}}
   ]
@@ -291,4 +293,3 @@ and most significant issues.
 PAPER (first 8000 characters):
 {paper_start}
 """
-

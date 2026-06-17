@@ -186,6 +186,7 @@ def _build_paper_json(
             "title": c.title,
             "quote": c.quote,
             "explanation": c.explanation,
+            "suggestion": c.suggestion,
             "comment_type": c.comment_type,
             "paragraph_index": c.paragraph_index,
         })

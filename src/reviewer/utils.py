@@ -21,7 +21,10 @@ def count_tokens(text: str) -> int:
     enc = _get_encoding()
     if enc is None:
         return len(text) // 4
-    return len(enc.encode(text, disallowed_special=()))
+    try:
+        return len(enc.encode(text, disallowed_special=()))
+    except TypeError:
+        return len(enc.encode(text))
 
 
 def truncate_text(text: str, max_tokens: int) -> str:
@@ -29,7 +32,10 @@ def truncate_text(text: str, max_tokens: int) -> str:
     enc = _get_encoding()
     if enc is None:
         return text[: max_tokens * 4]
-    tokens = enc.encode(text, disallowed_special=())[:max_tokens]
+    try:
+        tokens = enc.encode(text, disallowed_special=())[:max_tokens]
+    except TypeError:
+        tokens = enc.encode(text)[:max_tokens]
     return enc.decode(tokens)
 
 

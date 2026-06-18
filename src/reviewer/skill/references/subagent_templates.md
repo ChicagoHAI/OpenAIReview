@@ -28,6 +28,8 @@ Favor well-developed arguments over surface observations. When issues share a ro
 Write your findings as a JSON array to:
   <REVIEW_DIR>/comments/<DESCRIPTIVE_NAME>.json
 
+Every finding must include a `suggestion` field with a concrete revision, check, derivation, experiment, caveat, or clarification that would address the issue.
+
 Return a brief summary: how many issues found and a one-line title for each.
 ```
 
@@ -57,6 +59,8 @@ Make the **strongest possible version** of the most important arguments. Combine
 ## Output
 Write your findings as a JSON array to:
   <REVIEW_DIR>/comments/<DESCRIPTIVE_NAME>.json
+
+Every finding must include a `suggestion` field with a concrete revision, check, derivation, experiment, caveat, or clarification that would address the issue.
 
 Return a brief summary: how many issues found and a one-line title for each.
 ```

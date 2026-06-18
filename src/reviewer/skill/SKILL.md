@@ -145,6 +145,7 @@ import json
 it = json.load(open('./review_results/<slug>_review/comments/all_comments.json'))[7]
 print(it['title'])
 print(it['explanation'])
+print(it.get('suggestion', ''))
 "
 ```
 
@@ -156,6 +157,7 @@ Review the title list:
 - **Remove false positives**: issues resolved by context, conventions, or leniency rules.
 - **Verify quotes**: confirm each quote appears in the paper text.
 - **Assign comment_type**: use `"methodology"`, `"claim_accuracy"`, `"presentation"`, or `"missing_information"`. Choose the type that best tells an author *what kind of fix is needed*. Sub-agents may output `"technical"`/`"logical"` — reclassify to the 4-type scheme during consolidation.
+- **Write a suggestion**: every retained issue needs a `suggestion` field with the concrete revision, check, derivation, experiment, caveat, or clarification that would address it. If you merge comments, merge their suggestions into one actionable next step.
 
 **Do not drop issues just because they feel minor.** When uncertain, keep the issue but note the uncertainty.
 
@@ -187,7 +189,7 @@ Tell the user to run `openaireview serve` to browse all findings.
 
 Write the final issues and overall assessment to the workspace, then run the viz script:
 
-1. **Write** the consolidated issues (after dedup/tiering) as a JSON array to `./review_results/<slug>_review/final_issues.json`. Each object needs: `title`, `quote`, `explanation`, `comment_type`, `severity`.
+1. **Write** the consolidated issues (after dedup/tiering) as a JSON array to `./review_results/<slug>_review/final_issues.json`. Each object needs: `title`, `quote`, `explanation`, `suggestion`, `comment_type`, `severity`.
 
 2. **Write** the overall assessment to `./review_results/<slug>_review/overall_assessment.txt`. This is the first thing users see in the viz UI. Keep it to **one short paragraph** (3-5 sentences, ~150 words). It should:
    - State whether the core contribution is sound and worth revising

@@ -31,7 +31,7 @@ uv venv && uv pip install -e .
 - `--max-pages` and `--max-tokens` to limit input size and save OCR cost
 - Mistral OCR and DeepSeek OCR as optional PDF engines (`pip install "openaireview[mistral]"`)
 - `openaireview extract` subcommand for two-stage OCR + review workflow
-- Multi-provider routing: OpenRouter, OpenAI, Anthropic, Gemini, Mistral (`--provider`)
+- Multi-provider routing: OpenRouter, Requesty, OpenAI, Anthropic, Gemini, Mistral (`--provider`)
 - Table and figure extraction from arXiv HTML (tables as markdown)
 - pymupdf4llm + GNN layout as default PDF fallback (replaces raw PyMuPDF)
 - Mobile-responsive visualization UI
@@ -64,6 +64,8 @@ First, set an API key for any supported provider:
 
 ```bash
 export OPENROUTER_API_KEY=your_key_here   # OpenRouter (supports all models)
+# or
+export REQUESTY_API_KEY=your_key_here     # Requesty (OpenAI-compatible gateway)
 # or
 export OPENAI_API_KEY=your_key_here       # OpenAI native
 # or
@@ -100,7 +102,7 @@ Review an academic paper for technical and logical issues. Accepts a local file 
 |---|---|---|
 | `--method` | `progressive` | Review method: `zero_shot`, `local`, `progressive`, `progressive_full` |
 | `--model` | `anthropic/claude-opus-4-6` | Model to use |
-| `--provider` | (auto) | LLM provider: `openrouter`, `openai`, `anthropic`, `gemini`, `mistral` |
+| `--provider` | (auto) | LLM provider: `openrouter`, `requesty`, `openai`, `anthropic`, `gemini`, `mistral` |
 | `--ocr` | (auto) | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf` |
 | `--max-pages` | (all) | Only process first N pages of a PDF (saves OCR cost) |
 | `--max-tokens` | (all) | Truncate input text to first N tokens before review |
@@ -138,6 +140,7 @@ Start a local visualization server to browse review results.
 | Variable | Default | Description |
 |---|---|---|
 | `OPENROUTER_API_KEY` | | OpenRouter API key (supports all models) |
+| `REQUESTY_API_KEY` | | Requesty API key (OpenAI-compatible gateway) |
 | `OPENAI_API_KEY` | | OpenAI native API key |
 | `ANTHROPIC_API_KEY` | | Anthropic native API key |
 | `GEMINI_API_KEY` | | Google Gemini native API key |
@@ -145,7 +148,7 @@ Start a local visualization server to browse review results.
 | `MODEL` | `anthropic/claude-opus-4-6` | Default model |
 | `REVIEW_PROVIDER` | (auto) | Force a specific LLM provider |
 
-Set one API key. The provider is auto-detected from whichever key is set (priority: OpenRouter > OpenAI > Anthropic > Gemini > Mistral). See `.env.example` for a template.
+Set one API key. The provider is auto-detected from whichever key is set (priority: OpenRouter > Requesty > OpenAI > Anthropic > Gemini > Mistral). See `.env.example` for a template.
 
 ## Supported Models & Pricing
 

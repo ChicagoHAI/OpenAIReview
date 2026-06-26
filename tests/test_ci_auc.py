@@ -86,5 +86,21 @@ def test_bootstrap_overall_and_per_proxy():
     assert 1 in per_proxy  # CI present for the one proxy
 
 
+def test_bootstrap_single_sided_proxy_no_crash():
+    # proxy 2 has only a high-quality paper -> its per-proxy CI is nan, not a crash
+    counts = {
+        "p1": {"total": 2, "major": 1, "moderate": 1, "minor": 0},  # proxy 1 high
+        "p2": {"total": 5, "major": 2, "moderate": 2, "minor": 1},  # proxy 1 low
+        "p3": {"total": 3, "major": 1, "moderate": 1, "minor": 1},  # proxy 2 high only
+    }
+    mem = {
+        "p1": [{"pair": 1, "side": "high"}], "p2": [{"pair": 1, "side": "low"}],
+        "p3": [{"pair": 2, "side": "high"}],
+    }
+    (lo, hi), per_proxy = bootstrap(by_proxy_totals(counts, mem))
+    assert math.isnan(per_proxy[2][0]) and math.isnan(per_proxy[2][1])
+    assert 0.0 <= per_proxy[1][0] <= per_proxy[1][1] <= 1.0
+
+
 def test_dispatch_covers_the_three_kinds():
     assert set(DISPATCH) == {"comment_volume", "by_proxy", "by_severity"}

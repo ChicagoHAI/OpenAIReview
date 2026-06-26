@@ -77,7 +77,9 @@ def bootstrap(by_proxy):
             per_lists[proxy_id].append(a)
             H += hits; T += tot
         overalls.append(H / T if T else np.nan)
-    ci = lambda xs: tuple(np.percentile(xs, [2.5, 97.5]))
+    # A proxy with papers on only one side never gets a draw appended, so guard
+    # the empty case (mirrors the nan the point-estimate paths return there).
+    ci = lambda xs: tuple(np.percentile(xs, [2.5, 97.5])) if xs else (float("nan"), float("nan"))
     return ci(overalls), {proxy_id: ci(per_lists[proxy_id]) for proxy_id in proxy_ids}
 
 

@@ -535,7 +535,7 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--provider",
-        choices=["openrouter", "openai", "anthropic", "gemini", "mistral"],
+        choices=["openrouter", "requesty", "openai", "anthropic", "gemini", "mistral"],
         default=None,
         help="LLM provider (default: auto-detect from API keys, or REVIEW_PROVIDER env var)",
     )

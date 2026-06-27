@@ -53,29 +53,36 @@ of the third-party systems.
 
 ## Configuration
 
-Configs are YAML files in `configs/`. Copy `default.yaml` and edit to create experiment variants. Committed configs serve as the experiment log.
+`run_benchmark.py` now uses the unified runner schema below. It rejects unknown
+keys at load time, so older experiment configs in `configs/` that contain
+generation-era fields such as `max_papers`, `length`, `error_type`, and
+`perturb_model` are retained as historical experiment logs and are not directly
+loadable by the current unified runner.
 
 ```yaml
-max_papers: 5
-length: short              # short (2k-7k words) | medium (7k-17k) | long (>17k)
-error_type: surface         # surface | formal | all
+system: openaireview        # openaireview | coarse | reviewer3
+input_dir: benchmarks/perturbation/results/perturbations
+results_dir: benchmarks/perturbation/results
+max_tokens: 13000
+min_perturbations: 0
 score_method: llm           # llm | fuzzy | semantic
+score_model: google/gemini-3-flash-preview
 
-perturb_model: google/gemini-3-flash-preview
-score_model:   google/gemini-3-flash-preview
-
-review_models:
+models:
   - google/gemini-3-flash-preview
   - z-ai/glm-4.6
 
-review_methods:
+methods:                    # required for system: openaireview
   - zero_shot
   - progressive
-
-results_dir: benchmarks/perturbation/results
 ```
 
-Papers are streamed from the [proof-pile](https://huggingface.co/datasets/hoskinson-center/proof-pile) dataset and binned by word count.
+For `--stages score,report`, the configured `input_dir` must already contain
+prepared upstream perturbation artifacts named `*_recorrupted.md` and
+`*_kept_perturbations.json`, and `results_dir` must already contain matching
+review JSONs under the layout shown below. This repository does not currently
+check in those prepared/reviewed artifacts, so score/report smoke tests require
+local benchmark outputs from an earlier prepare/review run.
 
 ## Results Layout
 

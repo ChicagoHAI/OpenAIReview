@@ -1,26 +1,23 @@
-import json
 from pathlib import Path
 from collections import defaultdict, Counter
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib_venn import venn2, venn2_circles
 from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.cluster import KMeans
+
+from utils import COLOR_BLUE, COLOR_RED, load, para_set, stems, regions_2, draw_venn2, save_fig
 
 model_dict = {
     'claude-opus-4.7': 'Claude Opus 4.7',
     'gpt-5.5':         'GPT-5.5',
 }
 
-def load(path):
-    return json.loads(Path(path).read_text())
-
 def method_key(model):
     return f"progressive__{model}"
 
 def get_papers(folder):
-    return [p.stem for p in Path(folder).glob("*.json")]
+    return sorted(stems(folder))
 
 
 # VOLUME
@@ -64,10 +61,6 @@ def overlap(folder, models, total_papers):
     temp_jaccard_sim = defaultdict(int)
     temp_count       = defaultdict(int)
 
-    def para_set(d, mk):
-        comments = d.get("methods", {}).get(mk, {}).get("comments", [])
-        return {c["paragraph_index"] for c in comments if "paragraph_index" in c}
-
     claude, gpt = models[0], models[1]
 
     for stem in papers:
@@ -76,10 +69,8 @@ def overlap(folder, models, total_papers):
         claude_paras = para_set(d, method_key(claude))
         gpt_paras    = para_set(d, method_key(gpt))
 
-        both_num    = len(claude_paras & gpt_paras)
-        only_c_num  = len(claude_paras - gpt_paras)
-        only_p_num  = len(gpt_paras - claude_paras)
-        total_num   = both_num + only_c_num + only_p_num
+        r = regions_2(claude_paras, gpt_paras)
+        both_num, only_c_num, only_p_num, total_num = r["both"], r["only_a"], r["only_b"], r["total"]
 
         overlap_ind[stem]["both_idx"]   = claude_paras & gpt_paras
         overlap_ind[stem]["only_c_idx"] = claude_paras - gpt_paras
@@ -87,13 +78,13 @@ def overlap(folder, models, total_papers):
         overlap_ind[stem]["both_num"]   = both_num
         overlap_ind[stem]["only_c_num"] = only_c_num
         overlap_ind[stem]["only_p_num"] = only_p_num
-        overlap_ind[stem]["jaccard_sim"] = both_num / total_num if total_num else None
+        overlap_ind[stem]["jaccard_sim"] = r["jaccard"] if total_num else None
 
         overlap_total["both_total"]   += both_num
         overlap_total["only_c_total"] += only_c_num
         overlap_total["only_p_total"] += only_p_num
 
-        temp_jaccard_sim["all"] += both_num / total_num if total_num else 0
+        temp_jaccard_sim["all"] += r["jaccard"]
         temp_count["all"]       += 1 if total_num else 0
 
     overlap_avg["both_avg"]        = overlap_total["both_total"]   / total_papers
@@ -112,45 +103,19 @@ def overlap(folder, models, total_papers):
 
 
 def plot_overlap(overlap_avg, models):
-    COLORS = ["#2196F3", "#E53935"]  # blue, red
+    sizes = (round(overlap_avg["only_c_avg"], 2),
+             round(overlap_avg["only_p_avg"], 2),
+             round(overlap_avg["both_avg"],   2))
 
     fig, ax = plt.subplots(1, 1, figsize=(7, 6), dpi=400)
-
-    only_c = round(overlap_avg["only_c_avg"], 2)
-    only_p = round(overlap_avg["only_p_avg"], 2)
-    both   = round(overlap_avg["both_avg"],   2)
-
-    v = venn2(
-        subsets=(only_c, only_p, both),
+    draw_venn2(
+        ax, sizes,
         set_labels=(model_dict.get(models[0], models[0]), model_dict.get(models[1], models[1])),
-        ax=ax,
-        set_colors=COLORS,
-        alpha=0.15,
+        colors=(COLOR_BLUE, COLOR_RED),
+        region_fontsize=22, set_fontsize=20,
     )
-
-    c = venn2_circles(subsets=(only_c, only_p, both), ax=ax, linewidth=2.0)
-    for circle, color in zip(c, COLORS):
-        circle.set_edgecolor(color)
-        circle.set_linewidth(2.0)
-
-    for label_id in ["10", "01", "11"]:
-        lbl = v.get_label_by_id(label_id)
-        if lbl:
-            lbl.set_fontsize(15)
-            lbl.set_color("black")
-            lbl.set_fontweight("normal")
-            lbl.set_ha("center")
-
-    for set_label in v.set_labels:
-        if set_label:
-            set_label.set_fontsize(15)
-            set_label.set_color("black")
-
-    ax.set_title(f"Claude Opus 4.7 vs. GPT-5.5\nJaccard Similarity: {overlap_avg['jaccard_sim_avg']:.3f}",
-                 fontsize=15, fontweight="bold", pad=10)
-
     plt.tight_layout()
-    plt.savefig("./venn_gpt_claude.png", dpi=400, bbox_inches="tight")
+    save_fig("venn_gpt_claude", dpi=400)
 
 
 # CLUSTERING
@@ -206,22 +171,89 @@ def cluster(folder, models):
             print(f"    [{labels[i]:20s}] {texts[i][:100]}")
 
 
+# PERTURBATION SOURCE
+#
+# On the perturbation benchmark the OpenAIReview (progressive) reviews live in a tree
+#   perturbation/results/<domain>/<model>/<error_type>/progressive/paper_xxx/review/*.json
+# rather than a flat folder of per-paper JSONs. Each leaf JSON carries
+# methods["progressive__<model>"]. We treat each (domain, paper, error_type) as one cell
+# (matching the _fused_for_venn granularity) and average the 2-way Venn over cells in
+# which both models are present.
+
+PERTURB_ROOT = Path(__file__).resolve().parent.parent / "perturbation" / "results"
+
+
+def perturb_cells(models, root=PERTURB_ROOT):
+    """Return {cell_id: {model: set(paragraph_index)}} from the perturbation tree.
+
+    cell_id = "<domain>__<paper>__<error_type>". Only the progressive (OpenAIReview)
+    method is read. Skips the _fused_for_venn/ helper dir and any non-domain dirs.
+    """
+    cells = defaultdict(dict)
+    for domain_dir in sorted(root.glob("*")):
+        if not domain_dir.is_dir() or domain_dir.name.startswith("_"):
+            continue
+        for model in models:
+            mdir = domain_dir / model
+            if not mdir.is_dir():
+                continue
+            for etype_dir in sorted(p for p in mdir.glob("*") if p.is_dir()):
+                prog = etype_dir / "progressive"
+                if not prog.is_dir():
+                    continue
+                for paper_dir in sorted(prog.glob("paper_*")):
+                    review_jsons = sorted((paper_dir / "review").glob("*.json"))
+                    if not review_jsons:
+                        continue
+                    d = load(review_jsons[0])
+                    cell_id = f"{domain_dir.name}__{paper_dir.name}__{etype_dir.name}"
+                    cells[cell_id][model] = para_set(d, method_key(model))
+    return cells
+
+
+def overlap_perturb(models, root=PERTURB_ROOT):
+    claude, gpt = models[0], models[1]
+    cells = perturb_cells(models, root)
+    paired = sorted(cid for cid, m in cells.items() if claude in m and gpt in m)
+    print(f"Cells with both {claude} and {gpt}: {len(paired)}")
+
+    totals = {"both": 0, "only_c": 0, "only_p": 0}
+    jaccard_sum, jaccard_n = 0.0, 0
+    vol = {claude: 0, gpt: 0}
+    for cid in paired:
+        ca, gp = cells[cid][claude], cells[cid][gpt]
+        r = regions_2(ca, gp)
+        totals["both"]   += r["both"]
+        totals["only_c"] += r["only_a"]
+        totals["only_p"] += r["only_b"]
+        vol[claude] += len(ca)
+        vol[gpt]    += len(gp)
+        if r["total"]:
+            jaccard_sum += r["jaccard"]
+            jaccard_n   += 1
+
+    n = len(paired)
+    overlap_avg = {
+        "both_avg":        totals["both"]   / n if n else 0,
+        "only_c_avg":      totals["only_c"] / n if n else 0,
+        "only_p_avg":      totals["only_p"] / n if n else 0,
+        "jaccard_sim_avg": jaccard_sum / jaccard_n if jaccard_n else 0,
+    }
+
+    print(f"\nAverage comments per cell: {claude} {vol[claude]/n:.2f}, {gpt} {vol[gpt]/n:.2f}")
+    print(f"\nAverage overlap per cell:\n")
+    print(f"{'Both':>8} {'Only Claude':>12} {'Only GPT':>10} {'Jaccard':>8}")
+    print("-" * 45)
+    print(f"{overlap_avg['both_avg']:>8.2f} {overlap_avg['only_c_avg']:>12.2f} {overlap_avg['only_p_avg']:>10.2f} {overlap_avg['jaccard_sim_avg']:>8.3f}")
+
+    plot_overlap(overlap_avg, models)
+    return overlap_avg
+
+
 if __name__ == "__main__":
-    FOLDER       = "./frontier_subset_progressive/"
-    MODELS       = ["claude-opus-4.7", "gpt-5.5"]
-    TOTAL_PAPERS = len(list(Path(FOLDER).glob("*.json")))
+    MODELS = ["claude-opus-4.7", "gpt-5.5"]
 
     print("=" * 90)
-    print("VOLUME")
+    print("OVERLAP (Claude vs. GPT) -- PERTURBATION benchmark")
     print("=" * 90)
-    volume_dicts(FOLDER, MODELS, TOTAL_PAPERS)
-
-    print("\n" + "=" * 90)
-    print("OVERLAP (Claude vs. GPT)")
-    print("=" * 90)
-    overlap(FOLDER, MODELS, TOTAL_PAPERS)
-
-    print("\n" + "=" * 90)
-    print("CLUSTERING")
-    print("=" * 90)
-    cluster(FOLDER, MODELS)
+    overlap_perturb(MODELS)

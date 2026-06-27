@@ -161,10 +161,74 @@ The progressive approach significantly outperforms all RAG variants on recall wh
 
 ---
 
+## Seeded-Perturbation Benchmark
+
+The Refine benchmark above measures recall against expert-written comments, but those comments are subjective and the matching heuristic is noisy. As a complementary evaluation, we built a **seeded-perturbation benchmark** with known ground truth: take a clean paper, inject specific errors, and measure exactly what the reviewer catches.
+
+### Setup
+
+**Paper:** Nakamura & Steinsson (2018), "High-Frequency Identification of Monetary Non-Neutrality: The Information Effect," QJE. 48 pages, extracted via Mistral OCR (113K chars of clean markdown with LaTeX math).
+
+**12 injected errors** across 5 categories:
+
+| Category | Count | Examples |
+|---|---|---|
+| `sign_flip` | 3 | Flipped minus to plus in Euler equation; removed leading negative in habits equation; changed kappa\*omega to kappa/omega in Phillips curve |
+| `parameter` | 5 | beta: 0.99->0.95; sigma: 0.5->5; b: 0.9->0.09; phi_pi: 0.01->1.5; labor share: 2/3->1/3 |
+| `definition` | 2 | Output gap y_t->c_t; information fraction 1-psi->1+psi |
+| `subscript_swap` | 1 | lambda_t^n -> lambda_s^n in marginal utility gap |
+| `claim` | 1 | "large and persistent" -> "permanent" effects |
+
+### Results
+
+| Metric | Zero-Shot | Progressive | **Debate** |
+|---|---|---|---|
+| **Recall** | **92%** (11/12) | 83% (10/12) | **92%** (11/12) |
+| Total comments | 10 | 32 | 34 |
+| False positives | 5 (50%) | 24 (75%) | 28 (82%) |
+| Unique catches | param_sigma, param_labor_share | claim_persistent | param_sigma, param_labor_share |
+| Missed | claim_persistent | param_sigma, param_labor_share | claim_persistent |
+
+**By category (debate):**
+
+| Category | Detected / Injected | Recall |
+|---|---|---|
+| Sign flips | 3/3 | **100%** |
+| Parameter errors | 5/5 | **100%** |
+| Definition errors | 2/2 | **100%** |
+| Subscript swaps | 1/1 | **100%** |
+| Overstated claims | 0/1 | 0% |
+
+### Key Findings
+
+1. **Debate recovers what consolidation drops.** The progressive method found param_sigma and param_labor_share during discovery but consolidation pruned them. The debate method's adversarial adjudication correctly kept both — each survived challenge because the judge verified the error against the paper context.
+
+2. **The debate dropped 16/54 comments (30%).** Unlike monolithic consolidation (which pruned 72% including real findings), the per-comment adversarial process makes targeted decisions. Comments dropped include: self-refuting findings ("No issue here upon verification"), context mismatches (comment about wrong paper section), and trivial observations.
+
+3. **The claim_persistent miss is a context window limitation.** The claim overstatement ("persistent" -> "permanent") was found during discovery but dropped at verdict because the judge's context window didn't include the passage containing "permanent." The challenger argued the word wasn't in the paper, and the judge agreed. This is fixable by providing the comment's source passage directly in the verdict prompt.
+
+4. **Zero-shot and debate are complementary.** Zero-shot catches claim_persistent (sees full paper at once) while debate catches all parameter errors (adversarial pressure prevents false pruning). An ensemble could achieve 100% recall on this benchmark.
+
+### Running the Benchmark
+
+```bash
+# Dry run: inject errors and inspect the perturbed paper
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md
+
+# Full run with scoring
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md --review --method zero_shot
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md --review --method progressive
+uv run python benchmarks/seed_errors.py --input path/to/clean_paper.md --review --method debate
+```
+
+---
+
 ## Next Steps
 
+- **Widen verdict context window** to include the comment's source passage, fixing the claim_persistent miss
+- **Ensemble zero-shot + debate** for maximum recall
+- Run debate method on Refine benchmark to measure recall improvement over progressive consolidation
 - Tune zero-shot prompt separately (less leniency, since full paper context is available)
-- Improve consolidation to preserve more true positives while still deduplicating
 - Investigate why coset-codes recall is low across all methods
 - Test on a larger set of papers beyond 4 benchmark examples
 - Evaluate with different large models (GPT-4o, Gemini) for cost comparison

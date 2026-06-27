@@ -188,6 +188,7 @@ def _build_paper_json(
             "explanation": c.explanation,
             "comment_type": c.comment_type,
             "paragraph_index": c.paragraph_index,
+            "severity": c.severity,
         })
 
     model_short = _model_short_name(result.model) if result.model else ""

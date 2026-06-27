@@ -114,6 +114,7 @@ def test_parse_comments_from_list():
             "title": "Wrong sign",
             "quote": "x = -y",
             "explanation": "Should be positive.",
+            "suggestion": "Change the sign or explain why the convention differs here.",
             "type": "technical",
         },
         {
@@ -126,6 +127,7 @@ def test_parse_comments_from_list():
     comments = parse_comments_from_list(items)
     assert len(comments) == 2
     assert comments[0].title == "Wrong sign"
+    assert comments[0].suggestion == "Change the sign or explain why the convention differs here."
     assert comments[0].comment_type == "technical"
     assert comments[1].comment_type == "logical"
 
@@ -141,12 +143,19 @@ def test_parse_review_response_json_object():
     response = json.dumps({
         "overall_feedback": "Good paper.",
         "comments": [
-            {"title": "Issue", "quote": "text", "explanation": "problem", "type": "technical"}
+            {
+                "title": "Issue",
+                "quote": "text",
+                "explanation": "problem",
+                "suggestion": "Add the missing derivation step.",
+                "type": "technical",
+            }
         ],
     })
     feedback, comments = parse_review_response(response)
     assert feedback == "Good paper."
     assert len(comments) == 1
+    assert comments[0].suggestion == "Add the missing derivation step."
 
 
 def test_parse_review_response_json_array():
@@ -178,6 +187,7 @@ def test_parse_review_response_salvages_malformed_jsonish_output():
       "title": "Quoted phrase breaks strict JSON",
       "quote": "the [n] "setting-sun" diagram",
       "explanation": "Still a valid review comment.",
+      "suggestion": "Escape the nested quotation or rewrite the phrase.",
       "type": "technical"
     }
   ]
@@ -188,3 +198,4 @@ def test_parse_review_response_salvages_malformed_jsonish_output():
     assert len(comments) == 1
     assert comments[0].title == "Quoted phrase breaks strict JSON"
     assert comments[0].quote == 'the [n] "setting-sun" diagram'
+    assert comments[0].suggestion == "Escape the nested quotation or rewrite the phrase."

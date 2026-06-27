@@ -187,7 +187,8 @@ def chat(
         api_model = api_model[len(prefix_to_strip):]
 
     current_max_tokens = max_tokens
-    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "model": model}
+    total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "model": model,
+                   "cost_usd": 0.0, "cost_source": None}
 
     for empty_attempt in range(EMPTY_RESPONSE_MAX_RETRIES):
         for attempt in range(retries):
@@ -210,8 +211,20 @@ def chat(
                     kwargs["temperature"] = temperature
                 if reasoning_effort is not None and reasoning_effort != "none":
                     _apply_reasoning(kwargs, resolved_provider, reasoning_effort, current_max_tokens)
+                # Ask OpenRouter to include actual cost in the usage block.
+                if resolved_provider == "openrouter":
+                    eb = kwargs.setdefault("extra_body", {})
+                    eb.setdefault("usage", {"include": True})
                 resp = client.chat.completions.create(**kwargs)
                 print(f"    [DEBUG] finish_reason={resp.choices[0].finish_reason}, completion_tokens={resp.usage.completion_tokens if resp.usage else 'N/A'}")
+                # Pull actual cost from OpenRouter's usage block when present.
+                resp_cost = None
+                if resp.usage is not None:
+                    resp_cost = getattr(resp.usage, "cost", None)
+                    if resp_cost is None:
+                        # OpenAI SDK exposes unknown fields via model_extra
+                        extra = getattr(resp.usage, "model_extra", None) or {}
+                        resp_cost = extra.get("cost")
                 usage = {
                     "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
                     "completion_tokens": resp.usage.completion_tokens if resp.usage else 0,
@@ -222,6 +235,9 @@ def chat(
                 # Accumulate tokens across retries
                 total_usage["prompt_tokens"] += usage["prompt_tokens"]
                 total_usage["completion_tokens"] += usage["completion_tokens"]
+                if resp_cost is not None:
+                    total_usage["cost_usd"] += float(resp_cost)
+                    total_usage["cost_source"] = "openrouter"
 
                 if content.strip():
                     return content, total_usage

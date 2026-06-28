@@ -73,6 +73,9 @@ MODEL_PRICES = {
     "openai/gpt-5-mini":             {"prompt": 0.25e-6,  "completion": 2.00e-6},
     "openai/gpt-5.4-mini":           {"prompt": 0.75e-6,  "completion": 4.50e-6},
     "openai/gpt-5.5":                {"prompt": 5.00e-6,  "completion": 30.00e-6},
+    # TODO: add the OpenRouter rate for x-ai/grok-4.1-fast (part of the efficient
+    # roster). Until it is filled in, estimate_cost skips Grok and the printed
+    # total excludes it.
 }
 
 

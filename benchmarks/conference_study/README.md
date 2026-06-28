@@ -1,177 +1,167 @@
-# Conference Study: Accepted vs Rejected
+# Quality-Proxy Study
 
-**Research question:** Does OpenAIReview's progressive method produce more (or
-different) comments on rejected papers than on accepted ones?
+Do AI review systems comment more on weaker papers than on stronger ones?
+This study tests whether comment volume tracks paper quality on real
+ICLR/NeurIPS papers. Paper quality has no gold-standard label, so we split
+papers into high- and low-quality groups using four noisy **quality proxies**
+built from citation, award, and review-score signals, and check whether each
+system produces more comments on the low-quality group.
 
-**Venue:** ICLR 2024. The only major ML venue where rejected submissions are
-publicly available on OpenReview. NeurIPS, ICML, CVPR etc. hide rejected
-papers, so this study can't easily port to them.
+The paper has the full method, metric, and results
+([arXiv:2606.19749](https://arxiv.org/abs/2606.19749), Section "AI Review
+Systems Correlate with Human Quality Signals"). This README covers how to
+reproduce the runs.
 
-## Directory layout
+## The four quality proxies
 
-```
-configs/           # YAML run configs (one per experiment)
-reports/           # Markdown write-ups (one per experiment)
-results/           # Output JSONs + run_log.jsonl (gitignored)
-papers/            # Downloaded PDFs (gitignored; regenerate via download_papers.py)
-  accepted/        # 5 ICLR 2024 Outstanding Paper Award winners
-  rejected/        # 5 substantive rejections (ratings 2.5–3.5, ≥3 reviewers)
-competitors/       # Adapters for external review systems (coarse, etc.)
-download_papers.py  # Fetches PDFs + writes manifest.json
-estimate_cost.py    # Pre-run USD cost estimate (progressive method)
-run_study.py        # Batch runner for OpenAIReview progressive (multi-model, multi-paper)
-run_competitors.py  # Batch runner for competitor systems (same paper/model grid)
-generate_report.py  # Auto-detects systems and emits per-system summary tables
-manifest.json       # Curated paper list (forum IDs, titles, groups)
-```
+Each proxy splits papers into a high-quality and a low-quality group of 30,
+drawn from ICLR/NeurIPS 2021-2022 papers with at least three reviews and a
+non-null average score:
 
-One experiment = `configs/<name>.yaml` + `reports/<name>.md` +
-`results/<name>/`. The triad shares a name.
+- **Community-level**: top 30 by citations-per-year vs 30 rejected papers never published elsewhere.
+- **Conference-level**: 30 papers highlighted by the venue (Outstanding, Best, Oral, Spotlight) vs 30 rejected papers.
+- **Reviewer-level**: top 30 by mean review score vs bottom 30.
+- **Composite**: top 30 awarded papers by combined citation-and-score rank vs bottom 30 rejected, never-published papers by review score.
 
-## Workflow
+That gives 60 papers per proxy and 240 in total (197 unique, since some papers
+satisfy more than one criterion). Frontier models too expensive to run on the
+full set use a **frontier subset** of 74 unique papers, which the paper mainly
+reports on.
 
-### 1. Download papers (one-time)
+Citations, awards, and review scores are noisy proxies of quality. We pick the
+top and bottom groups as a tractable approximation, not as ground-truth quality.
 
-PDFs are gitignored. Download them before the first run:
+## Reproducing the paper set
 
-```bash
-python download_papers.py
-```
+Selection draws from SNOR ([Zenodo 15866613](https://zenodo.org/records/15866613)),
+which links OpenReview submissions to Semantic Scholar citation counts,
+decisions, and reviewer scores.
 
-If `manifest.json` exists, the script downloads the exact papers listed
-there, skipping any already on disk. The manifest is never modified.
-
-**Adding more papers** to an existing manifest:
+**Full set (197 papers)** regenerates from code:
 
 ```bash
-python download_papers.py --add -n 5                         # 5 more per group (papercopilot)
-python download_papers.py --add -n 3 --group rejected        # 3 more rejected only
+cd conference_study
+python select_papers.py        # downloads SNOR (~448 MB, cached), writes manifests/canonical/
 ```
 
-**Bootstrapping a new study** (no manifest yet):
+Selection is deterministic (fixed seed, forum-id tiebreak), so this reproduces
+the exact 197-paper set used in the paper.
+
+**Frontier subset (74 papers)** is a fixed subsample of the full set with no
+regeneration script, so it is not shipped here. The pipeline runs end to end on
+the full set with the repo code; to reproduce the paper's frontier-subset
+numbers, contact the authors for `manifests/canonical/frontier.json`.
+
+## Run flow
 
 ```bash
-python download_papers.py -n 10                              # papercopilot, ICLR 2024
-python download_papers.py --source hf --venue ICLR --year 2023 -n 10   # HuggingFace
-python download_papers.py --source hf --venue NeurIPS --year 2022 -n 10
+cd conference_study
+export OPENROUTER_API_KEY=...      # all model calls route through OpenRouter
+
+# 1. Build the full paper manifest.
+python select_papers.py
+
+# 2. Download the PDFs listed in a manifest. Add --limit 5 for a cheap end-to-end smoke test first.
+python download_papers.py --source snor --manifest manifests/canonical/full.json
+
+# 3. Preview the API cost before the full run. estimate_cost.py prints a per-model
+#    breakdown; the full efficient set costs ~$25-50.
+python estimate_cost.py --config configs/baseline.yaml
+
+# 4. Run the systems on the same paper x model grid.
+python run_study.py       --config configs/baseline.yaml      # our system, efficient models, full set
+python run_competitors.py --config configs/coarse.yaml        # coarse, in its own venv (see "Running coarse")
+
+# 5. Build the paper's tables (pairwise accuracy + 95% CIs) from the results.
+#    Pass several configs to compare systems in one set of tables.
+python analyses/generate_report.py --config configs/baseline.yaml configs/coarse.yaml
 ```
 
-Two data sources via `--source`:
+Start with the `--limit 5` smoke run in step 2 plus one model to confirm the
+pipeline end to end for a few cents before launching the full set. Both runners
+are idempotent: rerunning skips (paper, model) combos already complete.
 
-- **papercopilot** (default): ICLR only, uses explicit accept/reject decisions.
-- **hf**: [AlgorithmicResearchGroup/openreview-papers-with-reviews](https://huggingface.co/datasets/AlgorithmicResearchGroup/openreview-papers-with-reviews)
-  on HuggingFace. Multi-venue (ICLR, NeurIPS, CoRL, UAI, MIDL), selects
-  by review score thresholds (`--accepted-threshold`, `--rejected-threshold`)
-  since the dataset has no explicit decisions.
+To reproduce the paper's frontier-subset numbers (all six models, including the
+two frontier ones), obtain `manifests/canonical/frontier.json` from the authors,
+then run steps 4 and 5 with `configs/frontier.yaml` in place of `baseline.yaml`.
 
-### 2. Estimate cost before a run
+## Running coarse
+
+`coarse` (PyPI `coarse-ink`) has a large, version-sensitive dependency set, so
+it runs in its own virtual environment and the adapter subprocess-calls into it.
+Set it up once:
 
 ```bash
-python estimate_cost.py
+uv venv /path/to/coarse-venv
+uv pip install --python /path/to/coarse-venv coarse-ink
+export COARSE_VENV_PYTHON=/path/to/coarse-venv/bin/python
 ```
 
-Uses observed progressive-method token multipliers (~6× input for the chain
-of running-summary + window replay, ~0.15× output). Sanity-check before
-burning API credits.
+`run_competitors.py --config configs/coarse.yaml` finds the venv through
+`COARSE_VENV_PYTHON` (or a `venv_python:` field in the config). coarse runs on
+the same paper x model grid, and its output merges into the same result schema
+as the other systems.
 
-### 3. Run an experiment
+## Metric
 
-```bash
-export OPENROUTER_API_KEY=...
-python run_study.py --config configs/baseline.yaml
-```
-
-Writes results to `results/<name>/<paper-slug>.json` and a run log to
-`results/<name>/run_log.jsonl`. Idempotent — rerunning skips paper/model
-combos already complete.
-
-**Useful flags:**
-
-- `--dry-run` — print the commands without calling the API.
-- `--paper <slug>` / `--model <name>` — restrict to one paper or model.
-- `--force` — re-run even if already complete.
-- `--max-pages` / `--max-tokens` / `--timeout-sec` / `--max-per-model` — ad-hoc
-overrides of any YAML value.
-
-### 4. Run a competitor system (optional)
-
-Competitors are external review systems wrapped via adapters in
-`competitors/`. They run on the same paper × model grid as `run_study.py`
-and their outputs merge into the same result-JSON schema, so the report
-tooling handles them alongside OpenAIReview's progressive.
-
-```bash
-python run_competitors.py --config configs/coarse.yaml
-```
-
-Each competitor has its own config (e.g. `configs/coarse.yaml`) with a
-`competitor:` field naming the adapter. Adapters live in
-`competitors/<name>_adapter.py` and are registered in
-`competitors/registry.py`. See that file's docstring for how to add a new
-one.
-
-Competitor outputs get their own `results/<competitor-name>/` directory,
-parallel to `results/<experiment-name>/`. To report on both, point
-`generate_report.py` at the combined results directory or at each
-separately.
-
-### 5. Generate report tables
-
-```bash
-python generate_report.py --config configs/baseline.yaml
-python generate_report.py --config configs/baseline.yaml --papers  # include papers table (parses PDFs, slow)
-```
-
-Auto-detects every system present in the result JSONs (e.g. `progressive`,
-`coarse`) by scanning method prefixes, and emits a per-system block of
-tables (overall, per-model, consolidation if applicable, cost) plus a
-runtime table spanning all systems. Pipe to a file or paste into
-`reports/<name>.md`.
-
-### 6. Add a new experiment
-
-```bash
-cp configs/baseline.yaml configs/my_experiment.yaml
-# edit name, caps, parallelism as needed
-python run_study.py --config configs/my_experiment.yaml
-python generate_report.py --config configs/my_experiment.yaml
-# write up findings in reports/my_experiment.md
-```
+For each (system, model, proxy) we compare mean comments on the high- and
+low-quality groups and report **pairwise accuracy**: the fraction of (low,
+high) paper pairs where the low-quality paper received more comments (ties
+count 0.5). A value of 0.5 means no separation, and above 0.5 means the system
+tracks the proxy direction. Confidence intervals come from a cluster bootstrap
+over papers (`analyses/ci_auc.py`); see the paper's appendix for the
+construction.
 
 ## Config schema
 
 ```yaml
-name: baseline         # Results -> results/<name>/
-max_pages: 20          # Passed to openaireview CLI
-max_tokens: 20000      # Passed to openaireview CLI
-timeout_sec: 3600      # Per-subprocess timeout
-max_per_model: 2       # Concurrent runs per model
+name: baseline                                 # results -> results/<name>/
+manifest: manifests/canonical/full.json    # paper set to run on
+models:                                        # backbone models (falls back to the manifest's list if omitted)
+  - deepseek/deepseek-v4-flash
+  - qwen/qwen3.6-35b-a3b
+max_pages: 20                                   # passed to the openaireview CLI
+max_tokens: 20000                               # passed to the openaireview CLI
+timeout_sec: 3600                               # per-subprocess timeout
+max_per_model: 2                                # concurrent runs per model
 ```
 
-Precedence: **CLI flag > YAML value > built-in default**. CLI flag names
-mirror YAML keys (hyphens for underscores).
+## Directory layout
 
-## Concurrency model
+```
+configs/            # run configs (baseline = full set, frontier = 74-subset, coarse = external system)
+manifests/          # paper set (canonical/full.json regenerates via select_papers.py)
+papers/             # downloaded PDFs (gitignored; regenerate via download_papers.py)
+results/            # output JSONs + run_log.jsonl (gitignored)
+competitors/        # adapters for external review systems
+analyses/           # report + AUC + confidence-interval scripts
+select_papers.py    # build the canonical manifest from SNOR
+download_papers.py  # fetch PDFs listed in a manifest
+run_study.py        # batch runner for our system
+run_competitors.py  # batch runner for external review systems
+```
 
-Each model gets its own queue + `max_per_model` worker threads — keeps
-OpenRouter per-model rate limits isolated. Per-paper locks prevent two
-models from clobbering the same result JSON during the CLI's
-read-modify-write merge. Total in-flight = `max_per_model × num_models`
-(default 6 for 3 models).
+## Output structure
 
-## Results format
+Each run config writes to its own results directory:
 
-Each `results/<name>/<slug>.json` contains a `methods` dict keyed by
-`<system>__<model_short>`. OpenAIReview's progressive writes two keys:
+```
+results/<name>/
+  <paper-slug>.json     # one file per paper, with every model and system merged in
+  run_log.jsonl         # one line per (paper, model) run: timing, exit code, output tails
+```
 
-- `progressive__<model_short>` — comments after the consolidation pass.
-- `progressive_original__<model_short>` — raw comments before consolidation.
+Each `<paper-slug>.json` holds the paper identity (`slug`, `title`), the parsed
+`paragraphs` the systems reviewed, and a `methods` dict keyed by
+`<system>__<model_short>`:
 
-Both are written in a single CLI invocation. `run_study.py` considers a
-(paper, model) combo "done" only when both keys exist.
+```
+methods:
+  progressive__<model>           # OpenAIReview comments after consolidation
+  progressive_original__<model>  # OpenAIReview comments before consolidation
+  coarse__<model>                # one key per external system run
+```
 
-Competitor systems typically write a single post-editorial key
-`<competitor>__<model_short>` (no raw/consolidated pair). The report
-generator scans the method keys to decide which tables apply to which
-system — systems without a `_original` partner skip the consolidation
-table.
+Each method entry has `label`, `model`, `overall_feedback`, `cost_usd`,  
+`prompt_tokens`, `completion_tokens`, and a `comments` list. Each comment has a  
+`title`, `quote`, `explanation`, `paragraph_index`, and `severity`.

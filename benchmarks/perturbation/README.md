@@ -29,7 +29,9 @@ and compute recall.
 
 The recommended way to reproduce the paper is to use the released perturbed
 papers, so most users can skip generation entirely. The exact set is published as
-a zip archive (TODO: add the Google Drive link). Each paper
+a zip archive on
+[Google Drive](https://drive.google.com/file/d/10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3/view?usp=sharing)
+(download with `gdown 10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3`). Each paper
 ships as a corrupted markdown file (`*_recorrupted.md`) and a ground-truth
 manifest (`*_kept_perturbations.json`), laid out as
 `<domain>/all/<paper_id>/<error_type>/`. Unzip it inside `benchmarks/perturbation/`

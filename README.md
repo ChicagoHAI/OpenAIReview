@@ -260,7 +260,7 @@ Injects controlled errors (surface math edits, false claims, faulty reasoning, e
 
 Pipeline: `extract → generate → validate → verify → inject → review → score`.
 
-We ship the perturbed papers used in the paper, so the generation pipeline (everything through inject) is optional. The recommended way to reproduce is to download and unzip the released set (TODO: add the Google Drive link) inside `benchmarks/perturbation/` so it lands at `data/perturbations_filtered/`, then run every paper domain at once with the committed per-domain configs:
+We ship the perturbed papers used in the paper, so the generation pipeline (everything through inject) is optional. The recommended way to reproduce is to download and unzip the released set ([Google Drive](https://drive.google.com/file/d/10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3/view?usp=sharing), or `gdown 10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3`) inside `benchmarks/perturbation/` so it lands at `data/perturbations_filtered/`, then run every paper domain at once with the committed per-domain configs:
 
 ```bash
 cd benchmarks/perturbation

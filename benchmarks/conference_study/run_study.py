@@ -235,7 +235,7 @@ def main() -> None:
     RESULTS_DIR = DEFAULT_RESULTS_BASE / name if name else DEFAULT_RESULTS_BASE
     LOG_FILE = RESULTS_DIR / "run_log.jsonl"
 
-    manifest_path = args.manifest or Path(cfg.get("manifest", "manifest.json"))
+    manifest_path = args.manifest or Path(cfg.get("manifest", "manifests/canonical/full.json"))
     if not manifest_path.is_absolute():
         manifest_path = HERE / manifest_path
     manifest = json.loads(manifest_path.read_text())

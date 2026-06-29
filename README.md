@@ -258,23 +258,18 @@ The full 197-paper set regenerates from `select_papers.py`. The 74-paper frontie
 
 Injects controlled errors (surface math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures recall by model, method, and error category.
 
-Pipeline: `extract → generate → validate → verify → inject → review → score`. Generation is one tool, the benchmark stages another:
+Pipeline: `extract → generate → validate → verify → inject → review → score`.
+
+We ship the perturbed papers used in the paper, so the generation pipeline (everything through inject) is optional. The recommended way to reproduce is to download and unzip the released set (TODO: add the Google Drive link) inside `benchmarks/perturbation/` so it lands at `data/perturbations_filtered/`, then run every paper domain at once with the committed per-domain configs:
 
 ```bash
 cd benchmarks/perturbation
-
-# 1. Sample papers from arXiv and generate perturbations (extract→...→inject).
-python perturb_automated.py --arxiv-category "math.*" --category theoretical \
-    --error-type all --target 10 --min-year 2015
-
-# 2-5. Point configs/default.yaml's input_dir at step 1's output, then run the stages.
-python run_benchmark.py configs/default.yaml --stages prepare
-python run_benchmark.py configs/default.yaml --stages review
-python run_benchmark.py configs/default.yaml --stages score
-python run_benchmark.py configs/default.yaml --stages report
+python run_benchmark.py --configs configs/full_*.yaml --stages prepare,review,score,report
 ```
 
-The config picks the review system per run via `system: openaireview | coarse | reviewer3` (adapter setup for the external systems is in `systems/README.md`). A comment counts as a detection when it passes two stages: a fuzzy substring match (the perturbed text covers the comment quote), then an LLM judge rating (a 1-5 score >= 3) on whether the explanation identifies the same error. See `benchmarks/perturbation/README.md` for the error taxonomy, config schema, and results layout.
+The config picks the review system per run via `system: openaireview | coarse | reviewer3` (adapter setup for the external systems is in `systems/README.md`). A comment counts as a detection when it passes two stages: a fuzzy substring match (the perturbed text covers the comment quote), then an LLM judge rating (a 1-5 score >= 3) on whether the explanation identifies the same error.
+
+To regenerate a fresh perturbed set instead, see `benchmarks/perturbation/README.md`, which documents the full generation pipeline, error taxonomy, config schema, dataset layout, and results layout.
 
 ## Related Resources
 

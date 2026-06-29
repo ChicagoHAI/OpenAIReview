@@ -252,7 +252,7 @@ python run_competitors.py --config configs/coarse.yaml
 python analyses/generate_report.py --config configs/baseline.yaml
 ```
 
-The full 197-paper set regenerates from `select_papers.py`. The 74-paper frontier subset the paper mainly reports on has no regeneration script and is not shipped; contact the authors for its manifest to reproduce those results. `run_study.py` and `run_competitors.py` are idempotent, so rerunning skips paper × model combos already complete. See `benchmarks/conference_study/README.md` for more details, include how to run `coarse`.
+The full 197-paper set regenerates from `select_papers.py`. The 74-paper frontier subset the paper mainly reports on has no regeneration script; download it (bundled with the full manifest) from [Google Drive](https://drive.google.com/file/d/1mor434X2tTJKBYsNXgdpxPW7guzqbJAV/view?usp=sharing) (or `gdown 1mor434X2tTJKBYsNXgdpxPW7guzqbJAV`) and unzip inside `benchmarks/conference_study/`. `run_study.py` and `run_competitors.py` are idempotent, so rerunning skips paper × model combos already complete. See `benchmarks/conference_study/README.md` for more details, include how to run `coarse`.
 
 ### Perturbation benchmark (`benchmarks/perturbation/`)
 

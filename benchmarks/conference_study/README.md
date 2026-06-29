@@ -48,9 +48,11 @@ Selection is deterministic (fixed seed, forum-id tiebreak), so this reproduces
 the exact 197-paper set used in the paper.
 
 **Frontier subset (74 papers)** is a fixed subsample of the full set with no
-regeneration script, so it is not shipped here. The pipeline runs end to end on
-the full set with the repo code; to reproduce the paper's frontier-subset
-numbers, contact the authors for `manifests/canonical/frontier.json`.
+regeneration script. Download it (bundled with the full manifest) from
+[Google Drive](https://drive.google.com/file/d/1mor434X2tTJKBYsNXgdpxPW7guzqbJAV/view?usp=sharing)
+(or `gdown 1mor434X2tTJKBYsNXgdpxPW7guzqbJAV`) and unzip inside `conference_study/`
+so the files land at `manifests/canonical/`. The same archive includes
+`full.json`, so you can use it to skip the SNOR download above.
 
 ## Run flow
 
@@ -82,8 +84,9 @@ pipeline end to end for a few cents before launching the full set. Both runners
 are idempotent: rerunning skips (paper, model) combos already complete.
 
 To reproduce the paper's frontier-subset numbers (all six models, including the
-two frontier ones), obtain `manifests/canonical/frontier.json` from the authors,
-then run steps 4 and 5 with `configs/frontier.yaml` in place of `baseline.yaml`.
+two frontier ones), use `manifests/canonical/frontier.json` from the download
+above, then run steps 4 and 5 with `configs/frontier.yaml` in place of
+`baseline.yaml`.
 
 ## Running coarse
 

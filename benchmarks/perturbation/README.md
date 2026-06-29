@@ -1,126 +1,118 @@
-# Perturbation Benchmark (v2)
+# Perturbation Benchmark
 
-Benchmark for evaluating how well LLM reviewers detect **seeded errors** in mathematical papers. The pipeline takes real arxiv papers, injects controlled perturbations, runs automated reviews, and measures recall.
+Do AI review systems catch errors deliberately injected into otherwise-good
+papers? This benchmark takes real arXiv papers, injects controlled errors, runs
+automated reviews, and measures recall (the fraction of injected errors a system
+detects).
+
+The paper has the full method and results
+([arXiv:2606.19749](https://arxiv.org/abs/2606.19749)). This README covers how to
+reproduce a run.
 
 ## Pipeline
 
 ```
-extract → generate → validate → inject → review → score
+extract → generate → validate → verify → inject → review → score
 ```
 
-1. **Extract** (`extract.py`): Identify candidate math spans (equations, symbols) in the paper.
-2. **Generate** (`generate.py`): Use an LLM to create perturbations for each candidate span.
-3. **Validate** (`validate.py`): Check that perturbations are valid (original exists, no overlaps, no garbled text).
-4. **Inject** (`inject.py`): Apply valid perturbations to produce a corrupted paper.
-5. **Review**: Run `openaireview review` on the corrupted paper with each (model, method) combination.
-6. **Score** (`score.py`): Compare review comments against the perturbation manifest using fuzzy substring matching + LLM-as-judge.
+- **extract → generate → validate → verify → inject** (the `openaireview perturb`
+  CLI, driven by `perturb_automated.py`): find candidate spans in a paper,
+  generate candidate errors, validate and verify them, and inject the kept ones
+  to produce a corrupted paper plus a ground-truth manifest.
+- **review** (`run_benchmark.py`): run each (model, method) over the corrupted paper.
+- **score** (`run_benchmark.py`): match each review comment against the manifest
+  and compute recall.
 
-## Error Types
+## Error types
 
-### Surface errors
-Minimal single-token edits to math expressions:
-- `operator_or_sign` — flip `+`/`-`, `≤`/`≥`, `∪`/`∩`
-- `symbol_binding` — swap a symbol (`α`→`β`)
-- `index_or_subscript` — change sub/superscript (`x_i`→`x_{i+1}`)
-- `numeric_parameter` — change a number (`0.5`→`0.25`)
+Injected errors span four categories (the underlying error type is in parentheses):
 
-### Formal errors
-Deeper structural corruptions to definitions, theorems, and proofs:
-- `def_wrong`, `thm_wrong_condition`, `thm_wrong_conclusion`, `thm_wrong_scope`
-- `proof_wrong_direction`, `proof_missing_case`, `proof_wrong_assumption`, `proof_mismatch`
+- **Surface** (`surface`): minimal single-token math edits (flip an operator or sign, change a number, alter a subscript).
+- **Claim** (`statement_empirical`, `claim_theoretical`): a stated empirical or theoretical claim is made wrong.
+- **Reasoning** (`logic`): a logical or derivation step is broken.
+- **Experimental** (`experimental`): an experimental-design or setup detail is corrupted.
 
-## Quick Start
+## Quick start
+
+Install the benchmark dependencies and set an API key:
 
 ```bash
-# Install benchmark dependencies
-pip install -e ".[benchmarks]"
-
-# Run a single config (prepare → review → score → report)
-python benchmarks/perturbation/run_benchmark.py benchmarks/perturbation/configs/default.yaml
-
-# Run only specific stages
-python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages prepare,review
-python benchmarks/perturbation/run_benchmark.py configs/default.yaml --stages score
-
-# Run many domains in one process (workers stay busy across config boundaries)
-python benchmarks/perturbation/run_benchmark.py --configs configs/full_*.yaml \
-    --parallel-openaireview 2 --parallel-coarse 8
+uv pip install -e ".[benchmarks]"
+export OPENROUTER_API_KEY=...
+cd benchmarks/perturbation
 ```
 
-`run_benchmark.py` selects a review system per config via the `system:` field
-(`openaireview` | `coarse` | `reviewer3`); see `systems/README.md` for setup
-of the third-party systems.
+Run the pipeline one stage at a time:
 
-## Configuration
+```bash
+# 1. Sample papers from arXiv and generate perturbations (extract→...→inject).
+#    Writes corrupted papers + manifests under results/perturbations/<category>/<error_type>/.
+python perturb_automated.py --arxiv-category "math.*" --category theoretical \
+    --error-type all --target 10 --min-year 2015
 
-Configs are YAML files in `configs/`. Copy `default.yaml` and edit to create experiment variants. Committed configs serve as the experiment log.
+# Point the config's input_dir at step 1's output, then run the benchmark stages:
+python run_benchmark.py configs/default.yaml --stages prepare   # 2. stage corrupted papers
+python run_benchmark.py configs/default.yaml --stages review    # 3. run the reviews
+python run_benchmark.py configs/default.yaml --stages score     # 4. score against the manifests
+python run_benchmark.py configs/default.yaml --stages report    # 5. aggregate the recall tables
+```
+
+Run several stages at once with `--stages prepare,review,score,report`, or sweep
+many configs with `--configs configs/*.yaml`. `run_benchmark.py` selects the
+review system per config via the `system:` field (`openaireview` | `coarse` |
+`reviewer3`). See `systems/README.md` for setting up the external systems.
+
+## Config schema
 
 ```yaml
-max_papers: 5
-length: short              # short (2k-7k words) | medium (7k-17k) | long (>17k)
-error_type: surface         # surface | formal | all
-score_method: llm           # llm | fuzzy | semantic
+system: openaireview                        # openaireview | coarse | reviewer3
+input_dir: results/perturbations/math_all   # corrupted papers from perturb_automated.py
+results_dir: results/default                # staged papers, reviews, scores
 
-perturb_model: google/gemini-3-flash-preview
-score_model:   google/gemini-3-flash-preview
-
-review_models:
-  - google/gemini-3-flash-preview
-  - z-ai/glm-4.6
-
-review_methods:
+models:                                     # backbone models to review with
+  - openai/gpt-5.5
+  - deepseek/deepseek-v4-flash
+methods:                                    # zero_shot | local | progressive
   - zero_shot
   - progressive
 
-results_dir: benchmarks/perturbation/results
+score_method: llm                           # llm | fuzzy | semantic
+score_model: google/gemini-3-flash-preview  # the llm judge
 ```
 
-Papers are streamed from the [proof-pile](https://huggingface.co/datasets/hoskinson-center/proof-pile) dataset and binned by word count.
-
-## Results Layout
-
-```
-<results_dir>/
-  config.yaml                                    # resolved config
-  perturb/<error_type>/paper_001/
-    paper_001.md                                 # original paper
-    paper-001_clean.md                           # clean copy
-    paper-001_corrupted.md                       # with injected errors
-    paper-001_perturbations.json                 # ground-truth manifest
-  <model_slug>/<error_type>/<method>/paper_001/
-    review/*.json                                # review results
-    score/<score_method>/*_score.json             # recall scores
-```
-
-## Reports
-
-Experiment reports are in `reports/`. See `reports/surface_3models_short_medium.md` for the first benchmark run (3 cheap models, 10 papers, surface errors).
-
-### Generating report statistics
-
-After a pipeline run completes, use `generate_report.py` to aggregate results across all papers, models, and methods:
-
-```bash
-python benchmarks/perturbation/generate_report.py benchmarks/perturbation/results_short
-```
-
-This prints markdown tables to stdout covering:
-- Configuration summary
-- Ground truth counts by length and error type
-- Recall by model × method (split by paper length and overall)
-- Recall by error type
-- Token usage and cost
-
-The output is meant to be reviewed and edited into a final report in `reports/`.
+Configs in `configs/` are local except the committed `default.yaml`. Copy it to
+define experiment variants.
 
 ## Scoring
 
-The scorer uses a two-stage filter:
-1. **Fuzzy substring match** — checks if the perturbed text appears (approximately) in the review comment's quote, using normalized text coverage with a 0.75 threshold.
-2. **LLM-as-judge** — asks a model to rate whether the reviewer's explanation identifies the same error described in the perturbation's `why_wrong` field (score >= 3/5 = match).
+A comment counts as detecting an injected error when it passes two stages:
 
-## Known Limitations
+1. **Substring match** — the perturbed text approximately covers the comment's
+   quote (normalized, 0.75 coverage), so the judge only sees comments pointing at
+   the right span.
+2. **LLM judge** — Gemini-3 Flash Preview rates whether the comment's explanation
+   identifies the same error as the manifest's `why_wrong`, on a 1-5 scale, and a
+   rating >= 3 counts as detected.
 
-- The perturb stage targets `n_per_error=2` perturbations per error type (8 total per paper), but the LLM often reuses the same candidate span for both, causing the validator to reject the duplicate. Typical yield is ~4-5 per paper.
-- Fuzzy substring matching can miss catches where the reviewer heavily paraphrases the quoted text.
-- `cost_usd` from OpenRouter metadata is unreliable for some models (notably qwen).
+Recall is the fraction of injected errors detected, reported per (model, method)
+and per error category by the `report` stage.
+
+## Results layout
+
+```
+<results_dir>/
+  perturb/<error_type>/paper_NNN/
+    paper_NNN_corrupted.md              # injected paper
+    paper_NNN_perturbations.json        # ground-truth manifest
+  <model>/<error_type>/<method>/paper_NNN/
+    review/*.json                       # review output
+    score/<score_method>/*_score.json   # recall scores
+```
+
+## Known limitations
+
+- The generator often reuses the same candidate span for multiple errors, and the
+  validator rejects the duplicates, so typical yield is ~4-5 perturbations per paper.
+- The substring match can miss detections where the reviewer heavily paraphrases
+  the quoted text.
+- `cost_usd` from OpenRouter metadata is unreliable for some models.

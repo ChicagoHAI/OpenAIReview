@@ -226,11 +226,11 @@ uv pip install -e ".[benchmarks]"
 export OPENROUTER_API_KEY=...
 ```
 
-Run scripts from inside each benchmark's directory unless noted.
+Run scripts from inside each benchmark's directory unless otherwise noted.
 
 ### Quality-proxy study (`benchmarks/conference_study/`)
 
-Tests whether AI review systems comment more on weaker papers than on stronger ones. Papers are split into high- and low-quality groups by four noisy quality proxies built from citations, venue awards, review scores, and a composite of the three. `configs/baseline.yaml` (our system) and `coarse.yaml` (coarse, an external review system) are the committed example configs.
+Tests whether AI review systems comment more on weaker papers than on stronger ones. Papers are split into high- and low-quality groups by four quality proxies built from citations, venue awards, review scores, and a composite of the three. `configs/baseline.yaml` (our system) and `coarse.yaml` (coarse, an external review system) are the committed example configs.
 
 ```bash
 cd benchmarks/conference_study
@@ -256,29 +256,25 @@ The full 197-paper set regenerates from `select_papers.py`. The 74-paper frontie
 
 ### Perturbation benchmark (`benchmarks/perturbation/`)
 
-Injects controlled errors (math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures per-comment recall by error type and domain.
+Injects controlled errors (surface math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures recall by model, method, and error category.
 
-Pipeline: `extract → generate → validate → verify → inject → review → score`. `run_benchmark.py` drives all stages from a single YAML.
+Pipeline: `extract → generate → validate → verify → inject → review → score`. Generation is one tool, the benchmark stages another:
 
 ```bash
 cd benchmarks/perturbation
 
-# One-shot: prepare papers, run reviews, score against the perturbation manifest
-python run_benchmark.py configs/default.yaml
+# 1. Sample papers from arXiv and generate perturbations (extract→...→inject).
+python perturb_automated.py --arxiv-category "math.*" --category theoretical \
+    --error-type all --target 10 --min-year 2015
 
-# Or run a subset of stages
-python run_benchmark.py configs/default.yaml --stages prepare,review
+# 2-5. Point configs/default.yaml's input_dir at step 1's output, then run the stages.
+python run_benchmark.py configs/default.yaml --stages prepare
+python run_benchmark.py configs/default.yaml --stages review
 python run_benchmark.py configs/default.yaml --stages score
-
-# Multi-config sweep with parallel workers reused across configs
-python run_benchmark.py --configs configs/full_*.yaml \
-    --parallel-openaireview 2 --parallel-coarse 8
-
-# Aggregate recall tables across all (paper, model, method) cells
-python generate_report.py results/
+python run_benchmark.py configs/default.yaml --stages report
 ```
 
-The config picks the review system per run via `system: openaireview | coarse | reviewer3`; adapter setup for third-party systems is in `systems/README.md`. Scoring uses a two-stage filter: a fuzzy substring match on the perturbed text against the comment quote, then an LLM judge rating (≥3/5) on whether the explanation identifies the same error. See `benchmarks/perturbation/README.md` for error-type taxonomy, results layout, and known limitations.
+The config picks the review system per run via `system: openaireview | coarse | reviewer3` (adapter setup for the external systems is in `systems/README.md`). A comment counts as a detection when it passes two stages: a fuzzy substring match (the perturbed text covers the comment quote), then an LLM judge rating (a 1-5 score >= 3) on whether the explanation identifies the same error. See `benchmarks/perturbation/README.md` for the error taxonomy, config schema, and results layout.
 
 ## Related Resources
 

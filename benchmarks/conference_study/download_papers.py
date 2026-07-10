@@ -7,7 +7,7 @@ Three data sources:
                          on HuggingFace. Multi-venue (ICLR, NeurIPS, CoRL, etc.),
                          uses review score thresholds instead of decisions.
   --source snor          Scale-up 4-pair signal matrix. Reads
-                         manifests/combined.json (produced by select_papers.py).
+                         manifests/canonical/full.json (produced by select_papers.py).
                          Downloads PDFs to papers/scaleup/<slug>.pdf and
                          updates the manifest with pdf_path + pages.
 
@@ -590,7 +590,7 @@ def main() -> None:
                     default="papercopilot",
                     help="Data source (default: papercopilot).")
     ap.add_argument("--manifest", type=Path,
-                    help="[snor] Path to combined.json (default: manifests/combined.json).")
+                    help="[snor] Path to the manifest (default: manifests/canonical/full.json).")
     ap.add_argument("--limit", type=int,
                     help="[snor] Only download the first N manifest entries "
                          "(for smoke tests).")
@@ -615,11 +615,11 @@ def main() -> None:
     manifest_path = out_dir / "manifest.json"
     cache_dir = out_dir / ".cache"
 
-    # snor source has its own flow: read combined.json, download flat.
+    # snor source has its own flow: read full.json, download flat.
     if args.source == "snor":
         snor_manifest = (args.manifest
                          if args.manifest
-                         else out_dir / "manifests" / "v1" / "combined.json")
+                         else out_dir / "manifests" / "canonical" / "full.json")
         # The papercopilot/hf default of 15 pages filters accidentally
         # tiny papers. SNOR already selects from real conference decisions,
         # so accept anything at least 6 pages. User can override explicitly.

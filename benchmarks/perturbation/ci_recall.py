@@ -14,17 +14,24 @@ directories and model ids. The bootstrap math is covered by tests/test_ci_recall
 in-memory counts. Two table kinds: by_model (recall per model and method) and by_category
 (recall split by error category for selected systems).
 
-Every cell draws from one seeded random generator, consumed in config order. A table's
-CIs reproduce exactly only when the whole config runs unchanged, so adding or reordering
-cells shifts the intervals of later ones.
+Each cell seeds its own random generator from the cell identity (model, method,
+category). A cell's interval therefore stays the same when the config adds, removes, or
+reorders other cells.
 """
+import hashlib
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 
 B = 5000
-RNG = np.random.default_rng(42)
+
+
+def cell_rng(slug, method, category=None):
+    """Generator seeded from the cell identity, stable across config edits."""
+    key = f"{slug}|{method}|{category or ''}".encode()
+    return np.random.default_rng(int.from_bytes(hashlib.blake2s(key, digest_size=8).digest(), "big"))
 
 
 # ---- pure aggregation + bootstrap (unit-tested in tests/test_ci_recall.py) ----
@@ -54,10 +61,11 @@ def paper_rows(per_paper, category_of=None, category=None):
     return rows
 
 
-def boot_ci(rows):
+def boot_ci(rows, rng):
     """Pooled recall and its 95% cluster-bootstrap CI for one cell.
 
-    `rows` is the per-paper (detected, injected) list from paper_rows. Returns
+    `rows` is the per-paper (detected, injected) list from paper_rows and `rng`
+    the generator to resample with (cell_rng for table cells). Returns
     (point, lo, hi, detected, injected): the pooled recall
     sum(detected) / sum(injected), the 2.5/97.5 bootstrap percentiles over
     paper resamples, and the summed counts. All-nan with zeroed counts when
@@ -69,7 +77,7 @@ def boot_ci(rows):
     inj = np.array([r[1] for r in rows], float)
     point = det.sum() / inj.sum()
     n = len(rows)
-    idx = RNG.integers(0, n, size=(B, n))
+    idx = rng.integers(0, n, size=(B, n))
     rec = det[idx].sum(axis=1) / inj[idx].sum(axis=1)
     lo, hi = np.percentile(rec, [2.5, 97.5])
     return (point, lo, hi, int(det.sum()), int(inj.sum()))
@@ -114,16 +122,27 @@ def load_cell(config, root, model_slug, method):
 
 
 def cell_ci(config, root, slug, method, category=None):
-    """(boot_ci tuple, n_papers) for one (model, method[, category]) cell."""
-    rows = paper_rows(load_cell(config, root, slug, method), config.get("categories"), category)
-    return boot_ci(rows), len(rows)
+    """(boot_ci tuple, n_papers) for one (model, method[, category]) cell.
+
+    Warns on stderr when no score file loads at all, so a drifted result path
+    shows up as a warning instead of only a NO DATA cell.
+    """
+    per_paper = load_cell(config, root, slug, method)
+    if not per_paper:
+        print(f"warning: no score files found for cell {slug}/{method}", file=sys.stderr)
+    rows = paper_rows(per_paper, config.get("categories"), category)
+    return boot_ci(rows, cell_rng(slug, method, category)), len(rows)
 
 
 # ---- table renderers ----
 
-def fmt(point, lo, hi, d, i):
-    if i == 0:  # no injected errors loaded: empty category or a misconfigured cell
-        return f"{'NO DATA':^30}"
+def fmt(ci, n, compact=False):
+    """One cell's text. `n == 0` (no papers contributed) prints NO DATA."""
+    point, lo, hi, d, i = ci
+    if n == 0:
+        return "NO DATA" if compact else f"{'NO DATA':^30}"
+    if compact:
+        return f"{point*100:4.1f}[{lo*100:.1f},{hi*100:.1f}]n{n}"
     return f"{point*100:5.1f}% [{lo*100:4.1f}, {hi*100:4.1f}]  ({d}/{i})"
 
 
@@ -133,12 +152,12 @@ def run_by_model(config, root, table):
     for label, slug in table["models"].items():
         line = f"{label:22s}"
         for method in methods:
-            ci, _ = cell_ci(config, root, slug, method)
-            line += " | " + fmt(*ci)
+            ci, n = cell_ci(config, root, slug, method)
+            line += " | " + fmt(ci, n)
         print(line)
     for extra in table.get("extra_rows", []):
-        ci, _ = cell_ci(config, root, extra["slug"], extra["method"])
-        print(f"{extra['label']:22s}| " + fmt(*ci))
+        ci, n = cell_ci(config, root, extra["slug"], extra["method"])
+        print(f"{extra['label']:22s}| " + fmt(ci, n))
 
 
 def run_by_category(config, root, table):
@@ -148,8 +167,8 @@ def run_by_category(config, root, table):
     for cell in table["cells"]:
         line = f"{cell['label']:24s}"
         for c in cats:
-            (p, lo, hi, d, i), n = cell_ci(config, root, cell["slug"], cell["method"], c)
-            line += " | " + ("NO DATA" if n == 0 else f"{p*100:4.1f}[{lo*100:.1f},{hi*100:.1f}]n{n}")
+            ci, n = cell_ci(config, root, cell["slug"], cell["method"], c)
+            line += " | " + fmt(ci, n, compact=True)
         print(line)
 
 

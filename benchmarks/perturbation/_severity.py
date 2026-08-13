@@ -22,10 +22,8 @@ Per-system maps:
                   -but-lower-importance findings as Editorial rather than style
                   notes. Confirm with the vendor if the label is later clarified.
 
-The conference_study analyses currently inline `COARSE_SEVERITY_MAP` (see
-`benchmarks/conference_study/analyses/compute_auc.py` and `report_scaleup.py`).
-Once those analyses are co-resident with this module they should import
-`COARSE_SEVERITY_MAP` and `normalize_severity` from here instead.
+The conference_study analyses (`compute_auc.py`, `report_scaleup.py`) import
+`COARSE_SEVERITY_MAP` and `normalize_severity` from here.
 """
 
 from __future__ import annotations

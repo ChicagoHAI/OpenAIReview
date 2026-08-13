@@ -1,13 +1,11 @@
 """Local window review: deep-check each chunk with surrounding context."""
 
-import json
-import re
 from datetime import date
 
 from .client import chat
 from .models import ReviewResult
 from .prompts import DEEP_CHECK_PROMPT, OCR_CAVEAT, OVERALL_FEEDBACK_PROMPT
-from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_response
 
 
 def split_into_paragraphs(text: str, min_chars: int = 100) -> list[str]:
@@ -120,17 +118,12 @@ def review_local(
             print(f"    WARNING: Empty response for chunk {chunk_idx+1}/{len(chunks)} "
                   f"(model={model}). No comments extracted from this chunk.")
         else:
-            arr_match = re.search(r"\[.*\]", response, re.DOTALL)
-            if arr_match:
-                try:
-                    items = json.loads(arr_match.group(0))
-                    new_comments = parse_comments_from_list(items)
-                    locate_comments_in_window(
-                        new_comments, chunk_idx, chunks, paragraphs, window_size,
-                    )
-                    all_comments.extend(new_comments)
-                except json.JSONDecodeError:
-                    pass
+            new_comments = parse_comments_from_response(response)
+            if new_comments:
+                locate_comments_in_window(
+                    new_comments, chunk_idx, chunks, paragraphs, window_size,
+                )
+                all_comments.extend(new_comments)
 
         print(f"    Chunk {chunk_idx+1}/{len(chunks)}: {len(all_comments)} comments so far")
 

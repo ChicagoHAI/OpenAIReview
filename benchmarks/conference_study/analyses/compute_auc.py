@@ -29,20 +29,14 @@ HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent  # benchmarks/conference_study/
 RESULTS_ROOT = REPO_ROOT / "results"
 
-COARSE_SEVERITY_MAP = {"critical": "major", "major": "moderate", "minor": "minor"}
-SEVERITY_TIERS = ("major", "moderate", "minor")
-
-
-def normalize_severity(method: str, raw: str | None) -> str | None:
-    """Map a raw severity label to {major, moderate, minor}, or None if absent
-    or unrecognized. coarse's {critical, major, minor} is remapped so tiers are
-    comparable across systems."""
-    if not raw:
-        return None
-    raw = raw.lower()
-    if method == "coarse":
-        return COARSE_SEVERITY_MAP.get(raw)
-    return raw if raw in SEVERITY_TIERS else None
+# Severity normalization lives in benchmarks/perturbation/_severity.py so the
+# perturbation adapters and these analyses use one source of truth.
+sys.path.insert(0, str(HERE.parents[1] / "perturbation"))
+from _severity import (  # noqa: E402
+    COARSE_SEVERITY_MAP,
+    TIERS as SEVERITY_TIERS,
+    normalize_severity,
+)
 
 
 def load_manifest(path: Path) -> dict[str, list[dict]]:

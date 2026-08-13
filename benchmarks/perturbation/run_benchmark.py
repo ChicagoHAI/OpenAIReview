@@ -98,6 +98,11 @@ class Config:
     review_mode: str = field(default="author", metadata={"choices": ["author", "journal"]})
     poll_interval_s: float = 5.0
     poll_timeout_s: float = 1200.0
+    # Cap pages of the rendered PDF sent to R3. None = no cap. Used because
+    # the token-truncated staged file often isn't valid LaTeX; we compile the
+    # FULL pre-truncation source and trim by pages instead (matches the
+    # max_pages: 20 convention in conference_study/configs/coarse.yaml).
+    max_pages: int | None = None
     # Legacy aliases (read on load, normalized into models/methods).
     review_models: list[str] = field(default_factory=list)
     review_methods: list[str] = field(default_factory=list)

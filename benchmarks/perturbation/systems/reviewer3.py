@@ -30,6 +30,15 @@ class Reviewer3System(System):
 
     def build_jobs(self, units, cfg, results_dir):
         domain = results_dir.name
+        overrides = {
+            k: cfg[k] for k in ("review_mode", "poll_interval_s", "poll_timeout_s")
+            if k in cfg and cfg[k] is not None
+        }
+        # We compile the FULL (pre-truncation) source for R3 — the token-cut
+        # staged file frequently isn't valid LaTeX (chops mid-environment).
+        # `max_pages` then trims the rendered PDF so R3 still sees roughly the
+        # same content window as coarse (which uses max_pages: 20).
+        max_pages = cfg.get("max_pages")
         out: list[tuple[CellKey, ReviewJob]] = []
         for u in units:
             if not u.staged_corrupted.exists():
@@ -42,10 +51,21 @@ class Reviewer3System(System):
                     continue
                 out_json.unlink()
             tag = f"{domain}/{u.paper_label}/{u.error_type}/{REVIEWER3_SLUG}"
+            # Persist the R3 sessionId next to the review JSON. If a prior
+            # run was killed mid-poll, the next run resumes that session
+            # instead of creating a duplicate (~34% credit waste observed
+            # without this).
+            sid_file = review_dir / f"{u.staged_corrupted.stem}.sid"
             job = ReviewJob(
                 tag=tag, out_json=out_json, review_dir=review_dir,
                 paper_label=f"{u.error_type}/{u.paper_label}",
-                payload={"paper": u.staged_corrupted},
+                payload={
+                    "paper": u.staged_corrupted,
+                    "source": u.src_corrupted,
+                    "max_pages": max_pages,
+                    "sid_file": sid_file,
+                    "overrides": overrides,
+                },
             )
             out.append(((REVIEWER3_SLUG,), job))
         return out
@@ -54,12 +74,16 @@ class Reviewer3System(System):
         if not jobs:
             return []
         cfg = reviewer3_adapter.config_from_env()
-        # cfg overrides come from the caller via run_jobs_with_cfg; default cfg is fine here.
+        for k, v in jobs[0].payload.get("overrides", {}).items():
+            setattr(cfg, k, v)
         adapter_jobs = [
             reviewer3_adapter.Reviewer3Job(
                 paper=j.payload["paper"],
                 out_json=j.out_json,
                 paper_label=j.tag,
+                source=j.payload.get("source"),
+                max_pages=j.payload.get("max_pages"),
+                sid_file=j.payload.get("sid_file"),
             )
             for j in jobs
         ]

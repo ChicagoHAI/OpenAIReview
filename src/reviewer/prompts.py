@@ -25,6 +25,11 @@ concerned you, what you checked to resolve it, and what specifically remains pro
 Acknowledge what the authors got right before noting the issue. Reference standard results \
 or conventions in the field when relevant."""
 
+SUGGESTION_STYLE = """\
+For each issue, include a concrete "suggestion" field. The suggestion should tell authors what \
+specific revision, check, derivation, experiment, caveat, or clarification would address the issue. \
+Avoid generic advice such as "clarify this" unless it names exactly what should be clarified."""
+
 LENIENCY_RULES = """\
 Be lenient with:
 - Introductory and overview sections, which intentionally simplify or gloss over details
@@ -56,6 +61,7 @@ Return ONLY a JSON array (can be []). Each item:
 - "title": concise title of the issue
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
+- "suggestion": concrete, actionable revision the authors could make to address the issue
 - "type": "technical" or "logical"
 """
 
@@ -68,6 +74,7 @@ Return a JSON object with this structure:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "suggestion": "concrete, actionable revision the authors could make to address the issue",
       "type": "technical" or "logical"
     }}}}
   ]
@@ -95,6 +102,8 @@ PASSAGE TO CHECK:
 
 {EXPLANATION_STYLE}
 
+{SUGGESTION_STYLE}
+
 {LENIENCY_RULES}
 
 {DO_NOT_FLAG_CHUNKED}
@@ -117,6 +126,8 @@ PASSAGE TO CHECK:
 {CHECK_CRITERIA}
 
 {EXPLANATION_STYLE}
+
+{SUGGESTION_STYLE}
 
 {LENIENCY_RULES}
 
@@ -145,6 +156,8 @@ Carefully check for:
 
 {EXPLANATION_STYLE}
 
+{SUGGESTION_STYLE}
+
 {LENIENCY_RULES}
 
 {DO_NOT_FLAG_BASE}
@@ -157,6 +170,7 @@ Return a JSON object with this structure:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "suggestion": "concrete, actionable revision the authors could make to address the issue",
       "type": "technical" or "logical"
     }}}}
   ]
@@ -190,6 +204,8 @@ Carefully check for:
 
 {EXPLANATION_STYLE}
 
+{SUGGESTION_STYLE}
+
 {LENIENCY_RULES}
 
 {DO_NOT_FLAG_CHUNKED}
@@ -202,6 +218,7 @@ Return a JSON object:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "suggestion": "concrete, actionable revision the authors could make to address the issue",
       "type": "technical" or "logical"
     }}}}
   ]
@@ -291,4 +308,3 @@ and most significant issues.
 PAPER (first 8000 characters):
 {paper_start}
 """
-

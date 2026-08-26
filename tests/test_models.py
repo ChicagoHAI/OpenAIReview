@@ -14,6 +14,19 @@ def test_comment_to_dict_no_paragraph():
     c = Comment(title="Bug", quote="x", explanation="y", comment_type="logical")
     d = c.to_dict()
     assert "paragraph_index" not in d
+    assert "suggestion" not in d
+
+
+def test_comment_to_dict_with_suggestion():
+    c = Comment(
+        title="Bug",
+        quote="x",
+        explanation="y",
+        comment_type="logical",
+        suggestion="Clarify the claim and add a supporting citation.",
+    )
+    d = c.to_dict()
+    assert d["suggestion"] == "Clarify the claim and add a supporting citation."
 
 
 def test_review_result_num_comments():

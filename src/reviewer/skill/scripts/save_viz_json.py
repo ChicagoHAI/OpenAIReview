@@ -7,7 +7,7 @@ Usage:
 Expects these files in the review workspace:
     metadata.json          -- {"title": "...", "slug": "..."}
     full_text.md           -- complete paper text
-    final_issues.json      -- array of {title, quote, explanation, comment_type, severity}
+    final_issues.json      -- array of {title, quote, explanation, suggestion, comment_type, severity}
     overall_assessment.txt -- overall assessment paragraph (optional)
 
 Merges with existing review_results/<slug>.json if present, preserving other methods.
@@ -62,6 +62,7 @@ def main():
             "title": issue.get("title", "Untitled"),
             "quote": quote,
             "explanation": issue.get("explanation", ""),
+            "suggestion": issue.get("suggestion", ""),
             "comment_type": issue.get("comment_type", "technical"),
             "severity": issue.get("severity", "moderate"),
             "paragraph_index": para_idx,

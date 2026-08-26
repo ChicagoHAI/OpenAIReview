@@ -21,7 +21,10 @@ def count_tokens(text: str) -> int:
     enc = _get_encoding()
     if enc is None:
         return len(text) // 4
-    return len(enc.encode(text, disallowed_special=()))
+    try:
+        return len(enc.encode(text, disallowed_special=()))
+    except TypeError:
+        return len(enc.encode(text))
 
 
 def truncate_text(text: str, max_tokens: int) -> str:
@@ -29,7 +32,10 @@ def truncate_text(text: str, max_tokens: int) -> str:
     enc = _get_encoding()
     if enc is None:
         return text[: max_tokens * 4]
-    tokens = enc.encode(text, disallowed_special=())[:max_tokens]
+    try:
+        tokens = enc.encode(text, disallowed_special=())[:max_tokens]
+    except TypeError:
+        tokens = enc.encode(text)[:max_tokens]
     return enc.decode(tokens)
 
 
@@ -194,6 +200,7 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
         title = item.get("title", item.get("name", "Untitled"))
         quote = item.get("quote", item.get("flagged_text", item.get("text", "")))
         explanation = item.get("explanation", item.get("message", item.get("comment", "")))
+        suggestion = item.get("suggestion", item.get("fix", item.get("recommendation", "")))
         comment_type = item.get("type", item.get("comment_type", "logical")).lower()
         if comment_type not in ("technical", "logical"):
             comment_type = "technical" if any(
@@ -210,6 +217,7 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
             quote=quote,
             explanation=explanation,
             comment_type=comment_type,
+            suggestion=suggestion,
             paragraph_index=paragraph_index,
         ))
     return comments
@@ -250,12 +258,13 @@ def _extract_comments_fallback(text: str) -> list[Comment]:
     """Recover comment objects from malformed JSON-ish output.
 
     This is intentionally schema-specific and only targets the comment shape
-    emitted by our prompts: title, quote, explanation, type.
+    emitted by our prompts: title, quote, explanation, optional suggestion, type.
     """
     pattern = re.compile(
         r'\{\s*"title"\s*:\s*"(?P<title>.*?)"\s*,\s*'
         r'"quote"\s*:\s*"(?P<quote>.*?)"\s*,\s*'
         r'"explanation"\s*:\s*"(?P<explanation>.*?)"\s*,\s*'
+        r'(?:"suggestion"\s*:\s*"(?P<suggestion>.*?)"\s*,\s*)?'
         r'"type"\s*:\s*"(?P<type>technical|logical)"\s*\}',
         re.DOTALL,
     )
@@ -265,6 +274,7 @@ def _extract_comments_fallback(text: str) -> list[Comment]:
             "title": _decode_jsonish_string(match.group("title")).strip(),
             "quote": _decode_jsonish_string(match.group("quote")).strip(),
             "explanation": _decode_jsonish_string(match.group("explanation")).strip(),
+            "suggestion": _decode_jsonish_string(match.group("suggestion") or "").strip(),
             "type": match.group("type").strip(),
         })
     return parse_comments_from_list(items)

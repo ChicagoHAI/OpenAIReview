@@ -10,6 +10,7 @@ class Comment:
     quote: str          # the flagged text from the paper
     explanation: str    # reviewer's explanation
     comment_type: str   # "technical" or "logical"
+    suggestion: str = ""  # concrete next step for improving the draft
     paragraph_index: int | None = None  # 0-based index in split paragraphs
 
     def to_dict(self) -> dict:
@@ -19,6 +20,8 @@ class Comment:
             "explanation": self.explanation,
             "comment_type": self.comment_type,
         }
+        if self.suggestion:
+            d["suggestion"] = self.suggestion
         if self.paragraph_index is not None:
             d["paragraph_index"] = self.paragraph_index
         return d

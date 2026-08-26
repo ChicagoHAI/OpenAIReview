@@ -32,6 +32,7 @@ Write findings as a JSON array. Each issue is a JSON object with these fields:
     title            -- short descriptive title
     quote            -- exact verbatim quote from the paper, character-for-character, preserving any LaTeX
     explanation      -- your reasoning
+    suggestion       -- concrete revision or next step the authors can take to address the issue
     comment_type     -- "technical" or "logical" (will be reclassified during consolidation)
     confidence       -- "high", "medium", or "low"
     source_section   -- section name where issue appears

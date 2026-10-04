@@ -1,4 +1,4 @@
-"""API client with support for OpenRouter, OpenAI, Anthropic, Gemini, and Mistral."""
+"""API client with support for OpenRouter, Requesty, OpenAI, Anthropic, Gemini, and Mistral."""
 
 import os
 import sys
@@ -15,6 +15,7 @@ except ImportError:
 # Provider configs: (env_var, base_url or None for default, model_prefix_to_strip)
 PROVIDERS = {
     "openrouter": ("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1", None),
+    "requesty": ("REQUESTY_API_KEY", "https://router.requesty.ai/v1", None),
     "openai": ("OPENAI_API_KEY", None, None),
     "anthropic": ("ANTHROPIC_API_KEY", "https://api.anthropic.com/v1/", "anthropic/"),
     "gemini": ("GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai/", "google/"),
@@ -22,7 +23,7 @@ PROVIDERS = {
 }
 
 # Auto-detection priority order
-PROVIDER_PRIORITY = ["openrouter", "openai", "anthropic", "gemini", "mistral"]
+PROVIDER_PRIORITY = ["openrouter", "requesty", "openai", "anthropic", "gemini", "mistral"]
 
 # Model prefix → native provider mapping (for smart auto-detection)
 MODEL_VENDOR_TO_PROVIDER = {

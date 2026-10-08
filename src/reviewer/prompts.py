@@ -48,6 +48,12 @@ Do NOT flag:
 DO_NOT_FLAG_CHUNKED = DO_NOT_FLAG_BASE.rstrip() + """
 - Incomplete text at passage boundaries"""
 
+SEVERITY_RUBRIC = """\
+For each issue, assign a "severity" tier:
+- "major": undermines a key claim, methodology, or comparison; affects conclusions
+- "moderate": real error or gap, but localized and fixable
+- "minor": framing concern, mild overclaim, or ambiguity resolvable from context"""
+
 DO_NOT_FLAG_PROGRESSIVE = DO_NOT_FLAG_CHUNKED.rstrip() + """
 - Notation not yet in the summary — it may be introduced later"""
 
@@ -57,6 +63,7 @@ Return ONLY a JSON array (can be []). Each item:
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
 - "type": "technical" or "logical"
+- "severity": "minor", "moderate", or "major"
 """
 
 JSON_OBJECT_OUTPUT = """\
@@ -98,6 +105,8 @@ PASSAGE TO CHECK:
 {LENIENCY_RULES}
 
 {DO_NOT_FLAG_CHUNKED}
+
+{SEVERITY_RUBRIC}
 
 {JSON_ARRAY_OUTPUT}"""
 
@@ -149,6 +158,8 @@ Carefully check for:
 
 {DO_NOT_FLAG_BASE}
 
+{SEVERITY_RUBRIC}
+
 Return a JSON object with this structure:
 {{{{
   "overall_feedback": "One paragraph high-level assessment of the paper's quality and main issues",
@@ -157,7 +168,8 @@ Return a JSON object with this structure:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
     }}}}
   ]
 }}}}
@@ -194,6 +206,8 @@ Carefully check for:
 
 {DO_NOT_FLAG_CHUNKED}
 
+{SEVERITY_RUBRIC}
+
 Return a JSON object:
 {{{{
   "overall_feedback": "brief assessment of this section",
@@ -202,7 +216,8 @@ Return a JSON object:
       "title": "short descriptive title of the issue",
       "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
       "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
-      "type": "technical" or "logical"
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major"
     }}}}
   ]
 }}}}

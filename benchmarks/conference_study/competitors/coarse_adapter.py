@@ -65,13 +65,14 @@ class CoarseAdapter(CompetitorAdapter):
         return f"coarse__{model_short(model)}"
 
     def review(self, pdf: Path, model: str, cfg: dict) -> NormalizedReview:
-        venv_python = cfg.get("venv_python")
+        venv_python = cfg.get("venv_python") or os.environ.get("COARSE_VENV_PYTHON")
         if not venv_python:
             raise RuntimeError(
-                "coarse adapter requires `venv_python` in config "
-                "(path to the coarse venv's python executable)"
+                "coarse adapter needs the coarse venv's python: set the "
+                "COARSE_VENV_PYTHON env var, or `venv_python` in the config. "
+                "See benchmarks/conference_study/README.md for coarse setup."
             )
-        venv_python = str(Path(venv_python).expanduser())
+        venv_python = str(Path(os.path.expandvars(venv_python)).expanduser())
         if not Path(venv_python).exists():
             raise RuntimeError(f"coarse venv python not found: {venv_python}")
 

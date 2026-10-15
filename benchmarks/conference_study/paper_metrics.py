@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_MANIFEST = HERE / "manifests" / "combined.json"
+DEFAULT_MANIFEST = HERE / "manifests" / "canonical" / "full.json"
 
 # Make the openaireview package importable when running from this dir.
 sys.path.insert(0, str(HERE.parent.parent / "src"))

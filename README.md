@@ -1,10 +1,10 @@
 # OpenAIReview
 
-[![PyPI version](https://img.shields.io/pypi/v/openaireview.svg)](https://pypi.org/project/openaireview/)
+[PyPI version](https://pypi.org/project/openaireview/)
 
 Our goal is provide thorough and detailed reviews to help researchers conduct the best research. See more examples [here](https://openaireview.github.io/).
 
-![Example](assets/example.png)
+Example
 
 ## Installation
 
@@ -14,11 +14,13 @@ uv venv && uv pip install openaireview
 ```
 
 For fast PDF processing (requires `MISTRAL_API_KEY`):
+
 ```bash
 uv pip install "openaireview[mistral]"
 ```
 
 For development:
+
 ```bash
 git clone https://github.com/ChicagoHAI/OpenAIReview.git
 cd OpenAIReview
@@ -42,12 +44,14 @@ uv venv && uv pip install -e .
 
 PDF extraction quality matters — math symbols, tables, and reading order all affect review quality. Four engines are supported, tried in order:
 
-| Engine | Install | Best for | Notes |
-|--------|---------|----------|-------|
-| **Mistral OCR** | `pip install "openaireview[mistral]"` + set `MISTRAL_API_KEY` | Best overall quality, math, tables | Cloud API, ~$0.001/page |
-| **DeepSeek OCR** | `pip install "openaireview[deepseek]"` + local backend | Privacy-sensitive docs | Local model via Ollama/vLLM |
-| **Marker** | `uv tool install marker-pdf --with psutil` | Math-heavy PDFs (offline) | Slow without GPU |
-| **pymupdf4llm** | (included) | Fallback, always available | No math symbol support |
+
+| Engine           | Install                                                       | Best for                           | Notes                       |
+| ---------------- | ------------------------------------------------------------- | ---------------------------------- | --------------------------- |
+| **Mistral OCR**  | `pip install "openaireview[mistral]"` + set `MISTRAL_API_KEY` | Best overall quality, math, tables | Cloud API, ~$0.001/page     |
+| **DeepSeek OCR** | `pip install "openaireview[deepseek]"` + local backend        | Privacy-sensitive docs             | Local model via Ollama/vLLM |
+| **Marker**       | `uv tool install marker-pdf --with psutil`                    | Math-heavy PDFs (offline)          | Slow without GPU            |
+| **pymupdf4llm**  | (included)                                                    | Fallback, always available         | No math symbol support      |
+
 
 The engine is auto-detected: if `MISTRAL_API_KEY` is set, Mistral OCR is tried first; then DeepSeek (if installed); then Marker (if on PATH); finally pymupdf4llm. You can force a specific engine with `--ocr`:
 
@@ -96,34 +100,40 @@ openaireview serve
 
 Review an academic paper for technical and logical issues. Accepts a local file path or an arXiv URL.
 
-| Option | Default | Description |
-|---|---|---|
-| `--method` | `progressive` | Review method: `zero_shot`, `local`, `progressive`, `progressive_full` |
-| `--model` | `anthropic/claude-opus-4-6` | Model to use |
-| `--provider` | (auto) | LLM provider: `openrouter`, `openai`, `anthropic`, `gemini`, `mistral` |
-| `--ocr` | (auto) | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf` |
-| `--max-pages` | (all) | Only process first N pages of a PDF (saves OCR cost) |
-| `--max-tokens` | (all) | Truncate input text to first N tokens before review |
-| `--output-dir` | `./review_results` | Directory for output JSON files |
-| `--name` | (from filename) | Paper slug name |
+
+| Option         | Default                     | Description                                                            |
+| -------------- | --------------------------- | ---------------------------------------------------------------------- |
+| `--method`     | `progressive`               | Review method: `zero_shot`, `local`, `progressive`, `progressive_full` |
+| `--model`      | `anthropic/claude-opus-4-6` | Model to use                                                           |
+| `--provider`   | (auto)                      | LLM provider: `openrouter`, `openai`, `anthropic`, `gemini`, `mistral` |
+| `--ocr`        | (auto)                      | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf`             |
+| `--max-pages`  | (all)                       | Only process first N pages of a PDF (saves OCR cost)                   |
+| `--max-tokens` | (all)                       | Truncate input text to first N tokens before review                    |
+| `--output-dir` | `./review_results`          | Directory for output JSON files                                        |
+| `--name`       | (from filename)             | Paper slug name                                                        |
+
 
 ### `openaireview extract <file>`
 
 Run OCR extraction only and save as markdown with metadata frontmatter. Useful for a two-stage workflow: extract first, then review the markdown.
 
-| Option | Default | Description |
-|---|---|---|
-| `-o`, `--output` | `<file>.md` | Output markdown path |
-| `--ocr` | (auto) | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf` |
+
+| Option           | Default     | Description                                                |
+| ---------------- | ----------- | ---------------------------------------------------------- |
+| `-o`, `--output` | `<file>.md` | Output markdown path                                       |
+| `--ocr`          | (auto)      | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf` |
+
 
 ### `openaireview serve`
 
 Start a local visualization server to browse review results.
 
-| Option | Default | Description |
-|---|---|---|
+
+| Option          | Default            | Description                            |
+| --------------- | ------------------ | -------------------------------------- |
 | `--results-dir` | `./review_results` | Directory containing result JSON files |
-| `--port` | `8080` | Server port |
+| `--port`        | `8080`             | Server port                            |
+
 
 ## Supported Input Formats
 
@@ -135,15 +145,17 @@ Start a local visualization server to browse review results.
 
 ## Environment Variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `OPENROUTER_API_KEY` | | OpenRouter API key (supports all models) |
-| `OPENAI_API_KEY` | | OpenAI native API key |
-| `ANTHROPIC_API_KEY` | | Anthropic native API key |
-| `GEMINI_API_KEY` | | Google Gemini native API key |
-| `MISTRAL_API_KEY` | | Mistral API key (also used for Mistral OCR) |
-| `MODEL` | `anthropic/claude-opus-4-6` | Default model |
-| `REVIEW_PROVIDER` | (auto) | Force a specific LLM provider |
+
+| Variable             | Default                     | Description                                 |
+| -------------------- | --------------------------- | ------------------------------------------- |
+| `OPENROUTER_API_KEY` |                             | OpenRouter API key (supports all models)    |
+| `OPENAI_API_KEY`     |                             | OpenAI native API key                       |
+| `ANTHROPIC_API_KEY`  |                             | Anthropic native API key                    |
+| `GEMINI_API_KEY`     |                             | Google Gemini native API key                |
+| `MISTRAL_API_KEY`    |                             | Mistral API key (also used for Mistral OCR) |
+| `MODEL`              | `anthropic/claude-opus-4-6` | Default model                               |
+| `REVIEW_PROVIDER`    | (auto)                      | Force a specific LLM provider               |
+
 
 Set one API key. The provider is auto-detected from whichever key is set (priority: OpenRouter > OpenAI > Anthropic > Gemini > Mistral). See `.env.example` for a template.
 
@@ -151,12 +163,14 @@ Set one API key. The provider is auto-detected from whichever key is set (priori
 
 All models available on [OpenRouter](https://openrouter.ai) are supported — use any model ID via `--model`. The following models have built-in pricing for accurate cost tracking in the visualization:
 
-| Model | Input ($/1M tokens) | Output ($/1M tokens) |
-|---|---|---|
-| `anthropic/claude-opus-4-6` | $5.00 | $25.00 |
-| `anthropic/claude-opus-4-5` | $5.00 | $25.00 |
-| `openai/gpt-5.2-pro` | $21.00 | $168.00 |
-| `google/gemini-3.1-pro-preview` | $2.00 | $12.00 |
+
+| Model                           | Input ($/1M tokens) | Output ($/1M tokens) |
+| ------------------------------- | ------------------- | -------------------- |
+| `anthropic/claude-opus-4-6`     | $5.00               | $25.00               |
+| `anthropic/claude-opus-4-5`     | $5.00               | $25.00               |
+| `openai/gpt-5.2-pro`            | $21.00              | $168.00              |
+| `google/gemini-3.1-pro-preview` | $2.00               | $12.00               |
+
 
 For models not listed above, a default rate of $5.00/$25.00 per 1M tokens is used.
 
@@ -212,59 +226,50 @@ uv pip install -e ".[benchmarks]"
 export OPENROUTER_API_KEY=...
 ```
 
-Run scripts from inside each benchmark's directory unless noted.
+Run scripts from inside each benchmark's directory unless otherwise noted.
 
-### Outcomes study (`benchmarks/conference_study/`)
+### Quality-proxy study (`benchmarks/conference_study/`)
 
-Compares OpenAIReview output on accepted vs. rejected conference submissions. Papers are sampled via the 4-pair SNOR signal matrix (top-cited vs. never-published, awarded vs. rejected, top vs. bottom scores, and a composed pair).
+Tests whether AI review systems comment more on weaker papers than on stronger ones. Papers are split into high- and low-quality groups by four quality proxies built from citations, venue awards, review scores, and a composite of the three. `configs/baseline.yaml` (our system) and `coarse.yaml` (coarse, an external review system) are the committed example configs.
 
 ```bash
 cd benchmarks/conference_study
 
-# 1. Build manifests (manifests/v1/{pair_1..4,combined}.json)
-python select_papers.py --venues iclr neurips --years 2021 2022
+# 1. Build the canonical paper manifest from SNOR (deterministic; downloads ~448 MB once)
+python select_papers.py        # writes manifests/canonical/
 
-# 2. Download PDFs flat under papers/scaleup/, write pages back into the manifest
-python download_papers.py --source snor
+# 2. Download PDFs into papers/, writing pages back into the manifest
+python download_papers.py --source snor --manifest manifests/canonical/full.json
 
-# 3. Optional cost preview (drops PDF parsing; estimate = pages × tokens_per_page × multipliers)
-python estimate_cost.py --config configs/scaleup_progressive.yaml
+# 3. Optional cost preview (estimate = pages × tokens_per_page × multipliers)
+python estimate_cost.py --config configs/baseline.yaml
 
-# 4. Run OpenAIReview and/or competitor systems on the same paper × model grid
-python run_study.py       --config configs/scaleup_progressive.yaml
-python run_competitors.py --config configs/coarse_v2.yaml
+# 4. Run our system and/or external systems on the same paper × model grid
+python run_study.py       --config configs/baseline.yaml
+python run_competitors.py --config configs/coarse.yaml
 
-# 5. Aggregate
-python analyses/report_scaleup.py results/scaleup_progressive
+# 5. Aggregate into the tables reported in the paper
+python analyses/generate_report.py --config configs/baseline.yaml
 ```
 
-`run_study.py` and `run_competitors.py` are idempotent — rerunning skips paper × model combos already complete. Per-paper locks let multiple models share the same result JSON. See `benchmarks/conference_study/README.md` for the config schema, concurrency model, and result format.
+The full 197-paper set regenerates from `select_papers.py`. The 74-paper frontier subset the paper mainly reports on has no regeneration script; download it (bundled with the full manifest) from [Google Drive](https://drive.google.com/file/d/1mor434X2tTJKBYsNXgdpxPW7guzqbJAV/view?usp=sharing) (or `gdown 1mor434X2tTJKBYsNXgdpxPW7guzqbJAV`) and unzip inside `benchmarks/conference_study/`. `run_study.py` and `run_competitors.py` are idempotent, so rerunning skips paper × model combos already complete. See `benchmarks/conference_study/README.md` for more details, include how to run `coarse`.
 
 ### Perturbation benchmark (`benchmarks/perturbation/`)
 
-Injects controlled errors (math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures per-comment recall by error type and domain.
+Injects controlled errors (surface math edits, false claims, faulty reasoning, experimental flaws) into clean papers and measures recall by model, method, and error category.
 
-Pipeline: `extract → generate → validate → verify → inject → review → score`. `run_benchmark.py` drives all stages from a single YAML.
+Pipeline: `extract → generate → validate → verify → inject → review → score`.
+
+We ship the perturbed papers used in the paper, so the generation pipeline (everything through inject) is optional. The recommended way to reproduce is to download and unzip the released set ([Google Drive](https://drive.google.com/file/d/10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3/view?usp=sharing), or `gdown 10tI0prXCDtyBFv_gdHFlU0i7SWN3zMr3`) inside `benchmarks/perturbation/` so it lands at `data/perturbations_filtered/`, then run every paper domain at once with the committed per-domain configs:
 
 ```bash
 cd benchmarks/perturbation
-
-# One-shot: prepare papers, run reviews, score against the perturbation manifest
-python run_benchmark.py configs/default.yaml
-
-# Or run a subset of stages
-python run_benchmark.py configs/default.yaml --stages prepare,review
-python run_benchmark.py configs/default.yaml --stages score
-
-# Multi-config sweep with parallel workers reused across configs
-python run_benchmark.py --configs configs/full_*.yaml \
-    --parallel-openaireview 2 --parallel-coarse 8
-
-# Aggregate recall tables across all (paper, model, method) cells
-python generate_report.py results/
+python run_benchmark.py --configs configs/full_*.yaml --stages prepare,review,score,report
 ```
 
-The config picks the review system per run via `system: openaireview | coarse | reviewer3`; adapter setup for third-party systems is in `systems/README.md`. Scoring uses a two-stage filter: a fuzzy substring match on the perturbed text against the comment quote, then an LLM judge rating (≥3/5) on whether the explanation identifies the same error. See `benchmarks/perturbation/README.md` for error-type taxonomy, results layout, and known limitations.
+The config picks the review system per run via `system: openaireview | coarse | reviewer3` (adapter setup for the external systems is in `systems/README.md`). A comment counts as a detection when it passes two stages: a fuzzy substring match (the perturbed text covers the comment quote), then an LLM judge rating (a 1-5 score >= 3) on whether the explanation identifies the same error.
+
+To regenerate a fresh perturbed set instead, see `benchmarks/perturbation/README.md`, which documents the full generation pipeline, error taxonomy, config schema, dataset layout, and results layout.
 
 ## Related Resources
 

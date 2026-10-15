@@ -2,7 +2,7 @@
 """Pair-grouped report for the 4-pair signal-matrix scale-up.
 
 Reads:
-    manifests/combined.json      paper list + pair_memberships + word_count
+    manifests/canonical/full.json      paper list + pair_memberships + word_count
     results/<name>/<slug>.json   methods dict with <method>__<model> keys
 
 Emits one markdown table per pair showing high-tail vs low-tail comment
@@ -27,7 +27,7 @@ from pathlib import Path
 from statistics import mean
 
 HERE = Path(__file__).resolve().parent
-MANIFEST = HERE / "manifests" / "combined.json"
+MANIFEST = HERE / "manifests" / "canonical" / "full.json"
 RESULTS_BASE = HERE / "results"
 BASELINE_MANIFEST = HERE / "manifest.json"
 

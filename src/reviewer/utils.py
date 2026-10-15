@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 
 import tiktoken
 
-from .models import Comment
+from .models import Comment, SEVERITY_VALUES
 
 
 def _get_encoding():
@@ -205,6 +205,11 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
         paragraph_index = item.get("paragraph_index", None)
         if paragraph_index is not None:
             paragraph_index = int(paragraph_index)
+        severity = item.get("severity")
+        if isinstance(severity, str):
+            severity = severity.strip().lower()
+        if severity not in SEVERITY_VALUES:
+            severity = "moderate"
         suggested_fix = item.get("suggested_fix", "") or ""
         comments.append(Comment(
             title=title,
@@ -212,6 +217,7 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
             explanation=explanation,
             comment_type=comment_type,
             paragraph_index=paragraph_index,
+            severity=severity,
             suggested_fix=suggested_fix,
         ))
     return comments

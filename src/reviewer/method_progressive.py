@@ -2,32 +2,52 @@
 
 Processes the paper sequentially, maintaining a running summary of definitions,
 equations, theorems, and key claims. For each passage:
-  1. (Optional) Pre-filter to skip non-substantial content
+  1. (Optional) Pre-filter to skip non-technical content
   2. Deep-check: running summary + window context + passage → find errors
   3. Summary update: current summary + passage → updated summary
   4. Post-hoc consolidation: one final call to deduplicate and prune low-confidence issues
 """
 
 import json
-import re
 from datetime import date
 
 from .client import chat
 from .models import ReviewResult
 from .prompts import (
     CONSOLIDATION_PROMPT,
-    DEEP_CHECK_PROMPT,
+    DEEP_CHECK_PROGRESSIVE_PROMPT as DEEP_CHECK_PROMPT,
     OCR_CAVEAT,
     OVERALL_FEEDBACK_PROMPT,
     SUMMARY_UPDATE_PROMPT,
-    SUBSTANTIAL_FILTER_PROMPT,
+    TECHNICAL_FILTER_PROMPT,
 )
-from .utils import count_tokens, locate_comments_in_window, parse_comments_from_list, split_into_paragraphs
+from .utils import count_tokens, locate_comments_in_window, parse_comments_from_response
 
 
 # ---------------------------------------------------------------------------
 # Paragraph / passage helpers
 # ---------------------------------------------------------------------------
+
+def split_into_paragraphs(text: str, min_chars: int = 100) -> list[str]:
+    """Split document into paragraphs, merging short ones with the next."""
+    raw = [p.strip() for p in text.split("\n\n") if p.strip()]
+    paragraphs: list[str] = []
+    carry = ""
+    for p in raw:
+        if carry:
+            p = carry + "\n\n" + p
+            carry = ""
+        if len(p) < min_chars:
+            carry = p
+        else:
+            paragraphs.append(p)
+    if carry:
+        if paragraphs:
+            paragraphs[-1] = paragraphs[-1] + "\n\n" + carry
+        else:
+            paragraphs.append(carry)
+    return paragraphs
+
 
 def merge_into_passages(
     paragraphs: list[str],
@@ -114,14 +134,14 @@ def update_running_summary(
     return updated
 
 
-def is_substantial_passage(
+def is_technical_passage(
     passage_text: str,
     model: str,
     result: ReviewResult,
     reasoning_effort: str | None = None,
 ) -> bool:
-    """Use the model to decide if a passage has substantial content worth checking."""
-    prompt = SUBSTANTIAL_FILTER_PROMPT.format(passage=passage_text[:2000])
+    """Use the model to decide if a passage has technical content worth checking."""
+    prompt = TECHNICAL_FILTER_PROMPT.format(passage=passage_text[:2000])
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
@@ -157,28 +177,19 @@ def consolidate_comments(
     result.total_prompt_tokens += usage["prompt_tokens"]
     result.total_completion_tokens += usage["completion_tokens"]
 
-    arr_match = re.search(r"\[.*\]", response, re.DOTALL)
-    if arr_match:
-        try:
-            items = json.loads(arr_match.group(0))
-            consolidated = parse_comments_from_list(items)
-            # Preserve paragraph_index and suggested_fix from original comments
-            # by matching quotes (safety net if consolidation drops either field)
-            orig_by_quote = {}
-            for c in comments:
-                orig_by_quote[c.quote[:200]] = (c.paragraph_index, c.suggested_fix)
-            for c in consolidated:
-                orig = orig_by_quote.get(c.quote[:200])
-                if orig is None:
-                    continue
-                orig_paragraph_index, orig_suggested_fix = orig
-                if c.paragraph_index is None:
-                    c.paragraph_index = orig_paragraph_index
-                if not c.suggested_fix and orig_suggested_fix:
-                    c.suggested_fix = orig_suggested_fix
-            return consolidated
-        except json.JSONDecodeError:
-            pass
+    consolidated = parse_comments_from_response(response)
+    if consolidated:
+        # Restore paragraph_index and suggested_fix from the original comment
+        # with the same quote, so each fix stays with the issue it was written for
+        orig_by_quote = {c.quote[:200]: c for c in comments}
+        for c in consolidated:
+            orig = orig_by_quote.get(c.quote[:200])
+            if orig is None:
+                continue
+            if c.paragraph_index is None:
+                c.paragraph_index = orig.paragraph_index
+            c.suggested_fix = orig.suggested_fix
+        return consolidated
 
     return comments  # fallback: return originals if parsing fails
 
@@ -192,14 +203,14 @@ def review_progressive(
     document_content: str,
     model: str = "anthropic/claude-opus-4-6",
     reasoning_effort: str | None = None,
-    skip_nonsubstantial: bool = False,
+    skip_nontechnical: bool = False,
     window_size: int = 3,
     ocr: bool = False,
 ) -> tuple[ReviewResult, ReviewResult]:
     """Review a paper using progressive summary approach.
 
     Processes the paper sequentially. For each passage:
-      1. (Optional) Pre-filter non-substantial content
+      1. (Optional) Pre-filter non-technical content
       2. Deep-check with running summary + window context
       3. Update the running summary
     Then consolidate all comments in a final pass.
@@ -229,10 +240,10 @@ def review_progressive(
         _, passage_text = passages[idx]
 
         # Step 0: Optional pre-filter
-        if skip_nonsubstantial:
-            if not is_substantial_passage(passage_text, model, result, reasoning_effort):
+        if skip_nontechnical:
+            if not is_technical_passage(passage_text, model, result, reasoning_effort):
                 skipped += 1
-                print(f"    Passage {idx+1}/{len(passages)}: SKIPPED (non-substantial)")
+                print(f"    Passage {idx+1}/{len(passages)}: SKIPPED (non-technical)")
                 # Still update summary even for skipped passages (may have definitions)
                 running_summary = update_running_summary(
                     current_summary=running_summary,
@@ -275,17 +286,12 @@ def review_progressive(
             print(f"    WARNING: Empty response for passage {idx+1}/{len(passages)} "
                   f"(model={model}). No comments extracted from this passage.")
         else:
-            arr_match = re.search(r"\[.*\]", response, re.DOTALL)
-            if arr_match:
-                try:
-                    items = json.loads(arr_match.group(0))
-                    new_comments = parse_comments_from_list(items)
-                    locate_comments_in_window(
-                        new_comments, idx, passages, paragraphs, window_size,
-                    )
-                    all_comments.extend(new_comments)
-                except json.JSONDecodeError:
-                    pass
+            new_comments = parse_comments_from_response(response)
+            if new_comments:
+                locate_comments_in_window(
+                    new_comments, idx, passages, paragraphs, window_size,
+                )
+                all_comments.extend(new_comments)
 
         print(f"    Passage {idx+1}/{len(passages)}: "
               f"{len(new_comments)} comments, "
@@ -303,8 +309,8 @@ def review_progressive(
             max_summary_tokens=max_summary_tokens,
         )
 
-    if skip_nonsubstantial:
-        print(f"  Skipped {skipped}/{len(passages)} non-substantial passages")
+    if skip_nontechnical:
+        print(f"  Skipped {skipped}/{len(passages)} non-technical passages")
 
     # Generate overall feedback
     paper_start = document_content[:8000]

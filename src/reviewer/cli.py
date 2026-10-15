@@ -95,11 +95,6 @@ def cmd_review(args: argparse.Namespace) -> None:
     method = args.method
     print(f"Running method: {method}...")
 
-    if args.skip_nonsubstantial == "true":
-        skip = True
-    else:
-        skip = False
-
     reasoning = getattr(args, "reasoning_effort", None)
 
     if method == "zero_shot":
@@ -117,7 +112,6 @@ def cmd_review(args: argparse.Namespace) -> None:
             slug, content,
             model=args.model,
             reasoning_effort=reasoning,
-            skip_nonsubstantial=skip,
             ocr=was_ocr,
         )
         result = full if method == "progressive_full" else consolidated
@@ -194,6 +188,7 @@ def _build_paper_json(
             "explanation": c.explanation,
             "comment_type": c.comment_type,
             "paragraph_index": c.paragraph_index,
+            "severity": c.severity,
         }
         if c.suggested_fix:
             comment_dict["suggested_fix"] = c.suggested_fix
@@ -414,7 +409,12 @@ def cmd_score(args: argparse.Namespace) -> None:
 
     print(f"Scoring {len(comments)} comments against {len(perturbations)} perturbations...")
 
-    result = score_review(perturbations, comments, model=args.model, method=args.method)
+    result = score_review(
+        perturbations, comments,
+        model=args.model, method=args.method,
+        threshold=args.threshold,
+        substring_gate=args.substring_gate,
+    )
 
     print(f"\n{'='*50}")
     print(f"PERTURBATION BENCHMARK RESULTS")
@@ -442,6 +442,9 @@ def cmd_score(args: argparse.Namespace) -> None:
         "n_detected": result.n_detected,
         "recall": result.recall,
         "n_total_comments": result.n_total_comments,
+        "match_mode": args.method,
+        "threshold": args.threshold,
+        "substring_gate": args.substring_gate,
         "detected": result.detected,
         "missed": result.missed,
     }
@@ -561,12 +564,6 @@ def main() -> None:
         choices=["none", "low", "medium", "high"],
         default=None,
         help="Reasoning effort level (default: adaptive/auto)",
-    )
-    review_parser.add_argument(
-        "--skip-nonsubstantial",
-        choices=["true", "false"],
-        default="false",
-        help="Skip non-substantial passages (default: false)",
     )
     review_parser.add_argument(
         "--ocr",
@@ -703,6 +700,14 @@ def main() -> None:
     score_parser.add_argument(
         "--method", choices=["llm", "fuzzy", "semantic"], default="llm",
         help="Score method (default: llm)",
+    )
+    score_parser.add_argument(
+        "--threshold", type=int, default=3,
+        help="LLM-judge minimum score (1-5) to count as detected (default: 3, llm method only)",
+    )
+    score_parser.add_argument(
+        "--substring-gate", action="store_true",
+        help="Skip LLM judge for (comment, perturbation) pairs whose quote has no meaningful overlap with the perturbed text (llm method only)",
     )
     # install-skill subcommand
     install_parser = subparsers.add_parser(

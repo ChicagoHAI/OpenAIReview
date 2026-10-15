@@ -10,33 +10,9 @@ For each (method, model) found in the supplied result directories, computes:
   - Per-tier AUC (major, moderate, minor) using the same pair-hit definition
     on per-tier comment counts.
   - Mean comments per paper on the high and low groups, Δ, % increase.
-  - Paper coverage and pair-count denominator.
 
 \\coarse's native {minor, major, critical} severity tiers are normalized to
-{minor, moderate, major} via {critical→major, major→moderate, minor→minor}
-so that severity AUCs are comparable across systems.
-
-The script keys papers by the full ``slug`` field from the manifest (not by
-forum-id prefix), since some forum-ids start with ``-`` and would collide
-under naive splitting.
-
-Usage:
-    # Frontier subset (Tables 1/2 in the paper)
-    python compute_auc.py \\
-        --manifest manifests/v2_frontier/combined.json \\
-        --dir frontier_subset_progressive frontier_subset_zero_shot \\
-              scaleup_v2_progressive scaleup_v2_zero_shot coarse_v2 \\
-              scaleup_v2_grok_progressive scaleup_v2_grok_zero_shot coarse_v2_grok
-
-    # Full 240-paper cohort (Tables 3/4 + appendix)
-    python compute_auc.py \\
-        --manifest manifests/v2/combined.json \\
-        --dir scaleup_v2_zero_shot scaleup_v2_progressive coarse_v2 \\
-              scaleup_v2_grok_zero_shot scaleup_v2_grok_progressive coarse_v2_grok
-
-    # Just one (method, model)
-    python compute_auc.py --manifest ... --dir ... \\
-        --method progressive_original --model grok-4.1-fast
+{minor, moderate, major} so that severity AUCs are comparable across systems.
 """
 from __future__ import annotations
 
@@ -47,6 +23,8 @@ from collections import defaultdict
 from pathlib import Path
 from statistics import mean
 
+import numpy as np
+
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent  # benchmarks/conference_study/
 RESULTS_ROOT = REPO_ROOT / "results"
@@ -56,6 +34,9 @@ SEVERITY_TIERS = ("major", "moderate", "minor")
 
 
 def normalize_severity(method: str, raw: str | None) -> str | None:
+    """Map a raw severity label to {major, moderate, minor}, or None if absent
+    or unrecognized. coarse's {critical, major, minor} is remapped so tiers are
+    comparable across systems."""
     if not raw:
         return None
     raw = raw.lower()
@@ -99,29 +80,27 @@ def load_counts(
     return counts
 
 
-def pair_auc(highs: list[int], lows: list[int]) -> tuple[float, int, int]:
-    """Returns (auc, strict_wins, total_pairs). 0.5 credit for ties."""
-    hits = 0.0
-    wins = 0
-    total = 0
-    for cl in lows:
-        for ch in highs:
-            if cl > ch:
-                hits += 1
-                wins += 1
-            elif cl == ch:
-                hits += 0.5
-            total += 1
-    return (hits / total if total else float("nan"), wins, total)
+def auc_from(highs, lows) -> tuple[float, float, int]:
+    """Pairwise-accuracy AUC over the high x low outer product.
+    """
+    high = np.asarray(highs); low = np.asarray(lows)
+    if high.size == 0 or low.size == 0:
+        return float("nan"), 0.0, 0
+    diff = low[:, None] - high[None, :]
+    hits = (diff > 0).sum() + 0.5 * (diff == 0).sum()
+    total = high.size * low.size
+    return hits / total, float(hits), total
 
 
 def cell_summary(
     counts_for_cell: dict[str, dict],
     slug_to_memberships: dict[str, list[dict]],
 ) -> dict:
-    """Compute per-cell summary stats. counts_for_cell is {slug: rec}."""
-    # Group counts by (pair, side) — for the Δ and AUC computations
-    by_pair: dict[int, dict[str, dict[str, list[int]]]] = defaultdict(
+    """Per-cell summary: comment means, Δ, % increase, and overall + per-tier
+    AUC, pooling hits and pairs across proxies. counts_for_cell is {slug: rec}."""
+    # Group counts by (proxy, side). "pair" is the manifest's field name for a
+    # quality proxy.
+    by_proxy: dict[int, dict[str, dict[str, list[int]]]] = defaultdict(
         lambda: {"high": {"total": [], "major": [], "moderate": [], "minor": []},
                  "low": {"total": [], "major": [], "moderate": [], "minor": []}}
     )
@@ -129,7 +108,7 @@ def cell_summary(
         for m in slug_to_memberships.get(slug, []):
             side = m["side"]
             for k in ("total", "major", "moderate", "minor"):
-                by_pair[m["pair"]][side][k].append(rec[k])
+                by_proxy[m["pair"]][side][k].append(rec[k])
 
     # Δ and means across the four (or fewer) proxies
     highs_means: list[float] = []
@@ -137,68 +116,48 @@ def cell_summary(
     deltas: list[float] = []
     auc_overall_hits = 0.0
     auc_overall_total = 0
-    auc_overall_wins = 0
-    auc_tier: dict[str, list[float]] = {t: [] for t in SEVERITY_TIERS}
     auc_tier_hits: dict[str, float] = {t: 0.0 for t in SEVERITY_TIERS}
     auc_tier_total: dict[str, int] = {t: 0 for t in SEVERITY_TIERS}
-    auc_tier_wins: dict[str, int] = {t: 0 for t in SEVERITY_TIERS}
 
-    for pid in sorted(by_pair):
-        h_total = by_pair[pid]["high"]["total"]
-        l_total = by_pair[pid]["low"]["total"]
-        if not h_total or not l_total:
+    for proxy_id in sorted(by_proxy):
+        high_total = by_proxy[proxy_id]["high"]["total"]
+        low_total = by_proxy[proxy_id]["low"]["total"]
+        if not high_total or not low_total:
             continue
-        h_mean = mean(h_total)
-        l_mean = mean(l_total)
-        highs_means.append(h_mean)
-        lows_means.append(l_mean)
-        deltas.append(l_mean - h_mean)
-        # Overall pair AUC
-        _, w, t = pair_auc(h_total, l_total)
-        auc_overall_wins += w
-        auc_overall_total += t
-        # accumulate by counting hits directly to avoid float-mean drift
-        for cl in l_total:
-            for ch in h_total:
-                if cl > ch:
-                    auc_overall_hits += 1
-                elif cl == ch:
-                    auc_overall_hits += 0.5
-        # Per-tier AUCs
+        high_mean = mean(high_total)
+        low_mean = mean(low_total)
+        highs_means.append(high_mean)
+        lows_means.append(low_mean)
+        deltas.append(low_mean - high_mean)
+        _, hits, total = auc_from(high_total, low_total)
+        auc_overall_hits += hits
+        auc_overall_total += total
         for tier in SEVERITY_TIERS:
-            ht = by_pair[pid]["high"][tier]
-            lt = by_pair[pid]["low"][tier]
-            for cl in lt:
-                for ch in ht:
-                    if cl > ch:
-                        auc_tier_hits[tier] += 1
-                        auc_tier_wins[tier] += 1
-                    elif cl == ch:
-                        auc_tier_hits[tier] += 0.5
-                    auc_tier_total[tier] += 1
+            _, tier_hits, tier_total = auc_from(by_proxy[proxy_id]["high"][tier],
+                                                by_proxy[proxy_id]["low"][tier])
+            auc_tier_hits[tier] += tier_hits
+            auc_tier_total[tier] += tier_total
 
     if not highs_means:
         return {}
 
-    h = mean(highs_means)
-    l = mean(lows_means)
-    d = mean(deltas)
-    pct = (d / h * 100) if h else float("nan")
+    c_high = mean(highs_means)
+    c_low = mean(lows_means)
+    delta = mean(deltas)
+    pct = (delta / c_high * 100) if c_high else float("nan")
     out = {
         "n_papers": len(counts_for_cell),
-        "c_high": h,
-        "c_low": l,
-        "delta": d,
+        "c_high": c_high,
+        "c_low": c_low,
+        "delta": delta,
         "pct_increase": pct,
         "auc_overall": auc_overall_hits / auc_overall_total if auc_overall_total else float("nan"),
-        "auc_overall_wins": auc_overall_wins,
         "auc_overall_total": auc_overall_total,
     }
     for tier in SEVERITY_TIERS:
-        tot = auc_tier_total[tier]
-        out[f"auc_{tier}"] = auc_tier_hits[tier] / tot if tot else float("nan")
-        out[f"auc_{tier}_wins"] = auc_tier_wins[tier]
-        out[f"auc_{tier}_total"] = tot
+        total = auc_tier_total[tier]
+        out[f"auc_{tier}"] = auc_tier_hits[tier] / total if total else float("nan")
+        out[f"auc_{tier}_total"] = total
     return out
 
 
@@ -207,7 +166,7 @@ def render_markdown(rows: list[tuple[str, str, dict]]) -> str:
     lines = []
     lines.append(
         "| method | model | n_papers | c_high | c_low | Δ | %inc | "
-        "AUC overall | AUC major | AUC mod | AUC minor | pairs |"
+        "AUC overall | AUC major | AUC moderate | AUC minor | pairs |"
     )
     lines.append(
         "|---|---|---|---|---|---|---|---|---|---|---|---|"
@@ -228,6 +187,8 @@ def render_markdown(rows: list[tuple[str, str, dict]]) -> str:
 
 
 def main() -> int:
+    """CLI: load the manifest and result dirs, compute each (method, model)
+    cell's point summary, and print them as a markdown table."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--manifest", required=True, type=Path, help="Path to manifest JSON (e.g., manifests/v2/combined.json).")
     p.add_argument("--dir", nargs="+", required=True, dest="dirs",

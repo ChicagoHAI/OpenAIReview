@@ -5,15 +5,16 @@ from reviewer.utils import _normalize_for_match, _quote_coverage
 from rapidfuzz import fuzz
 from sentence_transformers import SentenceTransformer, util
 
-# Fraction of the (normalized) perturbed string that must be covered by the
-# (normalized) comment quote. Same coverage notion used by
-# reviewer.utils.locate_comment_in_document.
 _FUZZY_QUOTE_THRESHOLD = 0.75
+_LLM_GATE_THRESHOLD = 0.7
 
-def score_review(perturbations: list[Perturbation], 
-                 review_comments: list[dict], 
-                 model: str, 
-                 method: str = "llm") -> PerturbationResult:
+
+def score_review(perturbations: list[Perturbation],
+                 review_comments: list[dict],
+                 model: str,
+                 method: str = "llm",
+                 threshold: int = 3,
+                 substring_gate: bool = False) -> PerturbationResult:
     n_injected = len(perturbations)
     n_total_comments = len(review_comments)
 
@@ -22,20 +23,24 @@ def score_review(perturbations: list[Perturbation],
 
     for p in perturbations:
         for comment in review_comments:
-            if not _substring_match(comment.get('quote', ''), p.perturbed):
-                continue 
-
-            if method == "llm":
-                explanation_match = _explanation_match_llm(comment.get('explanation', ''), p.why_wrong, model)
-            elif method == "fuzzy":
+            if substring_gate and not _llm_substring_gate(
+                    comment.get('quote', ''), p.perturbed
+                ):
+                    continue
+            if method == "fuzzy":
                 explanation_match = _explanation_match_fuzzy(comment.get('explanation', ''), p.why_wrong)
+            elif method == "llm":
+                explanation_match = _explanation_match_llm(
+                    comment.get('explanation', ''), p.why_wrong, model,
+                    threshold=threshold,
+                )
             elif method == "semantic":
                 explanation_match = _explanation_match_semantic(comment.get('explanation', ''), p.why_wrong)
 
             if explanation_match:
                 n_detected += 1
                 detected.append(p.perturbation_id)
-                break 
+                break
 
     missed = []
     for p in perturbations:
@@ -47,24 +52,20 @@ def score_review(perturbations: list[Perturbation],
     return PerturbationResult(n_injected=n_injected, n_detected=n_detected, recall=recall, n_total_comments=n_total_comments, detected=detected, missed=missed)
 
 
-def _substring_match(quote, perturbed) -> bool:
-    """Fuzzy substring match: True if `perturbed` is approximately contained
-    in `quote`. Tolerates dropped math delimiters, whitespace differences,
-    and minor formatting drift between the seeded perturbation and how a
-    reviewer ends up quoting the surrounding context.
-
-    Same normalize+coverage scheme used by
-    ``reviewer.utils.locate_comment_in_document``.
+def _llm_substring_gate(quote: str, perturbed: str,
+                        threshold: float = _LLM_GATE_THRESHOLD) -> bool:
+    """Cheap pre-filter for the `llm` method: True if a meaningful chunk of
+    the reviewer's quote overlaps the perturbed text.
     """
     if not quote or not perturbed:
         return False
     q = _normalize_for_match(quote)
     p = _normalize_for_match(perturbed)
-    if not p:
+    if not q or not p:
         return False
-    if p in q:
+    if q in p:
         return True
-    return _quote_coverage(p, q) >= _FUZZY_QUOTE_THRESHOLD
+    return _quote_coverage(q, p) >= threshold
 
 
 PROMPT = """
@@ -81,12 +82,12 @@ Reference description: {why_wrong}
 Reviewer explanation: {explanation}
 """
 
-def _explanation_match_llm(explanation, why_wrong, model) -> bool:
+def _explanation_match_llm(explanation, why_wrong, model, threshold: int = 3) -> bool:
     prompt = PROMPT.format(explanation=explanation, why_wrong=why_wrong)
     response, usage = chat(
         messages=[{"role": "user", "content": prompt}],
         model=model,
-        max_tokens=8192,
+        max_tokens=16,
     )
 
     try:
@@ -94,7 +95,7 @@ def _explanation_match_llm(explanation, why_wrong, model) -> bool:
     except ValueError:
         return False
 
-    return score >= 3
+    return score >= threshold
 
 def _explanation_match_fuzzy(explanation, why_wrong) -> bool:
     return fuzz.token_set_ratio(explanation, why_wrong) >= 70

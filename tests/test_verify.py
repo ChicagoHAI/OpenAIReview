@@ -27,6 +27,7 @@ def _make_perturbation(pid: str, span_id: str, quote: str = "some quote") -> Per
         error=Error.OPERATOR_OR_SIGN,
         original="original text",
         perturbed="perturbed text",
+        offset=0,
         why_wrong="it contradicts the quote",
         contradicts_quote=quote,
     )
@@ -42,6 +43,7 @@ def _make_span(
         span_type=SpanType.EQUATION_INLINE,
         text="x",
         context="",
+        offset=0,
         error_type="surface",
         related_passages=related or [],
         verifier_related_passages=verifier_related or [],
@@ -244,6 +246,7 @@ def _precheck_perturbation(orig: str, pert: str, err: Error = Error.OPERATOR_OR_
         error=err,
         original=orig,
         perturbed=pert,
+        offset=0,
         why_wrong="",
         contradicts_quote="q",
     )
@@ -251,7 +254,7 @@ def _precheck_perturbation(orig: str, pert: str, err: Error = Error.OPERATOR_OR_
 
 def test_structural_precheck_mixed_inequality_chain():
     p = _precheck_perturbation("$0 < w < L/2$", "$0 < w > L/2$")
-    status, reason = structural_precheck(p)
+    status, reason, _ = structural_precheck(p)
     assert status == "reject-typo"
     assert "mixed-direction" in reason
 
@@ -259,14 +262,14 @@ def test_structural_precheck_mixed_inequality_chain():
 def test_structural_precheck_broken_sandwich_ge_le():
     orig = r"\begin{align} a \le b \le c \end{align}"
     pert = r"\begin{align} a \ge b \le c \end{align}"
-    status, reason = structural_precheck(_precheck_perturbation(orig, pert))
+    status, reason, _ = structural_precheck(_precheck_perturbation(orig, pert))
     assert status == "reject-typo"
     assert "mixed-direction" in reason
 
 
 def test_structural_precheck_runaway_span():
     p = _precheck_perturbation("$\\Lambda_j$", "a" * 500)
-    status, reason = structural_precheck(p)
+    status, reason, _ = structural_precheck(p)
     assert status == "reject-typo"
     assert "runaway" in reason
 
@@ -275,7 +278,7 @@ def test_structural_precheck_escape_artifact():
     # Perturbed has literal '\n' (2-char backslash-n) where original has real newlines.
     orig = "$$\n    K = ...\n$$"
     pert = "$$\\n    K = ...\\n$$"
-    status, reason = structural_precheck(_precheck_perturbation(orig, pert, Error.INDEX_OR_SUBSCRIPT))
+    status, reason, _ = structural_precheck(_precheck_perturbation(orig, pert, Error.INDEX_OR_SUBSCRIPT))
     assert status == "reject-typo"
     assert "escape artifact" in reason
 
@@ -285,15 +288,15 @@ def test_structural_precheck_does_not_flag_latex_macros_starting_with_n_t_r():
     # escape-artifact rule even when they are newly introduced by the perturbation.
     for macro in (r"\neq", r"\nabla", r"\tau", r"\rightarrow", r"\top", r"\rm"):
         pert = f"$x = {macro}$"
-        status, _ = structural_precheck(_precheck_perturbation("$x = y$", pert))
+        status, _, _ = structural_precheck(_precheck_perturbation("$x = y$", pert))
         assert status == "keep", f"false positive on macro {macro!r}"
 
 
 def test_structural_precheck_keeps_clean_sign_flip():
-    status, _ = structural_precheck(_precheck_perturbation("$d > w/2$", "$d < w/2$"))
+    status, _, _ = structural_precheck(_precheck_perturbation("$d > w/2$", "$d < w/2$"))
     assert status == "keep"
 
 
 def test_structural_precheck_keeps_clean_numeric_change():
-    status, _ = structural_precheck(_precheck_perturbation("$10^{-6}$", "$10^{-3}$"))
+    status, _, _ = structural_precheck(_precheck_perturbation("$10^{-6}$", "$10^{-3}$"))
     assert status == "keep"

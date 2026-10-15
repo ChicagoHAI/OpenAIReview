@@ -22,6 +22,7 @@ def _make_span(text: str, span_id: str = "S0000") -> CandidateSpan:
         span_type=SpanType.EQUATION_INLINE,
         text=text,
         context="",
+        offset=0,
         error_type="surface",
     )
 

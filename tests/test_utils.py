@@ -24,7 +24,7 @@ def test_count_tokens_empty():
 
 def test_count_tokens_falls_back_when_model_encoding_init_fails(monkeypatch):
     class FakeEncoding:
-        def encode(self, text):
+        def encode(self, text, **_kwargs):
             return list(text.encode("utf-8"))
 
     def fail_encoding_for_model(_model):

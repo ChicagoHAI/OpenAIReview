@@ -210,6 +210,7 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
             severity = severity.strip().lower()
         if severity not in SEVERITY_VALUES:
             severity = "moderate"
+        suggested_fix = item.get("suggested_fix", "") or ""
         comments.append(Comment(
             title=title,
             quote=quote,
@@ -217,6 +218,7 @@ def parse_comments_from_list(items: list[dict]) -> list[Comment]:
             comment_type=comment_type,
             paragraph_index=paragraph_index,
             severity=severity,
+            suggested_fix=suggested_fix,
         ))
     return comments
 

@@ -137,6 +137,24 @@ def test_parse_comments_from_list_infers_type():
     assert comments[0].comment_type == "technical"
 
 
+def test_parse_comments_from_list_preserves_suggested_fix():
+    items = [{
+        "title": "Wrong sign",
+        "quote": "x = -y",
+        "explanation": "Should be positive.",
+        "type": "technical",
+        "suggested_fix": "Replace with x = y.",
+    }]
+    comments = parse_comments_from_list(items)
+    assert comments[0].suggested_fix == "Replace with x = y."
+
+
+def test_parse_comments_from_list_defaults_missing_suggested_fix():
+    items = [{"title": "T", "quote": "q", "explanation": "e", "type": "logical"}]
+    comments = parse_comments_from_list(items)
+    assert comments[0].suggested_fix == ""
+
+
 def test_parse_review_response_json_object():
     response = json.dumps({
         "overall_feedback": "Good paper.",

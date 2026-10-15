@@ -14,6 +14,7 @@ class Comment:
     comment_type: str   # "technical" or "logical"
     paragraph_index: int | None = None  # 0-based index in split paragraphs
     severity: str | None = None         # one of SEVERITY_VALUES, or None when unknown
+    suggested_fix: str = ""  # optional concrete, grounded correction (empty if none)
 
     def to_dict(self) -> dict:
         d = {
@@ -26,6 +27,8 @@ class Comment:
             d["paragraph_index"] = self.paragraph_index
         if self.severity:
             d["severity"] = self.severity
+        if self.suggested_fix:
+            d["suggested_fix"] = self.suggested_fix
         return d
 
 

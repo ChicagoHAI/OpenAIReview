@@ -181,7 +181,7 @@ def _build_paper_json(
 
     comments = []
     for i, c in enumerate(result.comments):
-        comments.append({
+        comment_dict = {
             "id": f"{key}_{i}",
             "title": c.title,
             "quote": c.quote,
@@ -189,7 +189,10 @@ def _build_paper_json(
             "comment_type": c.comment_type,
             "paragraph_index": c.paragraph_index,
             "severity": c.severity,
-        })
+        }
+        if c.suggested_fix:
+            comment_dict["suggested_fix"] = c.suggested_fix
+        comments.append(comment_dict)
 
     model_short = _model_short_name(result.model) if result.model else ""
     label = method.replace("_", " ").title()

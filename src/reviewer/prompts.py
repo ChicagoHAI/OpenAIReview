@@ -57,13 +57,22 @@ For each issue, assign a "severity" tier:
 DO_NOT_FLAG_PROGRESSIVE = DO_NOT_FLAG_CHUNKED.rstrip() + """
 - Notation not yet in the summary — it may be introduced later"""
 
-JSON_ARRAY_OUTPUT = """\
+SUGGESTED_FIX_DESC = (
+    "a single concrete, grounded correction the authors could apply, such as the corrected formula, "
+    "the specific missing assumption to state, or the exact comparison to add. "
+    "Leave it as an empty string if you cannot propose a specific, actionable fix. "
+    "Do not write vague advice like 'clarify this,' 'add more detail,' "
+    "'improve the explanation,' or 'run more experiments.'"
+)
+
+JSON_ARRAY_OUTPUT = f"""\
 Return ONLY a JSON array (can be []). Each item:
 - "title": concise title of the issue
 - "quote": the exact verbatim text (preserving LaTeX)
 - "explanation": deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic
 - "type": "technical" or "logical"
 - "severity": "minor", "moderate", or "major"
+- "suggested_fix": {SUGGESTED_FIX_DESC}
 """
 
 JSON_OBJECT_OUTPUT = """\
@@ -82,6 +91,14 @@ Return a JSON object with this structure:
 
 Return ONLY the JSON object{empty_note}. No other text."""
 
+# Fields of one comment in the zero-shot JSON output
+JSON_COMMENT_ITEM = f"""\
+      "title": "short descriptive title of the issue",
+      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
+      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
+      "type": "technical" or "logical",
+      "severity": "minor" or "moderate" or "major",
+      "suggested_fix": "{SUGGESTED_FIX_DESC}\""""
 
 # ── Deep-check prompt (used by local and progressive methods) ───────────────
 
@@ -165,11 +182,7 @@ Return a JSON object with this structure:
   "overall_feedback": "One paragraph high-level assessment of the paper's quality and main issues",
   "comments": [
     {{{{
-      "title": "short descriptive title of the issue",
-      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
-      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
-      "type": "technical" or "logical",
-      "severity": "minor" or "moderate" or "major"
+{JSON_COMMENT_ITEM}
     }}}}
   ]
 }}}}
@@ -213,11 +226,7 @@ Return a JSON object:
   "overall_feedback": "brief assessment of this section",
   "comments": [
     {{{{
-      "title": "short descriptive title of the issue",
-      "quote": "the exact verbatim text from the paper containing the issue (copy it exactly, preserving LaTeX)",
-      "explanation": "deep reasoning — what you initially thought, whether context resolves it, and what specifically remains problematic",
-      "type": "technical" or "logical",
-      "severity": "minor" or "moderate" or "major"
+{JSON_COMMENT_ITEM}
     }}}}
   ]
 }}}}
@@ -291,6 +300,8 @@ Remove issues that:
 
 ISSUES FOUND:
 {issues_json}
+
+Keep each surviving issue's "suggested_fix" with that issue. Do not move a suggested_fix from one issue to another or write new ones.
 
 Return a JSON array containing the consolidated issues (same format as input). \
 Return [] if none survive filtering."""

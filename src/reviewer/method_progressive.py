@@ -179,13 +179,16 @@ def consolidate_comments(
 
     consolidated = parse_comments_from_response(response)
     if consolidated:
-        # Preserve paragraph_index from original comments by matching quotes
-        orig_by_quote = {}
-        for c in comments:
-            orig_by_quote[c.quote[:200]] = c.paragraph_index
+        # Restore paragraph_index and suggested_fix from the original comment
+        # with the same quote, so each fix stays with the issue it was written for
+        orig_by_quote = {c.quote[:200]: c for c in comments}
         for c in consolidated:
+            orig = orig_by_quote.get(c.quote[:200])
+            if orig is None:
+                continue
             if c.paragraph_index is None:
-                c.paragraph_index = orig_by_quote.get(c.quote[:200])
+                c.paragraph_index = orig.paragraph_index
+            c.suggested_fix = orig.suggested_fix
         return consolidated
 
     return comments  # fallback: return originals if parsing fails

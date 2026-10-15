@@ -23,3 +23,25 @@ def test_merge_respects_target():
     # No passage text (excluding separators) should massively exceed target
     for _, text in passages:
         assert len(text) < 1000
+
+
+def test_consolidate_restores_suggested_fix_by_quote(monkeypatch):
+    """A fix the consolidation model moved onto another issue is replaced by that issue's own fix."""
+    import json
+
+    from reviewer import method_progressive
+    from reviewer.models import Comment, ReviewResult
+
+    comments = [
+        Comment(title="A", quote="x = -y", explanation="sign", comment_type="technical",
+                paragraph_index=3, suggested_fix="Use x = y."),
+        Comment(title="B", quote="for all n", explanation="cond", comment_type="logical",
+                paragraph_index=5),
+    ]
+    merged = [{"title": "A", "quote": "x = -y", "explanation": "sign", "type": "technical",
+               "suggested_fix": "Assume n > 0."}]
+    monkeypatch.setattr(method_progressive, "chat",
+                        lambda **kw: (json.dumps(merged), {"prompt_tokens": 0, "completion_tokens": 0}))
+    out = method_progressive.consolidate_comments(comments, "m", ReviewResult(method="t", paper_slug="s"))
+    assert out[0].suggested_fix == "Use x = y."
+    assert out[0].paragraph_index == 3

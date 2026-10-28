@@ -63,7 +63,9 @@ def _llm_substring_gate(quote: str, perturbed: str,
     p = _normalize_for_match(perturbed)
     if not q or not p:
         return False
-    if q in p:
+    # The reviewer may quote only part of a long edit, or a whole sentence
+    # around a short one (e.g. a single flipped sign).
+    if q in p or p in q:
         return True
     return _quote_coverage(q, p) >= threshold
 

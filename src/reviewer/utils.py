@@ -104,6 +104,14 @@ def _quote_coverage(quote: str, window: str) -> float:
     return matched / len(quote)
 
 
+def _fixed_decimal_tokens(text: str) -> set[str]:
+    """Extract literal ASCII fixed decimals, retaining signs and trailing zeros."""
+    return set(re.findall(
+        r"(?<![\w.+\-\u2212])[+-]?[0-9]+\.[0-9]+(?!\w|\.[0-9])",
+        text,
+    ))
+
+
 def locate_comment_in_document(
     quote: str,
     paragraphs: list[str],
@@ -111,17 +119,20 @@ def locate_comment_in_document(
 ) -> int | None:
     """Find the paragraph index that best matches a quote.
 
-    Uses fuzzy substring matching. Returns the index of the best-matching
-    paragraph, or None if no paragraph scores above *threshold*.
+    Uses fuzzy substring matching with literal fixed-decimal preservation.
+    Returns the best eligible paragraph, or None if none meets *threshold*.
     """
     if not quote or not paragraphs:
         return None
 
+    quote_decimals = _fixed_decimal_tokens(quote)
     quote_norm = _normalize_for_match(quote)[:1000]
     best_idx = None
     best_score = 0.0
 
     for i, para in enumerate(paragraphs):
+        if quote_decimals and not quote_decimals.issubset(_fixed_decimal_tokens(para)):
+            continue
         para_norm = _normalize_for_match(para)
         # Fast exact-substring check first
         if quote_norm and quote_norm in para_norm:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Mann-Whitney AUC for the conference outcomes study.
+"""Mann-Whitney AUC for the quality-proxy study.
 
 For each (method, model) found in the supplied result directories, computes:
 
@@ -190,7 +190,7 @@ def main() -> int:
     """CLI: load the manifest and result dirs, compute each (method, model)
     cell's point summary, and print them as a markdown table."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--manifest", required=True, type=Path, help="Path to manifest JSON (e.g., manifests/v2/combined.json).")
+    p.add_argument("--manifest", required=True, type=Path, help="Path to manifest JSON (e.g., manifests/canonical/full.json).")
     p.add_argument("--dir", nargs="+", required=True, dest="dirs",
                    help="One or more result subdirectories under results/ (e.g., scaleup_v2_progressive).")
     p.add_argument("--method", default=None, help="Filter to one method (e.g., progressive_original, zero_shot, coarse).")

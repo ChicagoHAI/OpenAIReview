@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Select papers for the 4-pair signal matrix from SNOR v1.
 
-Writes per-pair manifests to manifests/pair_{1,2,3,4}.json plus a
-combined manifest (manifests/combined.json) with deduped papers and
-pair-membership metadata — that combined manifest is what the downloader
-and runner consume.
+Writes per-pair manifests (pair_{1,2,3,4}.json) plus a full-set manifest
+(full.json) with deduped papers and pair-membership metadata into the output
+dir (default manifests/canonical/). full.json is what the downloader and runner
+consume.
 
 Pairs:
     1  top-cited (high)         vs  never-published (low)     community-wide
@@ -40,7 +40,7 @@ from pathlib import Path
 from snor_loader import load_cohort
 
 HERE = Path(__file__).resolve().parent
-MANIFESTS_DIR = HERE / "manifests" / "v1"
+MANIFESTS_DIR = HERE / "manifests" / "canonical"
 
 CURRENT_YEAR = 2026
 
@@ -421,18 +421,22 @@ def build_manifests(
         "years": years,
         "n_per_tail": n_per_tail,
         "papers": combined_papers,
+        # Efficient roster run on the full set. The two frontier models
+        # (openai/gpt-5.5, anthropic/claude-opus-4.7) run only on the frontier
+        # subset (manifests/canonical/frontier.json), which pins all six.
         "models": [
-            "google/gemini-3-flash-preview",
-            "z-ai/glm-4.6",
-            "qwen/qwen3-235b-a22b-2507",
+            "deepseek/deepseek-v4-flash",
+            "qwen/qwen3.6-35b-a3b",
+            "google/gemini-3.1-flash-lite-preview",
+            "x-ai/grok-4.1-fast",
         ],
         "review_caps": {"max_pages": 20, "max_tokens": 20_000},
     }
-    (out_dir / "combined.json").write_text(
+    (out_dir / "full.json").write_text(
         json.dumps(combined, indent=2) + "\n"
     )
     print(f"\nCombined manifest: {len(combined_papers)} unique papers "
-          f"-> {out_dir / 'combined.json'}")
+          f"-> {out_dir / 'full.json'}")
 
 
 def main() -> None:

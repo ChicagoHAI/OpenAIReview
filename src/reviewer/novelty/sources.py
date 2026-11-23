@@ -25,6 +25,7 @@ import re
 import sys
 import time
 import xml.etree.ElementTree as ET
+from datetime import date, timedelta
 from difflib import SequenceMatcher
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -77,8 +78,8 @@ class HttpClient:
             except HTTPError as e:
                 if e.code in (429, 500, 502, 503, 504) and attempt < self.retries - 1:
                     retry_after = e.headers.get("Retry-After") if e.headers else None
-                    time.sleep(float(retry_after) if retry_after and retry_after.isdigit()
-                               else 2 ** (attempt + 1))
+                    time.sleep(min(30.0, float(retry_after)) if retry_after and retry_after.isdigit()
+                               else 5.0 * 2 ** attempt)
                     continue
                 raise
             except URLError:
@@ -271,6 +272,35 @@ SOURCES = {cls.name: cls for cls in (ArxivSource, SemanticScholarSource, OpenAle
 # Merge / filter
 # ---------------------------------------------------------------------------
 
+def arxiv_id_cutoff(arxiv_id: str) -> str | None:
+    """Last day of the month encoded in a new-style arXiv id (YYMM.NNNNN)."""
+    m = re.match(r"^(\d{2})(\d{2})\.\d{4,5}", arxiv_id or "")
+    if not m:
+        return None
+    year, month = 2000 + int(m.group(1)), int(m.group(2))
+    if not 1 <= month <= 12:
+        return None
+    nxt = date(year + (month == 12), month % 12 + 1, 1)
+    return (nxt - timedelta(days=1)).isoformat()
+
+
+def infer_cutoff(papers: list[CandidatePaper], self_title: str = "",
+                 self_arxiv_id: str = "", self_title_threshold: float = 0.9) -> str | None:
+    """The submission's own first publication date, so later work is excluded.
+
+    Prefers the earliest date of any search result that *is* the submission
+    (same arXiv id, or near-identical title); falls back to the month in its
+    arXiv id. Returns None when the paper is not online (e.g. a private PDF).
+    """
+    dates = [p.published[:10] for p in papers if p.published and (
+        (self_arxiv_id and p.arxiv_id == self_arxiv_id)
+        or (self_title and title_similarity(self_title, p.title) >= self_title_threshold))]
+    dates = [d for d in dates if re.match(r"\d{4}-\d{2}-\d{2}$", d)]
+    if dates:
+        return min(dates)
+    return arxiv_id_cutoff(self_arxiv_id)
+
+
 def dedupe_candidates(papers: list[CandidatePaper], title_threshold: float = 0.93) -> list[CandidatePaper]:
     """Merge the same paper returned by several sources.
 
@@ -303,8 +333,12 @@ def dedupe_candidates(papers: list[CandidatePaper], title_threshold: float = 0.9
                 hit.abstract = p.abstract
             hit.arxiv_id = hit.arxiv_id or p.arxiv_id
             hit.doi = hit.doi or p.doi
-            hit.year = hit.year or p.year
-            hit.published = hit.published or p.published
+            # Keep the EARLIEST date: a 2024 journal version of a 2021 preprint
+            # is still 2021 prior work and must not be dropped as "post-dated".
+            if p.published and (not hit.published or p.published < hit.published):
+                hit.published = p.published
+            if p.year and (not hit.year or p.year < hit.year):
+                hit.year = p.year
             hit.url = hit.url or p.url
             hit.authors = hit.authors or p.authors
             for s in p.sources:
@@ -353,6 +387,7 @@ def search_all(
     before: str | None = None,
     cache_dir: str | Path | None = None,
     log=print,
+    max_consecutive_failures: int = 2,
 ) -> list[CandidatePaper]:
     http = HttpClient(cache_dir=cache_dir)
     results: list[CandidatePaper] = []
@@ -361,10 +396,19 @@ def search_all(
             raise ValueError(f"Unknown source {name!r}; choose from {', '.join(SOURCES)}")
         src = SOURCES[name](http)
         n_before = len(results)
+        failures = 0
         for q in queries:
             try:
                 results.extend(src.search(q, limit=per_query, before=before))
+                failures = 0
             except Exception as e:  # one flaky API must not sink the run
+                failures += 1
                 print(f"  Warning: {name} search failed for {q[:60]!r}: {e}", file=sys.stderr)
+                if failures >= max_consecutive_failures:
+                    hint = (" (set S2_API_KEY for a higher rate limit)"
+                            if name == "semantic_scholar" else "")
+                    print(f"  Skipping remaining {name} queries after {failures} "
+                          f"consecutive failures{hint}", file=sys.stderr)
+                    break
         log(f"  {name}: {len(results) - n_before} results")
     return results

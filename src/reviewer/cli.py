@@ -527,6 +527,7 @@ def cmd_novelty(args: argparse.Namespace) -> None:
     """Compare a paper's claims against prior work retrieved from the web."""
     try:
         from .novelty import NoveltyConfig, render_markdown, run_novelty
+        from .novelty.sources import extract_arxiv_id
     except ImportError as e:
         print(f"Error: novelty assessment needs extra dependencies ({e}).\n"
               f'Install with: pip install "openaireview[novelty]"', file=sys.stderr)
@@ -546,7 +547,7 @@ def cmd_novelty(args: argparse.Namespace) -> None:
         llm_queries=args.llm_queries,
         max_claims=args.max_claims,
         before=args.before,
-        self_arxiv_id=args.arxiv_id or "",
+        self_arxiv_id=args.arxiv_id or (extract_arxiv_id(args.file) if "arxiv.org" in args.file else ""),
         embedder=args.embedder,
         ann=args.ann,
         chunk_tokens=args.chunk_tokens,

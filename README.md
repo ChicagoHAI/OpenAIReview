@@ -124,7 +124,7 @@ openaireview novelty paper.pdf --llm-queries --full-text 5 --corpus-dir ~/papers
 | Option | Default | Description |
 |---|---|---|
 | `--sources` | `arxiv,semantic_scholar,openalex` | Search backends |
-| `--before` | (none) | Ignore work published after this date (use the submission date) |
+| `--before` | paper's own date | Ignore work published after this date. Inferred automatically when the paper is on arXiv / indexed online; pass it explicitly for unpublished PDFs |
 | `--arxiv-id` | (from URL) | The paper's own arXiv id, excluded from prior work |
 | `--embedder` | `auto` | `auto`, `hashing`, `st:<model>`, `openai:<model>` |
 | `--ann` | `auto` | `auto` (exact < 5k chunks, else HNSW), `exact`, `hnsw`, `faiss`, `hnswlib` |

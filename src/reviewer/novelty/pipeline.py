@@ -35,7 +35,8 @@ from .chunking import chunk_document, extract_claims
 from .embeddings import Embedder, get_embedder
 from .fusion import reciprocal_rank_fusion
 from .sources import (
-    dedupe_candidates, extract_arxiv_id, filter_candidates, search_all,
+    arxiv_id_cutoff, dedupe_candidates, extract_arxiv_id, filter_candidates,
+    infer_cutoff, search_all,
 )
 from .types import CandidatePaper, Chunk, ClaimAssessment, Hit, NoveltyReport
 
@@ -353,6 +354,7 @@ def _aggregate_papers(claims: list[ClaimAssessment], papers: dict[str, Candidate
 def run_novelty(title: str, content: str, slug: str, cfg: NoveltyConfig,
                 log=print) -> NoveltyReport:
     title = re.sub(r"\s*\[[A-Z]+\]\s*$", "", title or "").strip()  # drop " [PDF]" format tag
+    title = re.sub(r"\s+", " ", title)  # incl. non-breaking spaces from HTML titles
     report = NoveltyReport(paper_slug=slug, title=title,
                            config={k: v for k, v in asdict(cfg).items()})
     self_arxiv = cfg.self_arxiv_id or extract_arxiv_id(slug)
@@ -372,10 +374,22 @@ def run_novelty(title: str, content: str, slug: str, cfg: NoveltyConfig,
         report.total_completion_tokens += usage["completion_tokens"]
         queries += [q for q in extra if q.lower() not in {x.lower() for x in queries}]
     report.queries = queries
+    # Prior work must predate the submission. Use --before if given; otherwise
+    # start from the arXiv id's month and refine with the paper's own record.
+    before = cfg.before or arxiv_id_cutoff(self_arxiv)
     log(f"  Searching {', '.join(cfg.sources)} with {len(queries)} queries...")
-    raw = search_all(queries, cfg.sources, per_query=cfg.per_query, before=cfg.before,
+    raw = search_all(queries, cfg.sources, per_query=cfg.per_query, before=before,
                      cache_dir=cfg.cache_dir, log=log)
     candidates = dedupe_candidates(raw)
+    if not cfg.before:
+        before = infer_cutoff(candidates, self_title=title, self_arxiv_id=self_arxiv) or before
+    if before:
+        how = "--before" if cfg.before else "the paper's own publication date"
+        log(f"  Cutoff: ignoring work published after {before} ({how})")
+    else:
+        log("  Warning: no publication date known for this paper, so later work is NOT "
+            "excluded. Pass --before YYYY-MM-DD (e.g. the submission date).")
+    report.config["effective_before"] = before
 
     # 3. Embed + optional persistent corpus
     embedder = get_embedder(cfg.embedder, cache_dir=cfg.cache_dir)
@@ -387,7 +401,7 @@ def run_novelty(title: str, content: str, slug: str, cfg: NoveltyConfig,
         candidates = dedupe_candidates(candidates)
 
     kept, dropped = filter_candidates(candidates, self_title=title,
-                                      self_arxiv_id=self_arxiv, before=cfg.before)
+                                      self_arxiv_id=self_arxiv, before=before)
     log(f"  {len(raw)} hits -> {len(candidates)} unique papers -> {len(kept)} usable "
         f"({len(dropped)} dropped: self-match, post-dated, or no abstract)")
     papers = {p.paper_id: p for p in kept}
@@ -476,6 +490,10 @@ def render_markdown(report: NoveltyReport) -> str:
     lines = [f"# Novelty report: {report.title}", ""]
     if report.novelty_score is not None:
         lines += [f"**Novelty score:** {report.novelty_score:.2f}  ", f"_{report.score_basis}_", ""]
+    cutoff = report.config.get("effective_before")
+    lines += [f"Prior work considered: published on or before **{cutoff}**." if cutoff else
+              "⚠️ No cutoff date: work published *after* this paper may appear below "
+              "(pass `--before`).", ""]
     verdicts = defaultdict(int)
     for c in report.claims:
         verdicts[c.verdict or "unjudged"] += 1

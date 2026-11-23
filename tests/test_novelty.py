@@ -345,3 +345,66 @@ def test_build_queries_drops_generic_words():
     qs = pl.build_queries("My Title [PDF]", claims)
     assert qs[0] == "My Title"
     assert "propose" not in qs[1].lower() and "router" in qs[1]
+
+
+# ── publication-date cutoff (later work must not count as prior art) ─────
+
+def test_arxiv_id_cutoff():
+    from reviewer.novelty.sources import arxiv_id_cutoff
+    assert arxiv_id_cutoff("2310.06825") == "2023-10-31"
+    assert arxiv_id_cutoff("2402.00001") == "2024-02-29"
+    assert arxiv_id_cutoff("1912.12345") == "2019-12-31"
+    assert arxiv_id_cutoff("hep-th/9901001") is None and arxiv_id_cutoff("") is None
+
+
+def test_infer_cutoff_prefers_self_record():
+    from reviewer.novelty.sources import infer_cutoff
+    papers = [CandidatePaper("arxiv:2310.06825", "Mistral 7B", abstract="x",
+                             arxiv_id="2310.06825", published="2023-10-10"),
+              CandidatePaper("s2:x", "Mistral 7B", abstract="x", published="2024-01-01")]
+    assert infer_cutoff(papers, self_title="Mistral\xa07B", self_arxiv_id="2310.06825") == "2023-10-10"
+    assert infer_cutoff([], self_arxiv_id="2310.06825") == "2023-10-31"
+    assert infer_cutoff([], self_title="Private paper") is None
+
+
+def test_dedupe_keeps_earliest_date():
+    pre = CandidatePaper("arxiv:2101.00001", "A Great Method for Things", abstract="a",
+                         arxiv_id="2101.00001", published="2021-01-05", year=2021)
+    journal = CandidatePaper("doi:10.1/j", "A great method for things", abstract="a longer abstract",
+                             doi="10.1/j", published="2024-03-01", year=2024)
+    [m] = dedupe_candidates([journal, pre])
+    assert m.published == "2021-01-05" and m.year == 2021
+
+
+def test_pipeline_excludes_later_work_by_default(monkeypatch):
+    later = CandidatePaper("s2:later", "Fine-tuning Sparse Routing Transformers for chatbots",
+                           abstract="We fine-tune a learned router that sends each token to a small "
+                                    "subset of expert feed-forward layers for a chatbot.",
+                           year=2026, published="2026-09-01", sources=["semantic_scholar"])
+    me = CandidatePaper("arxiv:2601.00001", "Sparse Routing for Efficient Transformers",
+                        abstract="self", arxiv_id="2601.00001", published="2026-01-15",
+                        sources=["arxiv"])
+    monkeypatch.setattr(pl, "search_all", lambda *a, **k: [
+        CandidatePaper(**{**p.__dict__, "sources": list(p.sources)}) for p in PRIOR + [later, me]])
+    rep = pl.run_novelty("Sparse Routing for Efficient Transformers", PAPER, "x", _cfg())
+    ids = {p.paper_id for p in rep.candidates}
+    assert "s2:later" not in ids and "arxiv:2601.00001" not in ids
+    assert rep.config["effective_before"] == "2026-01-01"  # earliest self record (PRIOR has one)
+    assert "2026-01-01" in pl.render_markdown(rep)
+
+
+def test_search_all_stops_after_repeated_failures(monkeypatch, capsys):
+    from reviewer.novelty import sources as S
+    calls = []
+
+    class Flaky(S.Source):
+        name = "flaky"
+
+        def search(self, query, limit=25, before=None):
+            calls.append(query)
+            raise RuntimeError("HTTP Error 429")
+
+    monkeypatch.setitem(S.SOURCES, "flaky", Flaky)
+    out = S.search_all(["a", "b", "c", "d"], ["flaky"], log=lambda *_: None)
+    assert out == [] and calls == ["a", "b"]
+    assert "Skipping remaining flaky queries" in capsys.readouterr().err

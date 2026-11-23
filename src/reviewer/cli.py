@@ -38,18 +38,12 @@ def _method_key(method: str, model: str) -> str:
     return f"{method}__{_model_short_name(model)}"
 
 
-def cmd_review(args: argparse.Namespace) -> None:
-    """Run a review on a document."""
-    from .method_progressive import review_progressive
-    from .method_local import review_local
-    from .method_zero_shot import review_zero_shot
-    from .parsers import is_url, parse_document
-    from .utils import split_into_paragraphs
+def _load_paper(args: argparse.Namespace) -> tuple[str, str, bool, str]:
+    """Parse a local file or URL. Returns ``(title, content, was_ocr, default_slug)``.
 
-    # Set provider env var early so client.get_client() picks it up
-    provider = getattr(args, "provider", None)
-    if provider:
-        os.environ["REVIEW_PROVIDER"] = provider
+    Shared by ``review`` and ``novelty``; honours --ocr, --max-pages and --max-tokens.
+    """
+    from .parsers import is_url, parse_document
 
     source = args.file
     ocr = getattr(args, "ocr", None)
@@ -85,6 +79,22 @@ def cmd_review(args: argparse.Namespace) -> None:
             content = truncate_text(content, max_tokens)
             print(f"  Truncated from {token_count} to {max_tokens} tokens")
 
+    return title, content, was_ocr, default_slug
+
+
+def cmd_review(args: argparse.Namespace) -> None:
+    """Run a review on a document."""
+    from .method_progressive import review_progressive
+    from .method_local import review_local
+    from .method_zero_shot import review_zero_shot
+    from .utils import split_into_paragraphs
+
+    # Set provider env var early so client.get_client() picks it up
+    provider = getattr(args, "provider", None)
+    if provider:
+        os.environ["REVIEW_PROVIDER"] = provider
+
+    title, content, was_ocr, default_slug = _load_paper(args)
     slug = args.name or slugify(default_slug)
     paragraphs = split_into_paragraphs(content)
     print(f"  {len(paragraphs)} paragraphs")
@@ -513,6 +523,59 @@ def cmd_extract(args: argparse.Namespace) -> None:
     print(f"  Saved to {output_path} ({len(content)} chars)")
 
 
+def cmd_novelty(args: argparse.Namespace) -> None:
+    """Compare a paper's claims against prior work retrieved from the web."""
+    try:
+        from .novelty import NoveltyConfig, render_markdown, run_novelty
+    except ImportError as e:
+        print(f"Error: novelty assessment needs extra dependencies ({e}).\n"
+              f'Install with: pip install "openaireview[novelty]"', file=sys.stderr)
+        sys.exit(1)
+
+    provider = getattr(args, "provider", None)
+    if provider:
+        os.environ["REVIEW_PROVIDER"] = provider
+
+    title, content, _was_ocr, default_slug = _load_paper(args)
+    slug = args.name or slugify(default_slug)
+
+    cfg = NoveltyConfig(
+        sources=[s.strip() for s in args.sources.split(",") if s.strip()],
+        per_query=args.per_query,
+        max_queries=args.max_queries,
+        llm_queries=args.llm_queries,
+        max_claims=args.max_claims,
+        before=args.before,
+        self_arxiv_id=args.arxiv_id or "",
+        embedder=args.embedder,
+        ann=args.ann,
+        chunk_tokens=args.chunk_tokens,
+        top_k=args.top_k,
+        rrf_k=args.rrf_k,
+        full_text=args.full_text,
+        judge=not args.no_judge,
+        model=args.model,
+        reasoning_effort=args.reasoning_effort,
+        cache_dir=None if args.no_cache else args.cache_dir,
+        corpus_dir=args.corpus_dir,
+    )
+    print("Assessing novelty...")
+    report = run_novelty(title, content, slug, cfg)
+
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    json_path = output_dir / f"{slug}.novelty.json"
+    md_path = output_dir / f"{slug}.novelty.md"
+    json_path.write_text(json.dumps(report.to_dict(), indent=2))
+    md_path.write_text(render_markdown(report))
+
+    if report.novelty_score is not None:
+        print(f"  Novelty score: {report.novelty_score:.2f} ({report.score_basis.split(':')[0]})")
+    for r in report.related_papers[:5]:
+        print(f"    - {r['title'][:80]} ({r['year']})  max cos {r['max_similarity']:.3f}")
+    print(f"Results saved to: {json_path}\n                  {md_path}")
+
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the visualization server."""
     from .serve import run_server
@@ -579,6 +642,69 @@ def main() -> None:
         "--max-tokens", type=int, default=None,
         help="Truncate input text to first N tokens before review",
     )
+
+    # novelty subcommand
+    novelty_parser = subparsers.add_parser(
+        "novelty",
+        help="Compare a paper's claims with prior work (hybrid BM25 + embedding retrieval)",
+    )
+    novelty_parser.add_argument("file", help="Path to paper file or arXiv URL")
+    novelty_parser.add_argument(
+        "--sources", default="arxiv,semantic_scholar,openalex",
+        help="Comma-separated search backends (default: arxiv,semantic_scholar,openalex)",
+    )
+    novelty_parser.add_argument("--per-query", type=int, default=25,
+                                help="Results per query per source (default: 25)")
+    novelty_parser.add_argument("--max-queries", type=int, default=8,
+                                help="Max heuristic search queries (default: 8)")
+    novelty_parser.add_argument("--llm-queries", action="store_true",
+                                help="Also ask the LLM for queries using alternative terminology")
+    novelty_parser.add_argument("--max-claims", type=int, default=12,
+                                help="Max claims to assess, including the abstract (default: 12)")
+    novelty_parser.add_argument("--before", default=None, metavar="YYYY-MM-DD",
+                                help="Ignore work published after this date (e.g. submission date)")
+    novelty_parser.add_argument("--arxiv-id", default=None,
+                                help="The paper's own arXiv id, to exclude it from prior work")
+    novelty_parser.add_argument(
+        "--embedder", default="auto",
+        help="auto | hashing | st:<sentence-transformers model> | openai:<model> (default: auto)",
+    )
+    novelty_parser.add_argument(
+        "--ann", choices=["auto", "exact", "hnsw", "faiss", "hnswlib"], default="auto",
+        help="Vector index; auto = exact below 5k chunks, else HNSW (default: auto)",
+    )
+    novelty_parser.add_argument("--chunk-tokens", type=int, default=200,
+                                help="Max tokens per chunk (default: 200)")
+    novelty_parser.add_argument("--top-k", type=int, default=5,
+                                help="Evidence chunks kept per claim (default: 5)")
+    novelty_parser.add_argument("--rrf-k", type=int, default=60,
+                                help="Reciprocal Rank Fusion constant (default: 60)")
+    novelty_parser.add_argument("--full-text", type=int, default=0, metavar="N",
+                                help="Fetch arXiv full text for the N most related papers (default: 0)")
+    novelty_parser.add_argument("--no-judge", action="store_true",
+                                help="Retrieval only; skip the LLM novelty verdicts (no API key needed)")
+    novelty_parser.add_argument("--model", default=DEFAULT_MODEL,
+                                help="Model for the judge (default: anthropic/claude-opus-4-6)")
+    novelty_parser.add_argument(
+        "--provider", choices=["openrouter", "openai", "anthropic", "gemini", "mistral"],
+        default=None, help="LLM provider (default: auto-detect)",
+    )
+    novelty_parser.add_argument("--reasoning-effort", choices=["none", "low", "medium", "high"],
+                                default=None, help="Reasoning effort for the judge")
+    novelty_parser.add_argument("--cache-dir", default="~/.cache/openaireview/novelty",
+                                help="HTTP + embedding cache (default: ~/.cache/openaireview/novelty)")
+    novelty_parser.add_argument("--no-cache", action="store_true", help="Disable caching")
+    novelty_parser.add_argument("--corpus-dir", default=None,
+                                help="Persistent local corpus that grows across runs (enables ANN at scale)")
+    novelty_parser.add_argument("--output-dir", default="./review_results",
+                                help="Directory for output files (default: ./review_results)")
+    novelty_parser.add_argument("--name", default=None, help="Paper slug name")
+    novelty_parser.add_argument("--ocr", choices=["mistral", "deepseek", "marker", "pymupdf"],
+                                default=None, help="PDF OCR engine (default: auto)")
+    novelty_parser.add_argument("--max-pages", type=int, default=None,
+                                help="Only process the first N pages of a PDF")
+    novelty_parser.add_argument("--max-tokens", type=int, default=None,
+                                help="Truncate input text to first N tokens")
 
     # extract subcommand
     extract_parser = subparsers.add_parser(
@@ -721,6 +847,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "review":
         cmd_review(args)
+    elif args.command == "novelty":
+        cmd_novelty(args)
     elif args.command == "extract":
         cmd_extract(args)
     elif args.command == "serve":

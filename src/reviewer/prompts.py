@@ -318,3 +318,46 @@ PAPER (first 8000 characters):
 {paper_start}
 """
 
+
+
+# ── Novelty assessment (reviewer.novelty) ──────────────────────────────────
+
+NOVELTY_QUERY_PROMPT = """\
+You help find prior work for an academic paper. Write {n} short literature-search \
+queries (3-8 words each) that would surface papers that already did what this paper \
+claims to do. Cover: the core technique, the problem/task, and older or alternative \
+terminology a different community might have used for the same idea. \
+Do not use the paper's own coined names unless they are standard terms.
+
+TITLE: {title}
+
+ABSTRACT AND CLAIMS:
+{claims}
+
+Return ONLY a JSON array of strings."""
+
+NOVELTY_JUDGE_PROMPT = """\
+You are an expert reviewer assessing the NOVELTY of one claim from a submitted paper \
+against excerpts of prior work retrieved from the literature. Today's date is {current_date}.
+
+Be precise and fair:
+- "anticipated": one excerpt already describes essentially the same contribution \
+(same idea applied to the same kind of problem), so the claim is not new.
+- "partial": prior work covers a substantial part (e.g. same technique, different \
+setting; or same setting, closely related technique) but the claim adds something real.
+- "novel": none of the excerpts covers the claim's core contribution.
+Judge only from the excerpts shown. Superficial topic or keyword overlap is NOT anticipation. \
+Generic background statements and claims about experimental numbers should usually be "novel" \
+unless an excerpt reports the same result.
+
+CLAIM (from the submission):
+{claim}
+
+PRIOR WORK EXCERPTS:
+{evidence}
+
+Return ONLY a JSON object:
+{{"verdict": "anticipated" | "partial" | "novel",
+  "evidence_index": <1-based index of the most relevant excerpt, or null>,
+  "explanation": "<2-3 sentences citing what the excerpt does>",
+  "key_difference": "<what the submission adds beyond that excerpt, or empty>"}}"""

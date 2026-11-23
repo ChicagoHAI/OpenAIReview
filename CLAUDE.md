@@ -20,6 +20,12 @@
 - `method_progressive.py` — sequential processing with running summary + consolidation.
 - `evaluate.py` — recall/precision/F1 via fuzzy quote similarity, location-based recall, cost estimation.
 - `viz/index.html` — Visualization UI (served by `serve.py`).
+- `novelty/` — RAG novelty assessment (`openaireview novelty`, extra `[novelty]`):
+  - `chunking.py` — section-aware, sentence-aligned chunking with contextual headers; `extract_claims` (abstract + contribution sentences as queries).
+  - `sources.py` — arXiv / Semantic Scholar / OpenAlex search (stdlib HTTP, disk cache), dedupe, self/post-date filtering.
+  - `bm25.py` — pure-Python Okapi BM25. `embeddings.py` — hashing / sentence-transformers / OpenAI embedders + SQLite cache.
+  - `ann.py` — exact NumPy index and HNSW (faiss or hnswlib). `fusion.py` — Reciprocal Rank Fusion.
+  - `pipeline.py` — orchestration, `CorpusStore` (persistent corpus), LLM judge, Markdown report.
 
 ### CLI Usage
 ```bash

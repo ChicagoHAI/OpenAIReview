@@ -201,7 +201,7 @@ def consolidate_comments(
 def review_progressive(
     paper_slug: str,
     document_content: str,
-    model: str = "anthropic/claude-opus-4-6",
+    model: str = "anthropic/claude-opus-5.5",
     reasoning_effort: str | None = None,
     skip_nontechnical: bool = False,
     window_size: int = 3,

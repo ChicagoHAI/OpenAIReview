@@ -1,6 +1,7 @@
 """API client with support for OpenRouter, OpenAI, Anthropic, Gemini, and Mistral."""
 
 import os
+import re
 import sys
 import time
 
@@ -139,11 +140,37 @@ REASONING_EFFORT_RATIO = {
 EMPTY_RESPONSE_MAX_RETRIES = 3
 EMPTY_RESPONSE_TOKEN_MULTIPLIER = 2
 
+# Adaptive-only Claude models always think, and thinking counts against
+# max_tokens. Give them headroom so the visible answer isn't cut off.
+ADAPTIVE_THINKING_TOKEN_MULTIPLIER = 4
+ADAPTIVE_MAX_OUTPUT_TOKENS = 128_000
 
-def _apply_reasoning(kwargs: dict, provider: str, reasoning_effort: str, max_tokens: int) -> None:
+
+# Newer Claude models (Opus 4.7+, the 5.x family, Fable/Mythos) reject sampling
+# params (temperature/top_p/top_k) and thinking.budget_tokens with a 400.
+_ADAPTIVE_ONLY_CLAUDE = re.compile(
+    r"claude-(?:fable|mythos|(?:opus|sonnet|haiku)-5|opus-4[-.][78])"
+)
+
+
+def _is_adaptive_only_claude(model: str) -> bool:
+    return bool(_ADAPTIVE_ONLY_CLAUDE.search(model))
+
+
+def _apply_reasoning(
+    kwargs: dict, provider: str, reasoning_effort: str, max_tokens: int, model: str = ""
+) -> None:
     """Add provider-specific reasoning/thinking parameters to the API call."""
     ratio = REASONING_EFFORT_RATIO.get(reasoning_effort, 0.5)
     budget = max(int(max_tokens * ratio), 1024)
+
+    if _is_adaptive_only_claude(model):
+        # These models take an effort level, not a token budget.
+        if provider == "openrouter":
+            kwargs["extra_body"] = {"reasoning": {"effort": reasoning_effort}}
+        # Native Anthropic (OpenAI-compatible endpoint): send nothing and let the
+        # model use adaptive thinking at its default effort.
+        return
 
     if provider == "openrouter":
         kwargs["extra_body"] = {"reasoning": {"max_tokens": budget}}
@@ -159,7 +186,7 @@ def _apply_reasoning(kwargs: dict, provider: str, reasoning_effort: str, max_tok
 
 def chat(
     messages: list[dict],
-    model: str = "anthropic/claude-opus-4-6",
+    model: str = "anthropic/claude-opus-5.5",
     temperature: float | None = 0.0,
     max_tokens: int = 16384,
     reasoning_effort: str | None = None,
@@ -173,7 +200,7 @@ def chat(
       2. REVIEW_PROVIDER env var
       3. Auto-detect from available API keys
 
-    Model names with provider prefixes (e.g. "anthropic/claude-opus-4-6")
+    Model names with provider prefixes (e.g. "anthropic/claude-opus-5.5")
     are stripped when using native APIs.
 
     reasoning_effort: None (adaptive default), or "none"/"low"/"medium"/"high".
@@ -185,8 +212,16 @@ def chat(
     api_model = model
     if prefix_to_strip and api_model.startswith(prefix_to_strip):
         api_model = api_model[len(prefix_to_strip):]
+    if resolved_provider == "anthropic":
+        # OpenRouter IDs use dots ("claude-opus-5.5"); Anthropic's API uses hyphens.
+        api_model = api_model.replace(".", "-")
 
+    adaptive_only = _is_adaptive_only_claude(api_model)
     current_max_tokens = max_tokens
+    if adaptive_only:
+        current_max_tokens = min(
+            max_tokens * ADAPTIVE_THINKING_TOKEN_MULTIPLIER, ADAPTIVE_MAX_OUTPUT_TOKENS
+        )
     total_usage = {"prompt_tokens": 0, "completion_tokens": 0, "model": model}
 
     for empty_attempt in range(EMPTY_RESPONSE_MAX_RETRIES):
@@ -206,10 +241,16 @@ def chat(
                     messages=messages,
                     **{token_key: current_max_tokens},
                 )
-                if temperature is not None:
+                if temperature is not None and not adaptive_only:
                     kwargs["temperature"] = temperature
                 if reasoning_effort is not None and reasoning_effort != "none":
-                    _apply_reasoning(kwargs, resolved_provider, reasoning_effort, current_max_tokens)
+                    _apply_reasoning(
+                        kwargs, resolved_provider, reasoning_effort, current_max_tokens, api_model
+                    )
+                    if resolved_provider == "anthropic" and "thinking" in kwargs.get("extra_body", {}):
+                        # Anthropic rejects extended thinking combined with a
+                        # temperature other than 1, so leave it at the default.
+                        kwargs.pop("temperature", None)
                 resp = client.chat.completions.create(**kwargs)
                 usage = {
                     "prompt_tokens": resp.usage.prompt_tokens if resp.usage else 0,
@@ -222,7 +263,12 @@ def chat(
                 total_usage["prompt_tokens"] += usage["prompt_tokens"]
                 total_usage["completion_tokens"] += usage["completion_tokens"]
 
-                if content.strip():
+                truncated = resp.choices[0].finish_reason == "length"
+                if content.strip() and not (
+                    adaptive_only
+                    and truncated
+                    and current_max_tokens < ADAPTIVE_MAX_OUTPUT_TOKENS
+                ):
                     return content, total_usage
 
                 # Empty response — likely reasoning consumed all tokens
@@ -240,7 +286,9 @@ def chat(
 
         # If we get here, we got an empty response — increase max_tokens and retry
         current_max_tokens *= EMPTY_RESPONSE_TOKEN_MULTIPLIER
-        print(f"  Empty response (reasoning may have consumed all tokens). "
+        if adaptive_only:
+            current_max_tokens = min(current_max_tokens, ADAPTIVE_MAX_OUTPUT_TOKENS)
+        print(f"  Empty or truncated response (reasoning may have consumed all tokens). "
               f"Retrying with max_tokens={current_max_tokens}...")
 
     # All empty-response retries exhausted, return whatever we got

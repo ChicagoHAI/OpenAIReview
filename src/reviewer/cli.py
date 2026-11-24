@@ -14,7 +14,7 @@ except ImportError:
     pass
 
 
-DEFAULT_MODEL = os.environ.get("MODEL", "anthropic/claude-opus-4-6")
+DEFAULT_MODEL = os.environ.get("MODEL", "anthropic/claude-opus-5.5")
 _BENCHMARKS_DIR = Path(__file__).parent.parent.parent / "benchmarks"
 OCR_DISCLAIMER = "This document was extracted by OCR engine and could contain mistakes."
 
@@ -29,7 +29,7 @@ def slugify(name: str) -> str:
 
 def _model_short_name(model: str) -> str:
     """Extract short model name from provider/model string."""
-    # "anthropic/claude-opus-4-6" -> "claude-opus-4-6"
+    # "anthropic/claude-opus-5.5" -> "claude-opus-5.5"
     return model.split("/")[-1] if "/" in model else model
 
 
@@ -543,7 +543,7 @@ def main() -> None:
     )
     review_parser.add_argument(
         "--model", default=DEFAULT_MODEL,
-        help="Model to use (default: anthropic/claude-opus-4-6)",
+        help="Model to use (default: anthropic/claude-opus-5.5)",
     )
     review_parser.add_argument(
         "--provider",
@@ -620,7 +620,7 @@ def main() -> None:
     )
     perturb_parser.add_argument(
         "--model", default=DEFAULT_MODEL,
-        help="Model for perturbation generation (default: anthropic/claude-opus-4-6)",
+        help="Model for perturbation generation (default: anthropic/claude-opus-5.5)",
     )
     perturb_parser.add_argument(
         "--output-dir", default="./perturbation_results",
@@ -691,7 +691,7 @@ def main() -> None:
     )
     score_parser.add_argument(
         "--model", default=DEFAULT_MODEL,
-        help="Model for explanation matching (default: anthropic/claude-opus-4-6)",
+        help="Model for explanation matching (default: anthropic/claude-opus-5.5)",
     )
     score_parser.add_argument(
         "--output-dir", default=None,

@@ -7,8 +7,13 @@ from pathlib import Path
 from .client import chat
 from .models import Comment, ReviewResult
 
-# Cost per 1M tokens (USD) - OpenRouter pricing as of early 2026
+# Cost per 1M tokens (USD) - OpenRouter pricing, last checked 2026-11-23
 COST_PER_1M = {
+    "anthropic/claude-fable-5.2": {"prompt": 8.0, "completion": 40.0},
+    "anthropic/claude-opus-5.5": {"prompt": 4.0, "completion": 20.0},
+    "openai/gpt-6.2-astra": {"prompt": 8.0, "completion": 40.0},  # also matches -pro
+    "google/gemini-4-argon": {"prompt": 2.0, "completion": 10.0},
+    "mistralai/mistral-large-4-0": {"prompt": 0.70, "completion": 2.10},
     "anthropic/claude-opus-4-6": {"prompt": 5.0, "completion": 25.0},
     "anthropic/claude-opus-4-5": {"prompt": 5.0, "completion": 25.0},
     "google/gemini-3.1-pro-preview": {"prompt": 2.0, "completion": 12.0},
@@ -46,11 +51,16 @@ Predicted comment:
 Do these refer to the same issue? Reply with exactly one word: YES or NO."""
 
 
+def _price_key(name: str) -> str:
+    # Match "claude-opus-5.5" and "claude-opus-5-5" to the same entry.
+    return name.replace(".", "-")
+
+
 def compute_cost(result: ReviewResult) -> float:
     """Estimate USD cost of a review."""
     pricing = None
     for key in COST_PER_1M:
-        if key in result.model:
+        if _price_key(key) in _price_key(result.model):
             pricing = COST_PER_1M[key]
             break
     if pricing is None:
@@ -60,7 +70,7 @@ def compute_cost(result: ReviewResult) -> float:
         parts = result.model.split("+")
         costs = []
         for part in parts:
-            p = next((v for k, v in COST_PER_1M.items() if k in part), DEFAULT_COST)
+            p = next((v for k, v in COST_PER_1M.items() if _price_key(k) in _price_key(part)), DEFAULT_COST)
             costs.append(p)
         pricing = {
             "prompt": 0.3 * costs[0]["prompt"] + 0.7 * costs[1]["prompt"],

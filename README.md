@@ -99,8 +99,9 @@ Review an academic paper for technical and logical issues. Accepts a local file 
 | Option | Default | Description |
 |---|---|---|
 | `--method` | `progressive` | Review method: `zero_shot`, `local`, `progressive`, `progressive_full` |
-| `--model` | `anthropic/claude-opus-4-6` | Model to use |
+| `--model` | `anthropic/claude-opus-5.5` | Model to use |
 | `--provider` | (auto) | LLM provider: `openrouter`, `openai`, `anthropic`, `gemini`, `mistral` |
+| `--reasoning-effort` | (adaptive) | Reasoning effort: `none`, `low`, `medium`, `high` |
 | `--ocr` | (auto) | PDF OCR engine: `mistral`, `deepseek`, `marker`, `pymupdf` |
 | `--max-pages` | (all) | Only process first N pages of a PDF (saves OCR cost) |
 | `--max-tokens` | (all) | Truncate input text to first N tokens before review |
@@ -125,6 +126,39 @@ Start a local visualization server to browse review results.
 | `--results-dir` | `./review_results` | Directory containing result JSON files |
 | `--port` | `8080` | Server port |
 
+### `openaireview perturb <file_or_url>`
+
+Inject seeded errors into a paper to test how well a reviewer catches them. Writes the perturbed paper and a manifest of the injected errors.
+
+| Option | Default | Description |
+|---|---|---|
+| `--model` | `anthropic/claude-opus-5.5` | Model that generates the perturbations |
+| `--category` | `theoretical` | Paper category: `theoretical`, `empirical` |
+| `--error-type` | `all` | `all`, `surface`, `claim_theoretical`, `logic`, `statement_empirical`, `experimental` |
+| `--n-total` | `20` | Target number of perturbations per paper |
+| `--verifier-model` | `anthropic/claude-sonnet-4-6` | Model that checks each perturbation is a real, substantive error |
+| `--skip-verifier` | off | Skip the verifier step |
+| `--reasoning-effort` | (adaptive) | Reasoning effort for generation |
+| `--output-dir` | `./perturbation_results` | Directory for output files |
+
+Run `openaireview perturb --help` for the remaining verifier options.
+
+### `openaireview score <manifest> <review>`
+
+Score a review results JSON against a perturbation manifest (recall of the injected errors).
+
+| Option | Default | Description |
+|---|---|---|
+| `--method` | `llm` | Matching method: `llm`, `fuzzy`, `semantic` |
+| `--model` | `anthropic/claude-opus-5.5` | LLM judge for explanation matching |
+| `--threshold` | `3` | Minimum judge score (1–5) to count as detected (`llm` only) |
+| `--substring-gate` | off | Skip the judge when the comment's quote doesn't overlap the perturbed text (`llm` only) |
+| `--output-dir` | (manifest's directory) | Where to save the score JSON |
+
+### `openaireview install-skill`
+
+Install the `/openaireview` Claude Code skill (see [Claude Code Skill](#claude-code-skill)). Pass `--force` to overwrite an existing install.
+
 ## Supported Input Formats
 
 - **PDF** (`.pdf`) — auto-selects best available engine (Mistral OCR > DeepSeek > Marker > pymupdf4llm); see [PDF parsing engines](#pdf-parsing-engines-optional)
@@ -142,7 +176,7 @@ Start a local visualization server to browse review results.
 | `ANTHROPIC_API_KEY` | | Anthropic native API key |
 | `GEMINI_API_KEY` | | Google Gemini native API key |
 | `MISTRAL_API_KEY` | | Mistral API key (also used for Mistral OCR) |
-| `MODEL` | `anthropic/claude-opus-4-6` | Default model |
+| `MODEL` | `anthropic/claude-opus-5.5` | Default model |
 | `REVIEW_PROVIDER` | (auto) | Force a specific LLM provider |
 
 Set one API key. The provider is auto-detected from whichever key is set (priority: OpenRouter > OpenAI > Anthropic > Gemini > Mistral). See `.env.example` for a template.
@@ -151,14 +185,16 @@ Set one API key. The provider is auto-detected from whichever key is set (priori
 
 All models available on [OpenRouter](https://openrouter.ai) are supported — use any model ID via `--model`. The following models have built-in pricing for accurate cost tracking in the visualization:
 
-| Model | Input ($/1M tokens) | Output ($/1M tokens) |
-|---|---|---|
-| `anthropic/claude-opus-4-6` | $5.00 | $25.00 |
-| `anthropic/claude-opus-4-5` | $5.00 | $25.00 |
-| `openai/gpt-5.2-pro` | $21.00 | $168.00 |
-| `google/gemini-3.1-pro-preview` | $2.00 | $12.00 |
+| Vendor | Model | Input ($/1M tokens) | Output ($/1M tokens) |
+|---|---|---|---|
+| Anthropic | `anthropic/claude-fable-5.2` | $8.00 | $40.00 |
+| Anthropic | `anthropic/claude-opus-5.5` | $4.00 | $20.00 |
+| OpenAI | `openai/gpt-6.2-astra` | $8.00 | $40.00 |
+| OpenAI | `openai/gpt-6.2-astra-pro` | $8.00 | $40.00 |
+| Google | `google/gemini-4-argon` | $2.00 | $10.00 |
+| Mistral | `mistralai/mistral-large-4-0` | $0.70 | $2.10 |
 
-For models not listed above, a default rate of $5.00/$25.00 per 1M tokens is used.
+Prices are OpenRouter list prices as of November 2026. `gpt-6.2-astra-pro` costs the same per token as `gpt-6.2-astra` but uses many more reasoning tokens per request. Older models (Claude Opus 4.5/4.6, GPT-5.2 Pro, Gemini 3.1 Pro, and a few open-weight models) are also still priced; see `COST_PER_1M` in `src/reviewer/evaluate.py`. For models not listed, a default rate of $5.00/$25.00 per 1M tokens is used.
 
 ## Review Methods
 

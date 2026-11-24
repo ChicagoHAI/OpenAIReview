@@ -80,7 +80,7 @@ def get_chunk_window_context(
 def review_local(
     paper_slug: str,
     document_content: str,
-    model: str = "anthropic/claude-opus-4-6",
+    model: str = "anthropic/claude-opus-5.5",
     reasoning_effort: str | None = None,
     window_size: int = 3,
     ocr: bool = False,

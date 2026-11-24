@@ -28,6 +28,7 @@ uv venv && uv pip install -e .
 
 ## Updates
 
+- `openaireview novelty`: compare a paper's claims against prior work from arXiv, Semantic Scholar and OpenAlex using hybrid BM25 + embedding (ANN) retrieval, with optional LLM verdicts (`pip install "openaireview[novelty]"`)
 - `--max-pages` and `--max-tokens` to limit input size and save OCR cost
 - Mistral OCR and DeepSeek OCR as optional PDF engines (`pip install "openaireview[mistral]"`)
 - `openaireview extract` subcommand for two-stage OCR + review workflow
@@ -107,6 +108,39 @@ Review an academic paper for technical and logical issues. Accepts a local file 
 | `--max-tokens` | (all) | Truncate input text to first N tokens before review |
 | `--output-dir` | `./review_results` | Directory for output JSON files |
 | `--name` | (from filename) | Paper slug name |
+
+### `openaireview novelty <file_or_url>`
+
+Check how novel a paper's contributions are. Extracts the abstract and contribution claims, searches arXiv / Semantic Scholar / OpenAlex for prior work, chunks and indexes the results with **BM25** and **dense embeddings** (exact or **HNSW ANN** index), fuses the two rankings with Reciprocal Rank Fusion, and (unless `--no-judge`) asks the LLM whether each claim is `anticipated`, `partial` or `novel` given the retrieved evidence. Writes `<slug>.novelty.json` and a readable `<slug>.novelty.md`.
+
+```bash
+pip install "openaireview[novelty]"          # numpy + hnswlib; embeddings via OPENAI_API_KEY
+pip install "openaireview[novelty-local]"    # + sentence-transformers (local BGE embeddings)
+
+openaireview novelty paper.pdf --before 2026-01-15
+openaireview novelty https://arxiv.org/abs/2602.18458 --no-judge --embedder st:BAAI/bge-small-en-v1.5
+openaireview novelty paper.pdf --llm-queries --full-text 5 --corpus-dir ~/papers/moe-corpus
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--sources` | `arxiv,semantic_scholar,openalex` | Search backends |
+| `--before` | paper's own date | Ignore work published after this date. Inferred automatically when the paper is on arXiv / indexed online; pass it explicitly for unpublished PDFs |
+| `--arxiv-id` | (from URL) | The paper's own arXiv id, excluded from prior work |
+| `--embedder` | `auto` | `auto`, `hashing`, `st:<model>`, `openai:<model>` |
+| `--ann` | `auto` | `auto` (exact < 5k chunks, else HNSW), `exact`, `hnsw`, `faiss`, `hnswlib` |
+| `--top-k` | `5` | Evidence chunks per claim |
+| `--chunk-tokens` | `200` | Max tokens per chunk |
+| `--llm-queries` | off | Ask the LLM for extra queries using alternative terminology |
+| `--full-text` | `0` | Fetch arXiv full text for the N most related papers |
+| `--corpus-dir` | (none) | Persistent local corpus that grows across runs |
+| `--no-judge` | off | Retrieval only (no LLM calls) |
+| `--model`, `--provider`, `--reasoning-effort` | as `review` | Judge model settings |
+| `--cache-dir` / `--no-cache` | `~/.cache/openaireview/novelty` | HTTP + embedding cache |
+
+Optional env vars: `S2_API_KEY` (higher Semantic Scholar rate limit), `OPENALEX_MAILTO` (OpenAlex polite pool).
+
+> The retrieval-only score (`--no-judge`) is an uncalibrated similarity signal; use it to rank and compare runs with the same embedder, not as an absolute verdict. Novelty verdicts are only as good as the retrieved evidence: a "novel" verdict means no anticipating work was *found*.
 
 ### `openaireview extract <file>`
 
